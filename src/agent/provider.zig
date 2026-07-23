@@ -37,6 +37,8 @@ pub const Adapter = struct {
     client: ai.Client,
     /// When true, use SSE streaming (still returns a full AssistantTurn).
     stream: bool = false,
+    /// Per-request chat knobs (temperature, max_tokens, tool_choice, …).
+    chat_options: ai.ChatOptions = .{},
     /// Optional live content callback (e.g. print deltas to stderr/stdout).
     on_event: ?ai.stream.Handler = null,
     on_event_ctx: ?*anyopaque = null,
@@ -70,15 +72,16 @@ pub const Adapter = struct {
             defs[i] = t.definition;
         }
         if (self.stream) {
-            return ai.stream.chatStream(
+            return ai.stream.chatStreamWithOptions(
                 &self.client,
                 arena,
                 messages,
                 defs,
                 self.on_event,
                 self.on_event_ctx,
+                self.chat_options,
             );
         }
-        return self.client.chat(arena, messages, defs);
+        return self.client.chatWithOptions(arena, messages, defs, self.chat_options);
     }
 };

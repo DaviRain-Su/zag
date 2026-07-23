@@ -33,7 +33,7 @@ const StreamState = struct {
         const content = try self.arena.dupe(u8, self.content.items);
         const fr = try self.arena.dupe(u8, self.finish_reason);
         if (self.tool_ids.items.len == 0) {
-            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr };
+            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr, .usage = null };
         }
         const calls = try self.arena.alloc(types.ToolCall, self.tool_ids.items.len);
         for (0..self.tool_ids.items.len) |i| {
@@ -43,7 +43,7 @@ const StreamState = struct {
                 .arguments = try self.arena.dupe(u8, self.tool_args.items[i].items),
             };
         }
-        return .{ .content = content, .tool_calls = calls, .finish_reason = fr };
+        return .{ .content = content, .tool_calls = calls, .finish_reason = fr, .usage = null };
     }
 };
 
@@ -163,8 +163,22 @@ pub fn chatStream(
     handler: ?Handler,
     handler_ctx: ?*anyopaque,
 ) Error!types.AssistantTurn {
+    return chatStreamWithOptions(client, arena, messages, tools, handler, handler_ctx, .{});
+}
+
+/// Stream with per-request options (temperature, tool_choice, …).
+pub fn chatStreamWithOptions(
+    client: *openai_compat.Client,
+    arena: std.mem.Allocator,
+    messages: []const types.Message,
+    tools: []const types.ToolDefinition,
+    handler: ?Handler,
+    handler_ctx: ?*anyopaque,
+    opts: openai_compat.ChatOptions,
+) Error!types.AssistantTurn {
     const chat_messages = try openai_compat.toChatMessages(arena, messages);
     const chat_tools = try openai_compat.toChatTools(arena, tools);
+    const req = try openai_compat.buildChatRequest(client.config.model, chat_messages, chat_tools, opts, true);
 
     var state: StreamState = .{
         .arena = arena,
@@ -174,11 +188,7 @@ pub fn chatStream(
 
     client.sdk.chat().create_chat_completion_stream_with_done(
         arena,
-        .{
-            .model = client.config.model,
-            .messages = chat_messages,
-            .tools = if (chat_tools.len > 0) chat_tools else null,
-        },
+        req,
         onSdkEvent,
         &state,
         onSdkDone,

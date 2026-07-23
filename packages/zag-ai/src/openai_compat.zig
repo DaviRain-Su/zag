@@ -16,8 +16,13 @@ pub const Config = struct {
     base_url: []const u8,
     api_key: []const u8,
     model: []const u8,
+    /// Transient HTTP retries (passed to openai-zig transport).
+    max_retries: u8 = 2,
+    retry_base_delay_ms: u64 = 500,
+    timeout_ms: ?u64 = null,
 };
 
+/// Provider-facing errors. Prefer `types.isRetryableError` for policy.
 pub const Error = error{
     HttpFailed,
     BadStatus,
@@ -26,7 +31,16 @@ pub const Error = error{
     WriteFailed,
     Unexpected,
     StreamFailed,
+    AuthenticationFailed,
+    PermissionDenied,
+    RateLimited,
+    Timeout,
+    ServerError,
+    BadRequest,
 };
+
+pub const ChatOptions = types.ChatOptions;
+pub const ToolChoice = types.ToolChoice;
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
@@ -35,13 +49,13 @@ pub const Client = struct {
     sdk: openai.Client,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Client {
-        // initClient only fails on allocation; surface OOM later if needed.
         const sdk = openai.initClient(allocator, .{
             .io = io,
             .base_url = config.base_url,
             .api_key = config.api_key,
-            .max_retries = 2,
-            .retry_base_delay_ms = 500,
+            .max_retries = config.max_retries,
+            .retry_base_delay_ms = config.retry_base_delay_ms,
+            .timeout_ms = config.timeout_ms,
         }) catch |err| {
             std.debug.panic("openai-zig client init failed: {s}", .{@errorName(err)});
         };
@@ -57,22 +71,29 @@ pub const Client = struct {
         self.sdk.deinit();
     }
 
-    /// Call chat completions. Prefer `provider()` from harness code.
+    /// Call chat completions with default options.
     pub fn chat(
         self: *Client,
-        /// Scratch allocator for the request/response parse (arena recommended).
         arena: std.mem.Allocator,
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
     ) Error!types.AssistantTurn {
+        return self.chatWithOptions(arena, messages, tools, .{});
+    }
+
+    /// Call chat completions with per-request knobs.
+    pub fn chatWithOptions(
+        self: *Client,
+        arena: std.mem.Allocator,
+        messages: []const types.Message,
+        tools: []const types.ToolDefinition,
+        opts: ChatOptions,
+    ) Error!types.AssistantTurn {
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
+        const req = try buildChatRequest(self.config.model, chat_messages, chat_tools, opts, false);
 
-        var parsed = self.sdk.chat().create_chat_completion(arena, .{
-            .model = self.config.model,
-            .messages = chat_messages,
-            .tools = if (chat_tools.len > 0) chat_tools else null,
-        }) catch |err| {
+        var parsed = self.sdk.chat().create_chat_completion(arena, req) catch |err| {
             return mapSdkError(err);
         };
         defer parsed.deinit();
@@ -86,21 +107,58 @@ pub const Client = struct {
     }
 };
 
+pub fn buildChatRequest(
+    model: []const u8,
+    messages: []const chat_res.ChatMessage,
+    tools: []const chat_res.ChatTool,
+    opts: ChatOptions,
+    stream: bool,
+) Error!chat_res.CreateChatCompletionRequest {
+    var req: chat_res.CreateChatCompletionRequest = .{
+        .model = model,
+        .messages = messages,
+        .tools = if (tools.len > 0) tools else null,
+        .stream = if (stream) true else null,
+        .temperature = opts.temperature,
+        .top_p = opts.top_p,
+        .max_tokens = opts.max_tokens,
+        .max_completion_tokens = opts.max_completion_tokens,
+        .parallel_tool_calls = opts.parallel_tool_calls,
+        .user = opts.user,
+        .seed = opts.seed,
+        .extra_body = opts.extra_body,
+    };
+    if (opts.tool_choice) |tc| {
+        req.tool_choice = try toolChoiceToChat(tc);
+    }
+    return req;
+}
+
+fn toolChoiceToChat(tc: ToolChoice) Error!chat_res.ChatToolChoice {
+    return switch (tc) {
+        .auto => chat_res.ChatToolChoice.forAuto(),
+        .none => chat_res.ChatToolChoice.forNone(),
+        .required => chat_res.ChatToolChoice.forRequired(),
+        .function => |name| chat_res.ChatToolChoice.forFunction(name),
+    };
+}
+
 pub fn mapSdkError(err: anyerror) Error {
-    // openai.errors.Error is an error set; compare by name for portability.
     const name = @errorName(err);
     if (std.mem.eql(u8, name, "OutOfMemory")) return error.OutOfMemory;
-    if (std.mem.eql(u8, name, "AuthenticationError") or
-        std.mem.eql(u8, name, "PermissionDeniedError") or
-        std.mem.eql(u8, name, "BadRequestError") or
-        std.mem.eql(u8, name, "NotFoundError") or
-        std.mem.eql(u8, name, "ConflictError") or
+    if (std.mem.eql(u8, name, "AuthenticationError")) return error.AuthenticationFailed;
+    if (std.mem.eql(u8, name, "PermissionDeniedError")) return error.PermissionDenied;
+    if (std.mem.eql(u8, name, "RateLimitError")) return error.RateLimited;
+    if (std.mem.eql(u8, name, "Timeout") or std.mem.eql(u8, name, "TimeoutError")) return error.Timeout;
+    if (std.mem.eql(u8, name, "InternalServerError")) return error.ServerError;
+    if (std.mem.eql(u8, name, "BadRequestError") or
         std.mem.eql(u8, name, "UnprocessableEntityError") or
-        std.mem.eql(u8, name, "RateLimitError") or
-        std.mem.eql(u8, name, "InternalServerError"))
-        return error.BadStatus;
+        std.mem.eql(u8, name, "NotFoundError") or
+        std.mem.eql(u8, name, "ConflictError"))
+        return error.BadRequest;
     if (std.mem.eql(u8, name, "DeserializeError") or std.mem.eql(u8, name, "SerializeError"))
         return error.InvalidResponse;
+    if (std.mem.eql(u8, name, "WriteFailed")) return error.WriteFailed;
     return error.HttpFailed;
 }
 
@@ -152,7 +210,6 @@ pub fn toChatTools(arena: std.mem.Allocator, tools: []const types.ToolDefinition
     for (tools, 0..) |t, i| {
         const parsed = std.json.parseFromSlice(std.json.Value, arena, t.parameters_json, .{}) catch
             return error.WriteFailed;
-        // Parsed lives in arena; no separate deinit needed for arena-backed parse.
         out[i] = .{
             .@"type" = "function",
             .function = .{
@@ -173,16 +230,31 @@ fn optionalSlice(value: anytype) []const u8 {
     return "";
 }
 
+fn usageFromResponse(resp: gen.CreateChatCompletionResponse) ?types.Usage {
+    const u = resp.usage orelse return null;
+    var out = types.Usage.fromCounts(u.prompt_tokens, u.completion_tokens, u.total_tokens);
+    if (u.completion_tokens_details) |d| {
+        if (d.reasoning_tokens) |rt| {
+            if (rt > 0 and rt < std.math.maxInt(u32)) {
+                out.reasoning_tokens = @intCast(rt);
+            }
+        }
+    }
+    return out;
+}
+
 pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletionResponse) Error!types.AssistantTurn {
     const choices = resp.choices;
     if (choices.len == 0) return error.InvalidResponse;
     const choice = choices[0];
     const finish_reason = try arena.dupe(u8, optionalSlice(choice.finish_reason));
+    const usage = usageFromResponse(resp);
     const msg = choice.message orelse {
         return .{
             .content = try arena.dupe(u8, ""),
             .tool_calls = &.{},
             .finish_reason = finish_reason,
+            .usage = usage,
         };
     };
 
@@ -208,15 +280,27 @@ pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletion
         .content = content,
         .tool_calls = tool_calls,
         .finish_reason = finish_reason,
+        .usage = usage,
     };
 }
 
-/// Build request body with `"stream": true` — retained for stream.zig fallback paths.
+/// Build JSON body for streaming requests (tests + fallbacks).
 pub fn buildRequestBodyForStream(
     allocator: std.mem.Allocator,
     model: []const u8,
     messages: []const types.Message,
     tools: []const types.ToolDefinition,
+) Error![]u8 {
+    return buildRequestBody(allocator, model, messages, tools, .{}, true);
+}
+
+pub fn buildRequestBody(
+    allocator: std.mem.Allocator,
+    model: []const u8,
+    messages: []const types.Message,
+    tools: []const types.ToolDefinition,
+    opts: ChatOptions,
+    stream: bool,
 ) Error![]u8 {
     var out: Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
@@ -225,8 +309,42 @@ pub fn buildRequestBodyForStream(
     s.beginObject() catch return error.WriteFailed;
     s.objectField("model") catch return error.WriteFailed;
     s.write(model) catch return error.WriteFailed;
-    s.objectField("stream") catch return error.WriteFailed;
-    s.write(true) catch return error.WriteFailed;
+    if (stream) {
+        s.objectField("stream") catch return error.WriteFailed;
+        s.write(true) catch return error.WriteFailed;
+    }
+    if (opts.temperature) |t| {
+        s.objectField("temperature") catch return error.WriteFailed;
+        s.write(t) catch return error.WriteFailed;
+    }
+    if (opts.top_p) |t| {
+        s.objectField("top_p") catch return error.WriteFailed;
+        s.write(t) catch return error.WriteFailed;
+    }
+    if (opts.max_tokens) |t| {
+        s.objectField("max_tokens") catch return error.WriteFailed;
+        s.write(t) catch return error.WriteFailed;
+    }
+    if (opts.max_completion_tokens) |t| {
+        s.objectField("max_completion_tokens") catch return error.WriteFailed;
+        s.write(t) catch return error.WriteFailed;
+    }
+    if (opts.parallel_tool_calls) |t| {
+        s.objectField("parallel_tool_calls") catch return error.WriteFailed;
+        s.write(t) catch return error.WriteFailed;
+    }
+    if (opts.user) |u| {
+        s.objectField("user") catch return error.WriteFailed;
+        s.write(u) catch return error.WriteFailed;
+    }
+    if (opts.seed) |seed| {
+        s.objectField("seed") catch return error.WriteFailed;
+        s.write(seed) catch return error.WriteFailed;
+    }
+    if (opts.tool_choice) |tc| {
+        s.objectField("tool_choice") catch return error.WriteFailed;
+        try writeToolChoiceLegacy(&s, tc);
+    }
 
     s.objectField("messages") catch return error.WriteFailed;
     s.beginArray() catch return error.WriteFailed;
@@ -244,8 +362,37 @@ pub fn buildRequestBodyForStream(
         s.endArray() catch return error.WriteFailed;
     }
 
+    if (opts.extra_body) |extra| {
+        if (extra == .object) {
+            var it = extra.object.iterator();
+            while (it.next()) |entry| {
+                s.objectField(entry.key_ptr.*) catch return error.WriteFailed;
+                s.write(entry.value_ptr.*) catch return error.WriteFailed;
+            }
+        }
+    }
+
     s.endObject() catch return error.WriteFailed;
     return out.toOwnedSlice() catch return error.OutOfMemory;
+}
+
+fn writeToolChoiceLegacy(s: *std.json.Stringify, tc: ToolChoice) Error!void {
+    switch (tc) {
+        .auto => s.write("auto") catch return error.WriteFailed,
+        .none => s.write("none") catch return error.WriteFailed,
+        .required => s.write("required") catch return error.WriteFailed,
+        .function => |name| {
+            s.beginObject() catch return error.WriteFailed;
+            s.objectField("type") catch return error.WriteFailed;
+            s.write("function") catch return error.WriteFailed;
+            s.objectField("function") catch return error.WriteFailed;
+            s.beginObject() catch return error.WriteFailed;
+            s.objectField("name") catch return error.WriteFailed;
+            s.write(name) catch return error.WriteFailed;
+            s.endObject() catch return error.WriteFailed;
+            s.endObject() catch return error.WriteFailed;
+        },
+    }
 }
 
 fn writeMessageLegacy(s: *std.json.Stringify, msg: types.Message) Error!void {
@@ -329,8 +476,81 @@ test "turnFromResponse text" {
         gpa.free(turn.finish_reason);
     }
     try std.testing.expectEqualStrings("hello", turn.content);
+    try std.testing.expect(turn.usage == null);
 }
 
+test "turnFromResponse tool_calls and usage" {
+    const gpa = std.testing.allocator;
+    const turn = try turnFromResponse(gpa, .{
+        .choices = &.{
+            .{
+                .finish_reason = "tool_calls",
+                .message = .{
+                    .content = null,
+                    .tool_calls = &.{
+                        .{
+                            .id = "call_1",
+                            .@"type" = "function",
+                            .function = .{
+                                .name = "list_dir",
+                                .arguments = "{\"path\":\".\"}",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        .usage = .{
+            .prompt_tokens = 12,
+            .completion_tokens = 8,
+            .total_tokens = 20,
+            .completion_tokens_details = .{
+                .reasoning_tokens = 3,
+            },
+        },
+    });
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+        for (turn.tool_calls) |tc| {
+            gpa.free(tc.id);
+            gpa.free(tc.name);
+            gpa.free(tc.arguments);
+        }
+        if (turn.tool_calls.len > 0) gpa.free(turn.tool_calls);
+    }
+    try std.testing.expect(turn.wantsTools());
+    try std.testing.expectEqualStrings("list_dir", turn.tool_calls[0].name);
+    try std.testing.expectEqualStrings("call_1", turn.tool_calls[0].id);
+    const u = turn.usage.?;
+    try std.testing.expectEqual(@as(u32, 12), u.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 8), u.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 20), u.total_tokens);
+    try std.testing.expectEqual(@as(u32, 3), u.reasoning_tokens);
+}
+
+test "buildRequestBody includes options" {
+    const gpa = std.testing.allocator;
+    const msgs = [_]types.Message{types.Message.user("hi")};
+    const tools = [_]types.ToolDefinition{.{
+        .name = "list_dir",
+        .description = "list",
+        .parameters_json = "{\"type\":\"object\",\"properties\":{}}",
+    }};
+    const body = try buildRequestBody(gpa, "test-model", &msgs, &tools, .{
+        .temperature = 0.2,
+        .max_tokens = 128,
+        .tool_choice = .required,
+        .parallel_tool_calls = false,
+    }, false);
+    defer gpa.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"temperature\":0.2") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"max_tokens\":128") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"tool_choice\":\"required\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"parallel_tool_calls\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "list_dir") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\"") == null);
+}
 
 test "buildRequestBodyForStream sets stream true" {
     const gpa = std.testing.allocator;
@@ -338,4 +558,14 @@ test "buildRequestBodyForStream sets stream true" {
     const body = try buildRequestBodyForStream(gpa, "m", &msgs, &.{});
     defer gpa.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\":true") != null);
+}
+
+test "mapSdkError classifies auth and rate limit" {
+    try std.testing.expectEqual(error.AuthenticationFailed, mapSdkError(error.AuthenticationError));
+    try std.testing.expectEqual(error.RateLimited, mapSdkError(error.RateLimitError));
+    try std.testing.expectEqual(error.ServerError, mapSdkError(error.InternalServerError));
+    try std.testing.expectEqual(error.Timeout, mapSdkError(error.TimeoutError));
+    try std.testing.expectEqual(error.BadRequest, mapSdkError(error.BadRequestError));
+    try std.testing.expect(types.isRetryableError(error.RateLimited));
+    try std.testing.expect(!types.isRetryableError(error.AuthenticationFailed));
 }

@@ -15,19 +15,25 @@ pub const openai_compat = @import("openai_compat.zig");
 pub const stream = @import("stream.zig");
 pub const catalog = @import("catalog.zig");
 pub const config_file = @import("config_file.zig");
+// Contract tests are pulled into the package test binary via refAllDecls.
 
 pub const Message = types.Message;
 pub const ToolCall = types.ToolCall;
 pub const AssistantTurn = types.AssistantTurn;
 pub const ToolDefinition = types.ToolDefinition;
 pub const StreamEvent = types.StreamEvent;
+pub const Usage = types.Usage;
+pub const ChatOptions = types.ChatOptions;
+pub const ToolChoice = types.ToolChoice;
 pub const Client = openai_compat.Client;
 pub const Config = openai_compat.Config;
 pub const ProviderSpec = presets.ProviderSpec;
 pub const ModelInfo = catalog.ModelInfo;
 pub const FileConfig = config_file.FileConfig;
 
-pub const version = "0.2.0";
+pub const isRetryableError = types.isRetryableError;
+
+pub const version = "0.3.0";
 
 pub const ResolveResult = struct {
     resolved: registry.Resolved,
@@ -107,4 +113,5 @@ const EnvMap = struct {
 
 test {
     std.testing.refAllDecls(@This());
+    _ = @import("contract_tests.zig");
 }
