@@ -65,8 +65,9 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 | `--no-project` | 不注入 AGENTS.md |
 
 ```text
-src/main.zig                    产品壳 CLI
-src/root.zig                    umbrella 再导出
+src/main.zig                    可执行入口（几行 → zag-cli.run）
+src/root.zig                    umbrella 再导出（库消费者）
+packages/zag-cli/               产品壳：flags · resolve · REPL · one-shot
 packages/zag-coding-agent/      Agent 门面 · toolset · WireProvider · runtime tools
 packages/zag-agent-core/        loop · 纯 Provider 端口 · session · permissions
 packages/zag-ai/                WireAdapter · resolve · catalog
@@ -74,7 +75,7 @@ packages/openai-zig/            线协议 · transport · OpenAPI
 ```
 
 ```text
-main → coding-agent → agent-core → zag-ai → openai-zig
+main → zag-cli → coding-agent → agent-core → zag-ai → openai-zig
 ```
 
 详见 [docs/architecture.md](./docs/architecture.md)。

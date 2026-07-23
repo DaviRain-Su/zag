@@ -44,6 +44,9 @@
         .zag_coding_agent = .{
             .path = "packages/zag-coding-agent",
         },
+        .zag_cli = .{
+            .path = "packages/zag-cli",
+        },
     },
     .paths = .{
         "build.zig",

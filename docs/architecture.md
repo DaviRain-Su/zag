@@ -164,31 +164,33 @@ Agent Core
 更长拆包标准见 [packaging.md](./packaging.md)（若存在）。
 
 ```text
-Product shell (src/main.zig)
+src/main.zig  (thin entry)
         │
         ▼
-┌── packages/zag-coding-agent ───────────────────────────┐
-│  Agent/Session · toolset · project · WireProvider      │
-│  runtime tools (list/read/write/shell)                 │
-└────────────┬───────────────────────┬───────────────────┘
-             │                       │
-             ▼                       ▼
- packages/zag-agent-core      packages/zag-ai
- loop · pure Provider         WireAdapter · catalog
- session · permissions        resolve · types
- context · trace
-             │
-             ▼
+ packages/zag-cli          flags · resolve · REPL · one-shot
+        │
+        ▼
+ packages/zag-coding-agent Agent/Session · toolset · WireProvider · runtime
+        │
+        ▼
+ packages/zag-agent-core   loop · pure Provider · session · permissions
+        │
+        ▼
+ packages/zag-ai           WireAdapter · catalog · resolve
+        │
+        ▼
  packages/openai-zig
 ```
 
 | 包 / 目录 | 职责 | 可依赖 | **禁止**依赖 |
 |-----------|------|--------|----------------|
 | `openai-zig` | HTTP / OpenAPI | std | 上层 agent 包 |
-| `zag-ai` | Model plane + WireAdapter | openai-zig | agent-core / coding-agent |
+| `zag-ai` | Model plane + WireAdapter | openai-zig | agent / cli 包 |
 | `zag-agent-core` | Loop、**纯 Provider**、session、permissions | zag-ai（types/retry/catalog only） | `Client`、Wire 组装、产品 toolset |
 | `zag-coding-agent` | 产品 Agent、`WireProvider`、默认 tools | core + zag-ai | openai-zig 细节 |
-| `src/main` + `src/root` | CLI 壳 + umbrella 再导出 | 上述 | 业务沉在 shell |
+| `zag-cli` | 产品壳（args/REPL/one-shot） | coding-agent + core + zag-ai | loop 业务 |
+| `src/main` | 进程入口 → `zag_cli.run` | zag-cli | 逻辑 |
+| `src/root` | umbrella 再导出 | 各 packages | — |
 
 **一句话：** Core 只见 `Provider.chat`；Wire 桥在 coding-agent；线协议在 zag-ai 之后。
 
@@ -199,13 +201,12 @@ Product shell (src/main.zig)
 ## 现状分层
 
 ```text
-CLI (main.zig)
+main.zig → zag-cli (产品壳)
     ↓
 zag-coding-agent  ★ 产品 harness
   Agent · Session · toolset · WireProvider · runtime tools
     ↓
 zag-agent-core  ★ 纯 loop / Provider 端口
-  loop · permissions · context · session · trace
     ↓
 zag-ai  WireAdapter (openai_compat 默认)
     ↓

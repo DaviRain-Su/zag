@@ -1,17 +1,19 @@
-//! Zag umbrella — re-exports monorepo packages for the CLI and external users.
+//! Zag umbrella — re-exports monorepo packages for library consumers.
 //!
 //! ```
-//! packages/openai-zig      wire transport + OpenAPI
-//! packages/zag-ai          model plane (WireAdapter)
-//! packages/zag-agent-core  loop / pure Provider
-//! packages/zag-coding-agent  coding tools + Agent facade + wire bridge
-//! src/main.zig             product shell (CLI)
+//! packages/openai-zig         wire transport + OpenAPI
+//! packages/zag-ai             model plane (WireAdapter)
+//! packages/zag-agent-core     loop / pure Provider
+//! packages/zag-coding-agent   coding tools + Agent facade + wire bridge
+//! packages/zag-cli            product shell (args / REPL / one-shot)
+//! src/main.zig                thin executable entry → zag-cli.run
 //! ```
 
 const std = @import("std");
 const ai = @import("zag-ai");
 const core = @import("zag-agent-core");
 const coding = @import("zag-coding-agent");
+const cli = @import("zag-cli");
 
 // --- Agent Core ---
 pub const message = core.message;
@@ -80,6 +82,7 @@ pub const provider_config = struct {
 
 pub const agent_core = core;
 pub const coding_agent = coding;
+pub const zag_cli = cli;
 
 pub const version = "0.5.0";
 

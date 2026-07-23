@@ -28,6 +28,12 @@ pub fn build(b: *std.Build) void {
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
 
+    const cli_dep = b.dependency("zag_cli", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const cli_mod = cli_dep.module("zag-cli");
+
     _ = b.addModule("openai_zig", .{
         .root_source_file = b.path("packages/openai-zig/src/root.zig"),
         .target = target,
@@ -54,6 +60,15 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-ai", .module = ai_mod },
         },
     });
+    _ = b.addModule("zag-cli", .{
+        .root_source_file = b.path("packages/zag-cli/src/root.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "zag-agent-core", .module = core_mod },
+            .{ .name = "zag-coding-agent", .module = coding_mod },
+            .{ .name = "zag-ai", .module = ai_mod },
+        },
+    });
 
     const mod = b.addModule("zag", .{
         .root_source_file = b.path("src/root.zig"),
@@ -62,6 +77,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-ai", .module = ai_mod },
             .{ .name = "zag-agent-core", .module = core_mod },
             .{ .name = "zag-coding-agent", .module = coding_mod },
+            .{ .name = "zag-cli", .module = cli_mod },
             .{ .name = "openai_zig", .module = openai_mod },
         },
     });
@@ -73,11 +89,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "zag", .module = mod },
-                .{ .name = "zag-ai", .module = ai_mod },
-                .{ .name = "zag-agent-core", .module = core_mod },
-                .{ .name = "zag-coding-agent", .module = coding_mod },
-                .{ .name = "openai_zig", .module = openai_mod },
+                .{ .name = "zag-cli", .module = cli_mod },
             },
         }),
     });
@@ -138,6 +150,20 @@ pub fn build(b: *std.Build) void {
     });
     const run_coding_tests = b.addRunArtifact(coding_tests);
 
+    const cli_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-coding-agent", .module = coding_mod },
+                .{ .name = "zag-ai", .module = ai_mod },
+            },
+        }),
+    });
+    const run_cli_tests = b.addRunArtifact(cli_tests);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
@@ -159,6 +185,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_coding_tests.step);
+    test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(openai_coverage_step);
 }
