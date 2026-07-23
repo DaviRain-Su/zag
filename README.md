@@ -54,18 +54,27 @@ src/runtime/   FS · shell 实现
 src/provider/  HTTP · env
 ```
 
-版本：`0.3.1`。
+版本：`0.4.0`。
 
-### 模型接入（OpenAI-compatible）
+### Monorepo：`packages/zag-ai`
 
-| 变量 | 作用 |
-|------|------|
-| `DEEPSEEK_API_KEY` / `XAI_API_KEY` / `OPENAI_API_KEY` / … | 自动探测（见 `provider/presets.zig` 顺序） |
-| `ZAG_PROVIDER` | 显式选 preset id |
-| `ZAG_API_KEY` + `ZAG_BASE_URL` | 自定义 OpenAI 兼容 endpoint |
-| `ZAG_MODEL` / `ZAG_BASE_URL` | 覆盖任意 preset 默认 |
+独立 AI 包（OpenAI Chat Completions only）：
 
-线协议只有一套（`openai_compat`）；扩展厂商 = 改 presets 表。
+```bash
+# 流式 + 配置文件
+cat > .zag/config.json <<'EOF'
+{ "provider": "deepseek", "model": "deepseek-v4-flash", "stream": true }
+EOF
+zig build run -- --yolo --stream -v "hello"
+```
+
+| 变量 / 文件 | 作用 |
+|-------------|------|
+| `DEEPSEEK_API_KEY` 等 | 自动探测（`packages/zag-ai/src/presets.zig`） |
+| `ZAG_PROVIDER` / `ZAG_MODEL` | 显式选择 |
+| `.zag/config.json` | 非密钥配置 + `"stream": true` |
+| `--stream` | SSE 流式输出 |
+| `catalog.zig` | 已知 model id / context window |
 
 ## 许可
 

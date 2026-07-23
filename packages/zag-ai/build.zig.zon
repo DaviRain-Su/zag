@@ -1,0 +1,13 @@
+.{
+    .name = .zag_ai,
+    .version = "0.1.0",
+    .fingerprint = 0x36b0f4d4a1d0538d,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}

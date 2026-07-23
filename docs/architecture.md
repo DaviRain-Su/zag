@@ -19,16 +19,26 @@ provider/  （模型接入，对齐 pi-ai 形状）
 LLM · FS · shell
 ```
 
-### Provider 扩展（OpenAI 格式 only）
+### Monorepo：`packages/zag-ai`（Grok Build 式拆分）
 
-| 文件 | 职责 |
+AI 模块独立于 agent harness，类似 hyper crates 分离：
+
+```text
+packages/zag-ai/          # 独立 Zig package
+  types · presets · catalog · registry · auth_env
+  openai_compat (非流) · stream (SSE) · config_file
+src/agent/                # harness 业务
+  provider.Adapter → 包装 zag-ai.Client（可选 stream）
+```
+
+| 能力 | 位置 |
 |------|------|
-| `provider/presets.zig` | 声明式 `ProviderSpec` 表（加厂商加一行） |
-| `provider/auth_env.zig` | 从 env 取 API key（无 OAuth） |
-| `provider/registry.zig` | 探测 / `ZAG_PROVIDER` / 自定义 endpoint |
-| `provider/openai_compat.zig` | 唯一线协议：Chat Completions + tools |
+| 厂商表 | `packages/zag-ai/src/presets.zig` |
+| Model catalog | `packages/zag-ai/src/catalog.zig` |
+| 配置文件 | `.zag/config.json` / `zag.json` / `--config` |
+| SSE streaming | `packages/zag-ai/src/stream.zig` + CLI `--stream` |
 
-加厂商：在 `presets.builtin` 追加一条，无需改 resolve 分支。
+加厂商：改 presets + catalog，无需改 harness。
 
 ## 工具执行三道门（Phase 3）
 

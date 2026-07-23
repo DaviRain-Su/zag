@@ -9,9 +9,9 @@
 const std = @import("std");
 const Io = std.Io;
 const http = std.http;
-const message = @import("../agent/message.zig");
-const tool = @import("../agent/tool.zig");
-const agent_provider = @import("../agent/provider.zig");
+const types = @import("types.zig");
+
+
 
 pub const Config = struct {
     /// e.g. "https://api.openai.com/v1" or "https://api.deepseek.com/v1"
@@ -20,7 +20,15 @@ pub const Config = struct {
     model: []const u8,
 };
 
-pub const Error = agent_provider.ChatError;
+pub const Error = error{
+    HttpFailed,
+    BadStatus,
+    InvalidResponse,
+    OutOfMemory,
+    WriteFailed,
+    Unexpected,
+    StreamFailed,
+};
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
@@ -44,37 +52,15 @@ pub const Client = struct {
         self.http_client.deinit();
     }
 
-    /// Type-erased handle for the agent harness (`agent.Provider`).
-    pub fn provider(self: *Client) agent_provider.Provider {
-        return .{
-            .ptr = self,
-            .vtable = &vtable,
-        };
-    }
-
-    const vtable: agent_provider.VTable = .{
-        .chat = chatVtable,
-    };
-
-    fn chatVtable(
-        ptr: *anyopaque,
-        arena: std.mem.Allocator,
-        messages: []const message.Message,
-        tools: []const tool.Tool,
-    ) agent_provider.ChatError!message.AssistantTurn {
-        const self: *Client = @ptrCast(@alignCast(ptr));
-        return self.chat(arena, messages, tools);
-    }
-
     /// Call chat completions. Prefer `provider()` from harness code.
     pub fn chat(
         self: *Client,
         /// Scratch allocator for the request/response parse (arena recommended).
         arena: std.mem.Allocator,
-        messages: []const message.Message,
-        tools: []const tool.Tool,
-    ) Error!message.AssistantTurn {
-        const body = try buildRequestBody(arena, self.config.model, messages, tools);
+        messages: []const types.Message,
+        tools: []const types.ToolDefinition,
+    ) Error!types.AssistantTurn {
+        const body = try buildRequestBody(arena, self.config.model, messages, tools, false);
         const url = try std.fmt.allocPrint(arena, "{s}/chat/completions", .{
             trimTrailingSlash(self.config.base_url),
         });
@@ -113,8 +99,9 @@ fn trimTrailingSlash(url: []const u8) []const u8 {
 fn buildRequestBody(
     allocator: std.mem.Allocator,
     model: []const u8,
-    messages: []const message.Message,
-    tools: []const tool.Tool,
+    messages: []const types.Message,
+    tools: []const types.ToolDefinition,
+    stream: bool,
 ) Error![]u8 {
     var out: Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
@@ -124,6 +111,10 @@ fn buildRequestBody(
     s.beginObject() catch return error.WriteFailed;
     s.objectField("model") catch return error.WriteFailed;
     s.write(model) catch return error.WriteFailed;
+    if (stream) {
+        s.objectField("stream") catch return error.WriteFailed;
+        s.write(true) catch return error.WriteFailed;
+    }
 
     s.objectField("messages") catch return error.WriteFailed;
     s.beginArray() catch return error.WriteFailed;
@@ -136,7 +127,7 @@ fn buildRequestBody(
         s.objectField("tools") catch return error.WriteFailed;
         s.beginArray() catch return error.WriteFailed;
         for (tools) |t| {
-            try writeToolDef(&s, t.definition);
+            try writeToolDef(&s, t);
         }
         s.endArray() catch return error.WriteFailed;
     }
@@ -145,7 +136,17 @@ fn buildRequestBody(
     return out.toOwnedSlice() catch return error.OutOfMemory;
 }
 
-fn writeMessage(s: *std.json.Stringify, msg: message.Message) Error!void {
+/// Build request body with `"stream": true` (used by stream.zig).
+pub fn buildRequestBodyForStream(
+    allocator: std.mem.Allocator,
+    model: []const u8,
+    messages: []const types.Message,
+    tools: []const types.ToolDefinition,
+) Error![]u8 {
+    return buildRequestBody(allocator, model, messages, tools, true);
+}
+
+fn writeMessage(s: *std.json.Stringify, msg: types.Message) Error!void {
     s.beginObject() catch return error.WriteFailed;
     s.objectField("role") catch return error.WriteFailed;
     s.write(msg.role.jsonName()) catch return error.WriteFailed;
@@ -196,7 +197,7 @@ fn writeMessage(s: *std.json.Stringify, msg: message.Message) Error!void {
     s.endObject() catch return error.WriteFailed;
 }
 
-fn writeToolDef(s: *std.json.Stringify, def: tool.Definition) Error!void {
+fn writeToolDef(s: *std.json.Stringify, def: types.ToolDefinition) Error!void {
     s.beginObject() catch return error.WriteFailed;
     s.objectField("type") catch return error.WriteFailed;
     s.write("function") catch return error.WriteFailed;
@@ -207,14 +208,12 @@ fn writeToolDef(s: *std.json.Stringify, def: tool.Definition) Error!void {
     s.objectField("description") catch return error.WriteFailed;
     s.write(def.description) catch return error.WriteFailed;
     s.objectField("parameters") catch return error.WriteFailed;
-    // Embed pre-serialized schema without re-escaping structure incorrectly:
-    // write as raw JSON value.
     s.print("{s}", .{def.parameters_json}) catch return error.WriteFailed;
     s.endObject() catch return error.WriteFailed;
     s.endObject() catch return error.WriteFailed;
 }
 
-fn parseAssistantTurn(allocator: std.mem.Allocator, body: []const u8) !message.AssistantTurn {
+fn parseAssistantTurn(allocator: std.mem.Allocator, body: []const u8) !types.AssistantTurn {
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
     // Intentionally not deinit'ing: we dupe what we need into `allocator` which
     // is typically an arena that frees everything together. If using GPA, the
@@ -256,10 +255,10 @@ fn parseAssistantTurn(allocator: std.mem.Allocator, body: []const u8) !message.A
         break :blk try allocator.dupe(u8, "");
     };
 
-    var tool_calls: []message.ToolCall = &.{};
+    var tool_calls: []types.ToolCall = &.{};
     if (msg_val.object.get("tool_calls")) |tc_val| {
         if (tc_val == .array and tc_val.array.items.len > 0) {
-            const slice = try allocator.alloc(message.ToolCall, tc_val.array.items.len);
+            const slice = try allocator.alloc(types.ToolCall, tc_val.array.items.len);
             for (tc_val.array.items, 0..) |item, i| {
                 if (item != .object) return error.InvalidResponse;
                 const id = item.object.get("id") orelse return error.InvalidResponse;
@@ -331,16 +330,13 @@ test "parse assistant tool_calls turn" {
 
 test "buildRequestBody includes tools" {
     const gpa = std.testing.allocator;
-    const tools = [_]tool.Tool{.{
-        .definition = .{
-            .name = "list_dir",
-            .description = "list",
-            .parameters_json = "{\"type\":\"object\",\"properties\":{}}",
-        },
-        .handler = undefined,
+    const tools = [_]types.ToolDefinition{.{
+        .name = "list_dir",
+        .description = "list",
+        .parameters_json = "{\"type\":\"object\",\"properties\":{}}",
     }};
-    const msgs = [_]message.Message{message.Message.user("hi")};
-    const body = try buildRequestBody(gpa, "test-model", &msgs, &tools);
+    const msgs = [_]types.Message{types.Message.user("hi")};
+    const body = try buildRequestBody(gpa, "test-model", &msgs, &tools, false);
     defer gpa.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "list_dir") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "test-model") != null);

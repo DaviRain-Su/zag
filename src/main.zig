@@ -35,6 +35,8 @@ pub fn main(init: std.process.Init) !void {
     var no_project = false;
     var trace_path: ?[]const u8 = null;
     var enable_trace = false;
+    var want_stream = false;
+    var config_path: ?[]const u8 = null;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -85,6 +87,15 @@ pub fn main(init: std.process.Init) !void {
                 i += 1;
                 trace_path = args[i];
             }
+        } else if (std.mem.eql(u8, a, "--stream")) {
+            want_stream = true;
+        } else if (std.mem.eql(u8, a, "--config")) {
+            i += 1;
+            if (i >= args.len) {
+                std.log.err("--config requires a path", .{});
+                std.process.exit(2);
+            }
+            config_path = args[i];
         } else if (std.mem.eql(u8, a, "--")) {
             i += 1;
             while (i < args.len) : (i += 1) {
@@ -113,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
         trace_path = ".zag/traces/latest.jsonl";
     }
 
-    const resolved = zag.provider_registry.resolveFromEnv(init.environ_map) catch |err| {
+    var resolve_result = zag.zag_ai.resolve(gpa, io, init.environ_map, config_path) catch |err| {
         switch (err) {
             error.MissingApiKey => {
                 std.log.err(
@@ -124,22 +135,31 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(1);
             },
             error.UnknownProvider => {
-                std.log.err("unknown ZAG_PROVIDER (see presets in provider/presets.zig)", .{});
+                std.log.err("unknown ZAG_PROVIDER (see packages/zag-ai presets)", .{});
                 std.process.exit(1);
             },
             error.MissingBaseUrl => {
                 std.log.err("ZAG_API_KEY requires ZAG_BASE_URL for custom endpoints", .{});
                 std.process.exit(1);
             },
+            else => {
+                std.log.err("provider resolve failed: {s}", .{@errorName(err)});
+                std.process.exit(1);
+            },
         }
     };
+    defer resolve_result.deinit(gpa);
+
+    const resolved = resolve_result.resolved;
+    const use_stream = want_stream or resolve_result.stream;
 
     if (verbose) {
-        std.log.info("provider id={s} name={s} model={s} key_from={s} permission={s} shell_policy={s}", .{
+        std.log.info("provider id={s} name={s} model={s} key_from={s} stream={any} permission={s} shell_policy={s}", .{
             resolved.spec_id,
             resolved.display_name,
             resolved.config.model,
             resolved.api_key_source,
+            use_stream,
             permission_mode.name(),
             shell_policy.name(),
         });
@@ -147,10 +167,15 @@ pub fn main(init: std.process.Init) !void {
         if (trace_path) |tp| std.log.info("trace path={s}", .{tp});
     }
 
-    var client = zag.openai_compat.Client.init(gpa, io, resolved.config);
-    defer client.deinit();
+    const client = zag.openai.Client.init(gpa, io, resolved.config);
+    var adapter = zag.provider.Adapter.init(client, use_stream);
+    if (use_stream and verbose) {
+        adapter.on_event = streamLogHandler;
+        adapter.on_event_ctx = null;
+    }
+    defer adapter.deinit();
 
-    var agent = zag.agent.Agent.init(gpa, io, client.provider(), .{
+    var agent = zag.agent.Agent.init(gpa, io, adapter.provider(), .{
         .verbose = verbose,
         .permission_mode = permission_mode,
         .shell_policy = shell_policy,
@@ -264,6 +289,23 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
     try Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
+fn streamLogHandler(_: ?*anyopaque, event: zag.zag_ai.StreamEvent) anyerror!void {
+    switch (event) {
+        .content_delta => |d| {
+            if (d.len > 0) std.debug.print("{s}", .{d});
+        },
+        .finish_reason => |fr| {
+            if (fr.len > 0) std.log.info("stream finish_reason={s}", .{fr});
+        },
+        .tool_call_delta => |tc| {
+            if (tc.name.len > 0) std.log.info("stream tool_call[{d}] {s}", .{ tc.index, tc.name });
+        },
+        .done => {
+            std.debug.print("\n", .{});
+        },
+    }
+}
+
 fn printUsage() !void {
     const usage =
         \\zag — Zig coding agent (Phase 3: workspace jail + shell policy + trace)
@@ -283,15 +325,17 @@ fn printUsage() !void {
         \\  --no-project               skip AGENTS.md injection
         \\  --trace [PATH]             write structured run trace JSONL
         \\                             (default .zag/traces/latest.jsonl)
+        \\  --stream                   SSE streaming completions (OpenAI format)
+        \\  --config PATH              JSON config (.zag/config.json also auto-loaded)
         \\
         \\Tools: list_dir, read_file, write_file, run_shell
         \\Security: relative paths only; shell denylist even under --yolo
         \\
-        \\Model providers (OpenAI Chat Completions wire format only):
-        \\  Auto-detect first set key among presets (order in provider/presets.zig),
-        \\  or set ZAG_PROVIDER=deepseek|xai|openai|openrouter|together|groq
-        \\  Custom: ZAG_API_KEY + ZAG_BASE_URL [+ ZAG_MODEL]
-        \\  Override any preset: ZAG_BASE_URL, ZAG_MODEL
+        \\Model (packages/zag-ai — OpenAI Chat Completions only):
+        \\  Env presets: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, …
+        \\  ZAG_PROVIDER=<id>  ZAG_MODEL  ZAG_BASE_URL
+        \\  Catalog: packages/zag-ai/src/catalog.zig
+        \\  Config file example: { "provider":"deepseek", "model":"deepseek-v4-flash", "stream":true }
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();

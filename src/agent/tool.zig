@@ -5,16 +5,12 @@
 
 const std = @import("std");
 const Io = std.Io;
+const ai = @import("zag-ai");
 
 pub const max_result_bytes: usize = 64 * 1024;
 
-/// OpenAI-style function tool definition (static metadata).
-pub const Definition = struct {
-    name: []const u8,
-    description: []const u8,
-    /// JSON Schema object for `function.parameters` (static string is fine).
-    parameters_json: []const u8,
-};
+/// OpenAI-style function tool definition (from zag-ai).
+pub const Definition = ai.ToolDefinition;
 
 pub const HandlerError = error{
     InvalidArguments,

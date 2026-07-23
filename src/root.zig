@@ -1,8 +1,9 @@
 //! Zag library root — coding agent harness.
 //!
-//! Prefer `zag.agent` for business logic. Provider/runtime are infrastructure.
+//! AI/LLM client lives in monorepo package `zag-ai` (`@import("zag-ai")`).
 
 const std = @import("std");
+const ai = @import("zag-ai");
 
 pub const message = @import("agent/message.zig");
 pub const tool = @import("agent/tool.zig");
@@ -20,16 +21,51 @@ pub const trace = @import("agent/trace.zig");
 pub const loop = @import("agent/loop.zig");
 pub const agent = @import("agent/agent.zig");
 
-pub const openai = @import("provider/openai.zig");
-pub const openai_compat = @import("provider/openai_compat.zig");
-pub const provider_config = @import("provider/config.zig");
-pub const provider_registry = @import("provider/registry.zig");
-pub const provider_presets = @import("provider/presets.zig");
-pub const provider_auth_env = @import("provider/auth_env.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
 
-pub const version = "0.3.1";
+// Re-export AI package surface for convenience
+pub const zag_ai = ai;
+pub const openai_compat = ai.openai_compat;
+pub const provider_registry = ai.registry;
+pub const provider_presets = ai.presets;
+pub const provider_auth_env = ai.auth_env;
+pub const provider_catalog = ai.catalog;
+pub const provider_config_file = ai.config_file;
+
+/// Back-compat alias used by older code / docs.
+pub const openai = struct {
+    pub const Client = ai.Client;
+    pub const Config = ai.Config;
+    pub const Error = ai.openai_compat.Error;
+};
+
+pub const provider_config = struct {
+    pub const Error = ai.registry.Error;
+    pub const Resolved = struct {
+        config: ai.Config,
+        preset: struct {
+            id: []const u8,
+            pub fn name(self: @This()) []const u8 {
+                return self.id;
+            }
+        },
+        api_key_source: []const u8 = "",
+        display_name: []const u8 = "",
+    };
+
+    pub fn resolve(env: *const std.process.Environ.Map) Error!Resolved {
+        const r = try ai.registry.resolveFromEnv(env);
+        return .{
+            .config = r.config,
+            .preset = .{ .id = r.spec_id },
+            .api_key_source = r.api_key_source,
+            .display_name = r.display_name,
+        };
+    }
+};
+
+pub const version = "0.4.0";
 
 test {
     std.testing.refAllDecls(@This());
