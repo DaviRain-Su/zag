@@ -83,8 +83,8 @@ Teaching 0 → 1 → 2 → 3  ✅
 | H3 Permissions | 矩阵、remember、plan 语义占位 | [modules/permissions.md](./modules/permissions.md) |
 | H4 Context/Session | 四层 prompt、compaction、schema 版本 | [modules/context-compaction.md](./modules/context-compaction.md)、[session-store.md](./modules/session-store.md) |
 | H5 Safety | policy 矩阵、redact、doctor；明确非 OS sandbox | [modules/workspace-sandbox.md](./modules/workspace-sandbox.md) |
-| H6 Provider | 重试政策、usage、流式取消、contract | [modules/zag-ai-provider.md](./modules/zag-ai-provider.md) |
-| H7 Trace | schema 版本、复盘字段齐全 | [modules/trace-observability.md](./modules/trace-observability.md) |
+| H6 Provider | 收口：流式取消、session usage 账本、contract 目录（retry/usage/ChatOptions **已有**） | [modules/zag-ai-provider.md](./modules/zag-ai-provider.md) |
+| H7 Trace | schema 版本、复盘字段齐全（usage 事件 **已有雏形**） | [modules/trace-observability.md](./modules/trace-observability.md) |
 
 **出门条件：** [maturity.md § L2 总验收](./maturity.md#l2-总验收phase-h-出门条件)。
 
@@ -99,15 +99,25 @@ Teaching 0 → 1 → 2 → 3  ✅
 | ID | 主题 | 文档 | 失败模式 |
 |----|------|------|----------|
 | **C4** | 编辑锐度 | [phases/C4-edit-sharpness.md](./phases/C4-edit-sharpness.md) | 偏行、不敢 apply |
-| **C5** | Context 工程 | [phases/C5-context.md](./phases/C5-context.md) | 长任务断片、上下文贵 |
+| **C5** | Context 工程 · **Memory Repo** | [phases/C5-context.md](./phases/C5-context.md) · [modules/memory.md](./modules/memory.md) | 长任务断片、上下文贵、重复交代 |
 | **C6** | 编排 / Oracle | [phases/C6-orchestration.md](./phases/C6-orchestration.md) | 弱模型硬撑 |
 | **C7** | 真沙箱增强 | [phases/C7-sandbox.md](./phases/C7-sandbox.md) | denylist 可绕过 |
 | **C8** | 扩展面 | [phases/C8-extensions.md](./phases/C8-extensions.md) | 扩展必须改核心 |
 | **C9** | 产品壳 | [phases/C9-product-shell.md](./phases/C9-product-shell.md) | 只能玩具 CLI |
 
-相关模块 stub：[subagents-oracle.md](./modules/subagents-oracle.md)、[extensions.md](./modules/extensions.md)、[tools-shell.md](./modules/tools-shell.md)。
+相关模块 stub：[memory.md](./modules/memory.md)、[subagents-oracle.md](./modules/subagents-oracle.md)、[extensions.md](./modules/extensions.md)、[tools-shell.md](./modules/tools-shell.md)。
 
-**建议顺序：** C4 → C5 → C6 → C7 → C8 → C9（与 Hyper 竞品「编辑→上下文→Oracle→沙箱→扩展」一致）。
+**建议顺序：** C4 → C5 → C6 → C7 → C8 → C9（编辑→上下文/记忆→Oracle→沙箱→扩展）。
+
+### Memory Repo 排期（钉死）
+
+```text
+现在～Phase H     禁止实现跨 session Memory 平台
+H4                只保证 transcript≠view、session 可版本化
+C5（H 之后）      repo map → Memory Repo MVP（默认关）
+```
+
+详见 [modules/memory.md](./modules/memory.md) 与 [architecture 词表](./architecture.md#memory-与记忆词表勿混)。
 
 ---
 
@@ -145,16 +155,17 @@ zag/
     vision.md          定位
     maturity.md        成熟度真理源
     roadmap.md         本文件
-    architecture.md
+    architecture.md    包边界 + 分层
     references.md
     gaps/              Teaching → L2 缺口
-    modules/           模块规格
+    modules/           模块规格（含 memory stub）
     phases/            H + C4–C9
     quality/
   chapters/            教程（00–03 tutorial；H planned）
   src/agent/           harness 业务
-  packages/zag-ai/     模型接入
   src/runtime/         FS / shell
+  packages/zag-ai/     agent 友好模型面
+  packages/openai-zig/ 线协议 / OpenAPI（可独立复用）
 ```
 
 ---

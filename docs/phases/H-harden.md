@@ -11,7 +11,8 @@
 
 1. **加深已有表面**，不新增产品品类。  
 2. 每切片：规格 → 实现 → 回写 maturity → 至少 1 条测试/golden。  
-3. 出门条件见 maturity「L2 总验收」。
+3. 出门条件见 maturity「L2 总验收」。  
+4. **不做** Memory Repo / repo map / subagent / MCP（属 C 轨；见 [memory.md](../modules/memory.md)）。
 
 ---
 
@@ -64,14 +65,22 @@
 
 **规格：** [zag-ai-provider.md](../modules/zag-ai-provider.md)
 
-- 错误分类与重试政策成文（与代码 `isRetryableError` 对齐）  
-- usage 记入 session/trace  
-- 流式取消与不完整 tool_call 组装规格  
-- ≥1 家 OpenAI-compat contract test 目录约定（见 [quality/contracts.md](../quality/contracts.md)）  
+**已有（勿重做）：** `isRetryableError`、transport + loop 重试、`ChatOptions`/config、turn usage → trace、catalog 预算、`contract_tests.zig`、包边界 openai-zig。
+
+**H6 收口剩余：**
+
+- usage 进 session 元数据 / 可聚合  
+- 流式取消与不完整 tool_call 组装规格 + 测试  
+- contract 目录约定与 CI 说明（见 [quality/contracts.md](../quality/contracts.md)）  
+- 与 H5 redact：密钥不进 verbose/trace  
 
 ## H7 — Trace
 
 **规格：** [trace-observability.md](../modules/trace-observability.md)
+
+**已有雏形：** `usage`、`provider_retry` 事件。
+
+**H7 剩余：**
 
 - 事件 schema 版本化  
 - 必须能复盘：permission / jail_deny / shell_deny / usage / 停因  

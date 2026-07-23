@@ -20,7 +20,7 @@
 | 无 golden transcript | 改 loop 易 silent 变笨 | H1 · [evals](../quality/evals.md) |
 | 只读工具无 grep/glob | 中型仓库靠瞎 list | H2（工具面，loop 消费） |
 | 流式/部分 tool_call 不稳 | 生产常用 `--stream` | H6 · [zag-ai-provider](../modules/zag-ai-provider.md) |
-| usage 未进会话账本 | 无法控成本 | H6 |
+| usage 仅 turn/trace 雏形 | 缺 session 聚合账本 | H6（trace 已有 usage 事件） |
 
 ## 非本阶段（勿塞进「修 Phase 0」）
 

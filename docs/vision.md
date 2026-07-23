@@ -18,7 +18,7 @@
 |--|---------------|---------------|
 | 角色 | 工业级 Rust 终端 agent（多 provider） | Zig 教程 + 实现；读架构、写规格、按模块长到生产底线 |
 | 读什么 | 竞品分析、sandbox、subagent、hashline、MCP | `~/orca/hyper-grok-build` 等本机对照 |
-| 写哪里 | 不 fork 进 Zag | `src/agent/`、`packages/zag-ai/`、`src/runtime/` |
+| 写哪里 | 不 fork 进 Zag | `src/agent/`、`packages/zag-ai/`、`packages/openai-zig/`、`src/runtime/` |
 
 抄**失败模式的解法**与**模块边界**，不抄 crate 名与 UI 皮肤。
 
@@ -44,6 +44,7 @@
 |------|----------|----------|
 | 编辑偏一行 / 空白打架 | 锚点 edit / patch | Phase H → C4 |
 | 长任务断片 / 上下文爆 | 分层 prompt + compaction | Phase H → C5 |
+| 跨会话偏好 / 重复交代 | Memory Repo（默认可关） | **C5 only**（[memory.md](./modules/memory.md)） |
 | 弱模型硬撑 | Oracle pin + 可感知触发 | C6 |
 | 不敢 auto-apply | change review | C4 |
 | 危险命令 / 逃逸 | jail → OS sandbox | H → C7 |
@@ -58,6 +59,7 @@
 - 云 thread / collab
 - 企业 Missions / SDLC 云平台
 - 一上来打磨 TUI（CLI + 锐度优先；TUI 属 C9）
+- Phase H 内做 Memory 平台 / 云知识库（属 C5，默认关）
 - 把 Zag 砍成「仅四工具」——学 Pi 的扩展纪律，不学阉割产品目标
 
 ## 双轨文档

@@ -28,9 +28,19 @@ vision → maturity（看清自己在哪）
 | 目录 | 作用 |
 |------|------|
 | [gaps/](./gaps/) | Teaching 各章 → L2 生产缺口 |
-| [modules/](./modules/) | 模块规格（不变式、API、验收） |
+| [modules/](./modules/) | 模块规格（不变式、API、验收、[代码映射](./modules/README.md#代码映射表)） |
+| [modules/memory.md](./modules/memory.md) | **Memory Repo**（C5；H 不做；默认可关） |
 | [phases/](./phases/) | Phase H 与 Capability C4–C9 |
 | [quality/](./quality/) | golden / security eval / provider 合同 |
+
+## 包边界（实现时）
+
+```text
+agent → zag-ai → openai-zig
+agent → runtime
+```
+
+详见 [architecture.md § Monorepo 包边界](./architecture.md#monorepo-包边界强制)。
 
 ## 教程章
 

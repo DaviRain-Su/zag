@@ -4,7 +4,7 @@
 |------|------|------|
 | [H-harden.md](./H-harden.md) | Production Floor | 规格；实现未齐 |
 | [C4-edit-sharpness.md](./C4-edit-sharpness.md) | Capability | 依赖 H |
-| [C5-context.md](./C5-context.md) | Capability | 依赖 H |
+| [C5-context.md](./C5-context.md) | Capability | 依赖 H；含 Memory Repo（[modules/memory.md](../modules/memory.md)） |
 | [C6-orchestration.md](./C6-orchestration.md) | Capability | 依赖 H |
 | [C7-sandbox.md](./C7-sandbox.md) | Capability | 依赖 H |
 | [C8-extensions.md](./C8-extensions.md) | Capability | 依赖 H |

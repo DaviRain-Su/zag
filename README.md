@@ -26,8 +26,9 @@
 | [chapters/00-loop](./chapters/00-loop/README.md) | Teaching 0：loop |
 | [chapters/01-edit-permissions](./chapters/01-edit-permissions/README.md) | Teaching 1：编辑 + 权限 |
 | [chapters/02-session-context](./chapters/02-session-context/README.md) | Teaching 2：会话 + context |
-| [chapters/03-production](./chapters/03-production/README.md) | Teaching 3：边界雏形（历史目录名） |
-| [chapters/H-harden](./chapters/H-harden/README.md) | Phase H 硬化（planned） |
+| [chapters/03-production](./chapters/03-production/README.md) | Teaching 3：jail / policy / trace（**目录名历史遗留**；≠ 生产完成） |
+| [chapters/H-harden](./chapters/H-harden/README.md) | Phase H 硬化（planned）— **当前实现主线** |
+| [docs/modules/memory.md](./docs/modules/memory.md) | Memory Repo 规格（C5；H 不做） |
 | [SECURITY.md](./SECURITY.md) | 安全默认与「尚未」 |
 
 ## 阶段
@@ -64,18 +65,28 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 | `--no-project` | 不注入 AGENTS.md |
 
 ```text
-src/agent/          ★ harness 业务
-src/runtime/        FS · shell
-packages/zag-ai/    模型接入
+src/agent/             ★ harness 业务（loop / 权限 / context / session / trace）
+src/runtime/           FS · shell 执行面
+packages/zag-ai/       agent 友好模型面（resolve / ChatOptions / catalog）
+packages/openai-zig/   线协议 · transport · OpenAPI（可独立复用）
 ```
+
+依赖单向：`agent → zag-ai → openai-zig`。详见 [docs/architecture.md](./docs/architecture.md)。
 
 版本号见 `src/root.zig` / `build.zig.zon`（**≠** 生产底线已达成）。
 
-### Monorepo：`packages/zag-ai`
+### 配置示例
 
 ```bash
 cat > .zag/config.json <<'EOF'
-{ "provider": "deepseek", "model": "deepseek-v4-flash", "stream": true }
+{
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "stream": true,
+  "temperature": 0.2,
+  "max_tokens": 4096,
+  "chat_retries": 2
+}
 EOF
 zig build run -- --yolo --stream -v "hello"
 ```

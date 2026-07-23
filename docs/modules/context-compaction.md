@@ -38,16 +38,20 @@
 
 ## L3（C5）
 
-- repo map  
+- repo map（工作区索引；见 [C5](../phases/C5-context.md)）  
 - 智能选文件  
-- 跨 session memory（默认可关）  
+- **跨 session Memory Repo** 挂载点：只经 ephemeral/project 注入；规格见 [memory.md](./memory.md)  
+
+H4 必须为 C5 留好的边界：transcript 权威、view 可重建、session schema 可版本化。
 
 ## 非目标（H）
 
 - 完美语义压缩  
 - 云端记忆  
+- Memory Repo 实现（属 C5，默认关）  
 
 ## Hyper / Pi 对照
 
 - Pi：turn snapshot vs config 边界  
 - Hyper：compaction 入口（只读）  
+

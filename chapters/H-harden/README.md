@@ -40,8 +40,10 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 | H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `src/agent/permissions.zig` |
 | H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | `context.zig` · `session_store.zig` |
 | H5 Safety | [workspace-sandbox.md](../../docs/modules/workspace-sandbox.md) | `workspace.zig` · `shell_policy.zig` |
-| H6 Provider | [zag-ai-provider.md](../../docs/modules/zag-ai-provider.md) | `packages/zag-ai/` |
-| H7 Trace | [trace-observability.md](../../docs/modules/trace-observability.md) | `src/agent/trace.zig` |
+| H6 Provider | [zag-ai-provider.md](../../docs/modules/zag-ai-provider.md) | `packages/zag-ai/` + `provider.zig`（retry/usage **部分已有**） |
+| H7 Trace | [trace-observability.md](../../docs/modules/trace-observability.md) | `src/agent/trace.zig`（usage 事件雏形） |
+
+**明确不做（本章）：** Memory Repo、repo map、subagent、MCP —— 见 [memory.md](../../docs/modules/memory.md) / Capability 轨。
 
 ---
 
