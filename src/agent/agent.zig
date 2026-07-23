@@ -1,7 +1,7 @@
-//! Agent facade — wires provider, tools, and loop so callers only see business ops.
+//! Agent facade — wires provider, tools, permissions, and loop.
 //!
 //! ```
-//! var agent = Agent.initPhase0(gpa, io, provider, .{});
+//! var agent = Agent.init(gpa, io, provider, .{ .permission_mode = .ask, ... });
 //! var session = try Session.start(gpa, system_prompt);
 //! defer session.deinit();
 //! const result = try agent.reply(&session, user_text);
@@ -15,11 +15,16 @@ const transcript_mod = @import("transcript.zig");
 const provider_mod = @import("provider.zig");
 const observer_mod = @import("observer.zig");
 const toolset_mod = @import("toolset.zig");
+const permissions = @import("permissions.zig");
 const loop = @import("loop.zig");
 
 pub const Options = struct {
     max_turns: u32 = loop.default_max_turns,
     verbose: bool = false,
+    /// ask (default) or yolo.
+    permission_mode: permissions.Mode = .ask,
+    /// Optional custom gate; when null, built from `permission_mode` + prompter.
+    permission_gate: ?permissions.Gate = null,
 };
 
 /// One conversation. Owns the transcript arena (heap-stable so Session is movable).
@@ -57,25 +62,52 @@ pub const Agent = struct {
     gpa: std.mem.Allocator,
     io: Io,
     provider: provider_mod.Provider,
-    tools_storage: toolset_mod.Phase0Storage,
+    tools_storage: toolset_mod.Phase1Storage,
     options: Options,
+    /// Owned when mode is ask and no custom gate; must outlive Agent methods.
+    stdin_prompter: permissions.StdinPrompter,
+    permission_gate: permissions.Gate,
 
+    pub fn init(
+        gpa: std.mem.Allocator,
+        io: Io,
+        provider: provider_mod.Provider,
+        options: Options,
+    ) Agent {
+        var self: Agent = .{
+            .gpa = gpa,
+            .io = io,
+            .provider = provider,
+            .tools_storage = .init(),
+            .options = options,
+            .stdin_prompter = .{ .io = io },
+            .permission_gate = .yolo(),
+        };
+        self.permission_gate = self.resolveGate();
+        return self;
+    }
+
+    /// Back-compat alias used by older call sites / docs.
     pub fn initPhase0(
         gpa: std.mem.Allocator,
         io: Io,
         provider: provider_mod.Provider,
         options: Options,
     ) Agent {
-        return .{
-            .gpa = gpa,
-            .io = io,
-            .provider = provider,
-            .tools_storage = .init(),
-            .options = options,
+        return init(gpa, io, provider, options);
+    }
+
+    fn resolveGate(self: *Agent) permissions.Gate {
+        if (self.options.permission_gate) |g| return g;
+        return switch (self.options.permission_mode) {
+            .yolo => permissions.Gate.yolo(),
+            .ask => self.stdin_prompter.gate(),
         };
     }
 
     fn deps(self: *Agent) loop.Deps {
+        // Re-resolve so stdin_prompter pointer stays valid if Agent was moved.
+        const gate = self.resolveGate();
         return .{
             .gpa = self.gpa,
             .provider = self.provider,
@@ -91,6 +123,7 @@ pub const Agent = struct {
                     observer_mod.Observer.stderrLog()
                 else
                     observer_mod.Observer.none(),
+                .permission_gate = gate,
             },
         };
     }
@@ -131,3 +164,4 @@ pub const Transcript = transcript_mod.Transcript;
 pub const Provider = provider_mod.Provider;
 pub const Message = message.Message;
 pub const Tool = tool.Tool;
+pub const Mode = permissions.Mode;

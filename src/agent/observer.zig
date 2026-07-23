@@ -11,6 +11,10 @@ pub const Event = union(enum) {
         name: []const u8,
         body: []const u8,
     },
+    permission: struct {
+        tool_name: []const u8,
+        allowed: bool,
+    },
 };
 
 pub const Observer = struct {
@@ -49,6 +53,13 @@ fn logToStderr(_: ?*anyopaque, event: Event) void {
                 r.body[0..preview_len],
                 if (r.body.len > preview_len) "…" else "",
             });
+        },
+        .permission => |p| {
+            if (p.allowed) {
+                std.log.info("permission allow {s}", .{p.tool_name});
+            } else {
+                std.log.warn("permission deny {s}", .{p.tool_name});
+            }
         },
     }
 }

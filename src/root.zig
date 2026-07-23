@@ -10,14 +10,16 @@ pub const transcript = @import("agent/transcript.zig");
 pub const provider = @import("agent/provider.zig");
 pub const observer = @import("agent/observer.zig");
 pub const toolset = @import("agent/toolset.zig");
+pub const permissions = @import("agent/permissions.zig");
 pub const loop = @import("agent/loop.zig");
 pub const agent = @import("agent/agent.zig");
 
 pub const openai = @import("provider/openai.zig");
 pub const provider_config = @import("provider/config.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
+pub const edit_tools = @import("runtime/edit_tools.zig");
 
-pub const version = "0.0.2-phase0";
+pub const version = "0.1.0-phase1";
 
 test {
     std.testing.refAllDecls(@This());

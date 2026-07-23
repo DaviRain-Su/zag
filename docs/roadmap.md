@@ -254,7 +254,7 @@ zag/
     architecture.md  ← 模块边界（随实现更新）
   chapters/          ← 每章教程（与代码同步）
     00-loop/         ← Phase 0 已写
-    01-edit-permissions/
+    01-edit-permissions/  ← Phase 1 已写
     02-session-context/
     03-production/
   src/               ← 实现（按 Phase 慢慢长）
@@ -283,4 +283,5 @@ zag/
 - [references.md](./references.md) — 链接全集与分类  
 - [architecture.md](./architecture.md) — 当前模块边界与协议  
 - [chapters/00-loop](../chapters/00-loop/README.md) — Phase 0 教程（与代码同步）  
+- [chapters/01-edit-permissions](../chapters/01-edit-permissions/README.md) — Phase 1 教程（与代码同步）  
 - 根目录 [README.md](../README.md) — 项目定位与入口  

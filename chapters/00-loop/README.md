@@ -157,6 +157,7 @@ DeepSeek / xAI / OpenAI 都是 **同一 OpenAI 兼容线协议** + 不同 base/k
 
 ## 9. 下一步
 
+- **[Chapter 1 — 编辑 + 权限](../01-edit-permissions/README.md)**（已实现）  
 - [architecture.md](../../docs/architecture.md)  
-- [roadmap.md](../../docs/roadmap.md) Phase 1：写文件 + 权限  
+- [roadmap.md](../../docs/roadmap.md)  
 - 外部对照：Ball *How to Build an Agent*

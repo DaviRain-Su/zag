@@ -5,12 +5,17 @@ const Io = std.Io;
 const zag = @import("zag");
 
 const default_system =
-    \\You are Zag, a coding agent. You explore codebases using tools.
+    \\You are Zag, a coding agent that can read and modify the working directory.
+    \\Tools:
+    \\- list_dir, read_file — explore (always allowed)
+    \\- write_file — create/overwrite files (may require user approval)
+    \\- run_shell — run shell commands (may require user approval)
     \\Rules:
     \\- Prefer tools over guessing about files on disk.
-    \\- Use list_dir and read_file to inspect the working directory.
     \\- Paths are relative to the process working directory.
-    \\- Be concise. When finished, answer the user without further tool calls.
+    \\- For edits: read first when possible, then write the full file content.
+    \\- If a tool is permission-denied, do not retry blindly; explain and wait.
+    \\- Be concise. When finished, answer without further tool calls.
 ;
 
 pub fn main(init: std.process.Init) !void {
@@ -22,6 +27,7 @@ pub fn main(init: std.process.Init) !void {
     var prompt_parts: std.ArrayList([]const u8) = .empty;
     var verbose = false;
     var show_help = false;
+    var permission_mode: zag.permissions.Mode = .ask;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -30,6 +36,20 @@ pub fn main(init: std.process.Init) !void {
             show_help = true;
         } else if (std.mem.eql(u8, a, "-v") or std.mem.eql(u8, a, "--verbose")) {
             verbose = true;
+        } else if (std.mem.eql(u8, a, "--yolo")) {
+            permission_mode = .yolo;
+        } else if (std.mem.eql(u8, a, "--ask")) {
+            permission_mode = .ask;
+        } else if (std.mem.eql(u8, a, "--permission") or std.mem.eql(u8, a, "-p")) {
+            i += 1;
+            if (i >= args.len) {
+                std.log.err("{s} requires ask|yolo", .{a});
+                std.process.exit(2);
+            }
+            permission_mode = zag.permissions.Mode.parse(args[i]) orelse {
+                std.log.err("unknown permission mode: {s} (use ask|yolo)", .{args[i]});
+                std.process.exit(2);
+            };
         } else if (std.mem.eql(u8, a, "--")) {
             i += 1;
             while (i < args.len) : (i += 1) {
@@ -66,18 +86,20 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (verbose) {
-        std.log.info("provider preset={s} base_url={s} model={s}", .{
+        std.log.info("provider preset={s} base_url={s} model={s} permission={s}", .{
             resolved.preset.name(),
             resolved.config.base_url,
             resolved.config.model,
+            permission_mode.name(),
         });
     }
 
     var client = zag.openai.Client.init(gpa, io, resolved.config);
     defer client.deinit();
 
-    var agent = zag.agent.Agent.initPhase0(gpa, io, client.provider(), .{
+    var agent = zag.agent.Agent.init(gpa, io, client.provider(), .{
         .verbose = verbose,
+        .permission_mode = permission_mode,
     });
 
     if (prompt_parts.items.len > 0) {
@@ -86,7 +108,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    try runRepl(&agent, io, verbose);
+    try runRepl(&agent, io, permission_mode);
 }
 
 fn runOneShot(agent: *zag.agent.Agent, prompt: []const u8, verbose: bool) !void {
@@ -106,9 +128,10 @@ fn runOneShot(agent: *zag.agent.Agent, prompt: []const u8, verbose: bool) !void 
     }
 }
 
-fn runRepl(agent: *zag.agent.Agent, io: Io, verbose: bool) !void {
-    _ = verbose;
-    try writeStdout(io, "zag phase-0 (read-only tools). Empty line or Ctrl-D to exit.\n");
+fn runRepl(agent: *zag.agent.Agent, io: Io, mode: zag.permissions.Mode) !void {
+    try writeStdout(io, "zag phase-1 (edit + shell, permission=");
+    try writeStdout(io, mode.name());
+    try writeStdout(io, "). Empty line or Ctrl-D to exit.\n");
 
     var stdin_buf: [4096]u8 = undefined;
     var stdin_reader = Io.File.stdin().reader(io, &stdin_buf);
@@ -152,25 +175,24 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
 
 fn printUsage() !void {
     const usage =
-        \\zag — Zig coding agent (Phase 0: read-only loop)
+        \\zag — Zig coding agent (Phase 1: edit + shell + permissions)
         \\
         \\Usage:
         \\  zag [flags] <prompt...>     one-shot
         \\  zag [flags]                 interactive REPL
         \\
         \\Flags:
-        \\  -h, --help       show help
-        \\  -v, --verbose    log tool calls to stderr
+        \\  -h, --help              show help
+        \\  -v, --verbose           log tool calls / permissions to stderr
+        \\  --ask                   permission mode ask (default): confirm write/shell
+        \\  --yolo                  permission mode yolo: auto-allow all tools
+        \\  -p, --permission MODE   ask | yolo
         \\
         \\Environment (first matching key wins):
-        \\  ZAG_API_KEY        explicit key (+ ZAG_BASE_URL / ZAG_MODEL)
-        \\  DEEPSEEK_API_KEY   DeepSeek  (api.deepseek.com, deepseek-v4-flash)
-        \\  XAI_API_KEY        xAI       (api.x.ai, grok-4-latest)
-        \\  OPENAI_API_KEY     OpenAI    (api.openai.com, gpt-4o-mini)
-        \\  ZAG_BASE_URL       override API base for any preset
-        \\  ZAG_MODEL          override model for any preset
+        \\  ZAG_API_KEY / DEEPSEEK_API_KEY / XAI_API_KEY / OPENAI_API_KEY
+        \\  ZAG_BASE_URL, ZAG_MODEL
         \\
-        \\Tools (Phase 0): list_dir, read_file
+        \\Tools: list_dir, read_file, write_file, run_shell
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();
