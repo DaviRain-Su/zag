@@ -51,12 +51,13 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    const config = resolveConfig(init.environ_map) catch |err| {
+    const resolved = zag.provider_config.resolve(init.environ_map) catch |err| {
         switch (err) {
             error.MissingApiKey => {
                 std.log.err(
                     \\missing API key. Set one of:
                     \\  ZAG_API_KEY
+                    \\  DEEPSEEK_API_KEY
                     \\  XAI_API_KEY
                     \\  OPENAI_API_KEY
                 , .{});
@@ -66,10 +67,14 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (verbose) {
-        std.log.info("provider base_url={s} model={s}", .{ config.base_url, config.model });
+        std.log.info("provider preset={s} base_url={s} model={s}", .{
+            resolved.preset.name(),
+            resolved.config.base_url,
+            resolved.config.model,
+        });
     }
 
-    var provider = zag.openai.Client.init(gpa, io, config);
+    var provider = zag.openai.Client.init(gpa, io, resolved.config);
     defer provider.deinit();
 
     if (prompt_parts.items.len > 0) {
@@ -79,33 +84,6 @@ pub fn main(init: std.process.Init) !void {
     }
 
     try runRepl(gpa, io, &provider, verbose);
-}
-
-fn resolveConfig(env: *const std.process.Environ.Map) error{MissingApiKey}!zag.openai.Config {
-    const api_key = env.get("ZAG_API_KEY") orelse
-        env.get("XAI_API_KEY") orelse
-        env.get("OPENAI_API_KEY") orelse
-        return error.MissingApiKey;
-
-    const base_url = env.get("ZAG_BASE_URL") orelse blk: {
-        // Prefer xAI when that key is the one that matched; else OpenAI default.
-        if (env.get("ZAG_API_KEY") == null and env.get("XAI_API_KEY") != null) {
-            break :blk "https://api.x.ai/v1";
-        }
-        if (env.get("OPENAI_API_KEY") != null and env.get("XAI_API_KEY") == null and env.get("ZAG_API_KEY") == null) {
-            break :blk "https://api.openai.com/v1";
-        }
-        // ZAG_API_KEY alone: default to xAI (this project's natural home).
-        break :blk "https://api.x.ai/v1";
-    };
-
-    const model = env.get("ZAG_MODEL") orelse "grok-4-latest";
-
-    return .{
-        .base_url = base_url,
-        .api_key = api_key,
-        .model = model,
-    };
 }
 
 fn runOneShot(
@@ -219,10 +197,13 @@ fn printUsage() !void {
         \\  -h, --help       show help
         \\  -v, --verbose    log tool calls to stderr
         \\
-        \\Environment:
-        \\  ZAG_API_KEY      API key (or XAI_API_KEY / OPENAI_API_KEY)
-        \\  ZAG_BASE_URL     default: https://api.x.ai/v1 (or OpenAI if only OPENAI_API_KEY)
-        \\  ZAG_MODEL        default: grok-4-latest
+        \\Environment (first matching key wins):
+        \\  ZAG_API_KEY        explicit key (+ ZAG_BASE_URL / ZAG_MODEL)
+        \\  DEEPSEEK_API_KEY   DeepSeek  (api.deepseek.com, deepseek-chat)
+        \\  XAI_API_KEY        xAI       (api.x.ai, grok-4-latest)
+        \\  OPENAI_API_KEY     OpenAI    (api.openai.com, gpt-4o-mini)
+        \\  ZAG_BASE_URL       override API base for any preset
+        \\  ZAG_MODEL          override model for any preset
         \\
         \\Tools (Phase 0): list_dir, read_file
         \\

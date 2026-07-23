@@ -10,6 +10,7 @@ pub const message = @import("agent/message.zig");
 pub const tool = @import("agent/tool.zig");
 pub const loop = @import("agent/loop.zig");
 pub const openai = @import("provider/openai.zig");
+pub const provider_config = @import("provider/config.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 
 pub const version = "0.0.1-phase0";
@@ -21,5 +22,6 @@ test {
     _ = tool;
     _ = loop;
     _ = openai;
+    _ = provider_config;
     _ = fs_tools;
 }

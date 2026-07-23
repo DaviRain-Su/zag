@@ -37,11 +37,15 @@ chapters/
 ### 快速开始（Phase 0）
 
 ```bash
-export XAI_API_KEY=...   # 或 OPENAI_API_KEY / ZAG_API_KEY
+# 任选一个 API key（优先级：ZAG_ > DEEPSEEK_ > XAI_ > OPENAI_）
+export DEEPSEEK_API_KEY=...   # 默认 deepseek-chat @ api.deepseek.com
+# export XAI_API_KEY=...
+# export OPENAI_API_KEY=...
+
 zig build run -- -v "这个项目有几个源文件？读一下 build.zig 摘要。"
 ```
 
-可选环境变量：`ZAG_BASE_URL`、`ZAG_MODEL`（默认 `grok-4-latest`）。  
+可用 `ZAG_BASE_URL` / `ZAG_MODEL` 覆盖任意 preset 的默认值。  
 详见 [chapters/00-loop](./chapters/00-loop/README.md)。
 
 ## 相关

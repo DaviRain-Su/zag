@@ -52,17 +52,19 @@
 ## 怎么跑
 
 ```bash
-# 任选一个 key
-export XAI_API_KEY=...          # 默认 base https://api.x.ai/v1
-# 或
-export OPENAI_API_KEY=...       # 默认 base https://api.openai.com/v1
-# 或
-export ZAG_API_KEY=...
-export ZAG_BASE_URL=https://...
-export ZAG_MODEL=grok-4-latest
+# 任选一个 key（优先级：ZAG_API_KEY > DEEPSEEK_API_KEY > XAI_API_KEY > OPENAI_API_KEY）
+export DEEPSEEK_API_KEY=...     # → https://api.deepseek.com/v1 + deepseek-chat
+# export XAI_API_KEY=...        # → https://api.x.ai/v1 + grok-4-latest
+# export OPENAI_API_KEY=...     # → https://api.openai.com/v1 + gpt-4o-mini
+# 或显式：
+# export ZAG_API_KEY=...
+# export ZAG_BASE_URL=https://...
+# export ZAG_MODEL=deepseek-chat
 
 zig build run -- -v "这个项目有几个源文件？读一下 build.zig 摘要。"
 ```
+
+`ZAG_BASE_URL` / `ZAG_MODEL` 可覆盖任意 preset 的默认值。
 
 验收：Agent **只靠 tool** 答对，stderr（`-v`）能看到 tool 序列。
 
