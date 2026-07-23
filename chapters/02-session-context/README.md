@@ -137,7 +137,7 @@ Session (full transcript, durable)
 
 ## 8. 下一步
 
-- Phase 3：路径 jail、命令策略、结构化 trace、semver  
+- **[Chapter 3 — 生产向](../03-production/README.md)**（已实现）  
 - 对照：Aider repo map / Hyper sessions  
 
 **Tag：** `ch2-session` / `phase-2`

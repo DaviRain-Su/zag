@@ -7,14 +7,14 @@ const zag = @import("zag");
 const default_system =
     \\You are Zag, a coding agent that can read and modify the working directory.
     \\Tools:
-    \\- list_dir, read_file — explore (always allowed)
-    \\- write_file — create/overwrite files (may require user approval)
-    \\- run_shell — run shell commands (may require user approval)
+    \\- list_dir, read_file — explore (always allowed after jail check)
+    \\- write_file — create/overwrite files (permission + workspace jail)
+    \\- run_shell — shell commands (permission + policy denylist)
     \\Rules:
     \\- Prefer tools over guessing about files on disk.
-    \\- Paths are relative to the process working directory.
+    \\- Paths must be relative to the working directory; absolute paths and '..' escapes are denied.
     \\- For edits: read first when possible, then write the full file content.
-    \\- If a tool is permission-denied, do not retry blindly; explain and wait.
+    \\- If a tool is denied (permission, jail, or policy), do not retry blindly; explain and wait.
     \\- Honor project instructions from AGENTS.md when present.
     \\- Be concise. When finished, answer without further tool calls.
 ;
@@ -29,9 +29,12 @@ pub fn main(init: std.process.Init) !void {
     var verbose = false;
     var show_help = false;
     var permission_mode: zag.permissions.Mode = .ask;
+    var shell_policy: zag.shell_policy.Mode = .protect;
     var session_path: ?[]const u8 = null;
     var continue_session = false;
     var no_project = false;
+    var trace_path: ?[]const u8 = null;
+    var enable_trace = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -51,7 +54,17 @@ pub fn main(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             permission_mode = zag.permissions.Mode.parse(args[i]) orelse {
-                std.log.err("unknown permission mode: {s} (use ask|yolo)", .{args[i]});
+                std.log.err("unknown permission mode: {s}", .{args[i]});
+                std.process.exit(2);
+            };
+        } else if (std.mem.eql(u8, a, "--shell-policy")) {
+            i += 1;
+            if (i >= args.len) {
+                std.log.err("--shell-policy requires protect|off", .{});
+                std.process.exit(2);
+            }
+            shell_policy = zag.shell_policy.Mode.parse(args[i]) orelse {
+                std.log.err("unknown shell policy: {s}", .{args[i]});
                 std.process.exit(2);
             };
         } else if (std.mem.eql(u8, a, "--session") or std.mem.eql(u8, a, "-s")) {
@@ -66,6 +79,12 @@ pub fn main(init: std.process.Init) !void {
             if (session_path == null) session_path = ".zag/sessions/default.jsonl";
         } else if (std.mem.eql(u8, a, "--no-project")) {
             no_project = true;
+        } else if (std.mem.eql(u8, a, "--trace")) {
+            enable_trace = true;
+            if (i + 1 < args.len and args[i + 1][0] != '-') {
+                i += 1;
+                trace_path = args[i];
+            }
         } else if (std.mem.eql(u8, a, "--")) {
             i += 1;
             while (i < args.len) : (i += 1) {
@@ -86,9 +105,12 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    // REPL with --session: continue existing file when present.
     if (session_path != null and !continue_session and prompt_parts.items.len == 0) {
         continue_session = true;
+    }
+
+    if (enable_trace and trace_path == null) {
+        trace_path = ".zag/traces/latest.jsonl";
     }
 
     const resolved = zag.provider_config.resolve(init.environ_map) catch |err| {
@@ -107,15 +129,14 @@ pub fn main(init: std.process.Init) !void {
     };
 
     if (verbose) {
-        std.log.info("provider preset={s} base_url={s} model={s} permission={s}", .{
+        std.log.info("provider preset={s} model={s} permission={s} shell_policy={s}", .{
             resolved.preset.name(),
-            resolved.config.base_url,
             resolved.config.model,
             permission_mode.name(),
+            shell_policy.name(),
         });
-        if (session_path) |sp| {
-            std.log.info("session path={s} continue={any}", .{ sp, continue_session });
-        }
+        if (session_path) |sp| std.log.info("session path={s}", .{sp});
+        if (trace_path) |tp| std.log.info("trace path={s}", .{tp});
     }
 
     var client = zag.openai.Client.init(gpa, io, resolved.config);
@@ -124,7 +145,11 @@ pub fn main(init: std.process.Init) !void {
     var agent = zag.agent.Agent.init(gpa, io, client.provider(), .{
         .verbose = verbose,
         .permission_mode = permission_mode,
+        .shell_policy = shell_policy,
+        .trace_path = trace_path,
+        .version = zag.version,
     });
+    defer agent.deinit();
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
@@ -171,7 +196,7 @@ fn runRepl(
     continue_existing: bool,
     load_project: bool,
 ) !void {
-    try writeStdout(io, "zag phase-2 (session + project + context, permission=");
+    try writeStdout(io, "zag phase-3 (jail + policy + trace, permission=");
     try writeStdout(io, mode.name());
     try writeStdout(io, "). Empty line or Ctrl-D to exit.\n");
     if (session_path) |sp| {
@@ -233,31 +258,26 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
 
 fn printUsage() !void {
     const usage =
-        \\zag — Zig coding agent (Phase 2: session + project + context)
+        \\zag — Zig coding agent (Phase 3: workspace jail + shell policy + trace)
         \\
         \\Usage:
         \\  zag [flags] <prompt...>     one-shot
         \\  zag [flags]                 interactive REPL
         \\
         \\Flags:
-        \\  -h, --help              show help
-        \\  -v, --verbose           log tool / permission / session events
-        \\  --ask                   permission mode ask (default)
-        \\  --yolo                  permission mode yolo
-        \\  -p, --permission MODE   ask | yolo
-        \\  -s, --session PATH      persist transcript as JSONL
-        \\  -c, --continue          resume session (default path .zag/sessions/default.jsonl)
-        \\  --no-project            do not inject AGENTS.md / README
-        \\
-        \\Environment:
-        \\  ZAG_API_KEY / DEEPSEEK_API_KEY / XAI_API_KEY / OPENAI_API_KEY
-        \\  ZAG_BASE_URL, ZAG_MODEL
+        \\  -h, --help                 show help
+        \\  -v, --verbose              stderr tool / permission log
+        \\  --ask / --yolo             human permission mode (default ask)
+        \\  -p, --permission MODE      ask | yolo
+        \\  --shell-policy MODE        protect (default) | off
+        \\  -s, --session PATH         session JSONL
+        \\  -c, --continue             resume session
+        \\  --no-project               skip AGENTS.md injection
+        \\  --trace [PATH]             write structured run trace JSONL
+        \\                             (default .zag/traces/latest.jsonl)
         \\
         \\Tools: list_dir, read_file, write_file, run_shell
-        \\
-        \\Example (resume):
-        \\  zag --yolo -c -v "remember codeword is banana"
-        \\  zag --yolo -c -v "what was the codeword?"
+        \\Security: relative paths only; shell denylist even under --yolo
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();

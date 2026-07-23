@@ -1,90 +1,72 @@
 # Zag 架构（随实现更新）
 
-> 描述**当前代码**。Phase 0–2：loop、编辑/权限、会话/项目/context。
+> 描述**当前代码**。Phase 0–3：loop → 编辑/权限 → 会话/context → **边界/策略/trace**。
 
 ## 分层
 
 ```text
-┌──────────────────────────────────────────────────┐
-│  main.zig     CLI：权限 / session / continue     │
-└───────────────────────────┬──────────────────────┘
-                            │
-┌───────────────────────────▼──────────────────────┐
-│  agent/           ★ 业务层                         │
-│    Agent · Session · loop · Transcript            │
-│    permissions · context · project · session_store│
-│    Provider · Toolset · Observer · message · tool │
-└────────────┬───────────────────────┬─────────────┘
-             │                       │
-┌────────────▼──────────┐  ┌─────────▼─────────────┐
-│  provider/            │  │  runtime/             │
-│  openai + config      │  │  fs_tools · edit_tools│
-└───────────────────────┘  └───────────────────────┘
+CLI (main.zig)
+    ↓
+agent/  ★ 业务
+  Agent · Session · loop
+  permissions · workspace jail · shell_policy · trace
+  context · project · session_store · Provider · Toolset
+    ↓
+provider/  +  runtime/
+    ↓
+LLM · FS · shell
 ```
+
+## 工具执行三道门（Phase 3）
+
+```text
+permission (HITL) → workspace jail → shell policy → execute
+```
+
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| permissions | `agent/permissions.zig` | ask / yolo |
+| workspace | `agent/workspace.zig` | 相对路径 jail |
+| shell_policy | `agent/shell_policy.zig` | 危险命令 denylist |
+| trace | `agent/trace.zig` | JSONL 审计 |
 
 ## 业务入口
 
-| 类型 | 路径 | 一句话 |
-|------|------|--------|
-| `Agent` | `agent/agent.zig` | reply / complete；自动 save |
-| `Session` | `agent/agent.zig` | transcript + 可选 path |
-| `loop.run` | `agent/loop.zig` | **view** → chat → gate → tools |
-| `context` | `agent/context.zig` | full vs model view |
-| `project` | `agent/project.zig` | AGENTS.md → system |
-| `session_store` | `agent/session_store.zig` | JSONL 持久化 |
-| `permissions` | `agent/permissions.zig` | ask / yolo |
-| `Transcript` | `agent/transcript.zig` | 消息账本 |
-
-### 会话 + 项目
-
 ```zig
-var session = try Session.start(gpa, io, .{
-    .base_system = sys,
-    .path = ".zag/sessions/default.jsonl",
-    .continue_existing = true,
-    .load_project_instructions = true,
+var agent = Agent.init(gpa, io, provider, .{
+    .permission_mode = .ask,
+    .shell_policy = .protect,
+    .trace_path = ".zag/traces/latest.jsonl",
 });
-defer session.deinit();
-const result = try agent.reply(&session, user_text); // auto-save
+defer agent.deinit();
 ```
-
-## Context 策略（Phase 2）
-
-- **Full transcript**：Session 内存 + JSONL  
-- **Model view**：leading system + 尾部消息 + 字符预算；可插一条临时 system note  
-- 不在 loop 里破坏 full 历史  
-
-## 权限（Phase 1）
-
-read 自动过；write/shell 在 ask 下确认；deny → soft tool error。
 
 ## 工具
 
-| Tool | 风险 |
+| Tool | 门闩 |
 |------|------|
-| list_dir, read_file | read |
-| write_file | write |
-| run_shell | execute |
+| list_dir / read_file | jail |
+| write_file | permission + jail |
+| run_shell | permission + shell policy |
 
-## 会话 JSONL
+## 持久化
 
-```text
-{"v":1,"type":"zag_session"}
-{"role":"system"|"user"|"assistant"|"tool", ...}
-```
+| 文件 | 内容 |
+|------|------|
+| `.zag/sessions/*.jsonl` | 对话 transcript |
+| `.zag/traces/*.jsonl` | run 审计事件 |
 
-## 演进
+## 版本
 
-| Phase | 状态 |
-|-------|------|
-| 0 loop | ✅ |
-| 1 edit + permissions | ✅ |
-| 2 session + context | ✅ |
-| 3 jail / trace / semver | 下一步 |
+`zag.version` = **0.3.0**（见 `src/root.zig` / `build.zig.zon`）。
 
-## 相关
+## 安全说明
 
-- [chapters/00-loop](../chapters/00-loop/README.md)  
-- [chapters/01-edit-permissions](../chapters/01-edit-permissions/README.md)  
-- [chapters/02-session-context](../chapters/02-session-context/README.md)  
-- [roadmap.md](./roadmap.md)  
+见仓库根 [SECURITY.md](../SECURITY.md)。
+
+## 相关章节
+
+- [00-loop](../chapters/00-loop/README.md)  
+- [01-edit-permissions](../chapters/01-edit-permissions/README.md)  
+- [02-session-context](../chapters/02-session-context/README.md)  
+- [03-production](../chapters/03-production/README.md)  

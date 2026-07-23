@@ -19,6 +19,8 @@ const permissions = @import("permissions.zig");
 const context_mod = @import("context.zig");
 const project_mod = @import("project.zig");
 const session_store = @import("session_store.zig");
+const shell_policy = @import("shell_policy.zig");
+const trace_mod = @import("trace.zig");
 const loop = @import("loop.zig");
 
 pub const Options = struct {
@@ -27,6 +29,11 @@ pub const Options = struct {
     permission_mode: permissions.Mode = .ask,
     permission_gate: ?permissions.Gate = null,
     context: context_mod.Options = .{},
+    shell_policy: shell_policy.Mode = .protect,
+    /// Relative path for JSONL run trace; null disables.
+    trace_path: ?[]const u8 = null,
+    /// Package version string for trace metadata.
+    version: []const u8 = "0.3.0",
 };
 
 pub const SessionStartOptions = struct {
@@ -150,6 +157,8 @@ pub const Agent = struct {
     options: Options,
     stdin_prompter: permissions.StdinPrompter,
     permission_gate: permissions.Gate,
+    /// Owned when options.trace_path is set.
+    trace: ?trace_mod.Trace = null,
 
     pub fn init(
         gpa: std.mem.Allocator,
@@ -165,9 +174,21 @@ pub const Agent = struct {
             .options = options,
             .stdin_prompter = .{ .io = io },
             .permission_gate = .yolo(),
+            .trace = null,
         };
         self.permission_gate = self.resolveGate();
+        if (options.trace_path) |tp| {
+            self.trace = trace_mod.Trace.init(gpa, io, tp);
+        }
         return self;
+    }
+
+    pub fn deinit(self: *Agent) void {
+        if (self.trace) |*tr| {
+            tr.finishIfOpen();
+            tr.deinit();
+        }
+        self.* = undefined;
     }
 
     pub fn initPhase0(
@@ -206,12 +227,26 @@ pub const Agent = struct {
                     observer_mod.Observer.none(),
                 .permission_gate = gate,
                 .context = self.options.context,
+                .shell_policy = self.options.shell_policy,
+                .trace = if (self.trace) |*tr| tr else null,
             },
         };
     }
 
+    fn ensureRunStart(self: *Agent, session: *Session) void {
+        const tr = if (self.trace) |*t| t else return;
+        if (tr.event_count > 0) return;
+        tr.emitRunStart(.{
+            .version = self.options.version,
+            .permission = self.options.permission_mode.name(),
+            .shell_policy = self.options.shell_policy.name(),
+            .session = session.path,
+        }) catch {};
+    }
+
     /// Append a user message, run harness, auto-save session when path set.
     pub fn reply(self: *Agent, session: *Session, user_text: []const u8) loop.RunError!loop.Result {
+        self.ensureRunStart(session);
         try session.transcript.appendUser(user_text);
         const result = try loop.run(self.deps(), &session.transcript);
         session.save() catch |err| {
@@ -250,6 +285,9 @@ pub const Agent = struct {
         defer session.deinit();
 
         const result = try self.reply(&session, user_prompt);
+        if (self.trace) |*tr| {
+            tr.emitRunEnd(result.turns, true) catch {};
+        }
         const owned = self.gpa.dupe(u8, result.final_text) catch return error.OutOfMemory;
         return .{ .final_text = owned, .turns = result.turns };
     }

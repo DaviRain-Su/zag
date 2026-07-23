@@ -256,7 +256,7 @@ zag/
     00-loop/         ← Phase 0 已写
     01-edit-permissions/  ← Phase 1 已写
     02-session-context/   ← Phase 2 已写
-    03-production/
+    03-production/        ← Phase 3 已写
   src/               ← 实现（按 Phase 慢慢长）
     agent/
     runtime/
@@ -285,4 +285,6 @@ zag/
 - [chapters/00-loop](../chapters/00-loop/README.md) — Phase 0 教程（与代码同步）  
 - [chapters/01-edit-permissions](../chapters/01-edit-permissions/README.md) — Phase 1 教程（与代码同步）  
 - [chapters/02-session-context](../chapters/02-session-context/README.md) — Phase 2 教程（与代码同步）  
+- [chapters/03-production](../chapters/03-production/README.md) — Phase 3 教程（与代码同步）  
+- [SECURITY.md](../SECURITY.md) — 安全默认与审计  
 - 根目录 [README.md](../README.md) — 项目定位与入口  

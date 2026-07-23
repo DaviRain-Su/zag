@@ -3,7 +3,7 @@
 zig-out/
 zig-pkg/
 
-# Local agent sessions
+# Local agent sessions + traces
 .zag/
 
 # Editor / OS

@@ -14,6 +14,9 @@ pub const permissions = @import("agent/permissions.zig");
 pub const context = @import("agent/context.zig");
 pub const project = @import("agent/project.zig");
 pub const session_store = @import("agent/session_store.zig");
+pub const workspace = @import("agent/workspace.zig");
+pub const shell_policy = @import("agent/shell_policy.zig");
+pub const trace = @import("agent/trace.zig");
 pub const loop = @import("agent/loop.zig");
 pub const agent = @import("agent/agent.zig");
 
@@ -22,7 +25,7 @@ pub const provider_config = @import("provider/config.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
 
-pub const version = "0.2.0-phase2";
+pub const version = "0.3.0";
 
 test {
     std.testing.refAllDecls(@This());
