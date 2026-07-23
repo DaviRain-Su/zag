@@ -232,16 +232,13 @@ const StreamState = struct {
     }
 };
 
-fn onHttpChunk(ctx: ?*anyopaque, chunk: []const u8) openai_http_err!void {
+fn onHttpChunk(ctx: ?*anyopaque, chunk: []const u8) Error!void {
     const state: *StreamState = @ptrCast(@alignCast(ctx.?));
     feedSseBytes(state, chunk) catch |err| {
         state.err = err;
-        return error.HttpError;
+        return err;
     };
 }
-
-// openai_zig transport StreamChunk uses errors.Error
-const openai_http_err = @import("openai_zig").errors.Error;
 
 /// Public for tests: feed raw SSE bytes into stream state.
 pub fn feedSseBytes(state: *StreamState, chunk: []const u8) Error!void {

@@ -18,8 +18,7 @@ const gen = openai.generated;
 /// Shared wire config (same shape for all adapters).
 pub const Config = config_mod.Config;
 
-/// Provider-facing errors. Prefer `types.isRetryableError` for policy.
-/// Same set as `wire.Error` (kept identical so adapters share one surface).
+/// Provider-facing errors (alias of `wire.Error` — shared across all adapters).
 pub const Error = wire.Error;
 
 pub const ChatOptions = types.ChatOptions;
@@ -321,8 +320,11 @@ fn toolChoiceToChat(tc: ToolChoice) Error!chat_res.ChatToolChoice {
     };
 }
 
+/// Map **openai-zig SDK** errors into shared `wire.Error`.
+/// Only used by this OpenAI adapter — Anthropic uses `http` + `wire.Error` directly.
 pub fn mapSdkError(err: anyerror) Error {
     const name = @errorName(err);
+    // openai-zig error names
     if (std.mem.eql(u8, name, "OutOfMemory")) return error.OutOfMemory;
     if (std.mem.eql(u8, name, "AuthenticationError")) return error.AuthenticationFailed;
     if (std.mem.eql(u8, name, "PermissionDeniedError")) return error.PermissionDenied;
@@ -337,6 +339,15 @@ pub fn mapSdkError(err: anyerror) Error {
     if (std.mem.eql(u8, name, "DeserializeError") or std.mem.eql(u8, name, "SerializeError"))
         return error.InvalidResponse;
     if (std.mem.eql(u8, name, "WriteFailed")) return error.WriteFailed;
+    // Already wire.Error (pass-through by name)
+    if (std.mem.eql(u8, name, "AuthenticationFailed")) return error.AuthenticationFailed;
+    if (std.mem.eql(u8, name, "PermissionDenied")) return error.PermissionDenied;
+    if (std.mem.eql(u8, name, "RateLimited")) return error.RateLimited;
+    if (std.mem.eql(u8, name, "ServerError")) return error.ServerError;
+    if (std.mem.eql(u8, name, "BadRequest")) return error.BadRequest;
+    if (std.mem.eql(u8, name, "InvalidResponse")) return error.InvalidResponse;
+    if (std.mem.eql(u8, name, "StreamFailed")) return error.StreamFailed;
+    if (std.mem.eql(u8, name, "BadStatus")) return error.BadStatus;
     return error.HttpFailed;
 }
 

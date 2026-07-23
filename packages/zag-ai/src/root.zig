@@ -1,7 +1,8 @@
-//! zag-ai — OpenAI-compatible LLM client (monorepo package).
+//! zag-ai — multi-wire LLM client for Zag (canonical messages + adapters).
 //!
-//! Split like Grok Build crates: AI/provider is independent of the agent harness.
-//! Transport and full OpenAPI surface: `openai_zig` (packages/openai-zig).
+//! - Shared: `config`, `wire`, `http` (std.http, vendor-neutral)
+//! - Adapters: `openai_compat` (uses openai-zig resources), `anthropic_messages` (uses http only)
+//! - Independent of agent harness (packages/zag-agent-core).
 
 const std = @import("std");
 

@@ -64,7 +64,8 @@ canonical: types.Message / ToolDefinition / ChatOptions
 2. **WireAdapter** — `wire.zig`；`createWire` / `Resolved.createWire`。  
 3. **openai_compat** — Chat Completions（默认）。  
 4. **anthropic_messages** — Messages API + **真 SSE**（`content_block_delta` / `tool_use`）。  
-5. **config.Config + http.Client** — 共享配置与中立 HTTP（Bearer / header auth）。
+5. **config.Config + http.Client** — 共享配置；`http` 仅用 `std.http`（不 import openai_zig）。  
+6. **wire.Error** — 全适配器共用；`mapSdkError` 仅 openai 适配器用。
 
 ### 不变式（适配层）
 

@@ -10,10 +10,10 @@ Auth is env + JSON config only (no OAuth).
 |--------|------|
 | `types` | Message / ContentPart / ToolCall / Usage / ChatOptions / StreamEvent / StreamHandler |
 | `config` | 共享 `Config`（base_url / key / model / retries） |
-| `http` | 中立 HTTP（Bearer 或 header auth；复用 openai-zig transport） |
-| `wire` | **WireAdapter** vtable + `ApiStyle` |
-| `openai_compat` | OpenAI Chat Completions adapter |
-| `anthropic_messages` | Anthropic Messages + **SSE stream** |
+| `http` | **中立** HTTP（`std.http` only；Bearer 或 header auth；**不**依赖 openai_zig） |
+| `wire` | **WireAdapter** + `ApiStyle` + 共享 `Error` |
+| `openai_compat` | OpenAI Chat Completions（**唯一**依赖 openai-zig resources 的适配器） |
+| `anthropic_messages` | Anthropic Messages + SSE（只用 config/http/wire） |
 | `presets` | ProviderSpec table (`api_style`) |
 | `catalog` | Known model ids + context windows + budget helpers |
 | `registry` | Resolve provider + `createWire` |
