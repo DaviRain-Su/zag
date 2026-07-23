@@ -4,9 +4,18 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const openai_dep = b.dependency("openai_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const openai_mod = openai_dep.module("openai_zig");
+
     const mod = b.addModule("zag-ai", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{ .name = "openai_zig", .module = openai_mod },
+        },
     });
 
     const tests = b.addTest(.{
@@ -14,6 +23,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "openai_zig", .module = openai_mod },
+            },
         }),
     });
     const run_tests = b.addRunArtifact(tests);

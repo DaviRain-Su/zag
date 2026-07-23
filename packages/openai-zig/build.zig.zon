@@ -1,13 +1,10 @@
 .{
-    .name = .zag_ai,
+    .name = .openai_zig,
     .version = "0.1.0",
-    .fingerprint = 0x36b0f4d4a1d0538d,
+    // Changing this has security and trust implications.
+    .fingerprint = 0x8a2c729d40dc27c4,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{
-        .openai_zig = .{
-            .path = "../openai-zig",
-        },
-    },
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",

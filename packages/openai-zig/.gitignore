@@ -1,0 +1,3 @@
+config
+.zig-cache
+zig-out

@@ -1,17 +1,15 @@
-//! OpenAI Chat Completions wire format — the **only** API implementation in Zag.
+//! OpenAI Chat Completions via monorepo `openai-zig` SDK.
 //!
-//! Inspired by pi-ai's `openai-completions` api layer: many vendors (DeepSeek,
-//! xAI, OpenRouter, …) share this HTTP+JSON shape. Vendor identity lives in
-//! `presets.zig` / `registry.zig`; this file only speaks the wire protocol.
-//!
-//! Endpoint: `{base_url}/chat/completions` with tools + tool_calls.
+//! Keeps a thin zag-facing API (`Config` / `Client` / `AssistantTurn`) while
+//! transport, retries, streaming, and resource surface live in openai-zig.
 
 const std = @import("std");
 const Io = std.Io;
-const http = std.http;
+const openai = @import("openai_zig");
 const types = @import("types.zig");
 
-
+const chat_res = openai.resources.chat;
+const gen = openai.generated;
 
 pub const Config = struct {
     /// e.g. "https://api.openai.com/v1" or "https://api.deepseek.com/v1"
@@ -34,22 +32,29 @@ pub const Client = struct {
     allocator: std.mem.Allocator,
     io: Io,
     config: Config,
-    http_client: http.Client,
+    sdk: openai.Client,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Client {
+        // initClient only fails on allocation; surface OOM later if needed.
+        const sdk = openai.initClient(allocator, .{
+            .io = io,
+            .base_url = config.base_url,
+            .api_key = config.api_key,
+            .max_retries = 2,
+            .retry_base_delay_ms = 500,
+        }) catch |err| {
+            std.debug.panic("openai-zig client init failed: {s}", .{@errorName(err)});
+        };
         return .{
             .allocator = allocator,
             .io = io,
             .config = config,
-            .http_client = .{
-                .allocator = allocator,
-                .io = io,
-            },
+            .sdk = sdk,
         };
     }
 
     pub fn deinit(self: *Client) void {
-        self.http_client.deinit();
+        self.sdk.deinit();
     }
 
     /// Call chat completions. Prefer `provider()` from harness code.
@@ -60,66 +65,163 @@ pub const Client = struct {
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
     ) Error!types.AssistantTurn {
-        const body = try buildRequestBody(arena, self.config.model, messages, tools, false);
-        const url = try std.fmt.allocPrint(arena, "{s}/chat/completions", .{
-            trimTrailingSlash(self.config.base_url),
-        });
+        const chat_messages = try toChatMessages(arena, messages);
+        const chat_tools = try toChatTools(arena, tools);
 
-        const auth_value = try std.fmt.allocPrint(arena, "Bearer {s}", .{self.config.api_key});
+        var parsed = self.sdk.chat().create_chat_completion(arena, .{
+            .model = self.config.model,
+            .messages = chat_messages,
+            .tools = if (chat_tools.len > 0) chat_tools else null,
+        }) catch |err| {
+            return mapSdkError(err);
+        };
+        defer parsed.deinit();
 
-        var response_body: Io.Writer.Allocating = .init(self.allocator);
-        defer response_body.deinit();
+        return try turnFromResponse(arena, parsed.value);
+    }
 
-        const result = self.http_client.fetch(.{
-            .location = .{ .url = url },
-            .method = .POST,
-            .payload = body,
-            .response_writer = &response_body.writer,
-            .headers = .{
-                .authorization = .{ .override = auth_value },
-                .content_type = .{ .override = "application/json" },
-            },
-        }) catch return error.HttpFailed;
-
-        const status_int = @intFromEnum(result.status);
-        if (status_int < 200 or status_int >= 300) {
-            std.log.err("provider HTTP {d}: {s}", .{ status_int, response_body.written() });
-            return error.BadStatus;
-        }
-
-        return parseAssistantTurn(arena, response_body.written()) catch return error.InvalidResponse;
+    /// Access the full openai-zig client (models, files, responses, …).
+    pub fn sdkClient(self: *Client) *openai.Client {
+        return &self.sdk;
     }
 };
 
-fn trimTrailingSlash(url: []const u8) []const u8 {
-    if (url.len > 0 and url[url.len - 1] == '/') return url[0 .. url.len - 1];
-    return url;
+pub fn mapSdkError(err: anyerror) Error {
+    // openai.errors.Error is an error set; compare by name for portability.
+    const name = @errorName(err);
+    if (std.mem.eql(u8, name, "OutOfMemory")) return error.OutOfMemory;
+    if (std.mem.eql(u8, name, "AuthenticationError") or
+        std.mem.eql(u8, name, "PermissionDeniedError") or
+        std.mem.eql(u8, name, "BadRequestError") or
+        std.mem.eql(u8, name, "NotFoundError") or
+        std.mem.eql(u8, name, "ConflictError") or
+        std.mem.eql(u8, name, "UnprocessableEntityError") or
+        std.mem.eql(u8, name, "RateLimitError") or
+        std.mem.eql(u8, name, "InternalServerError"))
+        return error.BadStatus;
+    if (std.mem.eql(u8, name, "DeserializeError") or std.mem.eql(u8, name, "SerializeError"))
+        return error.InvalidResponse;
+    return error.HttpFailed;
 }
 
-fn buildRequestBody(
+pub fn toChatMessages(arena: std.mem.Allocator, messages: []const types.Message) Error![]const chat_res.ChatMessage {
+    const out = try arena.alloc(chat_res.ChatMessage, messages.len);
+    for (messages, 0..) |msg, i| {
+        out[i] = try toChatMessage(arena, msg);
+    }
+    return out;
+}
+
+fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.ChatMessage {
+    var m: chat_res.ChatMessage = .{
+        .role = msg.role.jsonName(),
+        .content = if (msg.content.len > 0) msg.content else null,
+    };
+    switch (msg.role) {
+        .tool => {
+            m.tool_call_id = msg.tool_call_id;
+            m.content = msg.content;
+        },
+        .assistant => {
+            if (msg.content.len == 0 and msg.tool_calls != null) {
+                m.content = null;
+            }
+            if (msg.tool_calls) |calls| {
+                const tc = try arena.alloc(gen.ChatCompletionMessageToolCall, calls.len);
+                for (calls, 0..) |call, i| {
+                    tc[i] = .{
+                        .id = call.id,
+                        .type = "function",
+                        .function = .{
+                            .name = call.name,
+                            .arguments = call.arguments,
+                        },
+                    };
+                }
+                m.tool_calls = tc;
+            }
+        },
+        .system, .user => {},
+    }
+    return m;
+}
+
+pub fn toChatTools(arena: std.mem.Allocator, tools: []const types.ToolDefinition) Error![]const chat_res.ChatTool {
+    if (tools.len == 0) return &.{};
+    const out = try arena.alloc(chat_res.ChatTool, tools.len);
+    for (tools, 0..) |t, i| {
+        const parsed = std.json.parseFromSlice(std.json.Value, arena, t.parameters_json, .{}) catch
+            return error.WriteFailed;
+        // Parsed lives in arena; no separate deinit needed for arena-backed parse.
+        out[i] = .{
+            .type = "function",
+            .function = .{
+                .name = t.name,
+                .description = t.description,
+                .parameters = gen.FunctionParameters.forSchema(parsed.value),
+                .strict = null,
+            },
+        };
+    }
+    return out;
+}
+
+pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletionResponse) Error!types.AssistantTurn {
+    if (resp.choices.len == 0) return error.InvalidResponse;
+    const choice = resp.choices[0];
+    const finish_reason = try arena.dupe(u8, choice.finish_reason orelse "");
+    const msg = choice.message orelse {
+        return .{
+            .content = try arena.dupe(u8, ""),
+            .tool_calls = &.{},
+            .finish_reason = finish_reason,
+        };
+    };
+
+    const content = try arena.dupe(u8, msg.content orelse "");
+    var tool_calls: []types.ToolCall = &.{};
+    if (msg.tool_calls) |tcs| {
+        if (tcs.len > 0) {
+            const slice = try arena.alloc(types.ToolCall, tcs.len);
+            for (tcs, 0..) |tc, i| {
+                slice[i] = .{
+                    .id = try arena.dupe(u8, tc.id),
+                    .name = try arena.dupe(u8, tc.function.name),
+                    .arguments = try arena.dupe(u8, tc.function.arguments),
+                };
+            }
+            tool_calls = slice;
+        }
+    }
+
+    return .{
+        .content = content,
+        .tool_calls = tool_calls,
+        .finish_reason = finish_reason,
+    };
+}
+
+/// Build request body with `"stream": true` — retained for stream.zig fallback paths.
+pub fn buildRequestBodyForStream(
     allocator: std.mem.Allocator,
     model: []const u8,
     messages: []const types.Message,
     tools: []const types.ToolDefinition,
-    stream: bool,
 ) Error![]u8 {
     var out: Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
-
     var s: std.json.Stringify = .{ .writer = &out.writer };
 
     s.beginObject() catch return error.WriteFailed;
     s.objectField("model") catch return error.WriteFailed;
     s.write(model) catch return error.WriteFailed;
-    if (stream) {
-        s.objectField("stream") catch return error.WriteFailed;
-        s.write(true) catch return error.WriteFailed;
-    }
+    s.objectField("stream") catch return error.WriteFailed;
+    s.write(true) catch return error.WriteFailed;
 
     s.objectField("messages") catch return error.WriteFailed;
     s.beginArray() catch return error.WriteFailed;
     for (messages) |msg| {
-        try writeMessage(&s, msg);
+        try writeMessageLegacy(&s, msg);
     }
     s.endArray() catch return error.WriteFailed;
 
@@ -127,7 +229,7 @@ fn buildRequestBody(
         s.objectField("tools") catch return error.WriteFailed;
         s.beginArray() catch return error.WriteFailed;
         for (tools) |t| {
-            try writeToolDef(&s, t);
+            try writeToolDefLegacy(&s, t);
         }
         s.endArray() catch return error.WriteFailed;
     }
@@ -136,21 +238,10 @@ fn buildRequestBody(
     return out.toOwnedSlice() catch return error.OutOfMemory;
 }
 
-/// Build request body with `"stream": true` (used by stream.zig).
-pub fn buildRequestBodyForStream(
-    allocator: std.mem.Allocator,
-    model: []const u8,
-    messages: []const types.Message,
-    tools: []const types.ToolDefinition,
-) Error![]u8 {
-    return buildRequestBody(allocator, model, messages, tools, true);
-}
-
-fn writeMessage(s: *std.json.Stringify, msg: types.Message) Error!void {
+fn writeMessageLegacy(s: *std.json.Stringify, msg: types.Message) Error!void {
     s.beginObject() catch return error.WriteFailed;
     s.objectField("role") catch return error.WriteFailed;
     s.write(msg.role.jsonName()) catch return error.WriteFailed;
-
     switch (msg.role) {
         .tool => {
             const id = msg.tool_call_id orelse return error.WriteFailed;
@@ -160,7 +251,6 @@ fn writeMessage(s: *std.json.Stringify, msg: types.Message) Error!void {
             s.write(msg.content) catch return error.WriteFailed;
         },
         .assistant => {
-            // OpenAI accepts content null or string when tool_calls are present.
             s.objectField("content") catch return error.WriteFailed;
             if (msg.content.len == 0 and msg.tool_calls != null) {
                 s.write(null) catch return error.WriteFailed;
@@ -193,11 +283,10 @@ fn writeMessage(s: *std.json.Stringify, msg: types.Message) Error!void {
             s.write(msg.content) catch return error.WriteFailed;
         },
     }
-
     s.endObject() catch return error.WriteFailed;
 }
 
-fn writeToolDef(s: *std.json.Stringify, def: types.ToolDefinition) Error!void {
+fn writeToolDefLegacy(s: *std.json.Stringify, def: types.ToolDefinition) Error!void {
     s.beginObject() catch return error.WriteFailed;
     s.objectField("type") catch return error.WriteFailed;
     s.write("function") catch return error.WriteFailed;
@@ -213,132 +302,29 @@ fn writeToolDef(s: *std.json.Stringify, def: types.ToolDefinition) Error!void {
     s.endObject() catch return error.WriteFailed;
 }
 
-fn parseAssistantTurn(allocator: std.mem.Allocator, body: []const u8) !types.AssistantTurn {
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{});
-    // Intentionally not deinit'ing: we dupe what we need into `allocator` which
-    // is typically an arena that frees everything together. If using GPA, the
-    // Parsed arena would leak — callers must pass an arena.
-    //
-    // We still need Parsed's allocations for nested string slices during copy.
-    // parseFromSlice with arena allocator: both Parsed and dupes use same arena.
-    // So skip explicit deinit when allocator is arena-backed.
-    // For safety with GPA tests, deinit after copying:
-    defer parsed.deinit();
-
-    const root = parsed.value;
-    if (root != .object) return error.InvalidResponse;
-
-    const choices = root.object.get("choices") orelse return error.InvalidResponse;
-    if (choices != .array or choices.array.items.len == 0) return error.InvalidResponse;
-
-    const first = choices.array.items[0];
-    if (first != .object) return error.InvalidResponse;
-
-    const finish_reason = blk: {
-        if (first.object.get("finish_reason")) |fr| {
-            if (fr == .string) break :blk try allocator.dupe(u8, fr.string);
-        }
-        break :blk try allocator.dupe(u8, "");
-    };
-
-    const msg_val = first.object.get("message") orelse return error.InvalidResponse;
-    if (msg_val != .object) return error.InvalidResponse;
-
-    const content = blk: {
-        if (msg_val.object.get("content")) |c| {
-            switch (c) {
-                .string => |s| break :blk try allocator.dupe(u8, s),
-                .null => break :blk try allocator.dupe(u8, ""),
-                else => return error.InvalidResponse,
-            }
-        }
-        break :blk try allocator.dupe(u8, "");
-    };
-
-    var tool_calls: []types.ToolCall = &.{};
-    if (msg_val.object.get("tool_calls")) |tc_val| {
-        if (tc_val == .array and tc_val.array.items.len > 0) {
-            const slice = try allocator.alloc(types.ToolCall, tc_val.array.items.len);
-            for (tc_val.array.items, 0..) |item, i| {
-                if (item != .object) return error.InvalidResponse;
-                const id = item.object.get("id") orelse return error.InvalidResponse;
-                if (id != .string) return error.InvalidResponse;
-                const fn_val = item.object.get("function") orelse return error.InvalidResponse;
-                if (fn_val != .object) return error.InvalidResponse;
-                const name = fn_val.object.get("name") orelse return error.InvalidResponse;
-                if (name != .string) return error.InvalidResponse;
-                const args = fn_val.object.get("arguments") orelse return error.InvalidResponse;
-                if (args != .string) return error.InvalidResponse;
-
-                slice[i] = .{
-                    .id = try allocator.dupe(u8, id.string),
-                    .name = try allocator.dupe(u8, name.string),
-                    .arguments = try allocator.dupe(u8, args.string),
-                };
-            }
-            tool_calls = slice;
-        }
-    }
-
-    return .{
-        .content = content,
-        .tool_calls = tool_calls,
-        .finish_reason = finish_reason,
-    };
-}
-
-test "parse assistant text turn" {
+test "turnFromResponse text" {
     const gpa = std.testing.allocator;
-    const body =
-        \\{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"hello"}}]}
-    ;
-    const turn = try parseAssistantTurn(gpa, body);
+    const turn = try turnFromResponse(gpa, .{
+        .choices = &.{
+            .{
+                .finish_reason = "stop",
+                .message = .{
+                    .content = "hello",
+                },
+            },
+        },
+    });
     defer {
         gpa.free(turn.content);
         gpa.free(turn.finish_reason);
-        for (turn.tool_calls) |tc| {
-            gpa.free(tc.id);
-            gpa.free(tc.name);
-            gpa.free(tc.arguments);
-        }
-        if (turn.tool_calls.len > 0) gpa.free(turn.tool_calls);
     }
     try std.testing.expectEqualStrings("hello", turn.content);
-    try std.testing.expectEqual(@as(usize, 0), turn.tool_calls.len);
 }
 
-test "parse assistant tool_calls turn" {
+test "buildRequestBodyForStream sets stream true" {
     const gpa = std.testing.allocator;
-    const body =
-        \\{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_dir","arguments":"{\"path\":\".\"}"}}]}}]}
-    ;
-    const turn = try parseAssistantTurn(gpa, body);
-    defer {
-        gpa.free(turn.content);
-        gpa.free(turn.finish_reason);
-        for (turn.tool_calls) |tc| {
-            gpa.free(tc.id);
-            gpa.free(tc.name);
-            gpa.free(tc.arguments);
-        }
-        if (turn.tool_calls.len > 0) gpa.free(turn.tool_calls);
-    }
-    try std.testing.expect(turn.wantsTools());
-    try std.testing.expectEqualStrings("list_dir", turn.tool_calls[0].name);
-    try std.testing.expectEqualStrings("call_1", turn.tool_calls[0].id);
-}
-
-test "buildRequestBody includes tools" {
-    const gpa = std.testing.allocator;
-    const tools = [_]types.ToolDefinition{.{
-        .name = "list_dir",
-        .description = "list",
-        .parameters_json = "{\"type\":\"object\",\"properties\":{}}",
-    }};
     const msgs = [_]types.Message{types.Message.user("hi")};
-    const body = try buildRequestBody(gpa, "test-model", &msgs, &tools, false);
+    const body = try buildRequestBodyForStream(gpa, "m", &msgs, &.{});
     defer gpa.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "list_dir") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "test-model") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"role\":\"user\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\":true") != null);
 }

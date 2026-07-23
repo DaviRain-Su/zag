@@ -32,6 +32,9 @@
     // Once all dependencies are fetched, `zig build` no longer requires
     // internet connectivity.
     .dependencies = .{
+        .openai_zig = .{
+            .path = "packages/openai-zig",
+        },
         .zag_ai = .{
             .path = "packages/zag-ai",
         },

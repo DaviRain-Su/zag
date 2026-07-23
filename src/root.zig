@@ -26,6 +26,7 @@ pub const edit_tools = @import("runtime/edit_tools.zig");
 
 // Re-export AI package surface for convenience
 pub const zag_ai = ai;
+pub const openai_zig = ai.openai_zig;
 pub const openai_compat = ai.openai_compat;
 pub const provider_registry = ai.registry;
 pub const provider_presets = ai.presets;

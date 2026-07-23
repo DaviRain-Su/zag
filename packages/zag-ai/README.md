@@ -1,6 +1,8 @@
 # zag-ai
 
-Monorepo AI package for Zag — **OpenAI Chat Completions only**, env + JSON config auth (no OAuth).
+Monorepo AI package for Zag — agent-facing OpenAI Chat Completions layer over **openai-zig**.
+
+Auth is env + JSON config only (no OAuth).
 
 ## Layout
 
@@ -12,12 +14,17 @@ Monorepo AI package for Zag — **OpenAI Chat Completions only**, env + JSON con
 | `registry` | Resolve provider from env |
 | `auth_env` | API key from env vars |
 | `config_file` | `.zag/config.json` / `zag.json` |
-| `openai_compat` | Non-streaming chat |
-| `stream` | SSE streaming chat |
+| `openai_compat` | Non-streaming chat (**via openai-zig**) |
+| `stream` | SSE streaming chat (**via openai-zig**) |
+| `openai_zig` | Re-export of the full SDK |
 
-## Use from Zag
+## Dependency
 
-Root `build.zig` depends on `packages/zag-ai` as module `zag-ai`.
+```
+zag → zag-ai → openai-zig
+```
+
+`Client.sdkClient()` returns `*openai_zig.Client` for models/files/responses/etc.
 
 ## Config file example
 

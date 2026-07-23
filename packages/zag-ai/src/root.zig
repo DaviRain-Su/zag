@@ -1,8 +1,11 @@
 //! zag-ai — OpenAI-compatible LLM client (monorepo package).
 //!
 //! Split like Grok Build crates: AI/provider is independent of the agent harness.
+//! Transport and full OpenAPI surface: `openai_zig` (packages/openai-zig).
 
 const std = @import("std");
+
+pub const openai_zig = @import("openai_zig");
 
 pub const types = @import("types.zig");
 pub const presets = @import("presets.zig");
@@ -24,7 +27,7 @@ pub const ProviderSpec = presets.ProviderSpec;
 pub const ModelInfo = catalog.ModelInfo;
 pub const FileConfig = config_file.FileConfig;
 
-pub const version = "0.1.0";
+pub const version = "0.2.0";
 
 pub const ResolveResult = struct {
     resolved: registry.Resolved,

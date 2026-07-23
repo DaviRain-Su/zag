@@ -4,17 +4,29 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --- monorepo package: zag-ai ---
+    // --- monorepo packages: openai-zig + zag-ai ---
+    const openai_dep = b.dependency("openai_zig", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const openai_mod = openai_dep.module("openai_zig");
+
     const ai_dep = b.dependency("zag_ai", .{
         .target = target,
         .optimize = optimize,
     });
     const ai_mod = ai_dep.module("zag-ai");
 
-    // Also expose a direct path module for in-tree imports if needed
+    _ = b.addModule("openai_zig", .{
+        .root_source_file = b.path("packages/openai-zig/src/root.zig"),
+        .target = target,
+    });
     _ = b.addModule("zag-ai", .{
         .root_source_file = b.path("packages/zag-ai/src/root.zig"),
         .target = target,
+        .imports = &.{
+            .{ .name = "openai_zig", .module = openai_mod },
+        },
     });
 
     const mod = b.addModule("zag", .{
@@ -22,6 +34,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "zag-ai", .module = ai_mod },
+            .{ .name = "openai_zig", .module = openai_mod },
         },
     });
 
@@ -34,6 +47,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "zag", .module = mod },
                 .{ .name = "zag-ai", .module = ai_mod },
+                .{ .name = "openai_zig", .module = openai_mod },
             },
         }),
     });
@@ -48,12 +62,23 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    // Tests: zag-ai package + zag module + exe
+    const openai_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/openai-zig/src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_openai_tests = b.addRunArtifact(openai_tests);
+
     const ai_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("packages/zag-ai/src/root.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "openai_zig", .module = openai_mod },
+            },
         }),
     });
     const run_ai_tests = b.addRunArtifact(ai_tests);
@@ -69,6 +94,7 @@ pub fn build(b: *std.Build) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
