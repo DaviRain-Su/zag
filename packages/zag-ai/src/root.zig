@@ -12,6 +12,7 @@ pub const presets = @import("presets.zig");
 pub const auth_env = @import("auth_env.zig");
 pub const registry = @import("registry.zig");
 pub const openai_compat = @import("openai_compat.zig");
+pub const anthropic_messages = @import("anthropic_messages.zig");
 pub const stream = @import("stream.zig");
 pub const catalog = @import("catalog.zig");
 pub const config_file = @import("config_file.zig");
@@ -40,7 +41,7 @@ pub const isRetryableError = types.isRetryableError;
 pub const createWire = openai_compat.createWire;
 pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 
-pub const version = "0.4.1";
+pub const version = "0.5.0";
 
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {

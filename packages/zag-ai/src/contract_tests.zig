@@ -152,13 +152,17 @@ test "contract: WireAdapter vtable exposes openai_compat style" {
     try std.testing.expectEqualStrings("openai_compat", w.name());
 }
 
-test "contract: createWire rejects anthropic_messages" {
+test "contract: createWire accepts anthropic_messages style" {
     const gpa = std.testing.allocator;
-    try std.testing.expectError(error.BadRequest, openai_compat.createWire(gpa, std.testing.io, .{
-        .base_url = "https://example.invalid",
-        .api_key = "k",
-        .model = "m",
-    }, .anthropic_messages));
+    // Init only — no network until chat.
+    var w = try openai_compat.createWire(gpa, std.testing.io, .{
+        .base_url = "https://api.anthropic.com",
+        .api_key = "sk-ant-test",
+        .model = "claude-sonnet-4-20250514",
+    }, .anthropic_messages);
+    defer w.deinit();
+    try std.testing.expect(w.apiStyle() == .anthropic_messages);
+    try std.testing.expectEqualStrings("anthropic_messages", w.name());
 }
 
 test "contract: toChatMessages preserves tool result" {

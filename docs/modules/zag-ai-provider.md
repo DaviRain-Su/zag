@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `packages/zag-ai/`；适配 `src/agent/provider.zig`；传输 `packages/openai-zig/` |
+| 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `packages/openai-zig/` |
 | 成熟度 | L1 → **L1+ partial H6** → **L2（H6 收口）** → L3（fallback/multi-key） |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
@@ -61,8 +61,9 @@ canonical: types.Message / ToolDefinition / ChatOptions
 ### 实现节奏
 
 1. **文档** — 本页 + architecture。  
-2. **zag-ai WireAdapter（已落地）** — `packages/zag-ai/src/wire.zig`；`openai_compat.Client` 为默认实现；`Resolved.createWire` / `main` 走 adapter；`ZAG_API_STYLE`；Anthropic 预留且拒绝。  
-3. **Anthropic 等** — 另开；非 Phase H 出门条件。
+2. **WireAdapter** — `wire.zig`；`createWire` / `Resolved.createWire`。  
+3. **openai_compat** — Chat Completions（默认）。  
+4. **anthropic_messages** — Anthropic Messages API（已落地）；SSE 暂以非流式 + 合成 delta。
 
 ### 不变式（适配层）
 
@@ -146,7 +147,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 - 完整 OAuth 产品  
 - 绑定单一云厂商  
-- **实现** Anthropic（预留接口即可）  
+- Anthropic **真·SSE** 增量（当前合成 delta）  
 - Memory Repo（属 C5）  
 - Graph 编排（属 C6；节点内仍用本 Provider 端口）  
 

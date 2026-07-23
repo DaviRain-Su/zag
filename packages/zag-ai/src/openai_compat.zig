@@ -255,16 +255,17 @@ pub const Client = struct {
     }
 };
 
-/// Factory: build a WireAdapter for the given style (OpenAI-compat only today).
+/// Factory: build a WireAdapter for the given style.
 pub fn createWire(
     gpa: std.mem.Allocator,
     io: Io,
     config: Config,
     style: wire.ApiStyle,
 ) Error!wire.WireAdapter {
+    const anthropic_messages = @import("anthropic_messages.zig");
     return switch (style) {
         .openai_compat => createOpenAiCompatWire(gpa, io, config),
-        .anthropic_messages => error.BadRequest,
+        .anthropic_messages => anthropic_messages.createWire(gpa, io, config),
     };
 }
 

@@ -3,8 +3,9 @@
 //! Agent Core only sees `types.Message` / `AssistantTurn`. Each `ApiStyle`
 //! implementation converts to/from vendor wire formats (Pi-style convertToLlm).
 //!
-//! Default implementation: `openai_compat.Client` (`ApiStyle.openai_compat`).
-//! Reserved: `anthropic_messages` — add a module, do not branch in the agent loop.
+//! Implementations:
+//! - `openai_compat` — Chat Completions (`openai_compat.zig`)
+//! - `anthropic_messages` — Anthropic Messages API (`anthropic_messages.zig`)
 //!
 //! This file has **no** dependency on protocol packages (avoids import cycles).
 //! Factories live in `openai_compat.createWire` / `registry.Resolved.createWire`.
@@ -35,7 +36,7 @@ pub const ChatOptions = types.ChatOptions;
 pub const ApiStyle = enum {
     /// OpenAI Chat Completions (`/v1/chat/completions`) and compat hosts.
     openai_compat,
-    /// Reserved — not implemented.
+    /// Anthropic Messages API (`POST /v1/messages`).
     anthropic_messages,
 
     pub fn jsonName(self: ApiStyle) []const u8 {

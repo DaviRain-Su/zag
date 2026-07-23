@@ -149,7 +149,7 @@ pub fn run(init: std.process.Init) !void {
                 std.process.exit(1);
             },
             error.UnsupportedApiStyle => {
-                std.log.err("unsupported ZAG_API_STYLE (only openai_compat is implemented)", .{});
+                std.log.err("unsupported ZAG_API_STYLE (use openai_compat or anthropic_messages)", .{});
                 std.process.exit(1);
             },
             else => {
@@ -382,9 +382,13 @@ fn printUsage() !void {
         \\Security: relative paths only; shell denylist even under --yolo
         \\
         \\Model (packages/zag-ai):
-        \\  Env: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, …
-        \\  ZAG_PROVIDER  ZAG_MODEL  ZAG_BASE_URL  ZAG_API_STYLE=openai_compat
+        \\  Env: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, …
+        \\  ZAG_PROVIDER  ZAG_MODEL  ZAG_BASE_URL
+        \\  ZAG_API_STYLE=openai_compat|anthropic_messages
         \\  ZAG_TEMPERATURE  ZAG_MAX_TOKENS  ZAG_MAX_RETRIES  ZAG_TIMEOUT_MS  ZAG_CHAT_RETRIES
+        \\
+        \\  Anthropic example:
+        \\    ANTHROPIC_API_KEY=…  ZAG_PROVIDER=anthropic
         \\
         \\Packages: zag-cli → coding-agent → agent-core → zag-ai → openai-zig
         \\

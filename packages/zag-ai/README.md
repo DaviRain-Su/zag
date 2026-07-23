@@ -9,7 +9,8 @@ Auth is env + JSON config only (no OAuth).
 | Module | Role |
 |--------|------|
 | `types` | Message / ContentPart / ToolCall / Usage / ChatOptions / StreamEvent / StreamHandler |
-| `wire` | **WireAdapter** vtable + `ApiStyle` (canonical ↔ vendor) |
+| `wire` | **WireAdapter** vtable + `ApiStyle` (openai_compat · anthropic_messages) |
+| `anthropic_messages` | Anthropic Messages API adapter |
 | `presets` | ProviderSpec table (`api_style`) |
 | `catalog` | Known model ids + context windows + budget helpers |
 | `registry` | Resolve provider + `createWire` |
@@ -65,7 +66,18 @@ Stream: `wire.chatStream` / `Client.chatStreamWithOptions` / `stream.chatStreamW
 
 `Client.sdkClient()` returns `*openai_zig.Client` for models/files/responses/etc.
 
-Env: `ZAG_API_STYLE=openai_compat` (default). `anthropic` is reserved and rejected until implemented.
+Wire styles:
+
+| Style | Env / preset | Endpoint |
+|-------|----------------|----------|
+| `openai_compat` (default) | most presets | `/v1/chat/completions` |
+| `anthropic_messages` | `ZAG_PROVIDER=anthropic` or `ZAG_API_STYLE=anthropic` | `/v1/messages` |
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export ZAG_PROVIDER=anthropic
+# optional: ZAG_MODEL=claude-sonnet-4-20250514
+```
 
 ## Resolve (harness entry)
 

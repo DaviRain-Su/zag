@@ -42,6 +42,14 @@ pub const builtin: []const ProviderSpec = &.{
         .default_model = "gpt-4o-mini",
     },
     .{
+        .id = "anthropic",
+        .name = "Anthropic",
+        .base_url = "https://api.anthropic.com",
+        .env_keys = &.{ "ANTHROPIC_API_KEY" },
+        .default_model = "claude-sonnet-4-20250514",
+        .api_style = .anthropic_messages,
+    },
+    .{
         .id = "openrouter",
         .name = "OpenRouter",
         .base_url = "https://openrouter.ai/api/v1",

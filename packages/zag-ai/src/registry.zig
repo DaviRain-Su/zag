@@ -55,11 +55,8 @@ pub fn resolveFromEnv(env: *const std.process.Environ.Map) Error!Resolved {
 
 fn styleFromGetter(getter: anytype, preset_style: wire.ApiStyle) Error!wire.ApiStyle {
     if (getter.get("ZAG_API_STYLE")) |s| {
-        const parsed = wire.ApiStyle.parse(s) orelse return error.UnsupportedApiStyle;
-        if (parsed == .anthropic_messages) return error.UnsupportedApiStyle;
-        return parsed;
+        return wire.ApiStyle.parse(s) orelse error.UnsupportedApiStyle;
     }
-    if (preset_style == .anthropic_messages) return error.UnsupportedApiStyle;
     return preset_style;
 }
 
@@ -204,9 +201,18 @@ test "missing key" {
     try std.testing.expectError(error.MissingApiKey, resolveFromGet(TestEnv{ .pairs = &.{} }));
 }
 
-test "unsupported api style anthropic" {
+test "api style anthropic from env" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ANTHROPIC_API_KEY", "sk-ant" },
+        .{ "ZAG_PROVIDER", "anthropic" },
+    } });
+    try std.testing.expect(r.api_style == .anthropic_messages);
+    try std.testing.expectEqualStrings("anthropic", r.spec_id);
+}
+
+test "unsupported api style garbage" {
     try std.testing.expectError(error.UnsupportedApiStyle, resolveFromGet(TestEnv{ .pairs = &.{
         .{ "DEEPSEEK_API_KEY", "sk" },
-        .{ "ZAG_API_STYLE", "anthropic" },
+        .{ "ZAG_API_STYLE", "not-a-style" },
     } }));
 }

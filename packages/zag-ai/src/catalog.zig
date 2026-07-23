@@ -26,6 +26,10 @@ pub const models: []const ModelInfo = &.{
     .{ .id = "gpt-4o", .name = "GPT-4o", .provider = "openai", .context_window = 128_000, .max_output_tokens = 16_384 },
     .{ .id = "gpt-4o-mini", .name = "GPT-4o mini", .provider = "openai", .context_window = 128_000, .max_output_tokens = 16_384 },
     .{ .id = "o4-mini", .name = "o4-mini", .provider = "openai", .context_window = 200_000, .max_output_tokens = 100_000 },
+    // Anthropic (Messages API)
+    .{ .id = "claude-sonnet-4-20250514", .name = "Claude Sonnet 4", .provider = "anthropic", .context_window = 200_000, .max_output_tokens = 64_000 },
+    .{ .id = "claude-opus-4-20250514", .name = "Claude Opus 4", .provider = "anthropic", .context_window = 200_000, .max_output_tokens = 32_000 },
+    .{ .id = "claude-haiku-4-5-20251001", .name = "Claude Haiku 4.5", .provider = "anthropic", .context_window = 200_000, .max_output_tokens = 64_000 },
     // OpenRouter (examples)
     .{ .id = "openai/gpt-4o-mini", .name = "GPT-4o mini (OpenRouter)", .provider = "openrouter", .context_window = 128_000, .max_output_tokens = 16_384 },
     .{ .id = "deepseek/deepseek-v4-flash", .name = "DeepSeek V4 Flash (OpenRouter)", .provider = "openrouter", .context_window = 1_000_000, .max_output_tokens = 384_000 },
