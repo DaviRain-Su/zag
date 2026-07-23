@@ -9,23 +9,14 @@ const Io = std.Io;
 const openai = @import("openai_zig");
 const types = @import("types.zig");
 const wire = @import("wire.zig");
+const config_mod = @import("config.zig");
 const stream_mod = @import("stream.zig");
 
 const chat_res = openai.resources.chat;
 const gen = openai.generated;
 
-pub const Config = struct {
-    /// e.g. "https://api.openai.com/v1" or "https://api.deepseek.com/v1"
-    base_url: []const u8,
-    api_key: []const u8,
-    model: []const u8,
-    /// Transient HTTP retries (passed to openai-zig transport).
-    max_retries: u8 = 2,
-    retry_base_delay_ms: u64 = 500,
-    timeout_ms: ?u64 = null,
-    /// Wire family for this client (always openai_compat for this module).
-    api_style: wire.ApiStyle = .openai_compat,
-};
+/// Shared wire config (same shape for all adapters).
+pub const Config = config_mod.Config;
 
 /// Provider-facing errors. Prefer `types.isRetryableError` for policy.
 /// Same set as `wire.Error` (kept identical so adapters share one surface).

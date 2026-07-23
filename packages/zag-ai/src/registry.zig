@@ -6,6 +6,7 @@ const std = @import("std");
 const auth_env = @import("auth_env.zig");
 const presets = @import("presets.zig");
 const openai_compat = @import("openai_compat.zig");
+const config_mod = @import("config.zig");
 const wire = @import("wire.zig");
 
 pub const Error = error{
@@ -21,7 +22,7 @@ pub const Resolved = struct {
     display_name: []const u8,
     /// Env var that supplied the key (for logs).
     api_key_source: []const u8,
-    config: openai_compat.Config,
+    config: config_mod.Config,
     /// Wire adapter family (from preset or env `ZAG_API_STYLE`).
     api_style: wire.ApiStyle = .openai_compat,
 

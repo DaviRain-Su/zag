@@ -1,20 +1,17 @@
 //! Anthropic Messages API WireAdapter (`POST /v1/messages`).
 //!
-//! Converts zag-ai canonical `Message` / `ToolDefinition` to Anthropic wire JSON
-//! and maps responses back to `AssistantTurn`. Transport reuses openai-zig HTTP
-//! (with `x-api-key` + `anthropic-version`, not Bearer).
+//! Canonical messages → Anthropic JSON; responses / SSE → `AssistantTurn`.
+//! Uses shared `config.Config` + neutral `http.Client` (not openai_compat).
 
 const std = @import("std");
 const Io = std.Io;
-const openai = @import("openai_zig");
 const types = @import("types.zig");
 const wire = @import("wire.zig");
-const openai_compat = @import("openai_compat.zig");
-
-const transport_mod = openai.transport;
+const config_mod = @import("config.zig");
+const http = @import("http.zig");
 
 pub const Error = wire.Error;
-pub const Config = openai_compat.Config;
+pub const Config = config_mod.Config;
 pub const ChatOptions = types.ChatOptions;
 
 /// Default Anthropic API version header.
@@ -24,10 +21,7 @@ pub const Client = struct {
     allocator: std.mem.Allocator,
     io: Io,
     config: Config,
-    transport: transport_mod.Transport,
-    /// Owned header value buffers for x-api-key / version.
-    api_key_hdr: []u8,
-    api_version_hdr: []const u8,
+    http: http.Client,
     owned_by_wire: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Error!Client {
@@ -37,43 +31,26 @@ pub const Client = struct {
             cfg.base_url = "https://api.anthropic.com";
         }
 
-        const key_copy = allocator.dupe(u8, cfg.api_key) catch return error.OutOfMemory;
-        errdefer allocator.free(key_copy);
-
-        const headers = allocator.alloc(std.http.Header, 2) catch return error.OutOfMemory;
-        errdefer allocator.free(headers);
-        headers[0] = .{ .name = "x-api-key", .value = key_copy };
-        headers[1] = .{ .name = "anthropic-version", .value = default_api_version };
-
-        const transport = transport_mod.Transport.init(allocator, io, .{
-            .base_url = cfg.base_url,
-            .api_key = null, // do not send Bearer
-            .extra_headers = headers,
-            .timeout_ms = cfg.timeout_ms,
-            .max_retries = cfg.max_retries,
-            .retry_base_delay_ms = cfg.retry_base_delay_ms,
-        }) catch return error.HttpFailed;
-
-        // Transport owns a copy of headers slice; free our temporary array but
-        // not the key_copy if transport duped header structs only (values are pointers).
-        // Transport.dupes the Header slice but not string contents — key_copy must
-        // outlive transport. We store it on Client and free on deinit.
-        // Transport also dupes the Header array; the value pointers still point at key_copy.
-        allocator.free(headers);
+        const http_client = try http.Client.initHeaderAuth(
+            allocator,
+            io,
+            cfg,
+            "x-api-key",
+            &.{
+                .{ .name = "anthropic-version", .value = default_api_version },
+            },
+        );
 
         return .{
             .allocator = allocator,
             .io = io,
             .config = cfg,
-            .transport = transport,
-            .api_key_hdr = key_copy,
-            .api_version_hdr = default_api_version,
+            .http = http_client,
         };
     }
 
     pub fn deinit(self: *Client) void {
-        self.transport.deinit();
-        self.allocator.free(self.api_key_hdr);
+        self.http.deinit();
     }
 
     pub fn asWire(self: *Client) wire.WireAdapter {
@@ -93,24 +70,13 @@ pub const Client = struct {
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
     ) Error!types.AssistantTurn {
-        const body = try buildRequestBody(arena, self.config.model, messages, tools, opts);
+        const body = try buildRequestBody(arena, self.config.model, messages, tools, opts, false);
 
-        const resp = self.transport.requestWithOptions(
-            .POST,
-            "/v1/messages",
-            &.{
-                .{ .name = "Accept", .value = "application/json" },
-                .{ .name = "Content-Type", .value = "application/json" },
-            },
-            body,
-            null,
-        ) catch |err| {
-            return mapTransportError(err);
-        };
-        defer self.transport.allocator.free(resp.body);
+        const resp = try self.http.postJson("/v1/messages", body);
+        defer self.http.freeBody(resp.body);
 
         if (resp.status < 200 or resp.status >= 300) {
-            return mapHttpStatus(resp.status);
+            return http.Client.mapHttpStatus(resp.status);
         }
 
         const parsed = std.json.parseFromSlice(std.json.Value, arena, resp.body, .{
@@ -122,18 +88,6 @@ pub const Client = struct {
         return try turnFromAnthropicValue(arena, parsed.value);
     }
 
-    fn mapHttpStatus(status: u16) Error {
-        return switch (status) {
-            401 => error.AuthenticationFailed,
-            403 => error.PermissionDenied,
-            429 => error.RateLimited,
-            400, 404, 409, 422 => error.BadRequest,
-            408 => error.Timeout,
-            500...599 => error.ServerError,
-            else => error.BadStatus,
-        };
-    }
-
     pub fn chatStreamWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
@@ -143,18 +97,21 @@ pub const Client = struct {
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
     ) Error!types.AssistantTurn {
-        // Streaming SSE not yet implemented: non-stream chat + synthetic deltas.
-        const turn = try self.chatWithOptions(arena, messages, tools, opts);
-        if (handler) |h| {
-            if (turn.content.len > 0) {
-                h(handler_ctx, .{ .content_delta = turn.content }) catch return error.StreamFailed;
-            }
-            if (turn.finish_reason.len > 0) {
-                h(handler_ctx, .{ .finish_reason = turn.finish_reason }) catch return error.StreamFailed;
-            }
-            h(handler_ctx, .done) catch return error.StreamFailed;
-        }
-        return turn;
+        const body = try buildRequestBody(arena, self.config.model, messages, tools, opts, true);
+
+        var state: StreamState = .{
+            .arena = arena,
+            .handler = handler,
+            .handler_ctx = handler_ctx,
+        };
+
+        self.http.postJsonStream("/v1/messages", body, onHttpChunk, &state) catch |err| {
+            if (state.err) |e| return e;
+            return err;
+        };
+
+        if (state.err) |e| return e;
+        return state.finish() catch return error.OutOfMemory;
     }
 
     const borrowed_vtable: wire.VTable = .{
@@ -221,8 +178,224 @@ pub fn createWire(gpa: std.mem.Allocator, io: Io, config: Config) Error!wire.Wir
     return client.asWireOwned(gpa);
 }
 
-fn mapTransportError(err: anyerror) Error {
-    return openai_compat.mapSdkError(err);
+// --- SSE stream assembly ---
+
+const StreamState = struct {
+    arena: std.mem.Allocator,
+    handler: ?types.StreamHandler,
+    handler_ctx: ?*anyopaque,
+    line_buf: std.ArrayList(u8) = .empty,
+    content: std.ArrayList(u8) = .empty,
+    /// Partial tool_use blocks keyed by content block index.
+    tool_ids: std.ArrayList([]const u8) = .empty,
+    tool_names: std.ArrayList([]const u8) = .empty,
+    tool_args: std.ArrayList(std.ArrayList(u8)) = .empty,
+    /// Map content-block index → tool slot (only for tool_use blocks).
+    block_to_tool: std.AutoHashMapUnmanaged(usize, usize) = .{},
+    finish_reason: []const u8 = "",
+    usage: ?types.Usage = null,
+    err: ?Error = null,
+
+    fn ensureToolSlot(self: *StreamState) !usize {
+        const i = self.tool_ids.items.len;
+        try self.tool_ids.append(self.arena, "");
+        try self.tool_names.append(self.arena, "");
+        try self.tool_args.append(self.arena, .empty);
+        return i;
+    }
+
+    fn finish(self: *StreamState) !types.AssistantTurn {
+        const content = try self.arena.dupe(u8, self.content.items);
+        const fr = try self.arena.dupe(u8, if (self.finish_reason.len > 0) self.finish_reason else "stop");
+        if (self.tool_ids.items.len == 0) {
+            return .{
+                .content = content,
+                .tool_calls = &.{},
+                .finish_reason = fr,
+                .usage = self.usage,
+            };
+        }
+        const calls = try self.arena.alloc(types.ToolCall, self.tool_ids.items.len);
+        for (0..self.tool_ids.items.len) |i| {
+            calls[i] = .{
+                .id = try self.arena.dupe(u8, self.tool_ids.items[i]),
+                .name = try self.arena.dupe(u8, self.tool_names.items[i]),
+                .arguments = try self.arena.dupe(u8, self.tool_args.items[i].items),
+            };
+        }
+        return .{
+            .content = content,
+            .tool_calls = calls,
+            .finish_reason = fr,
+            .usage = self.usage,
+        };
+    }
+};
+
+fn onHttpChunk(ctx: ?*anyopaque, chunk: []const u8) openai_http_err!void {
+    const state: *StreamState = @ptrCast(@alignCast(ctx.?));
+    feedSseBytes(state, chunk) catch |err| {
+        state.err = err;
+        return error.HttpError;
+    };
+}
+
+// openai_zig transport StreamChunk uses errors.Error
+const openai_http_err = @import("openai_zig").errors.Error;
+
+/// Public for tests: feed raw SSE bytes into stream state.
+pub fn feedSseBytes(state: *StreamState, chunk: []const u8) Error!void {
+    try state.line_buf.appendSlice(state.arena, chunk);
+    while (true) {
+        const nl = std.mem.indexOfScalar(u8, state.line_buf.items, '\n') orelse break;
+        var line = state.line_buf.items[0..nl];
+        if (line.len > 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
+        // Copy line before mutating buffer (handleSseLine may allocate; line is in buffer).
+        const line_owned = try state.arena.dupe(u8, line);
+        const rest_start = nl + 1;
+        const rest_len = state.line_buf.items.len - rest_start;
+        if (rest_len > 0) {
+            std.mem.copyForwards(u8, state.line_buf.items[0..rest_len], state.line_buf.items[rest_start..]);
+        }
+        state.line_buf.shrinkRetainingCapacity(rest_len);
+        try handleSseLine(state, line_owned);
+    }
+}
+
+fn handleSseLine(state: *StreamState, line: []const u8) Error!void {
+    if (line.len == 0) return;
+    if (std.mem.startsWith(u8, line, ":")) return; // comment
+    if (std.mem.startsWith(u8, line, "event:")) return; // type is also in data JSON
+    if (!std.mem.startsWith(u8, line, "data:")) return;
+    const data = std.mem.trim(u8, line["data:".len..], " \t");
+    if (data.len == 0 or std.mem.eql(u8, data, "[DONE]")) return;
+
+    const parsed = std.json.parseFromSlice(std.json.Value, state.arena, data, .{
+        .ignore_unknown_fields = true,
+    }) catch return; // ignore malformed partials
+    defer parsed.deinit();
+    try handleSseEvent(state, parsed.value);
+}
+
+fn handleSseEvent(state: *StreamState, root: std.json.Value) Error!void {
+    if (root != .object) return;
+    const o = root.object;
+    const typ = if (o.get("type")) |t| (if (t == .string) t.string else "") else "";
+
+    if (std.mem.eql(u8, typ, "content_block_start")) {
+        const index: usize = @intCast(jsonInt(o.get("index")));
+        if (o.get("content_block")) |cb| {
+            if (cb == .object) {
+                const cbo = cb.object;
+                const bt = if (cbo.get("type")) |t| (if (t == .string) t.string else "") else "";
+                if (std.mem.eql(u8, bt, "tool_use")) {
+                    const slot = try state.ensureToolSlot();
+                    try state.block_to_tool.put(state.arena, index, slot);
+                    if (cbo.get("id")) |id| {
+                        if (id == .string) state.tool_ids.items[slot] = try state.arena.dupe(u8, id.string);
+                    }
+                    if (cbo.get("name")) |name| {
+                        if (name == .string) state.tool_names.items[slot] = try state.arena.dupe(u8, name.string);
+                    }
+                    if (state.handler) |h| {
+                        h(state.handler_ctx, .{
+                            .tool_call_delta = .{
+                                .index = slot,
+                                .id = state.tool_ids.items[slot],
+                                .name = state.tool_names.items[slot],
+                            },
+                        }) catch {
+                            state.err = error.StreamFailed;
+                        };
+                    }
+                }
+            }
+        }
+    } else if (std.mem.eql(u8, typ, "content_block_delta")) {
+        const index: usize = @intCast(jsonInt(o.get("index")));
+        if (o.get("delta")) |d| {
+            if (d == .object) {
+                const dtyp = if (d.object.get("type")) |t| (if (t == .string) t.string else "") else "";
+                if (std.mem.eql(u8, dtyp, "text_delta")) {
+                    if (d.object.get("text")) |tx| {
+                        if (tx == .string and tx.string.len > 0) {
+                            try state.content.appendSlice(state.arena, tx.string);
+                            if (state.handler) |h| {
+                                h(state.handler_ctx, .{ .content_delta = tx.string }) catch {
+                                    state.err = error.StreamFailed;
+                                };
+                            }
+                        }
+                    }
+                } else if (std.mem.eql(u8, dtyp, "input_json_delta")) {
+                    if (state.block_to_tool.get(index)) |slot| {
+                        if (d.object.get("partial_json")) |pj| {
+                            if (pj == .string and pj.string.len > 0) {
+                                try state.tool_args.items[slot].appendSlice(state.arena, pj.string);
+                                if (state.handler) |h| {
+                                    h(state.handler_ctx, .{
+                                        .tool_call_delta = .{
+                                            .index = slot,
+                                            .arguments_delta = pj.string,
+                                        },
+                                    }) catch {
+                                        state.err = error.StreamFailed;
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if (std.mem.eql(u8, typ, "message_delta")) {
+        if (o.get("delta")) |d| {
+            if (d == .object) {
+                if (d.object.get("stop_reason")) |sr| {
+                    if (sr == .string) {
+                        state.finish_reason = mapStopReason(sr.string);
+                        if (state.handler) |h| {
+                            h(state.handler_ctx, .{ .finish_reason = state.finish_reason }) catch {
+                                state.err = error.StreamFailed;
+                            };
+                        }
+                    }
+                }
+            }
+        }
+        if (o.get("usage")) |u| {
+            if (u == .object) {
+                const completion = jsonInt(u.object.get("output_tokens"));
+                // input tokens often only on message_start; merge if present
+                const prompt = if (state.usage) |ex| ex.prompt_tokens else @as(u32, @intCast(jsonInt(u.object.get("input_tokens"))));
+                const comp_u: u32 = @intCast(if (completion < 0) 0 else completion);
+                state.usage = .{
+                    .prompt_tokens = prompt,
+                    .completion_tokens = comp_u,
+                    .total_tokens = prompt +% comp_u,
+                };
+            }
+        }
+    } else if (std.mem.eql(u8, typ, "message_start")) {
+        if (o.get("message")) |msg| {
+            if (msg == .object) {
+                if (msg.object.get("usage")) |u| {
+                    if (u == .object) {
+                        const prompt = jsonInt(u.object.get("input_tokens"));
+                        state.usage = types.Usage.fromCounts(prompt, 0, prompt);
+                    }
+                }
+            }
+        }
+    } else if (std.mem.eql(u8, typ, "message_stop")) {
+        if (state.handler) |h| {
+            h(state.handler_ctx, .done) catch {
+                state.err = error.StreamFailed;
+            };
+        }
+    } else if (std.mem.eql(u8, typ, "error")) {
+        state.err = error.ServerError;
+    }
 }
 
 /// Build Anthropic Messages JSON body (arena-allocated).
@@ -232,6 +405,7 @@ pub fn buildRequestBody(
     messages: []const types.Message,
     tools: []const types.ToolDefinition,
     opts: ChatOptions,
+    stream: bool,
 ) Error![]u8 {
     var out: Io.Writer.Allocating = .init(arena);
     errdefer out.deinit();
@@ -240,6 +414,11 @@ pub fn buildRequestBody(
     s.beginObject() catch return error.WriteFailed;
     s.objectField("model") catch return error.WriteFailed;
     s.write(model) catch return error.WriteFailed;
+
+    if (stream) {
+        s.objectField("stream") catch return error.WriteFailed;
+        s.write(true) catch return error.WriteFailed;
+    }
 
     // max_tokens is required by Anthropic
     const max_tok: u32 = opts.max_tokens orelse opts.max_completion_tokens orelse 4096;
@@ -544,7 +723,7 @@ test "anthropic request body encodes system and tools" {
     const body = try buildRequestBody(gpa, "claude-sonnet-4-0", &msgs, &tools, .{
         .max_tokens = 256,
         .temperature = 0.2,
-    });
+    }, false);
     defer gpa.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"model\":\"claude-sonnet-4-0\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"max_tokens\":256") != null);
@@ -567,7 +746,7 @@ test "anthropic request body tool_result and tool_use" {
         types.Message.assistantToolCalls("", &calls),
         types.Message.toolResult("toolu_1", "ok"),
     };
-    const body = try buildRequestBody(gpa, "claude-3", &msgs, &.{}, .{ .max_tokens = 100 });
+    const body = try buildRequestBody(gpa, "claude-3", &msgs, &.{}, .{ .max_tokens = 100 }, false);
     defer gpa.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "tool_use") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "tool_result") != null);
@@ -606,4 +785,62 @@ test "anthropic turnFrom response tool_use" {
     try std.testing.expectEqualStrings("list_dir", turn.tool_calls[0].name);
     try std.testing.expect(std.mem.indexOf(u8, turn.tool_calls[0].arguments, "path") != null);
     try std.testing.expectEqual(@as(u32, 15), turn.usage.?.total_tokens);
+}
+
+test "anthropic request body stream true" {
+    const gpa = std.testing.allocator;
+    const msgs = [_]types.Message{types.Message.user("hi")};
+    const body = try buildRequestBody(gpa, "claude-3", &msgs, &.{}, .{ .max_tokens = 64 }, true);
+    defer gpa.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\":true") != null);
+}
+
+test "anthropic SSE text and tool_use assembly" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    var state: StreamState = .{
+        .arena = arena,
+        .handler = null,
+        .handler_ctx = null,
+    };
+
+    const sse =
+        \\event: message_start
+        \\data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}
+        \\
+        \\event: content_block_start
+        \\data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+        \\
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}
+        \\
+        \\event: content_block_start
+        \\data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu1","name":"list_dir"}}
+        \\
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}
+        \\
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\".\"}"}}
+        \\
+        \\event: message_delta
+        \\data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":8}}
+        \\
+        \\event: message_stop
+        \\data: {"type":"message_stop"}
+        \\
+    ;
+    try feedSseBytes(&state, sse);
+    const turn = try state.finish();
+    try std.testing.expectEqualStrings("Hi", turn.content);
+    try std.testing.expectEqualStrings("tool_calls", turn.finish_reason);
+    try std.testing.expectEqual(@as(usize, 1), turn.tool_calls.len);
+    try std.testing.expectEqualStrings("list_dir", turn.tool_calls[0].name);
+    try std.testing.expectEqualStrings("tu1", turn.tool_calls[0].id);
+    try std.testing.expectEqualStrings("{\"path\":\".\"}", turn.tool_calls[0].arguments);
+    try std.testing.expectEqual(@as(u32, 3), turn.usage.?.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 8), turn.usage.?.completion_tokens);
 }

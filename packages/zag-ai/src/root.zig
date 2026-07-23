@@ -17,6 +17,8 @@ pub const stream = @import("stream.zig");
 pub const catalog = @import("catalog.zig");
 pub const config_file = @import("config_file.zig");
 pub const wire = @import("wire.zig");
+pub const config = @import("config.zig");
+pub const http = @import("http.zig");
 // Contract tests are pulled into the package test binary via refAllDecls.
 
 pub const Message = types.Message;
@@ -29,7 +31,8 @@ pub const Usage = types.Usage;
 pub const ChatOptions = types.ChatOptions;
 pub const ToolChoice = types.ToolChoice;
 pub const Client = openai_compat.Client;
-pub const Config = openai_compat.Config;
+/// Shared wire config (OpenAI + Anthropic adapters).
+pub const Config = config.Config;
 pub const ProviderSpec = presets.ProviderSpec;
 pub const ModelInfo = catalog.ModelInfo;
 pub const FileConfig = config_file.FileConfig;

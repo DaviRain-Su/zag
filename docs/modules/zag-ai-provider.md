@@ -63,7 +63,8 @@ canonical: types.Message / ToolDefinition / ChatOptions
 1. **文档** — 本页 + architecture。  
 2. **WireAdapter** — `wire.zig`；`createWire` / `Resolved.createWire`。  
 3. **openai_compat** — Chat Completions（默认）。  
-4. **anthropic_messages** — Anthropic Messages API（已落地）；SSE 暂以非流式 + 合成 delta。
+4. **anthropic_messages** — Messages API + **真 SSE**（`content_block_delta` / `tool_use`）。  
+5. **config.Config + http.Client** — 共享配置与中立 HTTP（Bearer / header auth）。
 
 ### 不变式（适配层）
 
@@ -147,7 +148,6 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 - 完整 OAuth 产品  
 - 绑定单一云厂商  
-- Anthropic **真·SSE** 增量（当前合成 delta）  
 - Memory Repo（属 C5）  
 - Graph 编排（属 C6；节点内仍用本 Provider 端口）  
 

@@ -9,8 +9,11 @@ Auth is env + JSON config only (no OAuth).
 | Module | Role |
 |--------|------|
 | `types` | Message / ContentPart / ToolCall / Usage / ChatOptions / StreamEvent / StreamHandler |
-| `wire` | **WireAdapter** vtable + `ApiStyle` (openai_compat · anthropic_messages) |
-| `anthropic_messages` | Anthropic Messages API adapter |
+| `config` | 共享 `Config`（base_url / key / model / retries） |
+| `http` | 中立 HTTP（Bearer 或 header auth；复用 openai-zig transport） |
+| `wire` | **WireAdapter** vtable + `ApiStyle` |
+| `openai_compat` | OpenAI Chat Completions adapter |
+| `anthropic_messages` | Anthropic Messages + **SSE stream** |
 | `presets` | ProviderSpec table (`api_style`) |
 | `catalog` | Known model ids + context windows + budget helpers |
 | `registry` | Resolve provider + `createWire` |
