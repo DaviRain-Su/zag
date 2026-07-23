@@ -9,18 +9,20 @@
 ## 包内分层
 
 ```text
-agent/provider.Adapter          ← Agent Core 端口（canonical）
-        → zag-ai (Model plane)
-             resolve · catalog · ChatOptions · errors
-             WireAdapter.convert / stream map   ← 规划显式化
-                → openai-zig（OpenAI-compat 实现）
-                → （预留）anthropic / 其他协议包
+zag-agent-core/provider.Provider     ← 纯端口（无 Client）
+        ↑
+zag-coding-agent/wire_provider       ← WireAdapter → Provider 桥
+        → zag-ai WireAdapter
+             resolve · catalog · ChatOptions
+                → openai-zig（默认实现）
+                → （预留）anthropic / 其他
 ```
 
 | 层 | 路径 | 职责 |
 |----|------|------|
-| 端口 | `src/agent/provider.zig` | harness vtable；`chat_options`；**只认 canonical** |
-| Model plane | `packages/zag-ai` | resolve、catalog、canonical types、**adapters**、contract |
+| 纯端口 | `packages/zag-agent-core/src/provider.zig` | `Provider` vtable only |
+| 组装桥 | `packages/zag-coding-agent/src/wire_provider.zig` | stream / options / ownership |
+| Model plane | `packages/zag-ai` | WireAdapter、resolve、contract |
 | 协议实现 | `packages/openai-zig` 等 | HTTP / SSE / 厂商 schema |
 
 Harness **禁止**依赖 openai-zig 类型。总图见 [architecture.md](../architecture.md#目标分层总图钉死)。

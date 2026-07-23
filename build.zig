@@ -4,7 +4,6 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --- monorepo packages: openai-zig + zag-ai ---
     const openai_dep = b.dependency("openai_zig", .{
         .target = target,
         .optimize = optimize,
@@ -17,6 +16,18 @@ pub fn build(b: *std.Build) void {
     });
     const ai_mod = ai_dep.module("zag-ai");
 
+    const core_dep = b.dependency("zag_agent_core", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const core_mod = core_dep.module("zag-agent-core");
+
+    const coding_dep = b.dependency("zag_coding_agent", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const coding_mod = coding_dep.module("zag-coding-agent");
+
     _ = b.addModule("openai_zig", .{
         .root_source_file = b.path("packages/openai-zig/src/root.zig"),
         .target = target,
@@ -28,12 +39,29 @@ pub fn build(b: *std.Build) void {
             .{ .name = "openai_zig", .module = openai_mod },
         },
     });
+    _ = b.addModule("zag-agent-core", .{
+        .root_source_file = b.path("packages/zag-agent-core/src/root.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "zag-ai", .module = ai_mod },
+        },
+    });
+    _ = b.addModule("zag-coding-agent", .{
+        .root_source_file = b.path("packages/zag-coding-agent/src/root.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "zag-agent-core", .module = core_mod },
+            .{ .name = "zag-ai", .module = ai_mod },
+        },
+    });
 
     const mod = b.addModule("zag", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .imports = &.{
             .{ .name = "zag-ai", .module = ai_mod },
+            .{ .name = "zag-agent-core", .module = core_mod },
+            .{ .name = "zag-coding-agent", .module = coding_mod },
             .{ .name = "openai_zig", .module = openai_mod },
         },
     });
@@ -47,6 +75,8 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "zag", .module = mod },
                 .{ .name = "zag-ai", .module = ai_mod },
+                .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-coding-agent", .module = coding_mod },
                 .{ .name = "openai_zig", .module = openai_mod },
             },
         }),
@@ -83,18 +113,36 @@ pub fn build(b: *std.Build) void {
     });
     const run_ai_tests = b.addRunArtifact(ai_tests);
 
+    const core_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-agent-core/src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zag-ai", .module = ai_mod },
+            },
+        }),
+    });
+    const run_core_tests = b.addRunArtifact(core_tests);
+
+    const coding_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-coding-agent/src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-ai", .module = ai_mod },
+            },
+        }),
+    });
+    const run_coding_tests = b.addRunArtifact(coding_tests);
+
     const mod_tests = b.addTest(.{
         .root_module = mod,
     });
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
-    });
-    const run_exe_tests = b.addRunArtifact(exe_tests);
-
-    // openai-zig OpenAPI path coverage gate (IR vs resources)
-    // cwd = packages/openai-zig so the script path is package-relative.
     const openai_coverage = b.addSystemCommand(&.{
         "python3",
         "scripts/check-path-coverage.py",
@@ -109,7 +157,8 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests + openai path coverage");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_ai_tests.step);
+    test_step.dependOn(&run_core_tests.step);
+    test_step.dependOn(&run_coding_tests.step);
     test_step.dependOn(&run_mod_tests.step);
-    test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(openai_coverage_step);
 }

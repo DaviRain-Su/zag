@@ -1,0 +1,17 @@
+.{
+    .name = .zag_agent_core,
+    .version = "0.5.0",
+    .fingerprint = 0xa896e87df8bd960e,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zag_ai = .{
+            .path = "../zag-ai",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+}

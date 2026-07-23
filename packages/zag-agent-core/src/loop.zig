@@ -19,7 +19,6 @@ const tool = @import("tool.zig");
 const transcript_mod = @import("transcript.zig");
 const provider_mod = @import("provider.zig");
 const observer_mod = @import("observer.zig");
-const toolset_mod = @import("toolset.zig");
 const permissions = @import("permissions.zig");
 const context_mod = @import("context.zig");
 const workspace = @import("workspace.zig");
@@ -55,7 +54,7 @@ pub const Result = struct {
 pub const Deps = struct {
     gpa: std.mem.Allocator,
     provider: provider_mod.Provider,
-    toolset: toolset_mod.Toolset,
+    toolset: tool.Toolset,
     tool_ctx: tool.Context,
     options: Options = .{},
 };
@@ -277,11 +276,10 @@ test "loop stops when model returns text only" {
     var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
     try transcript.appendUser("hi");
 
-    var storage = toolset_mod.Phase0Storage.init();
     const result = try run(.{
         .gpa = gpa,
         .provider = provider,
-        .toolset = storage.toolset(),
+        .toolset = .{ .tools = &.{} },
         .tool_ctx = .{
             .allocator = gpa,
             .io = std.testing.io,
@@ -339,11 +337,10 @@ test "permission deny yields tool error without executing" {
     var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
     try transcript.appendUser("write something");
 
-    var storage = toolset_mod.Phase1Storage.init();
     const result = try run(.{
         .gpa = gpa,
         .provider = provider,
-        .toolset = storage.toolset(),
+        .toolset = .{ .tools = &.{} },
         .tool_ctx = .{
             .allocator = gpa,
             .io = std.testing.io,
@@ -405,11 +402,10 @@ test "jail deny absolute path without writing" {
     var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
     try transcript.appendUser("read passwd");
 
-    var storage = toolset_mod.Phase1Storage.init();
     const result = try run(.{
         .gpa = gpa,
         .provider = provider,
-        .toolset = storage.toolset(),
+        .toolset = .{ .tools = &.{} },
         .tool_ctx = .{
             .allocator = gpa,
             .io = std.testing.io,

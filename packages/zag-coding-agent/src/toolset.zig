@@ -1,18 +1,11 @@
-//! Named bundles of tools.
-//!
-//! Phase 0: read-only FS. Phase 1: + write_file + run_shell.
+//! Named bundles of coding tools (product layer).
 
-const tool = @import("tool.zig");
-const fs_tools = @import("../runtime/fs_tools.zig");
-const edit_tools = @import("../runtime/edit_tools.zig");
+const core = @import("zag-agent-core");
+const tool = core.tool;
+const fs_tools = @import("runtime/fs_tools.zig");
+const edit_tools = @import("runtime/edit_tools.zig");
 
-pub const Toolset = struct {
-    tools: []const tool.Tool,
-
-    pub fn registry(self: Toolset) tool.Registry {
-        return .{ .tools = self.tools };
-    }
-};
+pub const Toolset = tool.Toolset;
 
 /// Phase 0 read-only tools only (kept for narrow tests).
 pub const Phase0Storage = struct {

@@ -204,13 +204,14 @@ pub fn main(init: std.process.Init) !void {
         std.log.err("wire adapter init failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
-    var adapter = zag.provider.Adapter.fromWire(wire, use_stream, true);
-    adapter.chat_options = resolve_result.chat_options;
+    // Shell binds WireAdapter → core Provider (no OpenAI types in agent-core).
+    var wire_prov = zag.wire_provider.WireProvider.init(wire, use_stream, true);
+    wire_prov.chat_options = resolve_result.chat_options;
     if (use_stream and verbose) {
-        adapter.on_event = streamLogHandler;
-        adapter.on_event_ctx = null;
+        wire_prov.on_event = streamLogHandler;
+        wire_prov.on_event_ctx = null;
     }
-    defer adapter.deinit();
+    defer wire_prov.deinit();
 
     var agent_opts: zag.agent.Options = .{
         .verbose = verbose,
@@ -226,7 +227,7 @@ pub fn main(init: std.process.Init) !void {
         agent_opts.max_turns = mt;
     }
 
-    var agent = zag.agent.Agent.init(gpa, io, adapter.provider(), agent_opts);
+    var agent = zag.agent.Agent.init(gpa, io, wire_prov.provider(), agent_opts);
     defer agent.deinit();
 
     if (prompt_parts.items.len > 0) {

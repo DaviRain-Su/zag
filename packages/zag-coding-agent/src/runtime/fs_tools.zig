@@ -2,7 +2,8 @@
 
 const std = @import("std");
 const Io = std.Io;
-const tool = @import("../agent/tool.zig");
+const core = @import("zag-agent-core");
+const tool = core.tool;
 
 pub const list_dir_def: tool.Definition = .{
     .name = "list_dir",

@@ -33,6 +33,15 @@ pub const Tool = struct {
     handler: Handler,
 };
 
+/// Slice of tools exposed to the model + local handlers (core type; product bundles live in coding-agent).
+pub const Toolset = struct {
+    tools: []const Tool,
+
+    pub fn registry(self: Toolset) Registry {
+        return .{ .tools = self.tools };
+    }
+};
+
 pub const Registry = struct {
     tools: []const Tool,
 

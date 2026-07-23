@@ -1,30 +1,42 @@
-//! Zag library root — coding agent harness.
+//! Zag umbrella — re-exports monorepo packages for the CLI and external users.
 //!
-//! AI/LLM client lives in monorepo package `zag-ai` (`@import("zag-ai")`).
+//! ```
+//! packages/openai-zig      wire transport + OpenAPI
+//! packages/zag-ai          model plane (WireAdapter)
+//! packages/zag-agent-core  loop / pure Provider
+//! packages/zag-coding-agent  coding tools + Agent facade + wire bridge
+//! src/main.zig             product shell (CLI)
+//! ```
 
 const std = @import("std");
 const ai = @import("zag-ai");
+const core = @import("zag-agent-core");
+const coding = @import("zag-coding-agent");
 
-pub const message = @import("agent/message.zig");
-pub const tool = @import("agent/tool.zig");
-pub const transcript = @import("agent/transcript.zig");
-pub const provider = @import("agent/provider.zig");
-pub const observer = @import("agent/observer.zig");
-pub const toolset = @import("agent/toolset.zig");
-pub const permissions = @import("agent/permissions.zig");
-pub const context = @import("agent/context.zig");
-pub const project = @import("agent/project.zig");
-pub const session_store = @import("agent/session_store.zig");
-pub const workspace = @import("agent/workspace.zig");
-pub const shell_policy = @import("agent/shell_policy.zig");
-pub const trace = @import("agent/trace.zig");
-pub const loop = @import("agent/loop.zig");
-pub const agent = @import("agent/agent.zig");
+// --- Agent Core ---
+pub const message = core.message;
+pub const tool = core.tool;
+pub const transcript = core.transcript;
+pub const provider = coding.wire_provider; // product: WireProvider + re-export Provider port
+pub const provider_port = core.provider; // pure port only
+pub const observer = core.observer;
+pub const permissions = core.permissions;
+pub const context = core.context;
+pub const session_store = core.session_store;
+pub const shell_policy = core.shell_policy;
+pub const workspace = core.workspace;
+pub const trace = core.trace;
+pub const loop = core.loop;
 
-pub const fs_tools = @import("runtime/fs_tools.zig");
-pub const edit_tools = @import("runtime/edit_tools.zig");
+// --- Coding product ---
+pub const agent = coding.agent;
+pub const toolset = coding.toolset;
+pub const project = coding.project;
+pub const fs_tools = coding.fs_tools;
+pub const edit_tools = coding.edit_tools;
+pub const wire_provider = coding.wire_provider;
 
-// Re-export AI package surface for convenience
+// --- Model plane ---
 pub const zag_ai = ai;
 pub const openai_zig = ai.openai_zig;
 pub const openai_compat = ai.openai_compat;
@@ -34,11 +46,11 @@ pub const provider_auth_env = ai.auth_env;
 pub const provider_catalog = ai.catalog;
 pub const provider_config_file = ai.config_file;
 
-/// Back-compat alias used by older code / docs.
+/// Back-compat alias.
 pub const openai = struct {
     pub const Client = ai.Client;
     pub const Config = ai.Config;
-    pub const Error = ai.openai_compat.Error;
+    pub const Error = ai.wire.Error;
 };
 
 pub const provider_config = struct {
@@ -66,7 +78,10 @@ pub const provider_config = struct {
     }
 };
 
-pub const version = "0.4.0";
+pub const agent_core = core;
+pub const coding_agent = coding;
+
+pub const version = "0.5.0";
 
 test {
     std.testing.refAllDecls(@This());

@@ -65,13 +65,19 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 | `--no-project` | 不注入 AGENTS.md |
 
 ```text
-src/agent/             ★ harness 业务（loop / 权限 / context / session / trace）
-src/runtime/           FS · shell 执行面
-packages/zag-ai/       agent 友好模型面（resolve / ChatOptions / catalog）
-packages/openai-zig/   线协议 · transport · OpenAPI（可独立复用）
+src/main.zig                    产品壳 CLI
+src/root.zig                    umbrella 再导出
+packages/zag-coding-agent/      Agent 门面 · toolset · WireProvider · runtime tools
+packages/zag-agent-core/        loop · 纯 Provider 端口 · session · permissions
+packages/zag-ai/                WireAdapter · resolve · catalog
+packages/openai-zig/            线协议 · transport · OpenAPI
 ```
 
-依赖单向：`agent → zag-ai → openai-zig`。详见 [docs/architecture.md](./docs/architecture.md)。
+```text
+main → coding-agent → agent-core → zag-ai → openai-zig
+```
+
+详见 [docs/architecture.md](./docs/architecture.md)。
 
 版本号见 `src/root.zig` / `build.zig.zon`（**≠** 生产底线已达成）。
 

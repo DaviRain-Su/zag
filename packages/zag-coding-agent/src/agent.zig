@@ -1,4 +1,4 @@
-//! Agent facade — wires provider, tools, permissions, context, and loop.
+//! Coding Agent facade — product layer over Agent Core.
 //!
 //! ```
 //! var agent = Agent.init(gpa, io, provider, .{ .permission_mode = .ask });
@@ -9,19 +9,21 @@
 
 const std = @import("std");
 const Io = std.Io;
-const message = @import("message.zig");
-const tool = @import("tool.zig");
-const transcript_mod = @import("transcript.zig");
-const provider_mod = @import("provider.zig");
-const observer_mod = @import("observer.zig");
+const core = @import("zag-agent-core");
 const toolset_mod = @import("toolset.zig");
-const permissions = @import("permissions.zig");
-const context_mod = @import("context.zig");
 const project_mod = @import("project.zig");
-const session_store = @import("session_store.zig");
-const shell_policy = @import("shell_policy.zig");
-const trace_mod = @import("trace.zig");
-const loop = @import("loop.zig");
+
+const message = core.message;
+const tool = core.tool;
+const transcript_mod = core.transcript;
+const provider_mod = core.provider;
+const observer_mod = core.observer;
+const permissions = core.permissions;
+const context_mod = core.context;
+const session_store = core.session_store;
+const shell_policy = core.shell_policy;
+const trace_mod = core.trace;
+const loop = core.loop;
 
 pub const Options = struct {
     max_turns: u32 = loop.default_max_turns,
@@ -33,7 +35,7 @@ pub const Options = struct {
     /// Relative path for JSONL run trace; null disables.
     trace_path: ?[]const u8 = null,
     /// Package version string for trace metadata.
-    version: []const u8 = "0.4.0",
+    version: []const u8 = "0.5.0",
     /// Loop-level retries on retryable provider errors.
     chat_retries: u8 = 2,
     retry_base_delay_ms: u64 = 500,
@@ -88,7 +90,6 @@ pub const Session = struct {
                 session_store.load(gpa, io, Io.Dir.cwd(), p, &transcript) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.IoFailed, error.InvalidSession => {
-                        // Missing/invalid file → start fresh with composed system.
                         try seedNewTranscript(gpa, io, &transcript, opts, &project_source);
                     },
                 };
