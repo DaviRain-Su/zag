@@ -70,9 +70,9 @@ pub const Resource = struct {
     ) errors.Error!std.json.Parsed(gen.SkillListResource) {
         var buf: [256]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
-        try w.writeAll("/skills");
+        w.writeAll("/skills") catch return errors.Error.SerializeError;
         var first = true;
-        try appendListParams(&w, params, &first);
+        appendListParams(&w, params, &first) catch return errors.Error.SerializeError;
         return common.sendNoBodyTypedWithOptions(
             self.transport,
             allocator,
@@ -246,9 +246,9 @@ pub const Resource = struct {
     ) errors.Error!std.json.Parsed(gen.SkillVersionListResource) {
         var buf: [320]u8 = undefined;
         var w: std.Io.Writer = .fixed(&buf);
-        try w.print("/skills/{s}/versions", .{skill_id});
+        w.print("/skills/{s}/versions", .{skill_id}) catch return errors.Error.SerializeError;
         var first = true;
-        try appendListParams(&w, params, &first);
+        appendListParams(&w, params, &first) catch return errors.Error.SerializeError;
         return common.sendNoBodyTypedWithOptions(
             self.transport,
             allocator,
