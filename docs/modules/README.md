@@ -8,15 +8,15 @@
 
 | 规格 | 阶段 | 现状路径 | 目标拆分（可选） |
 |------|------|----------|------------------|
-| [loop-turn.md](./loop-turn.md) | H1 | `src/agent/loop.zig`、`agent.zig` | 保持 |
-| [tools-edit.md](./tools-edit.md) | H2 → C4 | `src/runtime/edit_tools.zig`、`fs_tools.zig`、`toolset.zig` | 可增 `tools/edit` 逻辑仍在 runtime |
-| [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | `edit_tools.zig` `run_shell`、`shell_policy.zig` | 保持 |
-| [permissions.md](./permissions.md) | H3 | `src/agent/permissions.zig` | 保持 |
-| [context-compaction.md](./context-compaction.md) | H4 → C5 | `src/agent/context.zig`、`project.zig` | 保持 |
-| [session-store.md](./session-store.md) | H4 → C5 | `src/agent/session_store.zig` | 保持 |
-| [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | `workspace.zig`、`shell_policy.zig` | C7 可增 runtime sandbox |
-| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `packages/zag-ai/*`、`src/agent/provider.zig` | 已拆 openai-zig；zag-ai 保持窄面 |
-| [trace-observability.md](./trace-observability.md) | H7 | `src/agent/trace.zig` | 保持 |
+| [loop-turn.md](./loop-turn.md) | H1 | `packages/zag-agent-core/src/loop.zig` | 保持 |
+| [tools-edit.md](./tools-edit.md) | H2 → C4 | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent |
+| [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | runtime `run_shell` + core `shell_policy` | 保持 |
+| [permissions.md](./permissions.md) | H3 | `zag-agent-core/.../permissions.zig` | 保持 |
+| [context-compaction.md](./context-compaction.md) | H4 → C5 | core `context`；coding `project` | 保持 |
+| [session-store.md](./session-store.md) | H4 → C5 | core `session_store.zig` | 保持 |
+| [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | core `workspace` + `shell_policy` | C7 sandbox |
+| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
+| [trace-observability.md](./trace-observability.md) | H7 | core `trace.zig` | 保持 |
 | [memory.md](./memory.md) | **C5**（前置 H4） | —（未实现） | `.zag/memory/` + agent 挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 | — | 独立 extensions 层 |

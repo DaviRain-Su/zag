@@ -160,38 +160,37 @@ Agent Core
 
 ## Monorepo 包边界（强制）
 
-按**依赖方向与失败模式**拆，不按「文件多了就拆」。  
-**目标包全谱与拆 repo 标准以 [packaging.md](./packaging.md) 为准**；下表是现状边界。
+按**依赖方向与失败模式**拆。对齐 Pi：`ai` / `agent-core` / `coding-agent` / shell。  
+更长拆包标准见 [packaging.md](./packaging.md)（若存在）。
 
 ```text
-Product shell (main / 未来 tui…)
+Product shell (src/main.zig)
         │
         ▼
-┌─────────────────── Agent Core (src/agent) ─────────────┐
-│  loop · permissions · context · session · trace        │
-│  Provider port · Toolset · Memory 端口 · Graph*        │
-│  永不 import OpenAPI / HTTP 细节                         │
-└────────────┬──────────────────────────┬────────────────┘
-             │                          │
-             ▼                          ▼
-   packages/zag-ai/              src/runtime/
-   Model plane                    fs · shell
-   canonical + adapters           永不知道 permission 矩阵
+┌── packages/zag-coding-agent ───────────────────────────┐
+│  Agent/Session · toolset · project · WireProvider      │
+│  runtime tools (list/read/write/shell)                 │
+└────────────┬───────────────────────┬───────────────────┘
+             │                       │
+             ▼                       ▼
+ packages/zag-agent-core      packages/zag-ai
+ loop · pure Provider         WireAdapter · catalog
+ session · permissions        resolve · types
+ context · trace
              │
              ▼
-   packages/openai-zig/
-   OpenAI-compat 线协议（adapter 后端之一）
+ packages/openai-zig
 ```
 
 | 包 / 目录 | 职责 | 可依赖 | **禁止**依赖 |
 |-----------|------|--------|----------------|
-| `packages/openai-zig` | HTTP、重试、SSE、OpenAPI 资源与生成类型 | std | zag-ai、agent、runtime |
-| `packages/zag-ai` | resolve、catalog、canonical 类型、**wire adapters**、错误分类 | openai-zig（及未来其他协议包） | agent、permissions、jail |
-| `src/agent` | Agent Core | zag-ai（窄面）、runtime tools | openai-zig 细节、OpenAPI 类型 |
-| `src/runtime` | 执行面 | std、Io | 模型协议 |
-| Product shell | 组装 | 上述 | 业务逻辑沉到 shell |
+| `openai-zig` | HTTP / OpenAPI | std | 上层 agent 包 |
+| `zag-ai` | Model plane + WireAdapter | openai-zig | agent-core / coding-agent |
+| `zag-agent-core` | Loop、**纯 Provider**、session、permissions | zag-ai（types/retry/catalog only） | `Client`、Wire 组装、产品 toolset |
+| `zag-coding-agent` | 产品 Agent、`WireProvider`、默认 tools | core + zag-ai | openai-zig 细节 |
+| `src/main` + `src/root` | CLI 壳 + umbrella 再导出 | 上述 | 业务沉在 shell |
 
-**一句话：** Agent Core 只看见 `Provider.chat` + `AssistantTurn`；线协议关在 adapter 之后。
+**一句话：** Core 只见 `Provider.chat`；Wire 桥在 coding-agent；线协议在 zag-ai 之后。
 
 规格映射见 [modules/README.md](./modules/README.md#代码映射表)。
 
@@ -200,21 +199,17 @@ Product shell (main / 未来 tui…)
 ## 现状分层
 
 ```text
-CLI (main.zig)                    ← 薄产品壳雏形
+CLI (main.zig)
     ↓
-agent/  ★ Agent Core（整体 L1；Provider 接线 L1+）
-  Agent · Session · loop
-  permissions · workspace jail · shell_policy · trace
-  context · project · session_store · Provider port · Toolset
-  （无 Graph 运行时；无 Memory 后端）
+zag-coding-agent  ★ 产品 harness
+  Agent · Session · toolset · WireProvider · runtime tools
     ↓
-packages/zag-ai/  Model plane（OpenAI-compat 直连，adapter 接口待显式化）
-  presets · catalog · registry · auth_env · config_file
-  openai_compat · stream · types
+zag-agent-core  ★ 纯 loop / Provider 端口
+  loop · permissions · context · session · trace
     ↓
-packages/openai-zig/
+zag-ai  WireAdapter (openai_compat 默认)
     ↓
-runtime/  FS · shell
+openai-zig
 ```
 
 ### 工具执行三道门（已有）
