@@ -139,6 +139,8 @@ P1 Capability — only after H
 
 > Copy **Pi’s** package discipline, session/compaction depth, and extension philosophy; keep **Zag’s** safety gates; finish a strong **single-agent loop (Phase H)** before any **graph/org multi-agent** layer. Industry “graph” hype maps to **C6+**, not a rewrite of the coding loop.
 
+**Architecture freeze (product decision):** [architecture.md](../architecture.md) — Product shell · Agent Core (Loop ⊂ Graph) · Memory Core port · Model plane WireAdapters.
+
 ## Related
 
 - [references.md](../references.md) · [maturity.md](../maturity.md) · [phases/H-harden.md](../phases/H-harden.md)  

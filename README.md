@@ -22,7 +22,7 @@
 | [docs/vision.md](./docs/vision.md) | 定位与吸收原则 |
 | [docs/maturity.md](./docs/maturity.md) | L0–L3 成熟度真理源 |
 | [docs/roadmap.md](./docs/roadmap.md) | Teaching / H / Capability / Quality |
-| [docs/architecture.md](./docs/architecture.md) | 现状 vs 目标分层 |
+| [docs/architecture.md](./docs/architecture.md) | 分层钉死：Loop⊂Graph · WireAdapter · 产品壳 |
 | [chapters/00-loop](./chapters/00-loop/README.md) | Teaching 0：loop |
 | [chapters/01-edit-permissions](./chapters/01-edit-permissions/README.md) | Teaching 1：编辑 + 权限 |
 | [chapters/02-session-context](./chapters/02-session-context/README.md) | Teaching 2：会话 + context |

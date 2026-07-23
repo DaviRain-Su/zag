@@ -62,6 +62,19 @@
 - Phase H 内做 Memory 平台 / 云知识库（属 C5，默认关）
 - 把 Zag 砍成「仅四工具」——学 Pi 的扩展纪律，不学阉割产品目标
 
+## 目标分层（摘要）
+
+```text
+Product shell (CLI/TUI/RPC…)  →  Agent Core (Loop ± Graph)
+                                   Memory Core 端口 · Tools
+                              →  Model plane (canonical + WireAdapters)
+                              →  Runtime
+```
+
+- **Loop** 可独立跑；**Graph** 多角色编排（C6），节点内仍是 Loop。  
+- **WireAdapter** 预留多协议；现状仅 OpenAI-compat。  
+- 详图：[architecture.md](./architecture.md)。
+
 ## 双轨文档
 
 | 轨 | 目录 | 目的 |
@@ -69,6 +82,7 @@
 | Teaching | `chapters/00–03` | 学会 harness 形状 |
 | Spec | `docs/modules`、`docs/phases` | 指导实现到 L2/L3 |
 | Gaps | `docs/gaps` | 每章诚实列出离生产差什么 |
+| Research | `docs/research/` | 行业与 Pi 对照存档 |
 
 ## 相关
 

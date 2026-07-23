@@ -24,7 +24,9 @@ Teaching 0 → 1 → 2 → 3  ✅
 **原则：** 完成 H 之前，文档与 README **禁止**写「已是生产级 / Phase 3 即生产完成」。
 
 **主对照：** [Pi harness](https://github.com/earendil-works/pi)（session/compaction/extensions 包纪律）。  
-**行业与缺口：** [research/2026-harness-landscape.md](./research/2026-harness-landscape.md)（先强 loop，graph 属 C6+）。
+**行业与缺口：** [research/2026-harness-landscape.md](./research/2026-harness-landscape.md)（先强 loop，graph 属 C6+）。  
+**架构钉死：** [architecture.md](./architecture.md) — Loop⊂Graph、WireAdapter 预留、Memory Core 端口、产品壳。  
+**下一代码步（非本轮）：** zag-ai 抽出 WireAdapter（OpenAI 为默认实现）。
 
 ---
 

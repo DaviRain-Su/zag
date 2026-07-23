@@ -9,22 +9,69 @@
 ## 包内分层
 
 ```text
-agent/provider.Adapter
-        → zag-ai.Client / stream / resolve
-                → openai-zig transport + chat resources
+agent/provider.Adapter          ← Agent Core 端口（canonical）
+        → zag-ai (Model plane)
+             resolve · catalog · ChatOptions · errors
+             WireAdapter.convert / stream map   ← 规划显式化
+                → openai-zig（OpenAI-compat 实现）
+                → （预留）anthropic / 其他协议包
 ```
 
 | 层 | 路径 | 职责 |
 |----|------|------|
-| 端口 | `src/agent/provider.zig` | harness vtable；`chat_options` |
-| 产品面 | `packages/zag-ai` | resolve、catalog 预算、ChatOptions、Usage、错误分类、embed、config |
-| 协议面 | `packages/openai-zig` | HTTP 重试、SSE、OpenAPI |
+| 端口 | `src/agent/provider.zig` | harness vtable；`chat_options`；**只认 canonical** |
+| Model plane | `packages/zag-ai` | resolve、catalog、canonical types、**adapters**、contract |
+| 协议实现 | `packages/openai-zig` 等 | HTTP / SSE / 厂商 schema |
 
-Harness **禁止**依赖 openai-zig 类型。详见 [architecture 包边界](../architecture.md#monorepo-包边界强制)。
+Harness **禁止**依赖 openai-zig 类型。总图见 [architecture.md](../architecture.md#目标分层总图钉死)。
+
+## Wire Adapter（预留）
+
+对齐 Pi：`convertToLlm` + stream 事件映回统一形状。
+
+### 目标形状（实现时落代码，本文先钉）
+
+```text
+canonical: types.Message / ToolDefinition / ChatOptions
+                │
+                ▼
+        WireAdapter (trait / vtable)
+          · name / api_style
+          · chat(arena, messages, tools, opts) → AssistantTurn
+          · chatStream(...) → 同一 turn 或事件回调
+                │
+        ┌───────┴────────┐
+        ▼                ▼
+  OpenAICompatAdapter   AnthropicAdapter（后置）
+        │
+        ▼
+  openai-zig Client
+```
+
+| 项 | 现状 | 目标 |
+|----|------|------|
+| Canonical 消息 | ✅ `types.Message` 等 | 保持稳定；agent 只依赖此 |
+| convert 逻辑 | 🟡 埋在 `openai_compat.toChatMessages` | 收进 **OpenAICompatAdapter** |
+| `api_style` | ❌ | `ProviderSpec` / resolve 可选字段；默认 `openai_compat` |
+| 第二协议 | ❌ | 需要时新 adapter；**不改** Agent Core |
+| Agent `if` 厂商 | 禁止 | 禁止 |
+
+### 实现节奏
+
+1. **文档（本轮）** — 本页 + architecture。  
+2. **zag-ai 改造（下一轮）** — 抽出 WireAdapter；现有 OpenAI 路径变为默认 adapter；行为与测试不回归。  
+3. **Anthropic 等** — 另开；非 Phase H 出门条件。
+
+### 不变式（适配层）
+
+1. Agent Core / `loop` **永不** import 厂商 wire 类型。  
+2. 错误分类在 adapter 边界映到统一 `Error` + `isRetryableError`。  
+3. Usage / finish_reason / tool_calls 在 canonical `AssistantTurn` 上对齐。  
+4. 流式：wire 增量 → 统一 `StreamEvent` 或组装后的 turn（与 H6 流式取消规格一致）。
 
 ## 不变式
 
-1. Harness 只依赖稳定 Provider 端口；线协议细节关在 openai-zig。  
+1. Harness 只依赖稳定 Provider 端口；线协议细节关在 adapter / 协议包。  
 2. Auth：env + 配置文件；H 不做 OAuth（可后置）。  
 3. 可重试错误与不可重试错误分类稳定，供 loop 使用（`isRetryableError`）。  
 4. 配置密钥不进 trace/session 明文（与 H5 redact 对齐；H6 配合）。
@@ -89,6 +136,7 @@ Harness **禁止**依赖 openai-zig 类型。详见 [architecture 包边界](../
 ## L3
 
 - provider fallback 链、multi-key  
+- **第二 WireAdapter**（Anthropic Messages 等）  
 - 非 Chat Completions 协议（Responses 等）按需  
 - Memory / RAG 用 embed 仅作可选后端，见 [memory.md](./memory.md)  
 
@@ -96,7 +144,9 @@ Harness **禁止**依赖 openai-zig 类型。详见 [architecture 包边界](../
 
 - 完整 OAuth 产品  
 - 绑定单一云厂商  
+- **实现** Anthropic（预留接口即可）  
 - Memory Repo（属 C5）  
+- Graph 编排（属 C6；节点内仍用本 Provider 端口）  
 
 ## Hyper 对照
 

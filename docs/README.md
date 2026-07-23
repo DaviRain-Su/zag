@@ -20,7 +20,7 @@ vision → maturity（看清自己在哪）
 | [vision.md](./vision.md) | 产品定位、吸收原则、刻意不做 |
 | [maturity.md](./maturity.md) | **真理源**：子系统 L0–L3 成熟度矩阵 |
 | [roadmap.md](./roadmap.md) | Teaching / Phase H / Capability / Quality |
-| [architecture.md](./architecture.md) | 现状 vs 目标分层 |
+| [architecture.md](./architecture.md) | **钉死**：Loop⊂Graph、WireAdapter、Agent/Memory/产品壳分层 |
 | [references.md](./references.md) | 外部教程与竞品对照（**Pi 主对照**） |
 | [research/2026-harness-landscape.md](./research/2026-harness-landscape.md) | 2026 行业扫描 + Pi 对照 + Zag 缺口 |
 

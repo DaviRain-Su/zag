@@ -1,65 +1,210 @@
 # Zag 架构
 
 > 描述**当前代码**与**目标分层**。成熟度等级见 [maturity.md](./maturity.md)。  
-> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）= 规格已写、实现未齐。
+> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）= 规格已写、实现未齐。  
+> 主对照：[Pi agent harness](https://github.com/earendil-works/pi)（包纪律 / loop / session）；产品壳对照 Grok Build / Pi-coding-agent。
+
+---
+
+## 目标分层总图（钉死）
+
+对齐 **Pi**（ai / agent-core / coding-agent）与 **Grok Build 产品壳** 思路；名字用 Zag 自己的。
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  Product shell（产品壳 · C9）                                  │
+│  CLI · headless · TUI · Bot · Web · RPC                       │
+│  只组装，不承载 loop / 协议细节                                 │
+├──────────────────────────────────────────────────────────────┤
+│  Agent Core（≈ Pi-agent-core）                                 │
+│  Loop · Session · Context view · Permissions · Trace           │
+│  Tools / Runtime 挂载                                          │
+│  Memory Core 端口（默认 no-op · C5）                            │
+│  Graph / DAG 编排（可选 · C6）— 节点内仍是 Loop                 │
+├────────────────────┬─────────────────────────────────────────┤
+│  Model plane       │  Runtime                                 │
+│  （≈ Pi-ai）       │  fs · shell · sandbox*                   │
+│  zag-ai            │                                          │
+│   canonical msgs   │                                          │
+│   + wire adapters  │                                          │
+│  openai-zig*       │                                          │
+└────────────────────┴─────────────────────────────────────────┘
+* openai-zig = OpenAI-compat 线协议实现（可独立复用）
+* sandbox = C7
+```
+
+### 四层职责
+
+| 层 | 对标 | 职责 | 阶段 |
+|----|------|------|------|
+| **Product shell** | Pi-coding-agent；Grok 产品壳 | UI/交互/进程模式；**薄** | 现状 CLI；**C9** 扩 TUI/RPC |
+| **Agent Core** | Pi-agent-core | 单 agent **Loop**、session、权限、context、trace；可选 Graph | **H** 硬化 Loop；**C6** Graph |
+| **Memory Core（端口）** | Grok/Hyper memory 抽象 | 跨 session 记忆；默认关闭实现 | 接口可早留；**C5** 实现 |
+| **Model plane** | Pi-ai | resolve、catalog、**canonical→wire 适配**、stream、错误 | H6；多协议适配后置 |
+| **Runtime** | — | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
+
+### 架构不变式
+
+1. **Loop 可独立运行**；日常 coding 路径不强制经过 Graph。  
+2. **Graph 节点内部是 Loop**（或确定性 gate）；Graph 是编排层，不替代 tool loop。  
+3. **Harness / Agent Core 只见 canonical 消息与 Provider 端口**；厂商线协议只在 Model plane 适配器。  
+4. **Memory / Graph / 产品壳** 不得依赖 `openai-zig` 类型。  
+5. Phase H 只保证 **单 Loop 生产底线**；Graph、多协议实现、厚产品壳后置。
+
+---
+
+## Loop ⊂ Graph（多角色编排）
+
+```text
+         ┌──────────── Graph / DAG（C6，可选）────────────┐
+         │  node = role / sub-agent / deterministic gate   │
+         │  edge = handoff · branch · join · retry         │
+         │  shared state = session / artifacts             │
+         │                                                   │
+         │    ┌──── Loop（Agent Core · 必选内核）────┐     │
+         │    │  prompt → model → tools → 回灌 …     │     │
+         │    └──────────────────────────────────────┘     │
+         └───────────────────────────────────────────────────┘
+
+单 coding 路径（默认）:
+
+         ┌──── Loop ────────────────────────────────────┐
+         │  无 Graph 外壳也可完整工作                      │
+         └──────────────────────────────────────────────┘
+```
+
+| 概念 | 含义 |
+|------|------|
+| **Loop** | 单角色工作环：模型决定 tool → 执行 → soft-fail 回灌。≈ Pi-agent-core。代码：`src/agent/loop.zig`。 |
+| **Graph / DAG** | **多角色编排**：谁先谁后、分支汇合、失败回边。每个 **agentic 节点** 内部仍跑 Loop。 |
+| **确定性节点** | 可非 LLM：permission gate、跑测试、worktree 隔离——与 agentic 节点混排。 |
+
+**禁止误解：** 用 DAG 引擎「画一遍整个 coding 流程」替代模型选 tool 的 Loop。  
+**正确吸收：** Graph 提供**更强一层**多角色能力；Loop 是节点执行引擎。
+
+规格：
+
+- Loop：[modules/loop-turn.md](./modules/loop-turn.md) · Phase **H1**  
+- Graph / 子代理：[modules/subagents-oracle.md](./modules/subagents-oracle.md) · Phase **C6**  
+- 行业背景：[research/2026-harness-landscape.md](./research/2026-harness-landscape.md)
+
+---
+
+## Model plane：canonical 消息 + Provider 适配器
+
+对齐 Pi：`transformContext` / `convertToLlm` + 多厂商 stream 映回统一事件。
+
+```text
+Agent Core
+  Message / AssistantTurn / ToolCall   ← canonical（zag-ai types）
+        │
+        │  Provider 端口（agent/provider.zig）
+        ▼
+  zag-ai
+        │  transformContext 等价：context.viewForModel（在 agent）
+        │  convertToLlm：WireAdapter（规划）
+        ▼
+  ┌─────────────┬──────────────────┐
+  │ OpenAI-compat│ Anthropic …     │  ← 适配器；**现状仅左列实现**
+  │ (openai-zig) │ （预留）         │
+  └─────────────┴──────────────────┘
+```
+
+### 设计钉死（实现分两步）
+
+| 现在（文档 + 后续 zag-ai 改造） | 现在不做 |
+|--------------------------------|----------|
+| Canonical 消息类型稳定在 `zag-ai/types` | 实现 Anthropic HTTP 客户端 |
+| 规划 **WireAdapter** 接口：`toWire` / `fromWire` / stream map | 在 `loop.zig` 里 `if (anthropic)` |
+| `ProviderSpec` 可增 `api_style`（enum；现状仅 `openai_compat`） | Phase H 以「多协议跑通」为出门条件 |
+| Harness 只依赖 `Provider.chat` + canonical turn | Agent 依赖 OpenAI JSON 字段名 |
+
+**实现顺序（用户确认）：** 先本文档 → 再改 **zag-ai** 做成可插拔 Provider 适配（OpenAI 为第一个 adapter）→ Anthropic 等需要时再加实现。
+
+详见 [modules/zag-ai-provider.md](./modules/zag-ai-provider.md#wire-adapter预留)。
+
+---
+
+## Memory Core（端口）与 Memory Repo
+
+| 名称 | 含义 |
+|------|------|
+| **Memory Core** | Agent Core 上的**端口**：read/search/write 注入 ephemeral；默认 **no-op** |
+| **Memory Repo** | 端口的一种后端（跨 session 落盘、可审可删） |
+
+- 接口形状可在 H4 边界清晰后预留；**实现与默认开启属 C5**。  
+- 不是 transcript，不是 compaction 摘要。  
+- 规格：[modules/memory.md](./modules/memory.md)
+
+---
+
+## Product shell（产品壳）
+
+| 模式 | 阶段 | 说明 |
+|------|------|------|
+| CLI / headless | 现状 | `src/main.zig` 组装 resolve → Client → Adapter → Agent |
+| TUI · Bot · Web · RPC | **C9** | 对标 Pi 四模式 / Grok 产品壳；**不得**把 loop 逻辑写进 UI |
+
+目标：Agent Core 可被多种 shell 嵌入；shell 只处理 I/O 与生命周期。
+
+---
 
 ## Monorepo 包边界（强制）
 
 按**依赖方向与失败模式**拆，不按「文件多了就拆」。
 
 ```text
-CLI (src/main.zig)
+Product shell (main / 未来 tui…)
         │
         ▼
-┌─────────────────── agent/ (harness) ───────────────────┐
+┌─────────────────── Agent Core (src/agent) ─────────────┐
 │  loop · permissions · context · session · trace        │
-│  Provider port · Toolset                               │
+│  Provider port · Toolset · Memory 端口 · Graph*        │
 │  永不 import OpenAPI / HTTP 细节                         │
 └────────────┬──────────────────────────┬────────────────┘
              │                          │
              ▼                          ▼
    packages/zag-ai/              src/runtime/
-   agent 友好模型面               fs · shell（执行面）
-   resolve · ChatOptions          永不知道 permission 矩阵
-   stream · catalog · errors
+   Model plane                    fs · shell
+   canonical + adapters           永不知道 permission 矩阵
              │
              ▼
    packages/openai-zig/
-   线协议 · transport · OpenAPI 资源
-   可独立复用；不知道 harness
+   OpenAI-compat 线协议（adapter 后端之一）
 ```
 
 | 包 / 目录 | 职责 | 可依赖 | **禁止**依赖 |
 |-----------|------|--------|----------------|
 | `packages/openai-zig` | HTTP、重试、SSE、OpenAPI 资源与生成类型 | std | zag-ai、agent、runtime |
-| `packages/zag-ai` | 预设、catalog、resolve、Chat 面、错误分类、contract 测试 | openai-zig | agent、permissions、jail |
-| `src/agent` | harness 业务：loop、权限、context、session、trace | zag-ai（窄面）、runtime tools | openai-zig 细节、OpenAPI 类型 |
-| `src/runtime` | list/read/write/shell 实现 | std、Io | 模型协议、LLM 配置 |
-| `src/main.zig` | CLI 组装 resolve → Client → Adapter → Agent | 上述全部（组装层） | — |
+| `packages/zag-ai` | resolve、catalog、canonical 类型、**wire adapters**、错误分类 | openai-zig（及未来其他协议包） | agent、permissions、jail |
+| `src/agent` | Agent Core | zag-ai（窄面）、runtime tools | openai-zig 细节、OpenAPI 类型 |
+| `src/runtime` | 执行面 | std、Io | 模型协议 |
+| Product shell | 组装 | 上述 | 业务逻辑沉到 shell |
 
-**一句话不变式：** harness 只看见 `Provider.chat` + `AssistantTurn`；线协议关在 openai-zig；厂商表/预算关在 zag-ai。
+**一句话：** Agent Core 只看见 `Provider.chat` + `AssistantTurn`；线协议关在 adapter 之后。
 
 规格映射见 [modules/README.md](./modules/README.md#代码映射表)。
+
+---
 
 ## 现状分层
 
 ```text
-CLI (main.zig)
+CLI (main.zig)                    ← 薄产品壳雏形
     ↓
-agent/  ★ 业务（整体 L1；Provider 接线部分已超 L1）
+agent/  ★ Agent Core（整体 L1；Provider 接线 L1+）
   Agent · Session · loop
   permissions · workspace jail · shell_policy · trace
   context · project · session_store · Provider port · Toolset
+  （无 Graph 运行时；无 Memory 后端）
     ↓
-packages/zag-ai/  模型接入（OpenAI Chat Completions）
+packages/zag-ai/  Model plane（OpenAI-compat 直连，adapter 接口待显式化）
   presets · catalog · registry · auth_env · config_file
-  openai_compat · stream · types（Usage / ChatOptions / ContentPart）
+  openai_compat · stream · types
     ↓
-packages/openai-zig/  传输与 OpenAPI
+packages/openai-zig/
     ↓
-runtime/  FS · shell 实现
-    ↓
-LLM · 本地磁盘 · /bin/sh
+runtime/  FS · shell
 ```
 
 ### 工具执行三道门（已有）
@@ -75,48 +220,29 @@ permission (HITL) → workspace jail → shell policy → execute
 | permissions | `agent/permissions.zig` | L1 ask/yolo |
 | workspace | `agent/workspace.zig` | L1 path jail |
 | shell_policy | `agent/shell_policy.zig` | L1 denylist |
-| trace | `agent/trace.zig` | L1 JSONL（含 usage / retry 事件雏形） |
+| trace | `agent/trace.zig` | L1 JSONL（usage / retry 雏形） |
 | context | `agent/context.zig` | L1 截断 view + catalog 预算 |
 | edit | `runtime/edit_tools.zig` | L1 整文件 write |
-| provider 适配 | `agent/provider.zig` + zag-ai | L1+（选项/重试已接；H6 未齐） |
+| provider | `agent/provider.zig` + zag-ai | L1+；**WireAdapter 显式化待做** |
 
-## 目标分层（对齐 Hyper 切分，不抄名）
-
-```text
-┌─────────────────────────────────────────────────────┐
-│ UX：CLI / headless /（C9）TUI / ACP                   │
-├─────────────────────────────────────────────────────┤
-│ agent/  harness                                       │
-│  loop·turn · permissions · plan · context · session │
-│  （C5）memory 挂载点 ·（C6）subagent·oracle           │
-│  （C8）hooks 挂载点                                   │
-├──────────────┬──────────────────┬───────────────────┤
-│ tools/runtime│ zag-ai           │ openai-zig        │
-│ edit·grep    │ resolve·stream   │ transport·OpenAPI │
-│ shell·web*   │ catalog·contract │ resources         │
-│ sandbox*     │                  │                   │
-├──────────────┴──────────────────┴───────────────────┤
-│ extensions*：skills · hooks · MCP · plugins（C8）     │
-└─────────────────────────────────────────────────────┘
-* = Capability，非 Phase H
-```
+## 目标能力与阶段
 
 | 能力 | 位置 | 阶段 |
 |------|------|------|
-| 厂商表 / catalog / 预算 | `packages/zag-ai` | 有；**H6 收口** |
-| 传输 / 全量 API 面 | `packages/openai-zig` | 独立维护 |
-| 可靠编辑 | `runtime` + toolset | **H2** → C4 |
-| 跨 session Memory Repo | agent + 可选存储 | **C5**（前置 H4） |
-| OS sandbox | runtime + agent | C7 |
-| Subagent / Oracle | agent | C6 |
-| MCP / Skills | extensions | C8 |
+| 单 Loop 生产底线 | Agent Core | **Phase H** |
+| WireAdapter（OpenAI 实现） | zag-ai | 文档后 **zag-ai 改造**（可与 H6 并行） |
+| Anthropic 等协议实现 | zag-ai adapter | 需要时；非 H 出门 |
+| 可靠编辑 | runtime + toolset | **H2** → C4 |
+| Memory Core + Repo | agent 端口 + 后端 | **C5** |
+| Graph / Subagent / Oracle | Agent Core 编排 | **C6** |
+| OS sandbox | runtime | C7 |
+| Skills / MCP / packages | extensions | C8 |
+| 厚产品壳 | shell | C9 |
 
 ## 业务入口（现状）
 
 ```zig
 var resolve_result = try zag_ai.resolve(gpa, io, env, config_path);
-// resolve_result.chat_options / model_info / chat_retries …
-
 var client = Client.init(gpa, io, resolve_result.resolved.config);
 var adapter = Adapter.init(client, stream);
 adapter.chat_options = resolve_result.chat_options;
@@ -128,8 +254,9 @@ var agent = Agent.init(gpa, io, adapter.provider(), .{
     .chat_retries = resolve_result.chat_retries,
     .trace_path = ".zag/traces/latest.jsonl",
 });
-defer agent.deinit();
 ```
+
+目标形态（改造后）：shell 拿到 `Provider` 实现（某 WireAdapter），Agent Core 不感知 openai-zig。
 
 ## 工具（现状 vs H2 目标）
 
@@ -146,20 +273,19 @@ defer agent.deinit();
 | 文件 | 内容 | 阶段 |
 |------|------|------|
 | `.zag/sessions/*.jsonl` | transcript | H4：schema_version |
-| `.zag/traces/*.jsonl` | 审计事件 | H7：schema_version；已有 usage 雏形 |
+| `.zag/traces/*.jsonl` | 审计事件 | H7：schema_version |
 | `.zag/config.json` | 非密钥配置 | 已有 chat/transport knobs |
-| `.zag/memory/*`（规划） | 跨 session 记忆 | **C5**，默认关；见 [modules/memory.md](./modules/memory.md) |
+| `.zag/memory/*`（规划） | Memory Repo 后端 | **C5**，默认关 |
 
-## Memory 与「记忆」词表（勿混）
+## Memory 词表（勿混）
 
 | 概念 | 是什么 | 阶段 |
 |------|--------|------|
-| Transcript | 会话权威消息日志 | Teaching 2；H4 版本化 |
-| Model view | 发给模型的投影（可截断/压缩） | L1 截断；**H4** compaction |
-| Repo map | 工作区结构索引，按任务选文件 | **C5** |
-| Memory Repo | 跨 session 可审可删长期记忆 | **C5**，默认可关 |
-
-H 阶段**不**交付 Memory Repo；只保证 session/view 边界够硬，C5 才挂记忆。
+| Transcript | 会话权威消息日志 | Teaching 2；H4 |
+| Model view | 发给模型的投影 | L1 截断；**H4** compaction |
+| Repo map | 工作区结构索引 | **C5** |
+| Memory Core | 端口（默认 no-op） | 接口可预留；**C5** |
+| Memory Repo | 跨 session 后端 | **C5**，默认可关 |
 
 ## 版本叙事
 
@@ -173,4 +299,5 @@ H 阶段**不**交付 Memory Repo；只保证 session/view 边界够硬，C5 才
 ## 相关
 
 - [roadmap.md](./roadmap.md) · [vision.md](./vision.md) · [modules/](./modules/)  
-- Teaching 章 [chapters/](../chapters/) · 硬化章 [H-harden](../chapters/H-harden/README.md)  
+- [research/2026-harness-landscape.md](./research/2026-harness-landscape.md)  
+- Teaching [chapters/](../chapters/) · [H-harden](../chapters/H-harden/README.md)  

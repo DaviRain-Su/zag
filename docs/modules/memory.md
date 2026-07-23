@@ -1,13 +1,14 @@
-# Module: memory（Memory Repo）
+# Module: memory（Memory Core 端口 + Memory Repo）
 
 | 项 | 内容 |
 |----|------|
 | 状态 | **stub / 未实现** |
 | 前置 | **Phase H 完成**，尤其 [H4](../phases/H-harden.md)（四层 prompt + session schema + view≠transcript） |
 | 阶段 | [C5 Context Engineering](../phases/C5-context.md) |
-| 代码（规划） | 尚无；候选 `src/agent/memory.zig` + `.zag/memory/` |
+| 代码（规划） | `MemoryCore` 端口（可先 no-op）+ 后端 `.zag/memory/` |
 | 成熟度 | L0 → L3（C5）；**不进 Phase H 出门条件** |
-| 对标 | Hyper memory；Pi 长期偏好；不照搬云 thread |
+| 对标 | Hyper / Grok Build memory 抽象；Pi 长期偏好；不照搬云 thread |
+| 分层位置 | [architecture — Memory Core](../architecture.md#memory-core端口与-memory-repo) |
 
 ## 词表（先分清再实现）
 
@@ -17,9 +18,26 @@
 | **Model view** | 发给模型的投影 | [context-compaction](./context-compaction.md) |
 | **Compaction 摘要** | 会话内折叠历史 | H4 / context |
 | **Repo map** | 工作区结构索引，按任务选文件 | C5（与 memory 并列，不是同一物） |
-| **Memory Repo** | **跨 session**、用户可审可删的长期条目 | **本模块** |
+| **Memory Core** | Agent Core 上的**端口**（search/write/inject）；默认 **no-op** | 本模块 · 抽象 |
+| **Memory Repo** | 端口的一种**后端**：跨 session 落盘、可审可删 | 本模块 · C5 实现 |
 
-禁止把「截断 view」或「session JSONL」改名叫 Memory。
+禁止把「截断 view」或「session JSONL」改名叫 Memory。  
+**Memory Core ≠ Loop 内部状态**；由 Agent Core 在组 view 时调用端口，类似 Pi 的可插拔上下文变换点。
+
+## Memory Core 端口（抽象，实现可晚）
+
+目标形状（名称可调）：
+
+```text
+MemoryCore
+  · enabled() bool                    // 默认 false
+  · search(query, budget) → snippets  // 供 ephemeral 注入
+  · write(entry) → id                 // 显式；可走 tool
+  · delete(id) / wipe()
+```
+
+- H 阶段：可不存在代码，或存在 **NullMemory** 恒空实现。  
+- C5：接 Memory Repo 后端；关闭时与 H 出口零行为变化。
 
 ## 不变式（C5 必须遵守）
 

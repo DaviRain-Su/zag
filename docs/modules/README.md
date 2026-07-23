@@ -46,7 +46,7 @@
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | 四层 prompt / 压缩 |
 | [session-store.md](./session-store.md) | H4 → C5 | 会话落盘 / schema |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | jail / policy / redact |
-| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | 模型接入（zag-ai + provider 端口） |
+| [zag-ai-provider.md](./zag-ai-provider.md) | H6 + WireAdapter | 模型接入；**适配器预留**（OpenAI 先） |
 | [trace-observability.md](./trace-observability.md) | H7 | 审计 trace |
 | [memory.md](./memory.md) | C5 stub | Memory Repo（跨 session；默认可关） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
