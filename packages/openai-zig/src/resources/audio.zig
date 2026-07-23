@@ -150,16 +150,17 @@ fn buildTranscriptionFromPathPayload(
         try appendJsonValue(allocator, &multipart, "known_speaker_references", references);
     }
 
-    const file = std.fs.cwd().openFile(req.file_path, .{}) catch {
+    const file_io = std.Io.Threaded.global_single_threaded.io();
+    const file = std.Io.Dir.cwd().openFile(file_io, req.file_path, .{}) catch {
         return errors.Error.SerializeError;
     };
-    defer file.close();
+    defer file.close(file_io);
 
-    const file_size = file.stat() catch {
+    const file_size = file.stat(file_io) catch {
         return errors.Error.SerializeError;
     };
     const file_len = std.math.cast(usize, file_size.size) orelse return errors.Error.SerializeError;
-    var __file_reader = file.reader(&.{});
+    var __file_reader = file.reader(file_io, &.{});
     const file_data = __file_reader.interface.allocRemaining(allocator, .limited(file_len)) catch {
         return errors.Error.SerializeError;
     };
@@ -194,16 +195,17 @@ fn buildTranslationFromPathPayload(
         try appendJsonValue(allocator, &multipart, "temperature", temperature);
     }
 
-    const file = std.fs.cwd().openFile(req.file_path, .{}) catch {
+    const file_io = std.Io.Threaded.global_single_threaded.io();
+    const file = std.Io.Dir.cwd().openFile(file_io, req.file_path, .{}) catch {
         return errors.Error.SerializeError;
     };
-    defer file.close();
+    defer file.close(file_io);
 
-    const file_size = file.stat() catch {
+    const file_size = file.stat(file_io) catch {
         return errors.Error.SerializeError;
     };
     const file_len = std.math.cast(usize, file_size.size) orelse return errors.Error.SerializeError;
-    var __file_reader = file.reader(&.{});
+    var __file_reader = file.reader(file_io, &.{});
     const file_data = __file_reader.interface.allocRemaining(allocator, .limited(file_len)) catch {
         return errors.Error.SerializeError;
     };

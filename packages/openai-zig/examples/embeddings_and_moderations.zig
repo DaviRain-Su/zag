@@ -2,14 +2,13 @@ const std = @import("std");
 const sdk = @import("openai_zig");
 const errors = sdk.errors;
 const config = @import("config");
-const compat = @import("provider_compat.zig");
+const compat = @import("provider_compat");
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -18,6 +17,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,
@@ -51,7 +51,7 @@ pub fn main() !void {
     };
     defer emb.deinit();
 
-    var emb_out = std.io.Writer.Allocating.init(gpa);
+    var emb_out = std.Io.Writer.Allocating.init(gpa);
     defer emb_out.deinit();
     var emb_stream: std.json.Stringify = .{ .writer = &emb_out.writer, .options = .{ .emit_null_optional_fields = false } };
     try emb_stream.write(emb.value);
@@ -77,7 +77,7 @@ pub fn main() !void {
     };
     defer mod.deinit();
 
-    var mod_out = std.io.Writer.Allocating.init(gpa);
+    var mod_out = std.Io.Writer.Allocating.init(gpa);
     defer mod_out.deinit();
     var mod_stream: std.json.Stringify = .{ .writer = &mod_out.writer, .options = .{ .emit_null_optional_fields = false } };
     try mod_stream.write(mod.value);

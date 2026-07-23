@@ -48,7 +48,7 @@ pub const Resource = struct {
     ) errors.Error!std.json.Parsed(gen.ListFilesResponse) {
         var buf: [256]u8 = undefined;
         var fbs: std.Io.Writer = .fixed(&buf);
-        var writer = fbs.writer();
+        var writer = &fbs;
         writer.writeAll("/files") catch {
             return errors.Error.SerializeError;
         };
@@ -82,7 +82,7 @@ pub const Resource = struct {
     ) errors.Error!std.json.Parsed(gen.ListFilesResponse) {
         var buf: [256]u8 = undefined;
         var fbs: std.Io.Writer = .fixed(&buf);
-        var writer = fbs.writer();
+        var writer = &fbs;
         writer.writeAll("/files") catch {
             return errors.Error.SerializeError;
         };
@@ -353,14 +353,15 @@ fn buildCreateFileMultipartPayload(
         try multipart.appendTextField("expires_after[seconds]", seconds);
     }
 
-    const file = std.fs.cwd().openFile(req.file_path, .{}) catch {
+    const file_io = std.Io.Threaded.global_single_threaded.io();
+    const file = std.Io.Dir.cwd().openFile(file_io, req.file_path, .{}) catch {
         return errors.Error.SerializeError;
     };
-    defer file.close();
+    defer file.close(file_io);
 
-    const file_size = try file.stat();
+    const file_size = file.stat(file_io) catch { return errors.Error.SerializeError; };
     const file_len = std.math.cast(usize, file_size.size) orelse return errors.Error.SerializeError;
-    var __file_reader = file.reader(&.{});
+    var __file_reader = file.reader(file_io, &.{});
     const file_data = __file_reader.interface.allocRemaining(allocator, .limited(file_len)) catch {
         return errors.Error.SerializeError;
     };

@@ -2,14 +2,13 @@ const std = @import("std");
 const sdk = @import("openai_zig");
 const config = @import("config");
 const errors = sdk.errors;
-const compat = @import("provider_compat.zig");
+const compat = @import("provider_compat");
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
     if (conf.api_key.len == 0) {
         std.debug.print("API key missing; set config/config.toml\n", .{});
@@ -17,6 +16,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,

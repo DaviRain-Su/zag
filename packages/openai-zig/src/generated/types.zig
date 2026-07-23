@@ -216,13 +216,13 @@ pub const AssistantStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !AssistantStreamEvent {
         switch (source) {
             .object => |root| {
-                const event = root.get("event") orelse return .{ .raw = source };
-                if (event != .string) return .{ .raw = source };
+                const event = root.get("event") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (event != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, event.string, "thread.created")) {
                     const parsed = std.json.parseFromValue(
@@ -230,7 +230,7 @@ pub const AssistantStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .thread = parsed.value };
                 }
@@ -241,7 +241,7 @@ pub const AssistantStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .run_step = parsed.value };
                 }
@@ -252,7 +252,7 @@ pub const AssistantStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .run = parsed.value };
                 }
@@ -263,7 +263,7 @@ pub const AssistantStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .message = parsed.value };
                 }
@@ -274,14 +274,14 @@ pub const AssistantStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .err = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -373,7 +373,7 @@ pub const AssistantsApiResponseFormatOption = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !AssistantsApiResponseFormatOption {
         _ = allocator;
@@ -384,11 +384,11 @@ pub const AssistantsApiResponseFormatOption = union(enum) {
                 if (std.mem.eql(u8, value, "auto")) {
                     return .auto;
                 }
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "text")) {
                     return .{ .text = .{ .type = kind.string } };
@@ -399,12 +399,12 @@ pub const AssistantsApiResponseFormatOption = union(enum) {
                 }
 
                 if (std.mem.eql(u8, kind.string, "json_schema")) {
-                    const schema_payload = root.get("json_schema") orelse return .{ .raw = source };
-                    if (schema_payload != .object) return .{ .raw = source };
+                    const schema_payload = root.get("json_schema") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    if (schema_payload != .object) return .{ .raw = FunctionParameters.forRaw(source) };
                     const schema_root = schema_payload.object;
 
-                    const schema_name = schema_root.get("name") orelse return .{ .raw = source };
-                    if (schema_name != .string) return .{ .raw = source };
+                    const schema_name = schema_root.get("name") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    if (schema_name != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                     return .{
                         .json_schema = .{
@@ -412,16 +412,16 @@ pub const AssistantsApiResponseFormatOption = union(enum) {
                             .json_schema = .{
                                 .description = if (schema_root.get("description")) |description| if (description == .string) description.string else null else null,
                                 .name = schema_name.string,
-                                .schema = if (schema_root.get("schema")) |schema| if (schema == .null) null else schema else null,
+                                .schema = if (schema_root.get("schema")) |schema| if (schema == .null) null else FunctionParameters.forSchema(schema) else null,
                                 .strict = if (schema_root.get("strict")) |strict| if (strict == .bool) strict.bool else null else null,
                             },
                         },
                     };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -938,17 +938,17 @@ pub const ChatCompletionRequestAssistantMessageContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestAssistantMessageContent {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const ChatCompletionRequestAssistantMessageContentPart, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const ChatCompletionRequestAssistantMessageContentPart, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .parts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -978,7 +978,7 @@ pub const ChatCompletionRequestAssistantMessageContentPart = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestAssistantMessageContentPart {
         switch (source) {
@@ -986,21 +986,21 @@ pub const ChatCompletionRequestAssistantMessageContentPart = union(enum) {
                 const type_value = root.get("type");
                 if (type_value != null and type_value.? == .string) {
                     if (std.mem.eql(u8, type_value.?.string, "text") or std.mem.eql(u8, type_value.?.string, "output_text")) {
-                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartText, allocator, source, options) catch return .{ .raw = source };
+                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartText, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                         defer parsed.deinit();
                         return .{ .text = parsed.value };
                     }
 
                     if (std.mem.eql(u8, type_value.?.string, "refusal")) {
-                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartRefusal, allocator, source, options) catch return .{ .raw = source };
+                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartRefusal, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                         defer parsed.deinit();
                         return .{ .refusal = parsed.value };
                     }
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1035,17 +1035,17 @@ pub const ChatCompletionRequestDeveloperMessageContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestDeveloperMessageContent {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const ChatCompletionRequestMessageContentPartText, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const ChatCompletionRequestMessageContentPartText, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .parts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1096,53 +1096,53 @@ pub const ChatCompletionRequestMessage = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestMessage {
         switch (source) {
             .object => |root| {
-                const role = root.get("role") orelse return .{ .raw = source };
-                if (role != .string) return .{ .raw = source };
+                const role = root.get("role") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (role != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, role.string, "developer")) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestDeveloperMessage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestDeveloperMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .developer = parsed.value };
                 }
 
                 if (std.mem.eql(u8, role.string, "system")) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestSystemMessage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestSystemMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .system = parsed.value };
                 }
 
                 if (std.mem.eql(u8, role.string, "user")) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestUserMessage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestUserMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .user = parsed.value };
                 }
 
                 if (std.mem.eql(u8, role.string, "assistant")) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestAssistantMessage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestAssistantMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .assistant = parsed.value };
                 }
 
                 if (std.mem.eql(u8, role.string, "tool")) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestToolMessage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestToolMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .tool = parsed.value };
                 }
 
                 if (std.mem.eql(u8, role.string, "function")) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestFunctionMessage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestFunctionMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .function = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1207,17 +1207,17 @@ pub const ChatCompletionRequestSystemMessageContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestSystemMessageContent {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const ChatCompletionRequestSystemMessageContentPart, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const ChatCompletionRequestSystemMessageContentPart, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .parts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1253,17 +1253,17 @@ pub const ChatCompletionRequestToolMessageContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestToolMessageContent {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const ChatCompletionRequestToolMessageContentPart, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const ChatCompletionRequestToolMessageContentPart, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .parts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1299,17 +1299,17 @@ pub const ChatCompletionRequestUserMessageContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestUserMessageContent {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const ChatCompletionRequestUserMessageContentPart, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const ChatCompletionRequestUserMessageContentPart, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .parts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1347,7 +1347,7 @@ pub const ChatCompletionRequestUserMessageContentPart = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChatCompletionRequestUserMessageContentPart {
         switch (source) {
@@ -1355,51 +1355,51 @@ pub const ChatCompletionRequestUserMessageContentPart = union(enum) {
                 const type_value = root.get("type");
                 if (type_value != null and type_value.? == .string) {
                     if (std.mem.eql(u8, type_value.?.string, "text") or std.mem.eql(u8, type_value.?.string, "input_text")) {
-                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartText, allocator, source, options) catch return .{ .raw = source };
+                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartText, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                         defer parsed.deinit();
                         return .{ .text = parsed.value };
                     }
 
                     if (std.mem.eql(u8, type_value.?.string, "image") or std.mem.eql(u8, type_value.?.string, "image_url") or root.get("image_url") != null) {
-                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartImage, allocator, source, options) catch return .{ .raw = source };
+                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartImage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                         defer parsed.deinit();
                         return .{ .image = parsed.value };
                     }
 
                     if (std.mem.eql(u8, type_value.?.string, "audio") or std.mem.eql(u8, type_value.?.string, "input_audio") or root.get("input_audio") != null) {
-                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartAudio, allocator, source, options) catch return .{ .raw = source };
+                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartAudio, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                         defer parsed.deinit();
                         return .{ .audio = parsed.value };
                     }
 
                     if (std.mem.eql(u8, type_value.?.string, "file") or root.get("file") != null) {
-                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartFile, allocator, source, options) catch return .{ .raw = source };
+                        const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartFile, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                         defer parsed.deinit();
                         return .{ .file = parsed.value };
                     }
                 }
 
                 if (root.get("image_url") != null) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartImage, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartImage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image = parsed.value };
                 }
 
                 if (root.get("input_audio") != null) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartAudio, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartAudio, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio = parsed.value };
                 }
 
                 if (root.get("file") != null) {
-                    const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartFile, allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(ChatCompletionRequestMessageContentPartFile, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1551,7 +1551,7 @@ pub const ChunkingStrategyRequestParam = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChunkingStrategyRequestParam {
         _ = allocator;
@@ -1562,24 +1562,24 @@ pub const ChunkingStrategyRequestParam = union(enum) {
                 if (std.mem.eql(u8, value, "auto")) {
                     return .{ .auto = .{ .type = value } };
                 }
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "auto")) {
                     return .{ .auto = .{ .type = kind.string } };
                 }
 
                 if (std.mem.eql(u8, kind.string, "static")) {
-                    const static_payload = root.get("static") orelse return .{ .raw = source };
-                    if (static_payload != .object) return .{ .raw = source };
+                    const static_payload = root.get("static") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    if (static_payload != .object) return .{ .raw = FunctionParameters.forRaw(source) };
                     const static_root = static_payload.object;
 
-                    const max_chunk_size_tokens = static_root.get("max_chunk_size_tokens") orelse return .{ .raw = source };
-                    const chunk_overlap_tokens = static_root.get("chunk_overlap_tokens") orelse return .{ .raw = source };
-                    if (max_chunk_size_tokens != .integer or chunk_overlap_tokens != .integer) return .{ .raw = source };
+                    const max_chunk_size_tokens = static_root.get("max_chunk_size_tokens") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    const chunk_overlap_tokens = static_root.get("chunk_overlap_tokens") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    if (max_chunk_size_tokens != .integer or chunk_overlap_tokens != .integer) return .{ .raw = FunctionParameters.forRaw(source) };
 
                     return .{
                         .static = .{
@@ -1598,7 +1598,7 @@ pub const ChunkingStrategyRequestParam = union(enum) {
 
                 return .{ .other = .{ .type = kind.string } };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1653,7 +1653,7 @@ pub const ChunkingStrategyResponse = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ChunkingStrategyResponse {
         _ = allocator;
@@ -1664,24 +1664,24 @@ pub const ChunkingStrategyResponse = union(enum) {
                 if (std.mem.eql(u8, value, "auto")) {
                     return .{ .auto = .{ .type = value } };
                 }
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "auto")) {
                     return .{ .auto = .{ .type = kind.string } };
                 }
 
                 if (std.mem.eql(u8, kind.string, "static")) {
-                    const static_payload = root.get("static") orelse return .{ .raw = source };
-                    if (static_payload != .object) return .{ .raw = source };
+                    const static_payload = root.get("static") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    if (static_payload != .object) return .{ .raw = FunctionParameters.forRaw(source) };
                     const static_root = static_payload.object;
 
-                    const max_chunk_size_tokens = static_root.get("max_chunk_size_tokens") orelse return .{ .raw = source };
-                    const chunk_overlap_tokens = static_root.get("chunk_overlap_tokens") orelse return .{ .raw = source };
-                    if (max_chunk_size_tokens != .integer or chunk_overlap_tokens != .integer) return .{ .raw = source };
+                    const max_chunk_size_tokens = static_root.get("max_chunk_size_tokens") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    const chunk_overlap_tokens = static_root.get("chunk_overlap_tokens") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                    if (max_chunk_size_tokens != .integer or chunk_overlap_tokens != .integer) return .{ .raw = FunctionParameters.forRaw(source) };
 
                     return .{
                         .static = .{
@@ -1700,7 +1700,7 @@ pub const ChunkingStrategyResponse = union(enum) {
 
                 return .{ .other = .{ .type = kind.string } };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1767,13 +1767,13 @@ pub const CodeInterpreterToolContainer = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CodeInterpreterToolContainer {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "auto")) {
                     const parsed = std.json.parseFromValue(
@@ -1781,14 +1781,14 @@ pub const CodeInterpreterToolContainer = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .auto = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -1846,12 +1846,12 @@ pub const CodeInterpreterOutput = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CodeInterpreterOutput {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const CodeInterpreterTool = struct {
@@ -1937,7 +1937,7 @@ pub const ComparisonFilterValueItems = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ComparisonFilterValueItems {
         _ = options;
@@ -1945,8 +1945,8 @@ pub const ComparisonFilterValueItems = union(enum) {
         return switch (source) {
             .string => .{ .string = source.string },
             .number => .{ .number = source.number },
-            .null => .{ .raw = source },
-            else => .{ .raw = source },
+            .null => .{ .raw = FunctionParameters.forRaw(source) },
+            else => .{ .raw = FunctionParameters.forRaw(source) },
         };
     }
 };
@@ -2012,7 +2012,7 @@ pub const ComparisonFilterValue = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ComparisonFilterValue {
         switch (source) {
@@ -2024,12 +2024,12 @@ pub const ComparisonFilterValue = union(enum) {
                 for (array.items, 0..) |item, i| {
                     values[i] = ComparisonFilterValueItems.jsonParseFromValue(allocator, item, options) catch {
                         allocator.free(values);
-                        return .{ .raw = source };
+                        return .{ .raw = FunctionParameters.forRaw(source) };
                     };
                 }
                 return .{ .items = values };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -2088,16 +2088,16 @@ pub const Filters = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !Filters {
         switch (source) {
             .object => |object| {
-                const t = object.get("type") orelse return .{ .raw = source };
-                if (t != .string) return .{ .raw = source };
+                const t = object.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (t != .string) return .{ .raw = FunctionParameters.forRaw(source) };
                 if (std.mem.eql(u8, t.string, "and") or std.mem.eql(u8, t.string, "or")) {
                     const parsed = std.json.parseFromValue(CompoundFilter, allocator, source, options) catch
-                        return .{ .raw = source };
+                        return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .compound = parsed.value };
                 }
@@ -2111,13 +2111,13 @@ pub const Filters = union(enum) {
                     std.mem.eql(u8, t.string, "nin"))
                 {
                     const parsed = std.json.parseFromValue(ComparisonFilter, allocator, source, options) catch
-                        return .{ .raw = source };
+                        return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .comparison = parsed.value };
                 }
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -2215,13 +2215,13 @@ pub const ComputerAction = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ComputerAction {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "click")) {
                     const parsed = std.json.parseFromValue(
@@ -2229,7 +2229,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .click = parsed.value };
                 }
@@ -2240,7 +2240,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .double_click = parsed.value };
                 }
@@ -2251,7 +2251,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .drag = parsed.value };
                 }
@@ -2262,7 +2262,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .keypress = parsed.value };
                 }
@@ -2273,7 +2273,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .move = parsed.value };
                 }
@@ -2284,7 +2284,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .screenshot = parsed.value };
                 }
@@ -2295,7 +2295,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .scroll = parsed.value };
                 }
@@ -2306,7 +2306,7 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .type_action = parsed.value };
                 }
@@ -2317,14 +2317,14 @@ pub const ComputerAction = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .wait = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -2497,13 +2497,13 @@ pub const ConversationItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ConversationItem {
         switch (source) {
             .object => |root| {
-                const item_type = root.get("type") orelse return .{ .raw = source };
-                if (item_type != .string) return .{ .raw = source };
+                const item_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (item_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, item_type.string, "message")) {
                     if (std.json.parseFromValue(
@@ -2757,9 +2757,9 @@ pub const ConversationItem = union(enum) {
                     } else |_| {}
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            .string, .number, .bool, .null, .array => return .{ .raw = source },
+            .string, .number, .bool, .null, .array => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -2802,7 +2802,7 @@ pub const ConversationParam = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ConversationParam {
         switch (source) {
@@ -2821,7 +2821,7 @@ pub const ConversationParam = union(enum) {
             .array, .number, .bool, .null => {},
         }
 
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const ConversationParam_2 = struct {
@@ -2941,7 +2941,7 @@ pub const CreateCompletionLogitBias = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateCompletionLogitBias {
         _ = options;
@@ -2955,7 +2955,7 @@ pub const CreateCompletionLogitBias = union(enum) {
                     const bias: i64 = switch (kv.value_ptr.*) {
                         .integer => |value| @intCast(value),
                         .float => |value| @intFromFloat(value),
-                        else => return .{ .raw = source },
+                        else => return .{ .raw = FunctionParameters.forRaw(source) },
                     };
                     try entries.append(allocator, .{
                         .token = kv.key_ptr.*,
@@ -2965,7 +2965,7 @@ pub const CreateCompletionLogitBias = union(enum) {
 
                 return .{ .entries = try entries.toOwnedSlice(allocator) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -3065,17 +3065,17 @@ pub const CreateEmbeddingRequestInput = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateEmbeddingRequestInput {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const []const u8, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const []const u8, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .texts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -3145,13 +3145,13 @@ pub const CreateEvalDataSourceConfig = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateEvalDataSourceConfig {
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
         const root = source.object;
-        const source_type = root.get("type") orelse return .{ .raw = source };
-        if (source_type != .string) return .{ .raw = source };
+        const source_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        if (source_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
         if (std.mem.eql(u8, source_type.string, "custom")) {
             const parsed = std.json.parseFromValue(
@@ -3159,7 +3159,7 @@ pub const CreateEvalDataSourceConfig = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .custom = parsed.value };
         }
@@ -3170,7 +3170,7 @@ pub const CreateEvalDataSourceConfig = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .logs = parsed.value };
         }
@@ -3181,12 +3181,12 @@ pub const CreateEvalDataSourceConfig = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .stored_completions = parsed.value };
         }
 
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 
@@ -3237,13 +3237,13 @@ pub const CreateEvalItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateEvalItem {
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
         const root = source.object;
-        const role = root.get("role") orelse return .{ .raw = source };
-        const content = root.get("content") orelse return .{ .raw = source };
+        const role = root.get("role") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        const content = root.get("content") orelse return .{ .raw = FunctionParameters.forRaw(source) };
         const has_type = root.get("type") != null;
 
         if (!has_type and role == .string and content == .string) {
@@ -3263,7 +3263,7 @@ pub const CreateEvalItem = union(enum) {
             allocator,
             source,
             options,
-        ) catch return .{ .raw = source };
+        ) catch return .{ .raw = FunctionParameters.forRaw(source) };
         defer eval_item.deinit();
         return .{ .eval_item = eval_item.value };
     }
@@ -3338,13 +3338,13 @@ pub const CreateEvalTestingCriteria = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateEvalTestingCriteria {
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
         const root = source.object;
-        const criterion_type = root.get("type") orelse return .{ .raw = source };
-        if (criterion_type != .string) return .{ .raw = source };
+        const criterion_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        if (criterion_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
         if (std.mem.eql(u8, criterion_type.string, "label_model")) {
             const parsed = std.json.parseFromValue(
@@ -3352,7 +3352,7 @@ pub const CreateEvalTestingCriteria = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .label_model = parsed.value };
         }
@@ -3363,7 +3363,7 @@ pub const CreateEvalTestingCriteria = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .string_check = parsed.value };
         }
@@ -3374,7 +3374,7 @@ pub const CreateEvalTestingCriteria = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .text_similarity = parsed.value };
         }
@@ -3385,7 +3385,7 @@ pub const CreateEvalTestingCriteria = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .python = parsed.value };
         }
@@ -3396,12 +3396,12 @@ pub const CreateEvalTestingCriteria = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .score_model = parsed.value };
         }
 
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const CreateEvalRequest = struct {
@@ -3543,20 +3543,20 @@ pub const CreateMessageRequestContentPart = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateMessageRequestContentPart {
         switch (source) {
             .object => |root| {
                 const type_value = root.get("type");
                 if (type_value != null and type_value.? == .string and std.mem.eql(u8, type_value.?.string, "text")) {
-                    const parsed = std.json.parseFromValue(@FieldType(CreateMessageRequestContentPart, "text"), allocator, source, options) catch return .{ .raw = source };
+                    const parsed = std.json.parseFromValue(@FieldType(CreateMessageRequestContentPart, "text"), allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text = parsed.value };
                 }
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -3599,17 +3599,17 @@ pub const CreateMessageRequestContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateMessageRequestContent {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const CreateMessageRequestContentPart, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const CreateMessageRequestContentPart, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .parts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -3667,17 +3667,17 @@ pub const CreateModerationRequestInput = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateModerationRequestInput {
         switch (source) {
             .string => return .{ .text = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const []const u8, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const []const u8, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .texts = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -3780,7 +3780,7 @@ pub const CreateResponse = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateResponse {
         const parsed = std.json.parseFromValue(
@@ -3788,7 +3788,7 @@ pub const CreateResponse = union(enum) {
             allocator,
             source,
             options,
-        ) catch return .{ .raw = source };
+        ) catch return .{ .raw = FunctionParameters.forRaw(source) };
         defer parsed.deinit();
 
         return .{ .object = parsed.value };
@@ -3878,7 +3878,7 @@ pub const CreateSpeechResponseStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateSpeechResponseStreamEvent {
         switch (source) {
@@ -3889,7 +3889,7 @@ pub const CreateSpeechResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .done = parsed.value };
                 }
@@ -3900,14 +3900,14 @@ pub const CreateSpeechResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .delta = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -4027,7 +4027,7 @@ pub const CreateTranscriptionResponseStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !CreateTranscriptionResponseStreamEvent {
         switch (source) {
@@ -4038,7 +4038,7 @@ pub const CreateTranscriptionResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .done = parsed.value };
                 }
@@ -4049,7 +4049,7 @@ pub const CreateTranscriptionResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .delta = parsed.value };
                 }
@@ -4060,14 +4060,14 @@ pub const CreateTranscriptionResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .segment = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -4370,7 +4370,7 @@ pub const EvalItemContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !EvalItemContent {
         switch (source) {
@@ -4380,7 +4380,7 @@ pub const EvalItemContent = union(enum) {
                     allocator,
                     source,
                     options,
-                ) catch return .{ .raw = source };
+                ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .items = parsed.value };
             },
@@ -4458,18 +4458,18 @@ pub const EvalItemContentItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !EvalItemContentItem {
         if (source == .string) {
             return .{ .text = source.string };
         }
 
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
 
         const root = source.object;
-        const kind = root.get("type") orelse return .{ .raw = source };
-        if (kind != .string) return .{ .raw = source };
+        const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
         if (std.mem.eql(u8, kind.string, "text")) {
             const parsed = std.json.parseFromValue(
@@ -4477,7 +4477,7 @@ pub const EvalItemContentItem = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .input_text = parsed.value };
         }
@@ -4488,7 +4488,7 @@ pub const EvalItemContentItem = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .output_text = parsed.value };
         }
@@ -4499,7 +4499,7 @@ pub const EvalItemContentItem = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .input_image = parsed.value };
         }
@@ -4510,12 +4510,12 @@ pub const EvalItemContentItem = union(enum) {
                 allocator,
                 source,
                 options,
-            ) catch return .{ .raw = source };
+            ) catch return .{ .raw = FunctionParameters.forRaw(source) };
             defer parsed.deinit();
             return .{ .input_audio = parsed.value };
         }
 
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const EvalItemContentOutputText = struct {
@@ -4749,15 +4749,15 @@ pub const FineTuneChatCompletionRequestAssistantMessage = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !FineTuneChatCompletionRequestAssistantMessage {
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
         const root = source.object;
-        const role = root.get("role") orelse return .{ .raw = source };
-        if (role != .string or !std.mem.eql(u8, role.string, "assistant")) return .{ .raw = source };
+        const role = root.get("role") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        if (role != .string or !std.mem.eql(u8, role.string, "assistant")) return .{ .raw = FunctionParameters.forRaw(source) };
 
-        const parsed = std.json.parseFromValue(ChatCompletionRequestAssistantMessage, allocator, source, options) catch return .{ .raw = source };
+        const parsed = std.json.parseFromValue(ChatCompletionRequestAssistantMessage, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
         defer parsed.deinit();
         return .{ .message = parsed.value };
     }
@@ -4935,14 +4935,14 @@ pub const FunctionAndCustomToolCallOutput = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !FunctionAndCustomToolCallOutput {
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
 
         const root = source.object;
-        const tool_type = root.get("type") orelse return .{ .raw = source };
-        if (tool_type != .string) return .{ .raw = source };
+        const tool_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        if (tool_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
         if (std.mem.eql(u8, tool_type.string, "function")) {
             if (std.json.parseFromValue(
@@ -4968,7 +4968,7 @@ pub const FunctionAndCustomToolCallOutput = union(enum) {
             } else |_| {}
         }
 
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const FunctionObject = struct {
@@ -5002,10 +5002,12 @@ pub const FunctionParameters = union(enum) {
 
     pub fn jsonParse(allocator: std.mem.Allocator, source: anytype, options: std.json.ParseOptions) !FunctionParameters {
         const parsed = try std.json.Value.jsonParse(allocator, source, options);
-        return jsonParseFromValue(parsed);
+        return jsonParseFromValue(allocator, parsed, options);
     }
 
-    pub fn jsonParseFromValue(source: std.json.Value) FunctionParameters {
+    pub fn jsonParseFromValue(allocator: std.mem.Allocator, source: std.json.Value, options: std.json.ParseOptions) !FunctionParameters {
+        _ = allocator;
+        _ = options;
         return switch (source) {
             .object => .{ .schema = source },
             else => .{ .raw = source },
@@ -5109,14 +5111,14 @@ pub const FunctionShellCallOutputOutcome = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !FunctionShellCallOutputOutcome {
-        if (source != .object) return .{ .raw = source };
+        if (source != .object) return .{ .raw = FunctionParameters.forRaw(source) };
 
         const root = source.object;
-        const outcome_type = root.get("type") orelse return .{ .raw = source };
-        if (outcome_type != .string) return .{ .raw = source };
+        const outcome_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+        if (outcome_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
         if (std.mem.eql(u8, outcome_type.string, "exit")) {
             if (std.json.parseFromValue(
@@ -5142,7 +5144,7 @@ pub const FunctionShellCallOutputOutcome = union(enum) {
             } else |_| {}
         }
 
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const FunctionShellCallOutputOutcomeParam = FunctionShellCallOutputOutcome;
@@ -5344,7 +5346,7 @@ pub const ImageEditStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ImageEditStreamEvent {
         switch (source) {
@@ -5355,7 +5357,7 @@ pub const ImageEditStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .completed = parsed.value };
                 }
@@ -5366,14 +5368,14 @@ pub const ImageEditStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .partial_image = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -5443,7 +5445,7 @@ pub const ImageGenStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ImageGenStreamEvent {
         switch (source) {
@@ -5454,7 +5456,7 @@ pub const ImageGenStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .completed = parsed.value };
                 }
@@ -5465,14 +5467,14 @@ pub const ImageGenStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .partial_image = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -5594,13 +5596,13 @@ pub const InputContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !InputContent {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "text")) {
                     const parsed = std.json.parseFromValue(
@@ -5608,7 +5610,7 @@ pub const InputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text = parsed.value };
                 }
@@ -5619,7 +5621,7 @@ pub const InputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image = parsed.value };
                 }
@@ -5630,7 +5632,7 @@ pub const InputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file = parsed.value };
                 }
@@ -5641,14 +5643,14 @@ pub const InputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -5731,7 +5733,7 @@ pub const InputParam = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !InputParam {
         switch (source) {
@@ -5739,12 +5741,12 @@ pub const InputParam = union(enum) {
             .array => |arr| {
                 _ = arr;
                 const parsed_items = std.json.parseFromValue([]const InputItem, allocator, source, options) catch {
-                    return .{ .raw = source };
+                    return .{ .raw = FunctionParameters.forRaw(source) };
                 };
                 defer parsed_items.deinit();
                 return .{ .items = parsed_items.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -5874,13 +5876,13 @@ pub const Item = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !Item {
         switch (source) {
             .object => |root| {
-                const item_type = root.get("type") orelse return .{ .raw = source };
-                if (item_type != .string) return .{ .raw = source };
+                const item_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (item_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, item_type.string, "message")) {
                     if (root.get("id") != null) {
@@ -6048,9 +6050,9 @@ pub const Item = union(enum) {
                     } else |_| {}
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -6093,7 +6095,7 @@ pub const InputItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !InputItem {
         switch (source) {
@@ -6104,10 +6106,10 @@ pub const InputItem = union(enum) {
                         defer parsed.deinit();
                         return .{ .easy_message = parsed.value };
                     } else |_| {
-                        return .{ .raw = source };
+                        return .{ .raw = FunctionParameters.forRaw(source) };
                     }
                 }
-                if (item_type.? != .string) return .{ .raw = source };
+                if (item_type.? != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, item_type.?.string, "item_reference")) {
                     if (std.json.parseFromValue(ItemReferenceParam, allocator, source, options)) |parsed| {
@@ -6119,10 +6121,10 @@ pub const InputItem = union(enum) {
                 if (Item.jsonParseFromValue(allocator, source, options)) |value| {
                     return .{ .item = value };
                 } else |_| {
-                    return .{ .raw = source };
+                    return .{ .raw = FunctionParameters.forRaw(source) };
                 }
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -6190,13 +6192,13 @@ pub const ItemResource = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ItemResource {
         switch (source) {
             .object => |root| {
-                const item_type = root.get("type") orelse return .{ .raw = source };
-                if (item_type != .string) return .{ .raw = source };
+                const item_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (item_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, item_type.string, "message")) {
                     if (root.get("id") != null) {
@@ -6343,9 +6345,9 @@ pub const ItemResource = union(enum) {
                     } else |_| {}
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -6608,13 +6610,13 @@ pub const MessageTextAnnotation = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !MessageTextAnnotation {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "file_citation")) {
                     const parsed = std.json.parseFromValue(
@@ -6622,7 +6624,7 @@ pub const MessageTextAnnotation = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_citation = parsed.value };
                 }
@@ -6633,14 +6635,14 @@ pub const MessageTextAnnotation = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_path = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -6682,13 +6684,13 @@ pub const MessageTextAnnotationDelta = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !MessageTextAnnotationDelta {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "file_citation")) {
                     const parsed = std.json.parseFromValue(
@@ -6696,7 +6698,7 @@ pub const MessageTextAnnotationDelta = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_citation = parsed.value };
                 }
@@ -6707,14 +6709,14 @@ pub const MessageTextAnnotationDelta = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_path = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -6772,13 +6774,13 @@ pub const MessageContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !MessageContent {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "text")) {
                     const parsed = std.json.parseFromValue(
@@ -6786,7 +6788,7 @@ pub const MessageContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text = parsed.value };
                 }
@@ -6797,7 +6799,7 @@ pub const MessageContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_file = parsed.value };
                 }
@@ -6808,7 +6810,7 @@ pub const MessageContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_url = parsed.value };
                 }
@@ -6819,14 +6821,14 @@ pub const MessageContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .refusal = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -6884,13 +6886,13 @@ pub const MessageContentDelta = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !MessageContentDelta {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "text")) {
                     const parsed = std.json.parseFromValue(
@@ -6898,7 +6900,7 @@ pub const MessageContentDelta = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text = parsed.value };
                 }
@@ -6909,7 +6911,7 @@ pub const MessageContentDelta = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_file = parsed.value };
                 }
@@ -6920,7 +6922,7 @@ pub const MessageContentDelta = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_url = parsed.value };
                 }
@@ -6931,14 +6933,14 @@ pub const MessageContentDelta = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .refusal = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -7151,13 +7153,13 @@ pub const MessageStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !MessageStreamEvent {
         switch (source) {
             .object => |root| {
-                const event = root.get("event") orelse return .{ .raw = source };
-                if (event != .string) return .{ .raw = source };
+                const event = root.get("event") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (event != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, event.string, "thread.message.created")) {
                     const parsed = std.json.parseFromValue(
@@ -7165,7 +7167,7 @@ pub const MessageStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .created = parsed.value };
                 }
@@ -7176,7 +7178,7 @@ pub const MessageStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .in_progress = parsed.value };
                 }
@@ -7187,7 +7189,7 @@ pub const MessageStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .delta = parsed.value };
                 }
@@ -7198,7 +7200,7 @@ pub const MessageStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .completed = parsed.value };
                 }
@@ -7209,14 +7211,14 @@ pub const MessageStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .incomplete = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -7376,13 +7378,13 @@ pub const OutputContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !OutputContent {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "output_text")) {
                     const parsed = std.json.parseFromValue(
@@ -7390,7 +7392,7 @@ pub const OutputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text = parsed.value };
                 }
@@ -7401,7 +7403,7 @@ pub const OutputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .refusal = parsed.value };
                 }
@@ -7412,7 +7414,7 @@ pub const OutputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning = parsed.value };
                 }
@@ -7423,14 +7425,14 @@ pub const OutputContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -7562,13 +7564,13 @@ pub const OutputItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !OutputItem {
         switch (source) {
             .object => |root| {
-                const item_type = root.get("type") orelse return .{ .raw = source };
-                if (item_type != .string) return .{ .raw = source };
+                const item_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (item_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, item_type.string, "message")) {
                     if (std.json.parseFromValue(OutputMessage, allocator, source, options)) |parsed| {
@@ -7696,9 +7698,9 @@ pub const OutputItem = union(enum) {
                     } else |_| {}
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -7912,7 +7914,7 @@ pub const Prompt = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !Prompt {
         _ = allocator;
@@ -7920,8 +7922,8 @@ pub const Prompt = union(enum) {
 
         switch (source) {
             .object => |root| {
-                const id = root.get("id") orelse return .{ .raw = source };
-                if (id != .string) return .{ .raw = source };
+                const id = root.get("id") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (id != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 return .{
                     .template = .{
@@ -7929,7 +7931,7 @@ pub const Prompt = union(enum) {
                         .version = if (root.get("version")) |value| switch (value) {
                             .null => null,
                             .string => value.string,
-                            else => return .{ .raw = source },
+                            else => return .{ .raw = FunctionParameters.forRaw(source) },
                         } else null,
                         .variables = if (root.get("variables")) |value| switch (value) {
                             .null => null,
@@ -7938,7 +7940,7 @@ pub const Prompt = union(enum) {
                     },
                 };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -8029,7 +8031,7 @@ pub const RealtimeAudioFormats = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RealtimeAudioFormats {
         _ = allocator;
@@ -8037,8 +8039,8 @@ pub const RealtimeAudioFormats = union(enum) {
 
         switch (source) {
             .object => |root| {
-                const format_type = root.get("type") orelse return .{ .raw = source };
-                if (format_type != .string) return .{ .raw = source };
+                const format_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (format_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, format_type.string, "audio/pcm")) {
                     return .{
@@ -8047,7 +8049,7 @@ pub const RealtimeAudioFormats = union(enum) {
                             .rate = if (root.get("rate")) |rate| switch (rate) {
                                 .null => null,
                                 .integer => rate.integer,
-                                else => return .{ .raw = source },
+                                else => return .{ .raw = FunctionParameters.forRaw(source) },
                             } else null,
                         },
                     };
@@ -8061,9 +8063,9 @@ pub const RealtimeAudioFormats = union(enum) {
                     return .{ .pcma = .{ .type = format_type.string } };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -8610,13 +8612,13 @@ pub const RealtimeConversationItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RealtimeConversationItem {
         switch (source) {
             .object => |root| {
-                const item_type = root.get("type") orelse return .{ .raw = source };
-                if (item_type != .string) return .{ .raw = source };
+                const item_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (item_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, item_type.string, "function_call")) {
                     if (std.json.parseFromValue(
@@ -8749,9 +8751,9 @@ pub const RealtimeConversationItem = union(enum) {
                     } else |_| {}
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            .string, .number, .bool, .null, .array => return .{ .raw = source },
+            .string, .number, .bool, .null, .array => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -9532,13 +9534,13 @@ pub const RealtimeTurnDetection = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RealtimeTurnDetection {
         switch (source) {
             .object => |root| {
-                const turn_type = root.get("type") orelse return .{ .raw = source };
-                if (turn_type != .string) return .{ .raw = source };
+                const turn_type = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (turn_type != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, turn_type.string, "server_vad")) {
                     const parsed = std.json.parseFromValue(
@@ -9546,7 +9548,7 @@ pub const RealtimeTurnDetection = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .server_vad = parsed.value };
                 }
@@ -9557,14 +9559,14 @@ pub const RealtimeTurnDetection = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .semantic_vad = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -9622,14 +9624,14 @@ pub const RealtimeTruncation = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RealtimeTruncation {
         switch (source) {
             .string => |value| {
                 if (std.mem.eql(u8, value, "auto")) return .auto;
                 if (std.mem.eql(u8, value, "disabled")) return .disabled;
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
             .object => {
                 const parsed = std.json.parseFromValue(
@@ -9641,7 +9643,7 @@ pub const RealtimeTruncation = union(enum) {
                     allocator,
                     source,
                     options,
-                ) catch return .{ .raw = source };
+                ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
 
                 if (std.mem.eql(u8, parsed.value.type, "retention_ratio") and parsed.value.retention_ratio != null) {
@@ -9654,9 +9656,9 @@ pub const RealtimeTruncation = union(enum) {
                     };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -9721,7 +9723,7 @@ pub const ResponseOutput = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ResponseOutput {
         switch (source) {
@@ -9735,7 +9737,7 @@ pub const ResponseOutput = union(enum) {
                     defer parsed.deinit();
                     return .{ .item = parsed.value };
                 } else |_| {}
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
             .array => {
                 const parsed = std.json.parseFromValue(
@@ -9743,11 +9745,11 @@ pub const ResponseOutput = union(enum) {
                     allocator,
                     source,
                     options,
-                ) catch return .{ .raw = source };
+                ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .items = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -9796,7 +9798,7 @@ pub const Response = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !Response {
         const parsed = std.json.parseFromValue(
@@ -9804,7 +9806,7 @@ pub const Response = union(enum) {
             allocator,
             source,
             options,
-        ) catch return .{ .raw = source };
+        ) catch return .{ .raw = FunctionParameters.forRaw(source) };
         defer parsed.deinit();
 
         return .{ .object = parsed.value };
@@ -9946,7 +9948,7 @@ pub const ResponseError = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ResponseError {
         const parsed = std.json.parseFromValue(
@@ -9959,7 +9961,7 @@ pub const ResponseError = union(enum) {
             allocator,
             source,
             options,
-        ) catch return .{ .raw = source };
+        ) catch return .{ .raw = FunctionParameters.forRaw(source) };
         defer parsed.deinit();
 
         if (parsed.value.message) |message| {
@@ -9972,7 +9974,7 @@ pub const ResponseError = union(enum) {
                 },
             };
         }
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const ResponseErrorEvent = struct {
@@ -10951,13 +10953,13 @@ pub const ResponseStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ResponseStreamEvent {
         switch (source) {
             .object => |root| {
-                const event = root.get("type") orelse return .{ .raw = source };
-                if (event != .string) return .{ .raw = source };
+                const event = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (event != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, event.string, "response.audio.delta")) {
                     const parsed = std.json.parseFromValue(
@@ -10965,7 +10967,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio_delta = parsed.value };
                 }
@@ -10976,7 +10978,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio_done = parsed.value };
                 }
@@ -10987,7 +10989,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio_transcript_delta = parsed.value };
                 }
@@ -10998,7 +11000,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .audio_transcript_done = parsed.value };
                 }
@@ -11009,7 +11011,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .code_interpreter_call_code_delta = parsed.value };
                 }
@@ -11020,7 +11022,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .code_interpreter_call_code_done = parsed.value };
                 }
@@ -11031,7 +11033,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .code_interpreter_call_completed = parsed.value };
                 }
@@ -11042,7 +11044,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .code_interpreter_call_in_progress = parsed.value };
                 }
@@ -11053,7 +11055,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .code_interpreter_call_interpreting = parsed.value };
                 }
@@ -11064,7 +11066,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .completed = parsed.value };
                 }
@@ -11075,7 +11077,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .content_part_added = parsed.value };
                 }
@@ -11086,7 +11088,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .content_part_done = parsed.value };
                 }
@@ -11097,7 +11099,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .created = parsed.value };
                 }
@@ -11108,7 +11110,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .custom_tool_call_input_delta = parsed.value };
                 }
@@ -11119,7 +11121,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .custom_tool_call_input_done = parsed.value };
                 }
@@ -11130,7 +11132,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .err = parsed.value };
                 }
@@ -11141,7 +11143,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .failed = parsed.value };
                 }
@@ -11152,7 +11154,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_search_call_completed = parsed.value };
                 }
@@ -11163,7 +11165,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_search_call_in_progress = parsed.value };
                 }
@@ -11174,7 +11176,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .file_search_call_searching = parsed.value };
                 }
@@ -11185,7 +11187,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .function_call_arguments_delta = parsed.value };
                 }
@@ -11196,7 +11198,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .function_call_arguments_done = parsed.value };
                 }
@@ -11207,7 +11209,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_gen_call_completed = parsed.value };
                 }
@@ -11218,7 +11220,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_gen_call_generating = parsed.value };
                 }
@@ -11229,7 +11231,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_gen_call_in_progress = parsed.value };
                 }
@@ -11240,7 +11242,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .image_gen_call_partial_image = parsed.value };
                 }
@@ -11251,7 +11253,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .in_progress = parsed.value };
                 }
@@ -11262,7 +11264,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .incomplete = parsed.value };
                 }
@@ -11273,7 +11275,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_call_arguments_delta = parsed.value };
                 }
@@ -11284,7 +11286,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_call_arguments_done = parsed.value };
                 }
@@ -11295,7 +11297,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_call_completed = parsed.value };
                 }
@@ -11306,7 +11308,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_call_failed = parsed.value };
                 }
@@ -11317,7 +11319,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_call_in_progress = parsed.value };
                 }
@@ -11328,7 +11330,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_list_tools_completed = parsed.value };
                 }
@@ -11339,7 +11341,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_list_tools_failed = parsed.value };
                 }
@@ -11350,7 +11352,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .mcp_list_tools_in_progress = parsed.value };
                 }
@@ -11361,7 +11363,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .output_item_added = parsed.value };
                 }
@@ -11372,7 +11374,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .output_item_done = parsed.value };
                 }
@@ -11383,7 +11385,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .output_text_annotation_added = parsed.value };
                 }
@@ -11394,7 +11396,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .queued = parsed.value };
                 }
@@ -11405,7 +11407,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning_summary_part_added = parsed.value };
                 }
@@ -11416,7 +11418,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning_summary_part_done = parsed.value };
                 }
@@ -11427,7 +11429,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning_summary_text_delta = parsed.value };
                 }
@@ -11438,7 +11440,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning_summary_text_done = parsed.value };
                 }
@@ -11449,7 +11451,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning_text_delta = parsed.value };
                 }
@@ -11460,7 +11462,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .reasoning_text_done = parsed.value };
                 }
@@ -11471,7 +11473,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .refusal_delta = parsed.value };
                 }
@@ -11482,7 +11484,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .refusal_done = parsed.value };
                 }
@@ -11493,7 +11495,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text_delta = parsed.value };
                 }
@@ -11504,7 +11506,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text_done = parsed.value };
                 }
@@ -11515,7 +11517,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .web_search_call_completed = parsed.value };
                 }
@@ -11526,7 +11528,7 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .web_search_call_in_progress = parsed.value };
                 }
@@ -11537,14 +11539,14 @@ pub const ResponseStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .web_search_call_searching = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -11751,12 +11753,12 @@ pub const RunStepDeltaStepDetailsToolCall = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RunStepDeltaStepDetailsToolCall {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const RunStepDeltaStepDetailsToolCallsCodeObject = struct {
@@ -11827,12 +11829,12 @@ pub const RunStepDeltaStepDetails = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RunStepDeltaStepDetails {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const RunStepDetailsMessageCreationObject = struct {
@@ -11872,12 +11874,12 @@ pub const RunStepDetailsToolCall = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RunStepDetailsToolCall {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const RunStepDetailsToolCallsCodeObject = struct {
@@ -11959,12 +11961,12 @@ pub const RunStepDetails = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RunStepDetails {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const RunStepObject = struct {
@@ -12096,13 +12098,13 @@ pub const RunStepStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RunStepStreamEvent {
         switch (source) {
             .object => |root| {
-                const event = root.get("event") orelse return .{ .raw = source };
-                if (event != .string) return .{ .raw = source };
+                const event = root.get("event") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (event != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, event.string, "thread.run.step.created")) {
                     const parsed = std.json.parseFromValue(
@@ -12110,7 +12112,7 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .created = parsed.value };
                 }
@@ -12121,7 +12123,7 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .in_progress = parsed.value };
                 }
@@ -12132,7 +12134,7 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .delta = parsed.value };
                 }
@@ -12143,7 +12145,7 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .completed = parsed.value };
                 }
@@ -12154,7 +12156,7 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .failed = parsed.value };
                 }
@@ -12165,7 +12167,7 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .cancelled = parsed.value };
                 }
@@ -12176,14 +12178,14 @@ pub const RunStepStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .expired = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -12329,13 +12331,13 @@ pub const RunStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !RunStreamEvent {
         switch (source) {
             .object => |root| {
-                const event = root.get("event") orelse return .{ .raw = source };
-                if (event != .string) return .{ .raw = source };
+                const event = root.get("event") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (event != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, event.string, "thread.run.created")) {
                     const parsed = std.json.parseFromValue(
@@ -12343,7 +12345,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .created = parsed.value };
                 }
@@ -12354,7 +12356,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .queued = parsed.value };
                 }
@@ -12365,7 +12367,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .in_progress = parsed.value };
                 }
@@ -12376,7 +12378,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .requires_action = parsed.value };
                 }
@@ -12387,7 +12389,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .completed = parsed.value };
                 }
@@ -12398,7 +12400,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .incomplete = parsed.value };
                 }
@@ -12409,7 +12411,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .failed = parsed.value };
                 }
@@ -12420,7 +12422,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .cancelling = parsed.value };
                 }
@@ -12431,7 +12433,7 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .cancelled = parsed.value };
                 }
@@ -12442,14 +12444,14 @@ pub const RunStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .expired = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -12529,17 +12531,17 @@ pub const StopConfiguration = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !StopConfiguration {
         switch (source) {
             .string => return .{ .single = source.string },
             .array => {
-                const parsed = std.json.parseFromValue([]const []const u8, allocator, source, options) catch return .{ .raw = source };
+                const parsed = std.json.parseFromValue([]const []const u8, allocator, source, options) catch return .{ .raw = FunctionParameters.forRaw(source) };
                 defer parsed.deinit();
                 return .{ .multiple = parsed.value };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 
@@ -12652,13 +12654,13 @@ pub const TextResponseFormatConfiguration = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !TextResponseFormatConfiguration {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "text")) {
                     const parsed = std.json.parseFromValue(
@@ -12666,7 +12668,7 @@ pub const TextResponseFormatConfiguration = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .text = parsed.value };
                 }
@@ -12677,7 +12679,7 @@ pub const TextResponseFormatConfiguration = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .json_object = parsed.value };
                 }
@@ -12688,14 +12690,14 @@ pub const TextResponseFormatConfiguration = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .json_schema = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -12776,13 +12778,13 @@ pub const ThreadItem = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ThreadItem {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "chatkit.user_message")) {
                     const parsed = std.json.parseFromValue(
@@ -12790,7 +12792,7 @@ pub const ThreadItem = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .user = parsed.value };
                 }
@@ -12801,7 +12803,7 @@ pub const ThreadItem = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .assistant = parsed.value };
                 }
@@ -12812,7 +12814,7 @@ pub const ThreadItem = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .widget = parsed.value };
                 }
@@ -12823,7 +12825,7 @@ pub const ThreadItem = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .client_tool_call = parsed.value };
                 }
@@ -12834,7 +12836,7 @@ pub const ThreadItem = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .task = parsed.value };
                 }
@@ -12845,14 +12847,14 @@ pub const ThreadItem = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .task_group = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -12920,13 +12922,13 @@ pub const ThreadStreamEvent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ThreadStreamEvent {
         switch (source) {
             .object => |root| {
-                const event = root.get("event") orelse return .{ .raw = source };
-                if (event != .string) return .{ .raw = source };
+                const event = root.get("event") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (event != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, event.string, "thread.created")) {
                     const parsed = std.json.parseFromValue(
@@ -12934,14 +12936,14 @@ pub const ThreadStreamEvent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .created = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };
@@ -13036,12 +13038,12 @@ pub const Tool = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !Tool {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const ToolChoice = struct {
@@ -13172,12 +13174,12 @@ pub const ToolChoiceParam = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !ToolChoiceParam {
         _ = allocator;
         _ = options;
-        return .{ .raw = source };
+        return .{ .raw = FunctionParameters.forRaw(source) };
     }
 };
 pub const ToolChoiceTypes = struct {
@@ -13483,13 +13485,13 @@ pub const UserMessageItemContent = union(enum) {
 
     pub fn jsonParseFromValue(
         allocator: std.mem.Allocator,
-        source: FunctionParameters,
+        source: std.json.Value,
         options: std.json.ParseOptions,
     ) !UserMessageItemContent {
         switch (source) {
             .object => |root| {
-                const kind = root.get("type") orelse return .{ .raw = source };
-                if (kind != .string) return .{ .raw = source };
+                const kind = root.get("type") orelse return .{ .raw = FunctionParameters.forRaw(source) };
+                if (kind != .string) return .{ .raw = FunctionParameters.forRaw(source) };
 
                 if (std.mem.eql(u8, kind.string, "input_text")) {
                     const parsed = std.json.parseFromValue(
@@ -13497,7 +13499,7 @@ pub const UserMessageItemContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .input_text = parsed.value };
                 }
@@ -13508,14 +13510,14 @@ pub const UserMessageItemContent = union(enum) {
                         allocator,
                         source,
                         options,
-                    ) catch return .{ .raw = source };
+                    ) catch return .{ .raw = FunctionParameters.forRaw(source) };
                     defer parsed.deinit();
                     return .{ .quoted_text = parsed.value };
                 }
 
-                return .{ .raw = source };
+                return .{ .raw = FunctionParameters.forRaw(source) };
             },
-            else => return .{ .raw = source },
+            else => return .{ .raw = FunctionParameters.forRaw(source) },
         }
     }
 };

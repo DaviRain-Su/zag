@@ -19,7 +19,7 @@ fn unwrapMarkdownFence(input: []const u8) []const u8 {
     if (std.mem.startsWith(u8, body, "json")) {
         body = body[4..];
     }
-    body = std.mem.trimLeft(u8, body, " \n\r\t");
+    body = std.mem.trimStart(u8, body, " \n\r\t");
 
     // Return content before closing fence if present.
     if (std.mem.lastIndexOf(u8, body, "```")) |end| {
@@ -28,12 +28,11 @@ fn unwrapMarkdownFence(input: []const u8) []const u8 {
     return text;
 }
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -42,6 +41,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,
@@ -107,7 +107,7 @@ pub fn main() !void {
     };
     defer parsed.deinit();
 
-    var out = std.io.Writer.Allocating.init(gpa);
+    var out = std.Io.Writer.Allocating.init(gpa);
     defer out.deinit();
     var json_out = std.json.Stringify{ .writer = &out.writer, .options = .{} };
     try json_out.write(parsed.value);

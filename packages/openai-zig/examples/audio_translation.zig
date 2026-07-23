@@ -2,14 +2,13 @@ const std = @import("std");
 const sdk = @import("openai_zig");
 const errors = sdk.errors;
 const config = @import("config");
-const compat = @import("provider_compat.zig");
+const compat = @import("provider_compat");
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -17,19 +16,20 @@ pub fn main() !void {
         return;
     }
 
-    const audio_file_path = std.process.getEnvVarOwned(gpa, "OPENAI_AUDIO_FILE") catch null;
+    const audio_file_path = if (init.environ_map.get("OPENAI_AUDIO_FILE")) |v| try gpa.dupe(u8, v) else null;
     if (audio_file_path == null or audio_file_path.?.len == 0) {
         std.debug.print("Set OPENAI_AUDIO_FILE to run this example (path to local audio file).\n", .{});
         return;
     }
     defer gpa.free(audio_file_path.?);
 
-    std.fs.cwd().access(audio_file_path.?, .{}) catch {
+    std.Io.Dir.cwd().access(io, audio_file_path.?, .{}) catch {
         std.debug.print("Audio file not found: {s}\n", .{audio_file_path.?});
         return;
     };
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,

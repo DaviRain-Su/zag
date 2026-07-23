@@ -16,12 +16,11 @@ fn tryListModels(
     std.debug.print("models returned: {d}\n", .{models.value.data.len});
 }
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -30,6 +29,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,

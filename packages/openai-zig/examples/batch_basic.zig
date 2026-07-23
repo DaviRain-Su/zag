@@ -2,14 +2,13 @@ const std = @import("std");
 const sdk = @import("openai_zig");
 const errors = sdk.errors;
 const config = @import("config");
-const compat = @import("provider_compat.zig");
+const compat = @import("provider_compat");
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -18,6 +17,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,
@@ -52,7 +52,7 @@ pub fn main() !void {
 
     std.debug.print("batch list has_more: {}\n", .{batches.value.has_more});
 
-    var out: std.io.Writer.Allocating = .init(gpa);
+    var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     var json_stream: std.json.Stringify = .{ .writer = &out.writer, .options = .{ .emit_null_optional_fields = false } };
     try json_stream.write(batches.value);
@@ -75,7 +75,7 @@ pub fn main() !void {
     };
     defer first_batch.deinit();
 
-    var batch_out: std.io.Writer.Allocating = .init(gpa);
+    var batch_out: std.Io.Writer.Allocating = .init(gpa);
     defer batch_out.deinit();
     var batch_stream: std.json.Stringify = .{ .writer = &batch_out.writer, .options = .{ .emit_null_optional_fields = false } };
     try batch_stream.write(first_batch.value);

@@ -2,12 +2,11 @@ const std = @import("std");
 const sdk = @import("openai_zig");
 const config = @import("config");
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -16,6 +15,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,
@@ -27,13 +27,13 @@ pub fn main() !void {
     defer client.deinit();
 
     const messages = [_]sdk.resources.chat.ChatMessage{ .{ .role = "user", .content = "用中文说你是谁" } };
-    var body_writer: std.io.Writer.Allocating = .init(gpa);
+    var body_writer: std.Io.Writer.Allocating = .init(gpa);
     defer body_writer.deinit();
     const req = struct {
         model: []const u8,
         messages: []const sdk.resources.chat.ChatMessage,
     }{ .model = conf.model, .messages = &messages };
-    try std.json.stringify(req, .{}, body_writer.writer());
+    { var __js: std.json.Stringify = .{ .writer = &body_writer.writer, .options = .{} }; try __js.write(req); }
     const payload = body_writer.written();
 
     const headers = [_]std.http.Header{

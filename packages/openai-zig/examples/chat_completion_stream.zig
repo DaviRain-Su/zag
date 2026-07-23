@@ -199,7 +199,7 @@ const StreamState = struct {
     fn looksIncomplete(self: *StreamState) bool {
         if (self.output.items.len == 0) return true;
 
-        const trimmed = std.mem.trimRight(u8, self.output.items, " \t\r\n");
+        const trimmed = std.mem.trimEnd(u8, self.output.items, " \t\r\n");
         if (trimmed.len == 0) return true;
         const normalized = trimCompletionTrailingNoise(trimmed);
         if (normalized.len == 0) return true;
@@ -262,7 +262,7 @@ fn trimCompletionTrailingNoise(text: []const u8) []const u8 {
         "💡",
     };
 
-    var trimmed = std.mem.trimRight(u8, text, " \t\r\n");
+    var trimmed = std.mem.trimEnd(u8, text, " \t\r\n");
     var did_trim = true;
     while (did_trim) {
         did_trim = false;
@@ -277,17 +277,16 @@ fn trimCompletionTrailingNoise(text: []const u8) []const u8 {
             }
         }
         if (!did_trim) break;
-        trimmed = std.mem.trimRight(u8, trimmed, " \t\r\n");
+        trimmed = std.mem.trimEnd(u8, trimmed, " \t\r\n");
     }
     return trimmed;
 }
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -296,6 +295,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,
@@ -339,10 +339,10 @@ pub fn main() !void {
 
     var stream_state = StreamState{
         .allocator = gpa,
-        .choice_last_texts = .{},
-        .output = .{},
-        .reasoning_choice_last_texts = .{},
-        .reasoning_output = .{},
+        .choice_last_texts = .empty,
+        .output = .empty,
+        .reasoning_choice_last_texts = .empty,
+        .reasoning_output = .empty,
     };
     defer stream_state.deinit();
 

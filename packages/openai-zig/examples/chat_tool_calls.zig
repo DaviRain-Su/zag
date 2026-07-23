@@ -28,7 +28,7 @@ fn printToolCalls(allocator: std.mem.Allocator, tool_calls: []const sdk.generate
             )) |parsed| {
                 defer parsed.deinit();
 
-                var writer = std.io.Writer.Allocating.init(allocator);
+                var writer = std.Io.Writer.Allocating.init(allocator);
                 defer writer.deinit();
                 var json_out: std.json.Stringify = .{
                     .writer = &writer.writer,
@@ -50,12 +50,11 @@ fn printTextMessage(message: sdk.generated.ChatCompletionResponseMessage) void {
     std.debug.print("assistant content: {s}\n", .{content});
 }
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -64,6 +63,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,

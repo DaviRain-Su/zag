@@ -3,11 +3,11 @@ const sdk = @import("openai_zig");
 const config = @import("config");
 
 fn stripInstructionPrefix(text: []const u8) []const u8 {
-    var trimmed = std.mem.trimLeft(u8, text, " \t\r\n");
+    var trimmed = std.mem.trimStart(u8, text, " \t\r\n");
     if (trimmed.len == 0) return "";
 
     if (trimmed.len > 0 and trimmed[0] == '.') {
-        trimmed = std.mem.trimLeft(u8, trimmed[1..], " \t\r\n");
+        trimmed = std.mem.trimStart(u8, trimmed[1..], " \t\r\n");
     }
     if (std.mem.startsWith(u8, trimmed, "The poem should") or
         std.mem.startsWith(u8, trimmed, "The poem must") or
@@ -16,19 +16,18 @@ fn stripInstructionPrefix(text: []const u8) []const u8 {
         std.mem.startsWith(u8, trimmed, "Write a"))
     {
         if (std.mem.indexOf(u8, trimmed, "\n")) |idx| {
-            return std.mem.trimLeft(u8, trimmed[idx + 1 ..], " \t\r\n");
+            return std.mem.trimStart(u8, trimmed[idx + 1 ..], " \t\r\n");
         }
         return "";
     }
     return trimmed;
 }
 
-pub fn main() !void {
-    var gpa_impl = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa_impl.deinit();
-    const gpa = gpa_impl.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var conf = try config.load(gpa, "config/config.toml");
+    var conf = try config.loadFromEnvMap(gpa, io, "config/config.toml", init.environ_map);
     defer conf.deinit(gpa);
 
     if (conf.api_key.len == 0) {
@@ -37,6 +36,7 @@ pub fn main() !void {
     }
 
     var client = try sdk.initClient(gpa, .{
+        .io = io,
         .base_url = conf.base_url,
         .api_key = conf.api_key,
         .timeout_ms = conf.timeout_ms,

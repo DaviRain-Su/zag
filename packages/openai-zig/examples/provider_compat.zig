@@ -17,7 +17,7 @@ pub fn deepSeekBetaBase(allocator: std.mem.Allocator, base_url: []const u8) ![]u
     }
 
     if (std.mem.endsWith(u8, trimmed_base, "/")) {
-        return std.fmt.allocPrint(allocator, "{s}/beta", .{std.mem.trimRight(u8, trimmed_base, "/")});
+        return std.fmt.allocPrint(allocator, "{s}/beta", .{std.mem.trimEnd(u8, trimmed_base, "/")});
     }
 
     if (std.mem.endsWith(u8, trimmed_base, "/v1")) {
@@ -25,11 +25,11 @@ pub fn deepSeekBetaBase(allocator: std.mem.Allocator, base_url: []const u8) ![]u
             return allocator.dupe(u8, "https://api.deepseek.com/beta");
         }
         const host_base = trimmed_base[0 .. trimmed_base.len - 3];
-        const normalized_host_base = std.mem.trimRight(u8, host_base, "/");
+        const normalized_host_base = std.mem.trimEnd(u8, host_base, "/");
         return std.fmt.allocPrint(allocator, "{s}/beta", .{normalized_host_base});
     }
 
-    const normalized_base = std.mem.trimRight(u8, trimmed_base, "/");
+    const normalized_base = std.mem.trimEnd(u8, trimmed_base, "/");
     return std.fmt.allocPrint(allocator, "{s}/beta", .{normalized_base});
 }
 

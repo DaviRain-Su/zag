@@ -362,6 +362,13 @@ pub const CreateChatCompletionRequest = struct {
     prediction: ?std.json.Value = null,
     stream: ?bool = null,
     response_format: ?ResponseFormat = null,
+    /// OpenAI ModerationParam (model + optional policy). Free-form JSON for forward-compat.
+    moderation: ?std.json.Value = null,
+    /// Prompt cache options (`ttl`, `mode`). Free-form JSON for forward-compat.
+    prompt_cache_options: ?std.json.Value = null,
+    /// Response verbosity preference when supported by the model.
+    verbosity: ?[]const u8 = null,
+    web_search_options: ?std.json.Value = null,
     extra_body: ?std.json.Value = null,
 
     pub fn jsonStringify(self: CreateChatCompletionRequest, writer: anytype) !void {
@@ -485,6 +492,22 @@ pub const CreateChatCompletionRequest = struct {
         }
         if (self.response_format) |value| {
             try writer.objectField("response_format");
+            try writer.write(value);
+        }
+        if (self.moderation) |value| {
+            try writer.objectField("moderation");
+            try writer.write(value);
+        }
+        if (self.prompt_cache_options) |value| {
+            try writer.objectField("prompt_cache_options");
+            try writer.write(value);
+        }
+        if (self.verbosity) |value| {
+            try writer.objectField("verbosity");
+            try writer.write(value);
+        }
+        if (self.web_search_options) |value| {
+            try writer.objectField("web_search_options");
             try writer.write(value);
         }
         if (self.extra_body) |value| {
