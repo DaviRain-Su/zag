@@ -1,9 +1,11 @@
-# Chapter 3 — 生产向：边界、策略、可观测
+# Chapter 3 — 边界雏形：Jail、策略、Trace
 
-> 对应 [Phase 3](../../docs/roadmap.md#phase-3--生产向可能上生产)。  
+> 对应 Teaching [Phase 3](../../docs/roadmap.md#phase-3--边界雏形jail--policy--trace)。  
+> **状态：tutorial-complete**（**不是** Production Floor / 不是 production-ready）。  
+> 章名目录仍为 `03-production`（历史路径）；语义上是「安全边界雏形」。  
 > **代码与本章同步。**
 
-**一句话：** 别人敢在受控环境用——**默认拒绝危险操作**，并能**复盘**一次 run。
+**一句话：** 演示级默认拒绝危险路径/命令，并能用 JSONL **复盘**一次 run——距离「敢日用生产底线」见 Phase H。
 
 ---
 
@@ -112,7 +114,7 @@ execute → tool result → transcript + trace
 - 默认拒绝什么？如何审计一次危险操作？  
 - jail / policy / ask 三层各解决什么？  
 - 为什么 soft fail 而不是进程 exit？  
-- Phase 3 **还没**做到哪些工业能力？
+- Teaching 3 与 Phase H（Production Floor）各解决什么？还缺哪些（见 gaps/03-safety）？
 
 ---
 
@@ -129,11 +131,16 @@ execute → tool result → transcript + trace
 见 `src/provider/presets.zig`：加一行 `ProviderSpec`（id / base_url / env_keys / default_model）。  
 不要改 `openai_compat.zig` 除非线协议本身变了。OAuth 登录暂不支持（仅 env key）。
 
-## 8. 下一步（本阶段之后）
+## 8. 生产缺口
 
-- 真沙箱 / 容器  
-- 配置文件（非仅 env）  
-- MCP 或 hooks 深挖一条  
-- Golden transcript 回归集  
+Jail + denylist + trace 仍是 L1。离 L2 见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**（redact、policy 矩阵、trace schema、doctor；OS sandbox 属 C7）。
 
-**Tag：** `ch3-prod` / `v0.3.1`
+---
+
+## 9. 下一步
+
+- **主线：** [Chapter H — Production Floor](../H-harden/README.md)  
+- 规格：[phases/H-harden.md](../../docs/phases/H-harden.md)  
+- 真沙箱属 Capability [C7](../../docs/phases/C7-sandbox.md)，不在 Teaching 3  
+
+**Tag：** `ch3-boundary` / tutorial-complete

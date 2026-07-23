@@ -1,110 +1,101 @@
 # Zag — 参考资料
 
-与 [roadmap.md](./roadmap.md) 配套的链接表。按类型整理；阶段建议见路线图正文。
+与 [roadmap.md](./roadmap.md) 配套。阶段建议以 roadmap / [maturity.md](./maturity.md) 为准。
 
 ---
 
-## 1. 从零实现 / 教程（必读梯队）
+## 1. 从零实现 / 教程（Teaching）
 
-| 资源 | 语言 | 说明 | 优先阶段 |
-|------|------|------|----------|
-| [How to Build an Agent — Thorsten Ball (Amp)](https://ampcode.com/how-to-build-an-agent) | Go | **第一必读**。~400 行讲透 agent loop + tools | 0（全文），1（复习编辑/shell） |
-| [how to build a coding agent — ghuntley](https://ghuntley.com/agent/) | Go | 工作坊版；tool definition 示例清晰 | 0 |
-| [Build a coding agent — Together AI](https://docs.together.ai/docs/how-to-build-coding-agents) | Python | Ball 文的 Python 对照实现 | 0 |
-| [Build a Coding Agent from Scratch — sidbharath](https://sidbharath.com/blog/build-a-coding-agent-python-tutorial/) | Python | 更完整：MVP loop → 安全执行 / 沙箱思路 | 1～3 |
-| Paul Iusztin — *Building a Coding Agent From Scratch*（[Decoding AI](https://www.decodingai.com/)） | Python | 生产 harness 八课级大纲：loop、HITL、durable、context、sandbox、skills/subagents、evals、deploy | 地图：0 扫一眼；2～3 精读对应课 |
-| 各类「95 行 / 131 行 agent」短文（如 waku-agent 等社区传播版） | 多 Python | 只用来建立「最小可运行」直觉，不作架构权威 | 0 可选 |
+| 资源 | 语言 | 说明 | 优先 |
+|------|------|------|------|
+| [How to Build an Agent — Thorsten Ball (Amp)](https://ampcode.com/how-to-build-an-agent) | Go | **第一必读**。loop + tools | Teaching 0 |
+| [how to build a coding agent — ghuntley](https://ghuntley.com/agent/) | Go | tool definition 形状 | 0 |
+| [Build a coding agent — Together AI](https://docs.together.ai/docs/how-to-build-coding-agents) | Python | Ball 对照 | 0 |
+| [Build a Coding Agent from Scratch — sidbharath](https://sidbharath.com/blog/build-a-coding-agent-python-tutorial/) | Python | 安全执行 / 沙箱概念 | 1～H |
+| Paul Iusztin — *Building a Coding Agent From Scratch*（[Decoding AI](https://www.decodingai.com/)） | Python | 生产 harness 地图 | 全程扫；H～C 精读 |
 
-### Paul 系列课题 ↔ Zag 阶段（概念对齐）
+### Paul 课题 ↔ Zag
 
-| 课题（典型标题） | Zag 阶段 |
-|------------------|----------|
-| System architecture | 全程地图 |
-| Agent loops & human approval | 0～1 |
-| Durable execution & replay | 2 |
-| Context engineering | 2 |
-| Permissions & sandboxes | 1 概念 / 3 实现 |
-| Skills & parallel subagents | 3 可选 |
-| AI evals & observability | 3 |
-| Deployment | 3 |
+| 课题 | Zag |
+|------|-----|
+| Agent loops & human approval | Teaching 0–1 · H1/H3 |
+| Durable execution & replay | Teaching 2 · H4 |
+| Context engineering | H4 · C5 |
+| Permissions & sandboxes | Teaching 3 · H5 · C7 |
+| Skills & subagents | C6 · C8 |
+| Evals & observability | Quality · H7 |
+| Deployment | C9 |
 
 ---
 
-## 2. 成品开源（读架构，不抄全仓）
+## 2. 成品开源 / 工业对照
 
-| 项目 | 语言 | 学什么 | 优先阶段 |
-|------|------|--------|----------|
-| [Aider](https://github.com/Aider-AI/aider) | Python | Git 感知编辑、repo map、pair 工作流 | 1～2 |
-| [OpenHands](https://github.com/OpenHands/openhands) | 偏 Python | 自主软件工程 agent、agent server | 2～3 |
-| [goose](https://github.com/aaif-goose/goose)（AAIF / 原 Block） | Rust | 本地生产 agent：MCP、扩展、subagents、ACP | 2～3 |
-| OpenCode / Cline 等终端·编辑器 agent | 多 TS 等 | 产品形态对照（CLI / IDE） | 扫一眼即可 |
-| **Hyper / Grok Build**（本地，如 `~/orca/hyper-grok-build`） | Rust | 工业 harness：Agent 定义、turn loop、tool bridge、subagent、compaction、hooks、sandbox | 全程对照；3 最深 |
+| 项目 | 学什么 | 优先 |
+|------|--------|------|
+| **Hyper / Grok Build**（本机如 `~/orca/hyper-grok-build`） | 工业 harness 上限；模块切分 | 全程；H/C 深读 |
+| [omp / Oh My Pi](https://github.com/can1357/oh-my-pi) | hashline、LSP/DAP、stream rules、typed subagent | C4、C6 |
+| [Pi](https://github.com/earendil-works/pi) | 最小 harness、扩展纪律、session/compaction | H4、C8 |
+| [Nanocodex](https://github.com/gakonst/nanocodex) | Turn/steer/fork、行为合同、Code Mode（研究） | Quality、C6 |
+| [Aider](https://github.com/Aider-AI/aider) | repo map、git 边界 | C4、C5 |
+| [goose](https://github.com/aaif-goose/goose) | MCP、扩展、ACP | C8、C9 |
+| [Codex CLI](https://github.com/openai/codex) | apply_patch、sandbox | C4、C7 |
+| Amp（闭源，[手册](https://ampcode.com/manual)） | Oracle、Changes、effort 心智 | C6；**不抄四档 Modes** |
+| Factory Droid | Readiness、Missions 轻量启发 | H5 doctor、C6 plan |
 
-### Hyper 对照阅读入口（本机）
+### Hyper 本机入口
 
-按需打开，**一次只跟一个主题**：
+| 主题 | 路径 / 文档 |
+|------|-------------|
+| 竞品与吸收看板 | `docs/competitive-analysis.md` |
+| Oracle 设计 | `docs/design-oracle.md` |
+| Agent / session | `crates/codegen/xai-grok-agent/`、`xai-grok-shell/src/session/` |
+| Tools / hashline | `xai-grok-tools`、hashline 相关 crate |
+| 用户指南 | `xai-grok-pager/docs/user-guide/`（permissions、sandbox、subagents、plan、MCP、sessions…） |
 
-| 主题 | 大致路径 / 文档 |
-|------|-----------------|
-| Agent 定义与拼装 | `crates/codegen/xai-grok-agent/`（含 README） |
-| Session / turn / tool_dispatch | `crates/codegen/xai-grok-shell/src/session/` |
-| 子 agent | 用户指南 subagents + `shell` subagent 模块 |
-| 权限 / plan mode | 用户指南 permissions、plan-mode |
-| Hooks / MCP | 用户指南 hooks、mcp |
-
-（具体相对路径以你本机 monorepo 为准。）
+一次只跟一个主题；不要 Phase 0 沉进全仓。
 
 ---
 
-## 3. 协议与生态（中后期）
+## 3. 协议与生态（Capability）
 
 | 资源 | 说明 | 阶段 |
 |------|------|------|
-| [Agent Client Protocol (ACP)](https://agentclientprotocol.com) | IDE / 宿主与 agent 的 JSON-RPC 约定 | 3 可选 |
-| [Model Context Protocol (MCP)](https://modelcontextprotocol.io) | 工具/资源扩展协议 | 3 可选 |
-| 各模型商 tool calling 文档（OpenAI / Anthropic / xAI 等） | JSON schema、并行 tool call、流式 | 0 钉一家即可 |
+| [MCP](https://modelcontextprotocol.io) | 工具扩展 | C8 |
+| [ACP](https://agentclientprotocol.com) | IDE 宿主协议 | C9 |
+| 各厂商 tool calling 文档 | 并行 tool、流式 | H6 · contracts |
 
 ---
 
-## 4. 概念与社区叙事
+## 4. 概念叙事
 
 | 话题 | 说明 |
 |------|------|
-| **Harness > model** | 同模型换 harness，榜单可大幅变化（如 Terminal-Bench 相关讨论）；书/实现主线应是 harness |
-| freeCodeCamp / 通用 AI agent 入门 | LangGraph 等偏「通用 agent」，Code Agent 可借鉴状态机思想，勿被框架绑架 |
-| Santiago 等「any language can build agent」 | 语言可换，loop 形状不变——支撑「用 Zig 实现」的合理性 |
+| **Harness > model** | 同模型换 harness，表现可差一个数量级 |
+| Zag [vision.md](./vision.md) | 本仓库吸收原则与刻意不做 |
 
 ---
 
-## 5. 最小阅读顺序（启动用）
+## 5. 最小阅读顺序
 
-1. [Ball — How to Build an Agent](https://ampcode.com/how-to-build-an-agent)（全文）  
-2. [ghuntley](https://ghuntley.com/agent/) 或 [Together](https://docs.together.ai/docs/how-to-build-coding-agents)  
-3. Paul 系列大纲（Decoding AI）  
-4. [Aider](https://github.com/Aider-AI/aider) 文档（编辑与上下文）  
-5. Hyper **或** [goose](https://github.com/aaif-goose/goose) 工业上限扫一眼  
-
-然后进入 [roadmap.md](./roadmap.md) **Phase 0**。
-
----
-
-## 6. 安全与生产备忘（Phase 3）
-
-撰写 `SECURITY.md` 时可覆盖：
-
-- 默认工作区 jail；拒绝工作区外写  
-- shell 超时、输出截断、审批策略  
-- API key 不进日志 / transcript 脱敏  
-- yolo 模式的明确风险说明  
-- 依赖与 Zig 版本钉死策略  
-
-（具体条文随实现补全；此处仅作清单提醒。）
+1. Ball — How to Build an Agent  
+2. ghuntley 或 Together  
+3. Zag [vision](./vision.md) + [maturity](./maturity.md)  
+4. Teaching 章 00→03（按需）  
+5. [phases/H-harden.md](./phases/H-harden.md)  
+6. Hyper competitive-analysis **或** omp README 扫一眼  
 
 ---
 
-## 7. 维护说明
+## 6. 安全备忘
 
-- 外链可能变更；发现 404 时更新本文件并在 PR/提交说明里提一句。  
-- 新增「必读」级资料时：先写进本表，再在 `roadmap.md` 对应 Phase 挂引用。  
-- Zag 自己的设计文档进 `docs/architecture.md`，不要和外部 references 混成一篇。  
-- 章节教程在 `chapters/`，与对应 Phase 代码同步更新。
+见根目录 [SECURITY.md](../SECURITY.md) 与 [modules/workspace-sandbox.md](./modules/workspace-sandbox.md)。  
+Teaching Phase 3 ≠ OS sandbox；生产底线含 redact + policy 矩阵（Phase H）。
+
+---
+
+## 7. 维护
+
+- 外链 404 时更新本表。  
+- 新增必读：先写本表，再挂 roadmap。  
+- Zag 设计进 `docs/modules` / `phases`，不与外部 references 混写。  
+- 教程在 `chapters/`，与实现同步。  

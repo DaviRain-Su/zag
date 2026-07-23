@@ -1,6 +1,7 @@
-# Chapter 2 — 日用级：会话、项目说明、Context
+# Chapter 2 — 日用雏形：会话、项目说明、Context
 
-> 对应 [Phase 2](../../docs/roadmap.md#phase-2--日用级能连续干活)。  
+> 对应 Teaching [Phase 2](../../docs/roadmap.md#phase-2--日用雏形会话--context)。  
+> **状态：tutorial-complete**（不是 production-ready）。  
 > **代码与本章同步。** 先读业务文件。
 
 **一句话：** 关掉进程还能续聊；项目约定进 system；超长历史只给模型看裁切后的 **view**。
@@ -135,9 +136,16 @@ Session (full transcript, durable)
 
 ---
 
-## 8. 下一步
+## 8. 生产缺口
 
-- **[Chapter 3 — 生产向](../03-production/README.md)**（已实现）  
+截断 view + JSONL 续聊只够雏形。离 L2 见 **[docs/gaps/02-session.md](../../docs/gaps/02-session.md)**（四层 prompt、compaction、schema 版本）。
+
+---
+
+## 9. 下一步
+
+- **[Chapter 3 — 边界雏形](../03-production/README.md)**（tutorial-complete；章名历史遗留）  
+- 硬化：[Chapter H](../H-harden/README.md)  
 - 对照：Aider repo map / Hyper sessions  
 
 **Tag：** `ch2-session` / `phase-2`

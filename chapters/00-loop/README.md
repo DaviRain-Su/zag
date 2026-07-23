@@ -1,6 +1,7 @@
 # Chapter 0 — 最小真理：Agent Loop
 
-> 对应 [Phase 0](../../docs/roadmap.md#phase-0--最小真理能跑的-loop)。  
+> 对应 Teaching [Phase 0](../../docs/roadmap.md#phase-0--最小真理loop)。  
+> **状态：tutorial-complete**（不是 production-ready）。  
 > **先读业务，再读基础设施。** Zig 样板已封装；你的注意力应在 harness。
 
 **一句话：** 模型只是引擎；Code Agent 好不好，主要看 **harness**。
@@ -155,9 +156,15 @@ DeepSeek / xAI / OpenAI 都是 **同一 OpenAI 兼容线协议** + 不同 base/k
 
 ---
 
-## 9. 下一步
+## 9. 生产缺口
 
-- **[Chapter 1 — 编辑 + 权限](../01-edit-permissions/README.md)**（已实现）  
-- [architecture.md](../../docs/architecture.md)  
-- [roadmap.md](../../docs/roadmap.md)  
+Teaching 验收只证明「loop 能跑」。离 L2 见 **[docs/gaps/00-loop.md](../../docs/gaps/00-loop.md)**（可机读错误、cancel、golden、流式稳健等）。成熟度总表：[maturity.md](../../docs/maturity.md)。
+
+---
+
+## 10. 下一步
+
+- **[Chapter 1 — 编辑 + 权限](../01-edit-permissions/README.md)**（tutorial-complete）  
+- 硬化主线：[Chapter H](../H-harden/README.md) / [Phase H](../../docs/phases/H-harden.md)  
+- [architecture.md](../../docs/architecture.md) · [roadmap.md](../../docs/roadmap.md)  
 - 外部对照：Ball *How to Build an Agent*

@@ -1,59 +1,72 @@
-# Zag 架构（随实现更新）
+# Zag 架构
 
-> 描述**当前代码**。Phase 0–3：loop → 编辑/权限 → 会话/context → **边界/策略/trace**。
+> 描述**当前代码**与**目标分层**。成熟度等级见 [maturity.md](./maturity.md)。  
+> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）= 规格已写、实现未齐。
 
-## 分层
+## 现状分层
 
 ```text
 CLI (main.zig)
     ↓
-agent/  ★ 业务
+agent/  ★ 业务（L1 骨架）
   Agent · Session · loop
   permissions · workspace jail · shell_policy · trace
   context · project · session_store · Provider port · Toolset
     ↓
-provider/  （模型接入，对齐 pi-ai 形状）
-  presets → registry + auth_env → openai_compat (唯一线协议)
-    + runtime/
+packages/zag-ai/  模型接入（OpenAI Chat Completions）
+  presets · catalog · registry · auth_env
+  openai_compat · stream · config_file
     ↓
-LLM · FS · shell
+runtime/  FS · shell 实现
+    ↓
+LLM · 本地磁盘 · /bin/sh
 ```
 
-### Monorepo：`packages/zag-ai`（Grok Build 式拆分）
-
-AI 模块独立于 agent harness，类似 hyper crates 分离：
-
-```text
-packages/zag-ai/          # 独立 Zig package
-  types · presets · catalog · registry · auth_env
-  openai_compat (非流) · stream (SSE) · config_file
-src/agent/                # harness 业务
-  provider.Adapter → 包装 zag-ai.Client（可选 stream）
-```
-
-| 能力 | 位置 |
-|------|------|
-| 厂商表 | `packages/zag-ai/src/presets.zig` |
-| Model catalog | `packages/zag-ai/src/catalog.zig` |
-| 配置文件 | `.zag/config.json` / `zag.json` / `--config` |
-| SSE streaming | `packages/zag-ai/src/stream.zig` + CLI `--stream` |
-
-加厂商：改 presets + catalog，无需改 harness。
-
-## 工具执行三道门（Phase 3）
+### 工具执行三道门（已有）
 
 ```text
 permission (HITL) → workspace jail → shell policy → execute
 ```
 
-| 模块 | 路径 | 职责 |
-|------|------|------|
-| permissions | `agent/permissions.zig` | ask / yolo |
-| workspace | `agent/workspace.zig` | 相对路径 jail |
-| shell_policy | `agent/shell_policy.zig` | 危险命令 denylist |
-| trace | `agent/trace.zig` | JSONL 审计 |
+全部 soft-fail 回灌模型。
 
-## 业务入口
+| 模块 | 路径 | 现状等级 |
+|------|------|----------|
+| permissions | `agent/permissions.zig` | L1 ask/yolo |
+| workspace | `agent/workspace.zig` | L1 path jail |
+| shell_policy | `agent/shell_policy.zig` | L1 denylist |
+| trace | `agent/trace.zig` | L1 JSONL |
+| context | `agent/context.zig` | L1 截断 view |
+| edit | `runtime/edit_tools.zig` | L1 整文件 write |
+
+## 目标分层（对齐 Hyper 切分，不抄名）
+
+```text
+┌─────────────────────────────────────────────────────┐
+│ UX：CLI / headless /（C9）TUI / ACP                   │
+├─────────────────────────────────────────────────────┤
+│ agent/  harness                                       │
+│  loop·turn · permissions · plan · context · session │
+│  （C6）subagent·oracle ·（C8）hooks 挂载点            │
+├──────────────┬──────────────────┬───────────────────┤
+│ tools        │ zag-ai           │ runtime           │
+│ edit·grep    │ providers·stream │ fs·shell·sandbox  │
+│ shell·web*   │ catalog·contract │ worktree*         │
+├──────────────┴──────────────────┴───────────────────┤
+│ extensions*：skills · hooks · MCP · plugins（C8）     │
+└─────────────────────────────────────────────────────┘
+* = Capability，非 Phase H
+```
+
+| 能力 | 位置 | 阶段 |
+|------|------|------|
+| 厂商表 / catalog | `packages/zag-ai` | 有；H6 硬化 |
+| 可靠编辑 | `runtime` + toolset | H2 → C4 |
+| OS sandbox | runtime + agent | C7 |
+| Subagent / Oracle | agent | C6 |
+| MCP / Skills | extensions | C8 |
+
+## 业务入口（现状）
 
 ```zig
 var agent = Agent.init(gpa, io, provider, .{
@@ -64,32 +77,34 @@ var agent = Agent.init(gpa, io, provider, .{
 defer agent.deinit();
 ```
 
-## 工具
+## 工具（现状 vs H2 目标）
 
-| Tool | 门闩 |
-|------|------|
-| list_dir / read_file | jail |
-| write_file | permission + jail |
-| run_shell | permission + shell policy |
+| Tool | 现状 | H2+ |
+|------|------|-----|
+| list_dir / read_file | ✅ jail | 保持 |
+| write_file | ✅ 整文件 | 保留；非唯一编辑路径 |
+| search_replace | ❌ | ✅ 默认编辑 |
+| grep / glob | ❌ | ✅ |
+| run_shell | ✅ policy | 统一错误形状 |
 
 ## 持久化
 
-| 文件 | 内容 |
-|------|------|
-| `.zag/sessions/*.jsonl` | 对话 transcript |
-| `.zag/traces/*.jsonl` | run 审计事件 |
+| 文件 | 内容 | H4+ |
+|------|------|-----|
+| `.zag/sessions/*.jsonl` | transcript | schema_version |
+| `.zag/traces/*.jsonl` | 审计事件 | schema_version + usage |
+| `.zag/config.json` | 非密钥配置 | 已有雏形 |
 
-## 版本
+## 版本叙事
 
-`zag.version` = **0.3.0**（见 `src/root.zig` / `build.zig.zon`）。
+- 包版本见 `src/root.zig` / `build.zig.zon`。  
+- **版本号 ≠ 生产就绪。** 生产底线以 [maturity L2 总验收](./maturity.md#l2-总验收phase-h-出门条件) 为准。
 
-## 安全说明
+## 安全
 
-见仓库根 [SECURITY.md](../SECURITY.md)。
+见 [SECURITY.md](../SECURITY.md)。OS sandbox **未**实现。
 
-## 相关章节
+## 相关
 
-- [00-loop](../chapters/00-loop/README.md)  
-- [01-edit-permissions](../chapters/01-edit-permissions/README.md)  
-- [02-session-context](../chapters/02-session-context/README.md)  
-- [03-production](../chapters/03-production/README.md)  
+- [roadmap.md](./roadmap.md) · [vision.md](./vision.md) · [modules/](./modules/)  
+- Teaching 章 [chapters/](../chapters/) · 硬化章 [H-harden](../chapters/H-harden/README.md)  
