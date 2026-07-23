@@ -1,4 +1,4 @@
-//! Zag CLI — Phase 0: one-shot or interactive read-only coding agent.
+//! Zag CLI — thin product shell. Business lives in `agent/`.
 
 const std = @import("std");
 const Io = std.Io;
@@ -19,7 +19,6 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
-    // args[0] is the program name.
     var prompt_parts: std.ArrayList([]const u8) = .empty;
     var verbose = false;
     var show_help = false;
@@ -74,74 +73,52 @@ pub fn main(init: std.process.Init) !void {
         });
     }
 
-    var provider = zag.openai.Client.init(gpa, io, resolved.config);
-    defer provider.deinit();
+    var client = zag.openai.Client.init(gpa, io, resolved.config);
+    defer client.deinit();
+
+    var agent = zag.agent.Agent.initPhase0(gpa, io, client.provider(), .{
+        .verbose = verbose,
+    });
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShot(gpa, io, &provider, prompt, verbose);
+        try runOneShot(&agent, prompt, verbose);
         return;
     }
 
-    try runRepl(gpa, io, &provider, verbose);
+    try runRepl(&agent, io, verbose);
 }
 
-fn runOneShot(
-    gpa: std.mem.Allocator,
-    io: Io,
-    provider: *zag.openai.Client,
-    prompt: []const u8,
-    verbose: bool,
-) !void {
-    const result = zag.loop.runPrompt(gpa, io, provider, default_system, prompt, .{
-        .verbose = verbose,
-    }) catch |err| {
+fn runOneShot(agent: *zag.agent.Agent, prompt: []const u8, verbose: bool) !void {
+    const result = agent.complete(default_system, prompt) catch |err| {
         std.log.err("agent failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
-    defer gpa.free(result.final_text);
+    defer result.deinit(agent.gpa);
 
     if (verbose) {
         std.log.info("completed in {d} turn(s)", .{result.turns});
     }
 
-    try writeStdout(io, result.final_text);
+    try writeStdout(agent.io, result.final_text);
     if (result.final_text.len == 0 or result.final_text[result.final_text.len - 1] != '\n') {
-        try writeStdout(io, "\n");
+        try writeStdout(agent.io, "\n");
     }
 }
 
-fn runRepl(
-    gpa: std.mem.Allocator,
-    io: Io,
-    provider: *zag.openai.Client,
-    verbose: bool,
-) !void {
+fn runRepl(agent: *zag.agent.Agent, io: Io, verbose: bool) !void {
+    _ = verbose;
     try writeStdout(io, "zag phase-0 (read-only tools). Empty line or Ctrl-D to exit.\n");
 
     var stdin_buf: [4096]u8 = undefined;
     var stdin_reader = Io.File.stdin().reader(io, &stdin_buf);
     const reader = &stdin_reader.interface;
 
-    // Session-long transcript + arena (Phase 2 will persist this).
-    var session_arena_impl: std.heap.ArenaAllocator = .init(gpa);
-    defer session_arena_impl.deinit();
-    const session_arena = session_arena_impl.allocator();
-
-    var tools_storage = zag.fs_tools.phase0Tools();
-    const tools: []const zag.tool.Tool = &tools_storage;
-    const registry: zag.tool.Registry = .{ .tools = tools };
-
-    var messages: std.ArrayList(zag.message.Message) = .empty;
-    try messages.append(session_arena, zag.message.Message.system(
-        try session_arena.dupe(u8, default_system),
-    ));
-
-    const tool_ctx: zag.tool.Context = .{
-        .allocator = gpa,
-        .io = io,
-        .cwd = Io.Dir.cwd(),
+    var session = zag.agent.Session.start(agent.gpa, default_system) catch |err| {
+        std.log.err("session failed: {s}", .{@errorName(err)});
+        std.process.exit(1);
     };
+    defer session.deinit();
 
     while (true) {
         try writeStdout(io, "you> ");
@@ -156,19 +133,7 @@ fn runRepl(
         const trimmed = std.mem.trim(u8, line, " \t\r");
         if (trimmed.len == 0) break;
 
-        try messages.append(session_arena, zag.message.Message.user(
-            try session_arena.dupe(u8, trimmed),
-        ));
-
-        const result = zag.loop.run(
-            session_arena,
-            provider,
-            registry,
-            tool_ctx,
-            &messages,
-            tools,
-            .{ .verbose = verbose },
-        ) catch |err| {
+        const result = agent.reply(&session, trimmed) catch |err| {
             std.log.err("agent failed: {s}", .{@errorName(err)});
             continue;
         };

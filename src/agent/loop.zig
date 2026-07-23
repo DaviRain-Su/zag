@@ -1,175 +1,147 @@
-//! The agent harness loop (Phase 0).
+//! Agent harness loop — business only.
 //!
 //! ```
-//! messages ──► provider.chat ──► assistant
-//!                 ▲                 │
-//!                 │            tool_calls?
-//!                 │            no → done
-//!                 │            yes ↓
-//!                 └──── tool results ──┘
+//! transcript ──► provider.chat ──► assistant
+//!      ▲                               │
+//!      │                          tool_calls?
+//!      │                          no → done
+//!      │                          yes ↓
+//!      └──────── tool results ────────┘
 //! ```
 //!
 //! Who decides to call a tool? The **model**.
-//! Who executes it? The **harness** (this loop).
-//! Where do results go? Back into `messages` as `role=tool`.
+//! Who executes it? The **harness** (this file).
+//! Where do results go? Back into the **transcript** as `role=tool`.
 
 const std = @import("std");
-const Io = std.Io;
 const message = @import("message.zig");
 const tool = @import("tool.zig");
-const openai = @import("../provider/openai.zig");
+const transcript_mod = @import("transcript.zig");
+const provider_mod = @import("provider.zig");
+const observer_mod = @import("observer.zig");
+const toolset_mod = @import("toolset.zig");
 
 pub const default_max_turns: u32 = 20;
 
 pub const Options = struct {
     max_turns: u32 = default_max_turns,
-    /// When true, print tool calls / results to stderr for debugging.
-    verbose: bool = false,
+    observer: observer_mod.Observer = .none(),
 };
 
 pub const RunError = error{
     MaxTurnsExceeded,
     ProviderFailed,
     OutOfMemory,
-    WriteFailed,
 };
 
 pub const Result = struct {
-    /// Final assistant text (may be empty if the model only used tools).
+    /// Borrowed from the transcript arena — valid until the session arena dies.
     final_text: []const u8,
-    /// Number of provider round-trips.
     turns: u32,
 };
 
-/// Run until the model stops requesting tools or `max_turns` is hit.
-///
-/// `messages` is the mutable transcript. Caller owns it; this function appends
-/// assistant + tool messages using `arena` for all new string storage.
-pub fn run(
-    arena: std.mem.Allocator,
-    provider: *openai.Client,
-    registry: tool.Registry,
+/// Dependencies for one loop invocation (assembled by `Agent`).
+pub const Deps = struct {
+    gpa: std.mem.Allocator,
+    provider: provider_mod.Provider,
+    toolset: toolset_mod.Toolset,
     tool_ctx: tool.Context,
-    messages: *std.ArrayList(message.Message),
-    tools: []const tool.Tool,
-    options: Options,
-) RunError!Result {
+    options: Options = .{},
+};
+
+/// Run until the model stops requesting tools or `max_turns` is hit.
+pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
     var turns: u32 = 0;
     var last_text: []const u8 = "";
 
-    while (turns < options.max_turns) {
+    while (turns < deps.options.max_turns) {
         turns += 1;
 
-        // Per-turn scratch for HTTP JSON parse; copy durable pieces into `arena`.
-        var turn_arena_impl: std.heap.ArenaAllocator = .init(provider.allocator);
+        // Per-turn scratch for provider JSON; durable data is copied into transcript.
+        var turn_arena_impl: std.heap.ArenaAllocator = .init(deps.gpa);
         defer turn_arena_impl.deinit();
-        const turn_arena = turn_arena_impl.allocator();
+        const scratch = turn_arena_impl.allocator();
 
-        const turn = provider.chat(turn_arena, messages.items, tools) catch {
-            return error.ProviderFailed;
-        };
+        const turn = deps.provider.chat(
+            scratch,
+            transcript.items(),
+            deps.toolset.tools,
+        ) catch return error.ProviderFailed;
 
-        // Persist assistant message into the long-lived arena.
-        const content_copy = arena.dupe(u8, turn.content) catch return error.OutOfMemory;
-        last_text = content_copy;
+        // Copy assistant turn into the long-lived transcript.
+        try transcript.appendAssistantTurn(turn);
+        last_text = transcript.items()[transcript.items().len - 1].content;
+        deps.options.observer.emit(.{ .assistant_text = last_text });
 
-        var persisted_calls: ?[]message.ToolCall = null;
-        if (turn.tool_calls.len > 0) {
-            const calls = arena.alloc(message.ToolCall, turn.tool_calls.len) catch
-                return error.OutOfMemory;
-            for (turn.tool_calls, 0..) |c, i| {
-                calls[i] = .{
-                    .id = arena.dupe(u8, c.id) catch return error.OutOfMemory,
-                    .name = arena.dupe(u8, c.name) catch return error.OutOfMemory,
-                    .arguments = arena.dupe(u8, c.arguments) catch return error.OutOfMemory,
-                };
-            }
-            persisted_calls = calls;
-        }
-
-        if (persisted_calls) |calls| {
-            messages.append(arena, message.Message.assistantToolCalls(content_copy, calls)) catch
-                return error.OutOfMemory;
-        } else {
-            messages.append(arena, message.Message.assistantText(content_copy)) catch
-                return error.OutOfMemory;
-        }
-
-        if (options.verbose) {
-            if (content_copy.len > 0) {
-                std.log.info("assistant: {s}", .{content_copy});
-            }
-        }
-
-        const calls = persisted_calls orelse {
-            // No tools → model is done.
-            return .{ .final_text = last_text, .turns = turns };
-        };
-
-        if (calls.len == 0) {
+        if (!turn.wantsTools()) {
             return .{ .final_text = last_text, .turns = turns };
         }
 
-        // Execute each tool and append results.
+        // Prefer arena-owned tool_calls from the transcript (not scratch).
+        const last_msg = transcript.items()[transcript.items().len - 1];
+        const calls = last_msg.tool_calls orelse {
+            return .{ .final_text = last_text, .turns = turns };
+        };
+
+        const registry = deps.toolset.registry();
         for (calls) |call| {
-            if (options.verbose) {
-                std.log.info("tool_call {s}({s})", .{ call.name, call.arguments });
-            }
+            deps.options.observer.emit(.{ .tool_call = call });
 
-            // Tool results allocated with tool_ctx.allocator; re-home into arena.
-            const raw = registry.execute(tool_ctx, call.name, call.arguments) catch
+            const raw = registry.execute(deps.tool_ctx, call.name, call.arguments) catch
                 return error.OutOfMemory;
-            defer tool_ctx.allocator.free(raw);
+            defer deps.tool_ctx.allocator.free(raw);
 
-            const result_copy = arena.dupe(u8, raw) catch return error.OutOfMemory;
-            if (options.verbose) {
-                const preview_len = @min(result_copy.len, 200);
-                std.log.info("tool_result {s}: {s}{s}", .{
-                    call.name,
-                    result_copy[0..preview_len],
-                    if (result_copy.len > preview_len) "…" else "",
-                });
-            }
-
-            messages.append(arena, message.Message.toolResult(call.id, result_copy)) catch
-                return error.OutOfMemory;
+            deps.options.observer.emit(.{
+                .tool_result = .{ .name = call.name, .body = raw },
+            });
+            try transcript.appendToolResult(call.id, raw);
         }
     }
 
     return error.MaxTurnsExceeded;
 }
 
-/// Convenience: one user prompt → final text, managing transcript on an arena.
-pub fn runPrompt(
-    gpa: std.mem.Allocator,
-    io: Io,
-    provider: *openai.Client,
-    system_prompt: []const u8,
-    user_prompt: []const u8,
-    options: Options,
-) RunError!Result {
-    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_impl.deinit();
-    const arena = arena_impl.allocator();
+test "loop stops when model returns text only" {
+    const gpa = std.testing.allocator;
 
-    var tools_storage = @import("../runtime/fs_tools.zig").phase0Tools();
-    const tools: []const tool.Tool = &tools_storage;
-    const registry: tool.Registry = .{ .tools = tools };
-
-    var messages: std.ArrayList(message.Message) = .empty;
-    messages.append(arena, message.Message.system(arena.dupe(u8, system_prompt) catch return error.OutOfMemory)) catch
-        return error.OutOfMemory;
-    messages.append(arena, message.Message.user(arena.dupe(u8, user_prompt) catch return error.OutOfMemory)) catch
-        return error.OutOfMemory;
-
-    const tool_ctx: tool.Context = .{
-        .allocator = gpa,
-        .io = io,
-        .cwd = Io.Dir.cwd(),
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Tool,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
     };
 
-    // Result final_text lives in arena; dupe to gpa before arena dies.
-    const result = try run(arena, provider, registry, tool_ctx, &messages, tools, options);
-    const owned = gpa.dupe(u8, result.final_text) catch return error.OutOfMemory;
-    return .{ .final_text = owned, .turns = result.turns };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var storage = toolset_mod.Phase0Storage.init();
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = storage.toolset(),
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("done", result.final_text);
+    try std.testing.expectEqual(@as(u32, 1), result.turns);
 }

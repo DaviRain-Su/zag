@@ -45,13 +45,15 @@ Key 优先级：`ZAG_API_KEY` → `DEEPSEEK_API_KEY` → `XAI_API_KEY` → `OPEN
 
 ```text
 src/
-  agent/      # message、tool、loop
-  runtime/    # fs_tools（只读）
-  provider/   # config + openai-compatible chat
-  main.zig
+  agent/      # ★ 业务：Agent / Session / loop / Transcript / Provider port
+  runtime/    # 本机能力：fs_tools
+  provider/   # 基础设施：HTTP JSON + env presets
+  main.zig    # 薄 CLI
 chapters/
-  00-loop/    # 本章教程（与代码同步）
+  00-loop/    # 教程：先业务后基建
 ```
+
+读代码请从 `src/agent/loop.zig` 与 `src/agent/agent.zig` 开始。
 
 ## 相关
 

@@ -7,6 +7,7 @@ const Io = std.Io;
 const http = std.http;
 const message = @import("../agent/message.zig");
 const tool = @import("../agent/tool.zig");
+const agent_provider = @import("../agent/provider.zig");
 
 pub const Config = struct {
     /// e.g. "https://api.openai.com/v1" or "https://api.x.ai/v1"
@@ -15,14 +16,7 @@ pub const Config = struct {
     model: []const u8,
 };
 
-pub const Error = error{
-    HttpFailed,
-    BadStatus,
-    InvalidResponse,
-    OutOfMemory,
-    WriteFailed,
-    Unexpected,
-};
+pub const Error = agent_provider.ChatError;
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
@@ -46,8 +40,29 @@ pub const Client = struct {
         self.http_client.deinit();
     }
 
-    /// Call chat completions. Returned strings are allocated with `self.allocator`
-    /// (or `arena` if provided). Prefer passing an arena for one-turn scratch.
+    /// Type-erased handle for the agent harness (`agent.Provider`).
+    pub fn provider(self: *Client) agent_provider.Provider {
+        return .{
+            .ptr = self,
+            .vtable = &vtable,
+        };
+    }
+
+    const vtable: agent_provider.VTable = .{
+        .chat = chatVtable,
+    };
+
+    fn chatVtable(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const message.Message,
+        tools: []const tool.Tool,
+    ) agent_provider.ChatError!message.AssistantTurn {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.chat(arena, messages, tools);
+    }
+
+    /// Call chat completions. Prefer `provider()` from harness code.
     pub fn chat(
         self: *Client,
         /// Scratch allocator for the request/response parse (arena recommended).
