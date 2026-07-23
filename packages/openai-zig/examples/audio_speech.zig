@@ -30,11 +30,11 @@ pub fn main(init: std.process.Init) !void {
     if (compat.skipIfDeepSeek(conf.base_url, "speech")) return;
 
     var resp = client.audio().create_speech(gpa, .{
-        .model = "tts-1", // change to a valid TTS model you have access to
+        .model = .{ .string = "tts-1" },
         .input = "Hello from Zig",
         .instructions = null,
         .speed = 1.0,
-        .voice = "alloy",
+        .voice = .{ .string = "alloy" },
         .response_format = "mp3",
         .stream_format = null,
     }) catch |err| {

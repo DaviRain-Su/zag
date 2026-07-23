@@ -52,7 +52,12 @@ fn onSdkEvent(user_ctx: ?*anyopaque, event: std.json.Parsed(chat_res.CreateChatC
     defer event.deinit();
 
     for (event.value.choices) |choice| {
-        const index: usize = if (choice.index > 0) @intCast(choice.index) else 0;
+        const index: usize = blk: {
+            const raw = choice.index;
+            // Hand-written stream choice uses i64; generated chunks may use ?i64.
+            const v: i64 = if (@TypeOf(raw) == ?i64) (raw orelse 0) else raw;
+            break :blk if (v > 0) @intCast(v) else 0;
+        };
 
         if (choice.delta.content) |content| {
             if (content.len > 0) {
@@ -71,7 +76,11 @@ fn onSdkEvent(user_ctx: ?*anyopaque, event: std.json.Parsed(chat_res.CreateChatC
 
         if (choice.delta.tool_calls) |tcs| {
             for (tcs) |tc| {
-                const tc_index: usize = if (tc.index > 0) @intCast(tc.index) else index;
+                const tc_index: usize = blk: {
+                    const raw = tc.index;
+                    const v: i64 = if (@TypeOf(raw) == ?i64) (raw orelse 0) else raw;
+                    break :blk if (v > 0) @intCast(v) else index;
+                };
                 state.ensureToolSlot(tc_index) catch {
                     state.err = error.OutOfMemory;
                     return openai.errors.Error.HttpError;

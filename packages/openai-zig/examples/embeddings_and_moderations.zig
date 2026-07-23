@@ -31,8 +31,8 @@ pub fn main(init: std.process.Init) !void {
     if (compat.skipIfDeepSeek(conf.base_url, "embeddings")) return;
 
     const emb = client.embeddings().create(gpa, .{
-        .input = .{ .text = "Hello from OpenAI Zig SDK." },
-        .model = "text-embedding-3-small",
+        .input = .{ .string = "Hello from OpenAI Zig SDK." },
+        .model = .{ .string = "text-embedding-3-small" },
         .encoding_format = null,
         .dimensions = null,
         .user = null,
@@ -60,8 +60,8 @@ pub fn main(init: std.process.Init) !void {
     if (compat.skipIfDeepSeek(conf.base_url, "moderations")) return;
 
     const mod = client.moderations().create(gpa, .{
-        .input = .{ .text = "You are a helpful assistant." },
-        .model = "text-moderation-latest",
+        .input = .{ .string = "You are a helpful assistant." },
+        .model = .{ .string = "text-moderation-latest" },
     }) catch |err| {
         switch (err) {
             errors.Error.NotFoundError => {

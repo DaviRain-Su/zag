@@ -161,10 +161,9 @@ fn firstChoiceText(response: gen.CreateChatCompletionResponse) ?[]const u8 {
 }
 
 fn firstChoiceReasoning(response: gen.CreateChatCompletionResponse) ?[]const u8 {
-    if (response.choices.len == 0) return null;
-    const message = response.choices[0].message orelse return null;
-    const reasoning = message.reasoning_content orelse return null;
-    return reasoning;
+    _ = response;
+    // reasoning_content is provider-specific and not always present on the generated message type.
+    return null;
 }
 
 const StreamState = struct {

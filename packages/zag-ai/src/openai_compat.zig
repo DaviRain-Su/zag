@@ -131,7 +131,7 @@ fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.Ch
                 for (calls, 0..) |call, i| {
                     tc[i] = .{
                         .id = call.id,
-                        .type = "function",
+                        .@"type" = "function",
                         .function = .{
                             .name = call.name,
                             .arguments = call.arguments,
@@ -154,7 +154,7 @@ pub fn toChatTools(arena: std.mem.Allocator, tools: []const types.ToolDefinition
             return error.WriteFailed;
         // Parsed lives in arena; no separate deinit needed for arena-backed parse.
         out[i] = .{
-            .type = "function",
+            .@"type" = "function",
             .function = .{
                 .name = t.name,
                 .description = t.description,
@@ -166,10 +166,18 @@ pub fn toChatTools(arena: std.mem.Allocator, tools: []const types.ToolDefinition
     return out;
 }
 
+fn optionalSlice(value: anytype) []const u8 {
+    const T = @TypeOf(value);
+    if (T == []const u8) return value;
+    if (T == ?[]const u8) return value orelse "";
+    return "";
+}
+
 pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletionResponse) Error!types.AssistantTurn {
-    if (resp.choices.len == 0) return error.InvalidResponse;
-    const choice = resp.choices[0];
-    const finish_reason = try arena.dupe(u8, choice.finish_reason orelse "");
+    const choices = resp.choices;
+    if (choices.len == 0) return error.InvalidResponse;
+    const choice = choices[0];
+    const finish_reason = try arena.dupe(u8, optionalSlice(choice.finish_reason));
     const msg = choice.message orelse {
         return .{
             .content = try arena.dupe(u8, ""),
@@ -178,16 +186,18 @@ pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletion
         };
     };
 
-    const content = try arena.dupe(u8, msg.content orelse "");
+    const content = try arena.dupe(u8, optionalSlice(msg.content));
     var tool_calls: []types.ToolCall = &.{};
     if (msg.tool_calls) |tcs| {
         if (tcs.len > 0) {
             const slice = try arena.alloc(types.ToolCall, tcs.len);
             for (tcs, 0..) |tc, i| {
+                const name: []const u8 = if (tc.function) |fn_obj| optionalSlice(fn_obj.name) else "";
+                const args: []const u8 = if (tc.function) |fn_obj| optionalSlice(fn_obj.arguments) else "";
                 slice[i] = .{
-                    .id = try arena.dupe(u8, tc.id),
-                    .name = try arena.dupe(u8, tc.function.name),
-                    .arguments = try arena.dupe(u8, tc.function.arguments),
+                    .id = try arena.dupe(u8, optionalSlice(tc.id)),
+                    .name = try arena.dupe(u8, name),
+                    .arguments = try arena.dupe(u8, args),
                 };
             }
             tool_calls = slice;
@@ -320,6 +330,7 @@ test "turnFromResponse text" {
     }
     try std.testing.expectEqualStrings("hello", turn.content);
 }
+
 
 test "buildRequestBodyForStream sets stream true" {
     const gpa = std.testing.allocator;

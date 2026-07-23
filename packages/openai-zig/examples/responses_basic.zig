@@ -30,12 +30,11 @@ pub fn main(init: std.process.Init) !void {
 
     if (compat.skipIfDeepSeek(conf.base_url, "responses")) return;
 
-    const request_payload =
-        \\{"model":"deepseek-chat","input":"用中文写一个三行短诗","stream":false}
-    ;
-    const parsed_request = try std.json.parseFromSlice(std.json.Value, gpa, request_payload, .{});
-    defer parsed_request.deinit();
-    const request = sdk.generated.CreateResponse.forRaw(parsed_request.value);
+    const request: sdk.generated.CreateResponse = .{
+        .model = .{ .string = conf.model },
+        .input = .{ .string = "用中文写一个三行短诗" },
+        .stream = .{ .bool = false },
+    };
 
     const response = client.responses().create(gpa, request) catch |err| {
         switch (err) {

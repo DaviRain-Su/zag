@@ -112,7 +112,7 @@ pub const ChatToolChoice = union(enum) {
     pub fn forFunction(name: []const u8) ChatToolChoice {
         return .{
             .named = .{
-                .type = "function",
+                .@"type" = "function",
                 .function = .{
                     .name = name,
                 },
@@ -154,7 +154,7 @@ pub const ChatToolsBuilder = struct {
         parameters: std.json.Value,
     ) ChatTool {
         return .{
-            .type = "function",
+            .@"type" = "function",
             .function = .{
                 .name = name,
                 .description = description,
@@ -171,12 +171,12 @@ pub const ChatToolsBuilder = struct {
         strict: bool,
     ) ChatTool {
         return .{
-            .type = "function",
+            .@"type" = "function",
             .function = .{
                 .name = name,
                 .description = description,
                 .parameters = gen.FunctionParameters.forSchema(parameters),
-                .strict = strict,
+                .strict = .{ .bool = strict },
             },
         };
     }
@@ -1156,7 +1156,7 @@ test "create chat request supports tool declarations and tool_choice" {
 
     const tools = [_]ChatTool{
         .{
-            .type = "function",
+            .@"type" = "function",
             .function = .{
                 .name = "get_weather",
                 .description = "Get weather by city",

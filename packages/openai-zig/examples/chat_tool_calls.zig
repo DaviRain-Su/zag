@@ -10,14 +10,15 @@ fn printToolCalls(allocator: std.mem.Allocator, tool_calls: []const sdk.generate
 
     std.debug.print("Tool calls:\n", .{});
     for (tool_calls, 0..) |tool_call, index| {
+        const fn_obj = tool_call.function orelse continue;
         std.debug.print("  [{d}] id={s} type={s} function={s}\n", .{
             index,
             tool_call.id,
-            tool_call.type,
-            tool_call.function.name,
+            tool_call.@"type",
+            fn_obj.name,
         });
 
-        const arguments_text = tool_call.function.arguments;
+        const arguments_text = fn_obj.arguments;
         if (arguments_text.len > 0) {
             std.debug.print("             arguments={s}\n", .{arguments_text});
             if (std.json.parseFromSlice(

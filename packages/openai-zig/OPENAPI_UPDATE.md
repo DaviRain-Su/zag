@@ -1,36 +1,31 @@
-# OpenAPI update notes (2026-07-23)
+# OpenAPI regeneration notes (2026-07-24)
 
-Source: [openai/openai-openapi](https://github.com/openai/openai-openapi) `openapi.yaml`
-(mirrored into `spec/openapi.documented.yml`).
+## Source
+- Spec: `spec/openapi.documented.yml` (latest openai-openapi snapshot)
+- Generator: `python3 tools/generate.py`
+- Outputs:
+  - `generated/ir.json` — **287** operations, **1385** schemas
+  - `src/generated/types.zig` — Zig type outlines + compatibility aliases
 
-## Diff vs previous vendored snapshot
+## Generator improvements
+- Resolves `allOf` by merging properties
+- Prefer first `$ref` in `oneOf` array items (typed tool_calls)
+- Content-like unions that include `string` map to `[]const u8`
+- Required slices default to `&.{}`; scalars get zero defaults
+- Complex required objects become optional for partial init / JSON parse
+- `FunctionParameters` kept as schema/raw union helper
+- Compatibility aliases for renamed OpenAPI schemas (EvalObject→Eval, etc.)
 
-### Paths
-- **+31** endpoints (org spend/alerts/data-retention, skills, video characters/edits/extensions,
-  beta responses helpers, realtime translations secrets, …)
-- **-1** path rename: `api_keys/{key_id}` → `api_keys/{api_key_id}`
+## Chat Completions (latest fields present)
+- `moderation`, `n`, `prompt_cache_options`, `verbosity`, `web_search_options`, …
 
-### Chat Completions (`CreateChatCompletionRequest`)
-New request fields relative to previous snapshot:
-- `moderation` → `ModerationParam`
-- `n` (completions count; already supported in hand-written client)
-- Shared model props: `prompt_cache_options` (`PromptCacheOptionsParam`)
-- Voice id ref: `VoiceIdsShared` → `VoiceIdsOrCustomVoice`
+## New surface available as types (resource wrappers still partial)
+- Skills, video characters/edits/extensions, org spend/alerts, beta responses helpers, …
 
-### Hand-written client (`src/resources/chat.zig`)
-Added optional JSON fields on `CreateChatCompletionRequest`:
-- `moderation`
-- `prompt_cache_options`
-- `verbosity`
-- `web_search_options`
-
-### Not yet regenerated
-`src/generated/types.zig` is **not** fully regenerated in this pass (large surface;
-skills/videos/org admin resources still need resource wrappers). Use
-`tools/generate.py` + IR refresh when adding those resources.
-
-### Notable new operation groups
-- Skills: Create/Get/List/Delete skill + versions + content
-- Videos: characters, edits, extensions
-- Organization: spend_limit, spend_alerts, data_retention, hosted_tool_permissions, model_permissions
-- Beta responses: compact, input_tokens, cancel, input_items variants
+## Rebuild
+```sh
+cd packages/openai-zig
+python3 tools/generate.py
+zig build test
+zig build examples -Dexamples=true
+```

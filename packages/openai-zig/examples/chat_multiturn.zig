@@ -64,7 +64,10 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (message.refusal) |refusal| {
-        std.debug.print("Refusal:\n{s}\n", .{refusal});
+        switch (refusal) {
+            .string => |s| std.debug.print("Refusal:\n{s}\n", .{s}),
+            else => std.debug.print("Refusal: {any}\n", .{refusal}),
+        }
     }
 
     const prefix_messages = [_]sdk.resources.chat.ChatMessage{
