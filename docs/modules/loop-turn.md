@@ -53,11 +53,24 @@ error: code=<CODE> message=<human>
 
 steer（中途纠偏）、并行只读落地、与 subagent 生命周期对齐（C6）。
 
+## Loop vs Graph（边界）
+
+| | Loop（本模块 / Phase H） | Graph（C6+ 编排，非本模块默认 runtime） |
+|--|---------------------------|----------------------------------------|
+| 适用 | 单 coding agent：模型选 tool → 执行 → 回灌 | 多角色 fan-out、handoff、条件汇合、组织拓扑 |
+| 状态 | transcript + context view | 共享 state + 节点检查点 |
+| 对标 | Pi agent-core loop；Claude Code 薄循环 | LangGraph / MS Agent Framework；Pi 不把 graph 做核 |
+
+**H1 实现的是 loop，不是 workflow DAG。**  
+图论/图工程若引入，挂在 C6（subagent/Oracle 编排），且每个节点内部仍可以是 loop。  
+行业扫描见 [research/2026-harness-landscape.md](../research/2026-harness-landscape.md)。
+
 ## 非目标
 
-- 分布式工作流引擎  
+- 分布式工作流引擎 / 把 `loop.run` 换成通用 graph runtime（H 阶段）  
 - 多租户调度  
 
-## Hyper 对照
+## 对照
 
-- `xai-grok-shell` session / turn 入口（只读架构）  
+- Pi：`packages/agent` agent-loop；`transformContext` → `convertToLlm`  
+- Hyper：`xai-grok-shell` session / turn 入口（只读架构）  

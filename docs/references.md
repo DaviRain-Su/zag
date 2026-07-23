@@ -32,15 +32,29 @@
 
 | 项目 | 学什么 | 优先 |
 |------|--------|------|
-| **Hyper / Grok Build**（本机如 `~/orca/hyper-grok-build`） | 工业 harness 上限；模块切分 | 全程；H/C 深读 |
-| [omp / Oh My Pi](https://github.com/can1357/oh-my-pi) | hashline、LSP/DAP、stream rules、typed subagent | C4、C6 |
-| [Pi](https://github.com/earendil-works/pi) | 最小 harness、扩展纪律、session/compaction | H4、C8 |
+| **[Pi](https://github.com/earendil-works/pi)**（**主对照**） | 包分层、agent loop、session 树、compaction、extensions/skills；**不 fork 扩核** | **H4 · H1 心智 · C5 · C8** |
+| **Hyper / Grok Build**（本机如 `~/orca/hyper-grok-build`） | 工业 harness 上限；权限/沙箱/hashline | 全程；H/C 深读 |
+| [omp / Oh My Pi](https://github.com/can1357/oh-my-pi) | 在 Pi 上的 meta-harness；hashline、LSP、typed subagent | C4、C6 |
 | [Nanocodex](https://github.com/gakonst/nanocodex) | Turn/steer/fork、行为合同、Code Mode（研究） | Quality、C6 |
 | [Aider](https://github.com/Aider-AI/aider) | repo map、git 边界 | C4、C5 |
 | [goose](https://github.com/aaif-goose/goose) | MCP、扩展、ACP | C8、C9 |
 | [Codex CLI](https://github.com/openai/codex) | apply_patch、sandbox | C4、C7 |
 | Amp（闭源，[手册](https://ampcode.com/manual)） | Oracle、Changes、effort 心智 | C6；**不抄四档 Modes** |
 | Factory Droid | Readiness、Missions 轻量启发 | H5 doctor、C6 plan |
+| [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) | **图** workflow（sequential/concurrent/handoff）— 编排层，非 coding loop 默认 | C6 对照，**勿当 Phase H** |
+| [awesome-agent-harness](https://github.com/mahonzhan/awesome-agent-harness) | harness / workflow / 协议索引 | 扫一眼 |
+
+### Pi 包地图（实现时打开的文件）
+
+| 包 | 职责 | Zag 落点 |
+|----|------|----------|
+| `@earendil-works/pi-ai` | 多厂商 LLM、tools 流、catalog | `packages/zag-ai` + `openai-zig` |
+| `@earendil-works/pi-agent-core` | stateful loop、events、`transformContext` → `convertToLlm` | `src/agent/loop.zig`、Provider 端口 |
+| `@earendil-works/pi-coding-agent` | CLI、sessions 树、compaction、extensions、skills | `main` + session/context；扩展属 C8 |
+| docs: [compaction](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md)、[sessions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sessions.md)、[extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) | 深度规格 | H4 / C5 / C8 |
+
+Pi **故意不做**（用扩展/容器代替）：核内 MCP、sub-agent、permission popup、plan mode。  
+Zag **保留** teaching 级 permission + jail + shell_policy，并在 Phase H 硬化——不是纯 Pi 极简安全模型。
 
 ### Hyper 本机入口
 
@@ -70,8 +84,15 @@
 
 | 话题 | 说明 |
 |------|------|
-| **Harness > model** | 同模型换 harness，表现可差一个数量级 |
+| **Harness > model** | 同模型换 harness，表现可差一个数量级；2026 主流叙事 |
+| **Harness vs Loop vs Graph** | 三层不是同义词：harness=外围机械；loop=工作反馈环；graph=多角色拓扑。见 [research/2026-harness-landscape.md](./research/2026-harness-landscape.md) |
 | Zag [vision.md](./vision.md) | 本仓库吸收原则与刻意不做 |
+
+### 2026 研究存档
+
+| 文档 | 内容 |
+|------|------|
+| [research/2026-harness-landscape.md](./research/2026-harness-landscape.md) | Pi 对照 + X/GitHub 行业扫描 + Zag 缺口与「先 loop 后 graph」策略 |
 
 ---
 
@@ -82,7 +103,9 @@
 3. Zag [vision](./vision.md) + [maturity](./maturity.md)  
 4. Teaching 章 00→03（按需）  
 5. [phases/H-harden.md](./phases/H-harden.md)  
-6. Hyper competitive-analysis **或** omp README 扫一眼  
+6. **Pi** compaction + sessions + extensions 文档（H4/C8 前必读）  
+7. [research/2026-harness-landscape.md](./research/2026-harness-landscape.md)  
+8. Hyper competitive-analysis **或** omp README 扫一眼（C 轨）  
 
 ---
 
