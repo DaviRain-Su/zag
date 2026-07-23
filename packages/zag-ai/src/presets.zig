@@ -1,9 +1,10 @@
-//! Built-in OpenAI-compatible provider presets (table-driven).
+//! Built-in provider presets (table-driven).
 //!
 //! Adding a vendor: append one `ProviderSpec` — no change to resolve logic.
-//! All presets share the `openai_compat` wire API.
+//! Wire family is `api_style` (today all builtins are `openai_compat`).
 
 const std = @import("std");
+const wire = @import("wire.zig");
 
 /// Declarative provider identity + env auth + defaults (pi-style createProvider input).
 pub const ProviderSpec = struct {
@@ -13,6 +14,8 @@ pub const ProviderSpec = struct {
     /// Env vars tried in order for the API key.
     env_keys: []const []const u8,
     default_model: []const u8,
+    /// Which WireAdapter implementation to use after resolve.
+    api_style: wire.ApiStyle = .openai_compat,
 };
 
 /// Detection order when no `ZAG_PROVIDER` is set: first matching env key wins.

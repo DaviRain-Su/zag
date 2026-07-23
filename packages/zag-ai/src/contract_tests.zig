@@ -138,6 +138,29 @@ test "contract: mapSdkError surface used by agent" {
     try std.testing.expect(!types.isRetryableError(openai_compat.mapSdkError(error.AuthenticationError)));
 }
 
+test "contract: WireAdapter vtable exposes openai_compat style" {
+    // Pure surface check — no network. Client init needs valid-looking config only.
+    const gpa = std.testing.allocator;
+    var client = openai_compat.Client.init(gpa, std.testing.io, .{
+        .base_url = "https://example.invalid/v1",
+        .api_key = "test",
+        .model = "test-model",
+    });
+    defer client.deinit();
+    const w = client.asWire();
+    try std.testing.expect(w.apiStyle() == .openai_compat);
+    try std.testing.expectEqualStrings("openai_compat", w.name());
+}
+
+test "contract: createWire rejects anthropic_messages" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectError(error.BadRequest, openai_compat.createWire(gpa, std.testing.io, .{
+        .base_url = "https://example.invalid",
+        .api_key = "k",
+        .model = "m",
+    }, .anthropic_messages));
+}
+
 test "contract: toChatMessages preserves tool result" {
     const gpa = std.testing.allocator;
     const msgs = [_]types.Message{

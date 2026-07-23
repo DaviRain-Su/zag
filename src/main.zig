@@ -142,6 +142,10 @@ pub fn main(init: std.process.Init) !void {
                 std.log.err("ZAG_API_KEY requires ZAG_BASE_URL for custom endpoints", .{});
                 std.process.exit(1);
             },
+            error.UnsupportedApiStyle => {
+                std.log.err("unsupported ZAG_API_STYLE (only openai_compat is implemented)", .{});
+                std.process.exit(1);
+            },
             else => {
                 std.log.err("provider resolve failed: {s}", .{@errorName(err)});
                 std.process.exit(1);
@@ -183,8 +187,9 @@ pub fn main(init: std.process.Init) !void {
             std.log.info("chat max_tokens={d}", .{mt});
         }
         std.log.info(
-            "retries transport={d} chat={d} timeout_ms={any}",
+            "wire={s} retries transport={d} chat={d} timeout_ms={any}",
             .{
+                resolved.api_style.jsonName(),
                 resolved.config.max_retries,
                 resolve_result.chat_retries,
                 resolved.config.timeout_ms,
@@ -194,8 +199,12 @@ pub fn main(init: std.process.Init) !void {
         if (trace_path) |tp| std.log.info("trace path={s}", .{tp});
     }
 
-    const client = zag.openai.Client.init(gpa, io, resolved.config);
-    var adapter = zag.provider.Adapter.init(client, use_stream);
+    // WireAdapter path (OpenAI-compat today; api_style from resolve).
+    const wire = resolved.createWire(gpa, io) catch |err| {
+        std.log.err("wire adapter init failed: {s}", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    var adapter = zag.provider.Adapter.fromWire(wire, use_stream, true);
     adapter.chat_options = resolve_result.chat_options;
     if (use_stream and verbose) {
         adapter.on_event = streamLogHandler;

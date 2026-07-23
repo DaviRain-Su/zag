@@ -58,8 +58,8 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 ### 实现节奏
 
-1. **文档（本轮）** — 本页 + architecture。  
-2. **zag-ai 改造（下一轮）** — 抽出 WireAdapter；现有 OpenAI 路径变为默认 adapter；行为与测试不回归。  
+1. **文档** — 本页 + architecture。  
+2. **zag-ai WireAdapter（已落地）** — `packages/zag-ai/src/wire.zig`；`openai_compat.Client` 为默认实现；`Resolved.createWire` / `main` 走 adapter；`ZAG_API_STYLE`；Anthropic 预留且拒绝。  
 3. **Anthropic 等** — 另开；非 Phase H 出门条件。
 
 ### 不变式（适配层）

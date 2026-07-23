@@ -8,13 +8,14 @@ Auth is env + JSON config only (no OAuth).
 
 | Module | Role |
 |--------|------|
-| `types` | Message / ContentPart / ToolCall / Usage / ChatOptions / StreamEvent |
-| `presets` | ProviderSpec table |
+| `types` | Message / ContentPart / ToolCall / Usage / ChatOptions / StreamEvent / StreamHandler |
+| `wire` | **WireAdapter** vtable + `ApiStyle` (canonical ↔ vendor) |
+| `presets` | ProviderSpec table (`api_style`) |
 | `catalog` | Known model ids + context windows + budget helpers |
-| `registry` | Resolve provider from env |
+| `registry` | Resolve provider + `createWire` |
 | `auth_env` | API key from env vars |
 | `config_file` | `.zag/config.json` / `zag.json` (chat + transport knobs) |
-| `openai_compat` | Non-streaming chat + embeddings (**via openai-zig**) |
+| `openai_compat` | Default WireAdapter: chat + stream + embeddings (**via openai-zig**) |
 | `stream` | SSE streaming chat (**via openai-zig**) |
 | `contract_tests` | Wire-shape tests (no network) |
 | `openai_zig` | Re-export of the full SDK |

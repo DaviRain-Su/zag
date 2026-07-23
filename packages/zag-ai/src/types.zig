@@ -160,6 +160,9 @@ pub const StreamEvent = union(enum) {
     done,
 };
 
+/// Live stream callback (shared by wire adapters and stream module).
+pub const StreamHandler = *const fn (ctx: ?*anyopaque, event: StreamEvent) anyerror!void;
+
 /// Classify provider failures for retry / UX (agent loop may map all to ProviderFailed).
 pub fn isRetryableError(err: anyerror) bool {
     return switch (err) {

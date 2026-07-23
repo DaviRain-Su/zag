@@ -8,7 +8,7 @@ const openai_compat = @import("openai_compat.zig");
 const chat_res = openai.resources.chat;
 
 pub const Error = openai_compat.Error;
-pub const Handler = *const fn (ctx: ?*anyopaque, event: types.StreamEvent) anyerror!void;
+pub const Handler = types.StreamHandler;
 
 const StreamState = struct {
     arena: std.mem.Allocator,

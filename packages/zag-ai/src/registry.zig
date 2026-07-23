@@ -1,4 +1,4 @@
-//! Provider registry — resolve which OpenAI-compat endpoint to use from env.
+//! Provider registry — resolve which endpoint + wire style to use from env.
 //!
 //! Inspired by pi-ai `Models` / `createProvider` + env key maps, without OAuth.
 
@@ -6,11 +6,13 @@ const std = @import("std");
 const auth_env = @import("auth_env.zig");
 const presets = @import("presets.zig");
 const openai_compat = @import("openai_compat.zig");
+const wire = @import("wire.zig");
 
 pub const Error = error{
     MissingApiKey,
     UnknownProvider,
     MissingBaseUrl,
+    UnsupportedApiStyle,
 };
 
 pub const Resolved = struct {
@@ -20,9 +22,16 @@ pub const Resolved = struct {
     /// Env var that supplied the key (for logs).
     api_key_source: []const u8,
     config: openai_compat.Config,
+    /// Wire adapter family (from preset or env `ZAG_API_STYLE`).
+    api_style: wire.ApiStyle = .openai_compat,
 
     pub fn presetName(self: Resolved) []const u8 {
         return self.spec_id;
+    }
+
+    /// Build a WireAdapter for this resolution (heap client; call `adapter.deinit()`).
+    pub fn createWire(self: Resolved, gpa: std.mem.Allocator, io: std.Io) openai_compat.Error!wire.WireAdapter {
+        return openai_compat.createWire(gpa, io, self.config, self.api_style);
     }
 };
 
@@ -34,6 +43,7 @@ pub const Resolved = struct {
 /// 3. First builtin preset whose env key is set (table order in presets.zig)
 ///
 /// Overrides: `ZAG_BASE_URL`, `ZAG_MODEL` always win when set.
+/// Optional: `ZAG_API_STYLE=openai_compat|anthropic` (anthropic not implemented).
 pub fn resolveFromEnv(env: *const std.process.Environ.Map) Error!Resolved {
     return resolveFromGet(struct {
         env: *const std.process.Environ.Map,
@@ -41,6 +51,16 @@ pub fn resolveFromEnv(env: *const std.process.Environ.Map) Error!Resolved {
             return self.env.get(key);
         }
     }{ .env = env });
+}
+
+fn styleFromGetter(getter: anytype, preset_style: wire.ApiStyle) Error!wire.ApiStyle {
+    if (getter.get("ZAG_API_STYLE")) |s| {
+        const parsed = wire.ApiStyle.parse(s) orelse return error.UnsupportedApiStyle;
+        if (parsed == .anthropic_messages) return error.UnsupportedApiStyle;
+        return parsed;
+    }
+    if (preset_style == .anthropic_messages) return error.UnsupportedApiStyle;
+    return preset_style;
 }
 
 pub fn resolveFromGet(getter: anytype) Error!Resolved {
@@ -61,14 +81,17 @@ pub fn resolveFromGet(getter: anytype) Error!Resolved {
                         return error.MissingApiKey
                 else
                     return error.MissingApiKey;
+            const style = try styleFromGetter(getter, spec.api_style);
             return .{
                 .spec_id = spec.id,
                 .display_name = spec.name,
                 .api_key_source = key_src.source,
+                .api_style = style,
                 .config = .{
                     .api_key = key_src.key,
                     .base_url = zag_base orelse spec.base_url,
                     .model = zag_model orelse spec.default_model,
+                    .api_style = style,
                 },
             };
         }
@@ -78,14 +101,17 @@ pub fn resolveFromGet(getter: anytype) Error!Resolved {
     if (zag_key) |k| {
         if (k.len > 0) {
             const base = zag_base orelse return error.MissingBaseUrl;
+            const style = try styleFromGetter(getter, .openai_compat);
             return .{
                 .spec_id = "custom",
                 .display_name = "custom",
                 .api_key_source = "ZAG_API_KEY",
+                .api_style = style,
                 .config = .{
                     .api_key = k,
                     .base_url = base,
                     .model = zag_model orelse "gpt-4o-mini",
+                    .api_style = style,
                 },
             };
         }
@@ -94,14 +120,17 @@ pub fn resolveFromGet(getter: anytype) Error!Resolved {
     // Auto-detect first preset with a configured env key
     for (presets.builtin) |spec| {
         if (auth_env.resolveApiKeySource(getter, spec.env_keys)) |key_src| {
+            const style = try styleFromGetter(getter, spec.api_style);
             return .{
                 .spec_id = spec.id,
                 .display_name = spec.name,
                 .api_key_source = key_src.source,
+                .api_style = style,
                 .config = .{
                     .api_key = key_src.key,
                     .base_url = zag_base orelse spec.base_url,
                     .model = zag_model orelse spec.default_model,
+                    .api_style = style,
                 },
             };
         }
@@ -130,6 +159,7 @@ test "auto-detect deepseek" {
     try std.testing.expectEqualStrings("sk-deep", r.config.api_key);
     try std.testing.expectEqualStrings("https://api.deepseek.com/v1", r.config.base_url);
     try std.testing.expectEqualStrings("deepseek-v4-flash", r.config.model);
+    try std.testing.expect(r.api_style == .openai_compat);
 }
 
 test "ZAG_MODEL overrides preset default" {
@@ -172,4 +202,11 @@ test "unknown ZAG_PROVIDER" {
 
 test "missing key" {
     try std.testing.expectError(error.MissingApiKey, resolveFromGet(TestEnv{ .pairs = &.{} }));
+}
+
+test "unsupported api style anthropic" {
+    try std.testing.expectError(error.UnsupportedApiStyle, resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "DEEPSEEK_API_KEY", "sk" },
+        .{ "ZAG_API_STYLE", "anthropic" },
+    } }));
 }

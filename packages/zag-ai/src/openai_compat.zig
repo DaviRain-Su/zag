@@ -1,12 +1,15 @@
-//! OpenAI Chat Completions via monorepo `openai-zig` SDK.
+//! OpenAI Chat Completions **WireAdapter** via monorepo `openai-zig` SDK.
 //!
-//! Keeps a thin zag-facing API (`Config` / `Client` / `AssistantTurn`) while
-//! transport, retries, streaming, and resource surface live in openai-zig.
+//! This is the default (and currently only) wire implementation of
+//! `wire.ApiStyle.openai_compat`. Canonical messages live in `types.zig`;
+//! conversion to OpenAI chat resources is private to this module.
 
 const std = @import("std");
 const Io = std.Io;
 const openai = @import("openai_zig");
 const types = @import("types.zig");
+const wire = @import("wire.zig");
+const stream_mod = @import("stream.zig");
 
 const chat_res = openai.resources.chat;
 const gen = openai.generated;
@@ -20,24 +23,13 @@ pub const Config = struct {
     max_retries: u8 = 2,
     retry_base_delay_ms: u64 = 500,
     timeout_ms: ?u64 = null,
+    /// Wire family for this client (always openai_compat for this module).
+    api_style: wire.ApiStyle = .openai_compat,
 };
 
 /// Provider-facing errors. Prefer `types.isRetryableError` for policy.
-pub const Error = error{
-    HttpFailed,
-    BadStatus,
-    InvalidResponse,
-    OutOfMemory,
-    WriteFailed,
-    Unexpected,
-    StreamFailed,
-    AuthenticationFailed,
-    PermissionDenied,
-    RateLimited,
-    Timeout,
-    ServerError,
-    BadRequest,
-};
+/// Same set as `wire.Error` (kept identical so adapters share one surface).
+pub const Error = wire.Error;
 
 pub const ChatOptions = types.ChatOptions;
 pub const ToolChoice = types.ToolChoice;
@@ -47,28 +39,58 @@ pub const Client = struct {
     io: Io,
     config: Config,
     sdk: openai.Client,
+    /// When true, `asWireOwned` deinit frees this Client via allocator.
+    owned_by_wire: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Client {
+        var cfg = config;
+        cfg.api_style = .openai_compat;
         const sdk = openai.initClient(allocator, .{
             .io = io,
-            .base_url = config.base_url,
-            .api_key = config.api_key,
-            .max_retries = config.max_retries,
-            .retry_base_delay_ms = config.retry_base_delay_ms,
-            .timeout_ms = config.timeout_ms,
+            .base_url = cfg.base_url,
+            .api_key = cfg.api_key,
+            .max_retries = cfg.max_retries,
+            .retry_base_delay_ms = cfg.retry_base_delay_ms,
+            .timeout_ms = cfg.timeout_ms,
         }) catch |err| {
             std.debug.panic("openai-zig client init failed: {s}", .{@errorName(err)});
         };
         return .{
             .allocator = allocator,
             .io = io,
-            .config = config,
+            .config = cfg,
             .sdk = sdk,
         };
     }
 
     pub fn deinit(self: *Client) void {
         self.sdk.deinit();
+    }
+
+    pub fn apiStyle(_: *const Client) wire.ApiStyle {
+        return .openai_compat;
+    }
+
+    pub fn wireName(_: *const Client) []const u8 {
+        return "openai_compat";
+    }
+
+    /// Borrow as WireAdapter; `WireAdapter.deinit` is a no-op (caller owns Client).
+    pub fn asWire(self: *Client) wire.WireAdapter {
+        return .{
+            .ptr = self,
+            .vtable = &borrowed_vtable,
+        };
+    }
+
+    /// Owned as WireAdapter; `WireAdapter.deinit` calls `Client.deinit` and frees heap.
+    pub fn asWireOwned(self: *Client, gpa: std.mem.Allocator) wire.WireAdapter {
+        _ = gpa;
+        self.owned_by_wire = true;
+        return .{
+            .ptr = self,
+            .vtable = &owned_vtable,
+        };
     }
 
     /// Call chat completions with default options.
@@ -99,6 +121,19 @@ pub const Client = struct {
         defer parsed.deinit();
 
         return try turnFromResponse(arena, parsed.value);
+    }
+
+    /// Stream via openai-zig SSE; returns assembled turn.
+    pub fn chatStreamWithOptions(
+        self: *Client,
+        arena: std.mem.Allocator,
+        messages: []const types.Message,
+        tools: []const types.ToolDefinition,
+        handler: ?types.StreamHandler,
+        handler_ctx: ?*anyopaque,
+        opts: ChatOptions,
+    ) Error!types.AssistantTurn {
+        return stream_mod.chatStreamWithOptions(self, arena, messages, tools, handler, handler_ctx, opts);
     }
 
     /// Create embeddings for one or more input strings (OpenAI-compatible `/embeddings`).
@@ -159,7 +194,89 @@ pub const Client = struct {
     pub fn sdkClient(self: *Client) *openai.Client {
         return &self.sdk;
     }
+
+    const borrowed_vtable: wire.VTable = .{
+        .api_style = wireApiStyle,
+        .name = wireNameFn,
+        .deinit = wireDeinitNoop,
+        .chat = wireChat,
+        .chat_stream = wireChatStream,
+    };
+
+    const owned_vtable: wire.VTable = .{
+        .api_style = wireApiStyle,
+        .name = wireNameFn,
+        .deinit = wireDeinitOwned,
+        .chat = wireChat,
+        .chat_stream = wireChatStream,
+    };
+
+    fn wireApiStyle(ptr: *anyopaque) wire.ApiStyle {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.apiStyle();
+    }
+
+    fn wireNameFn(ptr: *anyopaque) []const u8 {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.wireName();
+    }
+
+    fn wireDeinitNoop(_: *anyopaque) void {}
+
+    fn wireDeinitOwned(ptr: *anyopaque) void {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        const gpa = self.allocator;
+        self.deinit();
+        gpa.destroy(self);
+    }
+
+    fn wireChat(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const types.Message,
+        tools: []const types.ToolDefinition,
+        opts: ChatOptions,
+    ) Error!types.AssistantTurn {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.chatWithOptions(arena, messages, tools, opts);
+    }
+
+    fn wireChatStream(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const types.Message,
+        tools: []const types.ToolDefinition,
+        handler: ?types.StreamHandler,
+        handler_ctx: ?*anyopaque,
+        opts: ChatOptions,
+    ) Error!types.AssistantTurn {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts);
+    }
 };
+
+/// Factory: build a WireAdapter for the given style (OpenAI-compat only today).
+pub fn createWire(
+    gpa: std.mem.Allocator,
+    io: Io,
+    config: Config,
+    style: wire.ApiStyle,
+) Error!wire.WireAdapter {
+    return switch (style) {
+        .openai_compat => createOpenAiCompatWire(gpa, io, config),
+        .anthropic_messages => error.BadRequest,
+    };
+}
+
+pub fn createOpenAiCompatWire(gpa: std.mem.Allocator, io: Io, config: Config) Error!wire.WireAdapter {
+    const client = gpa.create(Client) catch return error.OutOfMemory;
+    client.* = Client.init(gpa, io, config);
+    return client.asWireOwned(gpa);
+}
+
+pub fn openAiCompatFromClient(client: *Client) wire.WireAdapter {
+    return client.asWire();
+}
 
 pub const EmbedOptions = struct {
     /// Defaults to client config model when null.

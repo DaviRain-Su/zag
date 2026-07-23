@@ -15,6 +15,7 @@ pub const openai_compat = @import("openai_compat.zig");
 pub const stream = @import("stream.zig");
 pub const catalog = @import("catalog.zig");
 pub const config_file = @import("config_file.zig");
+pub const wire = @import("wire.zig");
 // Contract tests are pulled into the package test binary via refAllDecls.
 
 pub const Message = types.Message;
@@ -32,10 +33,14 @@ pub const ProviderSpec = presets.ProviderSpec;
 pub const ModelInfo = catalog.ModelInfo;
 pub const FileConfig = config_file.FileConfig;
 pub const EmbeddingResult = openai_compat.EmbeddingResult;
+pub const WireAdapter = wire.WireAdapter;
+pub const ApiStyle = wire.ApiStyle;
 
 pub const isRetryableError = types.isRetryableError;
+pub const createWire = openai_compat.createWire;
+pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 
-pub const version = "0.4.0";
+pub const version = "0.4.1";
 
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {
