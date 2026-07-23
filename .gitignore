@@ -1,0 +1,16 @@
+# Zig build artifacts
+.zig-cache/
+zig-out/
+zig-pkg/
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# Local secrets (never commit)
+.env
+.env.*
+!*.env.example
