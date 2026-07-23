@@ -2,54 +2,63 @@
 
 > 描述**当前代码**与**目标分层**。成熟度等级见 [maturity.md](./maturity.md)。  
 > Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）= 规格已写、实现未齐。  
-> 主对照：[Pi agent harness](https://github.com/earendil-works/pi)（包纪律 / loop / session）；产品壳对照 Grok Build / Pi-coding-agent。
+> **主蓝本：Grok Build workspace 分层**（all-in-one 产品 × 可嵌入内核，60+ crate 单向依赖；见 [packaging.md](./packaging.md)）。  
+> 辅助对照：[Pi](https://github.com/earendil-works/pi)（loop / session / compaction 教科书叙述——只借叙述，不采纳其极简产品面）。
 
 ---
 
 ## 目标分层总图（钉死）
 
-对齐 **Pi**（ai / agent-core / coding-agent）与 **Grok Build 产品壳** 思路；名字用 Zag 自己的。
+对齐 **Grok Build**（tool-types → tools → agent → shell → pager → bin）；名字用 Zag 自己的。双轨目标：**L4 以下 = Kernel SDK 面；L5–L6 = All-in-One 产品面**。
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│  Product shell（产品壳 · C9）                                  │
-│  CLI · headless · TUI · Bot · Web · RPC                       │
-│  只组装，不承载 loop / 协议细节                                 │
+│ L6 发行  zag (bin)             all-in-one 组装（对标 pager-bin）│
 ├──────────────────────────────────────────────────────────────┤
-│  Agent Core（≈ Pi-agent-core）                                 │
+│ L5 产品面（产品壳 · C9）        对标 pager / dashboard / acp    │
+│  zag-cli · zag-tui · zag-acp   只组装，不承载 loop / 协议细节   │
+├──────────────────────────────────────────────────────────────┤
+│ L4 Kernel ★SDK 主入口（≈ xai-grok-shell；今 src/agent）         │
 │  Loop · Session · Context view · Permissions · Trace           │
 │  Tools / Runtime 挂载                                          │
 │  Memory Core 端口（默认 no-op · C5）                            │
 │  Graph / DAG 编排（可选 · C6）— 节点内仍是 Loop                 │
+│  L3 agent 定义（≈ xai-grok-agent；C6 拆出）                     │
 ├────────────────────┬─────────────────────────────────────────┤
-│  Model plane       │  Runtime                                 │
-│  （≈ Pi-ai）       │  fs · shell · sandbox*                   │
-│  zag-ai            │                                          │
-│   canonical msgs   │                                          │
-│   + wire adapters  │                                          │
-│  openai-zig*       │                                          │
-└────────────────────┴─────────────────────────────────────────┘
-* openai-zig = OpenAI-compat 线协议实现（可独立复用）
-* sandbox = C7
+│ L2 Model plane     │ L2 Runtime / 领域包                       │
+│  （对标 models/    │  zag-tools（fs·edit·shell·grep）           │
+│   sampler）        │  zag-workspace（jail·git）                 │
+│  zag-ai            │  zag-sandbox*（C7）                        │
+│   canonical msgs   │  zag-hooks / zag-mcp*（C8）                │
+│   + wire adapters  │                                           │
+│  openai-zig*       │                                           │
+├────────────────────┴─────────────────────────────────────────┤
+│ L0 契约  zag-types（message · tool 协议 · sampling；无 IO）      │
+└──────────────────────────────────────────────────────────────┘
+* openai-zig = OpenAI-compat 线协议实现（可独立复用 / 首个拆 repo 候选）
 ```
 
-### 四层职责
+### 分层职责
 
-| 层 | 对标 | 职责 | 阶段 |
-|----|------|------|------|
-| **Product shell** | Pi-coding-agent；Grok 产品壳 | UI/交互/进程模式；**薄** | 现状 CLI；**C9** 扩 TUI/RPC |
-| **Agent Core** | Pi-agent-core | 单 agent **Loop**、session、权限、context、trace；可选 Graph | **H** 硬化 Loop；**C6** Graph |
-| **Memory Core（端口）** | Grok/Hyper memory 抽象 | 跨 session 记忆；默认关闭实现 | 接口可早留；**C5** 实现 |
-| **Model plane** | Pi-ai | resolve、catalog、**canonical→wire 适配**、stream、错误 | H6；多协议适配后置 |
-| **Runtime** | — | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
+| 层 | 对标（Grok Build） | 职责 | 阶段 |
+|----|--------------------|------|------|
+| **L6/L5 产品面** | pager-bin / pager / dashboard / acp-lib | UI/交互/进程模式；**薄**，只组装 | 现状 CLI；**C9** 扩 TUI/ACP |
+| **L4 Kernel（SDK 入口）** | xai-grok-shell | 单 agent **Loop**、session、权限、context、trace；可选 Graph | **H** 硬化 Loop；**C6** Graph |
+| **L3 agent 定义** | xai-grok-agent | 工具 + 采样 + hooks 组合 | C6 拆出 |
+| **Memory Core（端口）** | grok-memory 抽象 | 跨 session 记忆；默认关闭实现 | 接口可早留；**C5** 实现 |
+| **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、**canonical→wire 适配**、stream、错误 | H6；多协议适配后置 |
+| **L2 Runtime / 领域包** | tools / workspace / sandbox | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
+| **L0 契约** | tool-types / tool-protocol | 无 IO 领域类型；SDK 最稳面 | H 期间归目录，C 轨 zon 化 |
 
 ### 架构不变式
 
 1. **Loop 可独立运行**；日常 coding 路径不强制经过 Graph。  
 2. **Graph 节点内部是 Loop**（或确定性 gate）；Graph 是编排层，不替代 tool loop。  
-3. **Harness / Agent Core 只见 canonical 消息与 Provider 端口**；厂商线协议只在 Model plane 适配器。  
-4. **Memory / Graph / 产品壳** 不得依赖 `openai-zig` 类型。  
-5. Phase H 只保证 **单 Loop 生产底线**；Graph、多协议实现、厚产品壳后置。
+3. **Kernel 只见 canonical 消息与 Provider 端口**；厂商线协议只在 Model plane 适配器（quarantine，学 shell 对 rmcp/reqwest 的隔离）。  
+4. **Memory / Graph / 产品面** 不得依赖 `openai-zig` 类型。  
+5. **依赖只准朝下**；L4 不 import L5/L6；产品不反噬内核。  
+6. Phase H 只保证 **单 Loop 生产底线**；Graph、多协议实现、厚产品壳后置。  
+7. **All-in-one 是产品目标，不是架构豁免**：每个新能力先声明落点包（[packaging.md](./packaging.md) §5）。
 
 ---
 
@@ -151,7 +160,8 @@ Agent Core
 
 ## Monorepo 包边界（强制）
 
-按**依赖方向与失败模式**拆，不按「文件多了就拆」。
+按**依赖方向与失败模式**拆，不按「文件多了就拆」。  
+**目标包全谱与拆 repo 标准以 [packaging.md](./packaging.md) 为准**；下表是现状边界。
 
 ```text
 Product shell (main / 未来 tui…)
@@ -298,6 +308,6 @@ var agent = Agent.init(gpa, io, adapter.provider(), .{
 
 ## 相关
 
-- [roadmap.md](./roadmap.md) · [vision.md](./vision.md) · [modules/](./modules/)  
+- [packaging.md](./packaging.md) · [roadmap.md](./roadmap.md) · [vision.md](./vision.md) · [modules/](./modules/)  
 - [research/2026-harness-landscape.md](./research/2026-harness-landscape.md)  
 - Teaching [chapters/](../chapters/) · [H-harden](../chapters/H-harden/README.md)  

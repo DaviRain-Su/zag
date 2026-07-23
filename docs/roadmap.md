@@ -137,6 +137,22 @@ C5（H 之后）      repo map → Memory Repo MVP（默认关）
 
 ---
 
+## Packaging（横切；双轨 Kernel SDK × All-in-One）
+
+设计：[packaging.md](./packaging.md)（对齐 Grok Build workspace 分层）。
+
+| 阶段 | Packaging 动作 |
+|------|----------------|
+| **Phase H** | 不拆包；按目标包边界整理目录与 import 方向（`modules/*` 即包 API 草稿） |
+| **C4–C5** | H2/H5 稳定后拆出 `zag-tools` / `zag-workspace`；canonical 类型归 `zag-types` |
+| **C6** | `src/agent` 分为 `zag-agent`（定义）+ `zag-kernel`（编排；SDK 主入口） |
+| **C9** | `zag-cli` / `zag-tui` / `zag-acp` 产品面成包；`zag` bin 只组装 |
+| 发布 | 满足 packaging §3 四条标准的包 mirror 拆 repo（首个候选 `openai-zig`） |
+
+规则：**每个 C 轨新能力必须在设计中声明落点包**；不允许直接长在 main/cli。
+
+---
+
 ## 建议节奏
 
 | 段落 | 做什么 |
@@ -157,7 +173,8 @@ C5（H 之后）      repo map → Memory Repo MVP（默认关）
 zag/
   docs/
     README.md          文档地图
-    vision.md          定位
+    vision.md          定位（双轨：Kernel SDK × All-in-One）
+    packaging.md       包分层与拆包（对齐 Grok Build）
     maturity.md        成熟度真理源
     roadmap.md         本文件
     architecture.md    包边界 + 分层

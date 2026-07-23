@@ -17,7 +17,8 @@ vision → maturity（看清自己在哪）
 
 | 文档 | 作用 |
 |------|------|
-| [vision.md](./vision.md) | 产品定位、吸收原则、刻意不做 |
+| [vision.md](./vision.md) | 双轨定位（Kernel SDK × All-in-One）、吸收原则 |
+| [packaging.md](./packaging.md) | 包分层与拆包设计（对齐 Grok Build workspace） |
 | [maturity.md](./maturity.md) | **真理源**：子系统 L0–L3 成熟度矩阵 |
 | [roadmap.md](./roadmap.md) | Teaching / Phase H / Capability / Quality |
 | [architecture.md](./architecture.md) | **钉死**：Loop⊂Graph、WireAdapter、Agent/Memory/产品壳分层 |

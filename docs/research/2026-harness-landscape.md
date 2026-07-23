@@ -1,5 +1,10 @@
 # 2026 Harness Landscape → Zag gap map
 
+> **决策修订（2026-07-24 晚）：** 本文写作时以 Pi 为 primary reference。定位已修订为
+> **双轨：Kernel SDK × All-in-One（主蓝本 = Grok Build 包分层）**，Pi 降级为
+> loop/session/compaction 的叙述参考；其「最小默认工具面」哲学**不采纳**。
+> 见 [vision.md](../vision.md) 与 [packaging.md](../packaging.md)。本文其余内容作研究存档保留。
+
 > **Research freeze:** 2026-07-24.  
 > Sources: [earendil-works/pi](https://github.com/earendil-works/pi), X/Twitter, GitHub awesome lists, 2026 harness engineering posts.  
 > Implementation target: **Zag** monorepo (`agent → zag-ai → openai-zig`).  
@@ -37,7 +42,7 @@ Even graph systems embed **loops inside nodes**. Graph does not replace the codi
 
 ---
 
-## 2. Pi (primary reference)
+## 2. Pi（原 primary reference；现降级为叙述参考，见顶部修订）
 
 Repo: [earendil-works/pi](https://github.com/earendil-works/pi) (~76k★). Site: [pi.dev](https://pi.dev).
 
