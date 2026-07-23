@@ -21,11 +21,15 @@ pub const loop = @import("agent/loop.zig");
 pub const agent = @import("agent/agent.zig");
 
 pub const openai = @import("provider/openai.zig");
+pub const openai_compat = @import("provider/openai_compat.zig");
 pub const provider_config = @import("provider/config.zig");
+pub const provider_registry = @import("provider/registry.zig");
+pub const provider_presets = @import("provider/presets.zig");
+pub const provider_auth_env = @import("provider/auth_env.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
 
-pub const version = "0.3.0";
+pub const version = "0.3.1";
 
 test {
     std.testing.refAllDecls(@This());

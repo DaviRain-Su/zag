@@ -55,8 +55,8 @@ transcript ──► provider.chat ──► assistant
 
 **先不要读**（除非你在修协议/IO）：
 
-- `src/provider/openai.zig` — HTTP + JSON  
-- `src/provider/config.zig` — 环境变量  
+- `src/provider/openai_compat.zig` — 唯一线协议 HTTP+JSON  
+- `src/provider/presets.zig` / `registry.zig` — 厂商表与 env 解析  
 - `src/runtime/fs_tools.zig` — 具体怎么读磁盘  
 - `src/main.zig` — CLI 壳  
 
@@ -101,7 +101,7 @@ while turns < max:
 | 样板 | 封装位置 | 业务侧看到 |
 |------|----------|------------|
 | arena / dupe 消息 | `Transcript` | `appendUser` / `appendAssistantTurn` |
-| HTTP + JSON | `openai.Client` | `Provider.chat` |
+| HTTP + JSON | `openai_compat.Client` | `Provider.chat` |
 | env 选 key/model | `provider/config.zig` | `main` 解析一次 |
 | 装 list_dir/read_file | `Phase0Storage` / `Agent.initPhase0` | `agent.reply` |
 | stderr 日志 | `Observer.stderrLog` | `Options.verbose` |

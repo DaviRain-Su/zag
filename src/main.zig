@@ -113,25 +113,33 @@ pub fn main(init: std.process.Init) !void {
         trace_path = ".zag/traces/latest.jsonl";
     }
 
-    const resolved = zag.provider_config.resolve(init.environ_map) catch |err| {
+    const resolved = zag.provider_registry.resolveFromEnv(init.environ_map) catch |err| {
         switch (err) {
             error.MissingApiKey => {
                 std.log.err(
-                    \\missing API key. Set one of:
-                    \\  ZAG_API_KEY
-                    \\  DEEPSEEK_API_KEY
-                    \\  XAI_API_KEY
-                    \\  OPENAI_API_KEY
+                    \\missing API key. Configure a preset env var (see --help), or:
+                    \\  ZAG_API_KEY + ZAG_BASE_URL [+ ZAG_MODEL]
+                    \\  ZAG_PROVIDER=<id>  (optional explicit preset)
                 , .{});
+                std.process.exit(1);
+            },
+            error.UnknownProvider => {
+                std.log.err("unknown ZAG_PROVIDER (see presets in provider/presets.zig)", .{});
+                std.process.exit(1);
+            },
+            error.MissingBaseUrl => {
+                std.log.err("ZAG_API_KEY requires ZAG_BASE_URL for custom endpoints", .{});
                 std.process.exit(1);
             },
         }
     };
 
     if (verbose) {
-        std.log.info("provider preset={s} model={s} permission={s} shell_policy={s}", .{
-            resolved.preset.name(),
+        std.log.info("provider id={s} name={s} model={s} key_from={s} permission={s} shell_policy={s}", .{
+            resolved.spec_id,
+            resolved.display_name,
             resolved.config.model,
+            resolved.api_key_source,
             permission_mode.name(),
             shell_policy.name(),
         });
@@ -139,7 +147,7 @@ pub fn main(init: std.process.Init) !void {
         if (trace_path) |tp| std.log.info("trace path={s}", .{tp});
     }
 
-    var client = zag.openai.Client.init(gpa, io, resolved.config);
+    var client = zag.openai_compat.Client.init(gpa, io, resolved.config);
     defer client.deinit();
 
     var agent = zag.agent.Agent.init(gpa, io, client.provider(), .{
@@ -278,6 +286,12 @@ fn printUsage() !void {
         \\
         \\Tools: list_dir, read_file, write_file, run_shell
         \\Security: relative paths only; shell denylist even under --yolo
+        \\
+        \\Model providers (OpenAI Chat Completions wire format only):
+        \\  Auto-detect first set key among presets (order in provider/presets.zig),
+        \\  or set ZAG_PROVIDER=deepseek|xai|openai|openrouter|together|groq
+        \\  Custom: ZAG_API_KEY + ZAG_BASE_URL [+ ZAG_MODEL]
+        \\  Override any preset: ZAG_BASE_URL, ZAG_MODEL
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();

@@ -10,12 +10,25 @@ CLI (main.zig)
 agent/  ★ 业务
   Agent · Session · loop
   permissions · workspace jail · shell_policy · trace
-  context · project · session_store · Provider · Toolset
+  context · project · session_store · Provider port · Toolset
     ↓
-provider/  +  runtime/
+provider/  （模型接入，对齐 pi-ai 形状）
+  presets → registry + auth_env → openai_compat (唯一线协议)
+    + runtime/
     ↓
 LLM · FS · shell
 ```
+
+### Provider 扩展（OpenAI 格式 only）
+
+| 文件 | 职责 |
+|------|------|
+| `provider/presets.zig` | 声明式 `ProviderSpec` 表（加厂商加一行） |
+| `provider/auth_env.zig` | 从 env 取 API key（无 OAuth） |
+| `provider/registry.zig` | 探测 / `ZAG_PROVIDER` / 自定义 endpoint |
+| `provider/openai_compat.zig` | 唯一线协议：Chat Completions + tools |
+
+加厂商：在 `presets.builtin` 追加一条，无需改 resolve 分支。
 
 ## 工具执行三道门（Phase 3）
 

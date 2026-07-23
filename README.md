@@ -54,7 +54,18 @@ src/runtime/   FS · shell 实现
 src/provider/  HTTP · env
 ```
 
-版本：`0.3.0`。
+版本：`0.3.1`。
+
+### 模型接入（OpenAI-compatible）
+
+| 变量 | 作用 |
+|------|------|
+| `DEEPSEEK_API_KEY` / `XAI_API_KEY` / `OPENAI_API_KEY` / … | 自动探测（见 `provider/presets.zig` 顺序） |
+| `ZAG_PROVIDER` | 显式选 preset id |
+| `ZAG_API_KEY` + `ZAG_BASE_URL` | 自定义 OpenAI 兼容 endpoint |
+| `ZAG_MODEL` / `ZAG_BASE_URL` | 覆盖任意 preset 默认 |
+
+线协议只有一套（`openai_compat`）；扩展厂商 = 改 presets 表。
 
 ## 许可
 

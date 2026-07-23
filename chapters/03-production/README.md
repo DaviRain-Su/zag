@@ -124,11 +124,16 @@ execute → tool result → transcript + trace
 
 ---
 
-## 7. 下一步（本阶段之后）
+## 7. 扩展 OpenAI 兼容厂商
+
+见 `src/provider/presets.zig`：加一行 `ProviderSpec`（id / base_url / env_keys / default_model）。  
+不要改 `openai_compat.zig` 除非线协议本身变了。OAuth 登录暂不支持（仅 env key）。
+
+## 8. 下一步（本阶段之后）
 
 - 真沙箱 / 容器  
 - 配置文件（非仅 env）  
 - MCP 或 hooks 深挖一条  
 - Golden transcript 回归集  
 
-**Tag：** `ch3-prod` / `v0.3.0`
+**Tag：** `ch3-prod` / `v0.3.1`
