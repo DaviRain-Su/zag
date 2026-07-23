@@ -42,8 +42,14 @@ Available example names (see `build.zig`):
 
 ### Testing
 ```sh
-zig build test     # runs all test blocks (currently only one client‑init test)
+zig build test          # unit tests + OpenAPI path coverage
+zig build coverage      # only path coverage (IR vs resources)
+python3 scripts/check-path-coverage.py
 ```
+
+Path coverage fails if any `generated/ir.json` operation path is missing from
+`src/resources/*.zig`. After regenerating the OpenAPI types, run coverage before
+merging.
 
 Tests are defined as inline `test` blocks in source files (Zig's built‑in test framework). The build script creates two test executables (module and executable) and runs them in parallel.
 

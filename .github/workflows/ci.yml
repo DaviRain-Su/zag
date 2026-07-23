@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Zig ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Zig 0.16.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Python (path coverage script)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: OpenAPI path coverage (openai-zig)
+        working-directory: packages/openai-zig
+        run: python3 scripts/check-path-coverage.py
+
+      - name: zig build test (monorepo)
+        run: zig build test --summary all
+
+      - name: zig build (install zag)
+        run: zig build
+
+      - name: openai-zig package tests
+        working-directory: packages/openai-zig
+        run: zig build test --summary all
+
+      - name: openai-zig examples (compile)
+        working-directory: packages/openai-zig
+        run: zig build examples -Dexamples=true

@@ -33,7 +33,8 @@ Zig **0.16**。
 ```bash
 export DEEPSEEK_API_KEY=sk-...
 
-zig build test
+zig build test              # monorepo tests + openai-zig path coverage
+zig build openai-coverage   # only OpenAPI IR ↔ resources coverage
 zig build run -- --yolo -v --trace "list_dir ."
 
 # 应被 jail 拒绝：

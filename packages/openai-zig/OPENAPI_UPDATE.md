@@ -49,4 +49,18 @@ All **287** IR operations now have resource path wrappers, including:
 - `realtime.create_translation_client_secret`
 - `projects.create_project_service_account_api_key` + `update_project_service_account`
 
-Verify with a path scan over `src/resources/*.zig` against `generated/ir.json`.
+### CI / local gate
+
+```bash
+# from packages/openai-zig
+python3 scripts/check-path-coverage.py
+# or
+zig build coverage
+zig build test          # includes coverage
+
+# from monorepo root
+zig build openai-coverage
+zig build test          # includes openai-coverage
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs path coverage on every PR/push.

@@ -64,9 +64,19 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    const test_step = b.step("test", "Run tests");
+    // OpenAPI path coverage: every IR operation path must appear in resources.
+    const coverage_cmd = b.addSystemCommand(&.{
+        "python3",
+        "scripts/check-path-coverage.py",
+    });
+    coverage_cmd.setCwd(b.path("."));
+    const coverage_step = b.step("coverage", "Check OpenAPI path coverage vs resources");
+    coverage_step.dependOn(&coverage_cmd.step);
+
+    const test_step = b.step("test", "Run tests + OpenAPI path coverage");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(coverage_step);
 
     // Build examples with: zig build -Dexamples=true
     // Optional filter: -Dexamples_filter=chat_completion,models_list

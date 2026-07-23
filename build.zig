@@ -93,9 +93,23 @@ pub fn build(b: *std.Build) void {
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    const test_step = b.step("test", "Run all tests");
+    // openai-zig OpenAPI path coverage gate (IR vs resources)
+    // cwd = packages/openai-zig so the script path is package-relative.
+    const openai_coverage = b.addSystemCommand(&.{
+        "python3",
+        "scripts/check-path-coverage.py",
+    });
+    openai_coverage.setCwd(b.path("packages/openai-zig"));
+    const openai_coverage_step = b.step(
+        "openai-coverage",
+        "Check openai-zig OpenAPI path coverage vs resources",
+    );
+    openai_coverage_step.dependOn(&openai_coverage.step);
+
+    const test_step = b.step("test", "Run all tests + openai path coverage");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(openai_coverage_step);
 }
