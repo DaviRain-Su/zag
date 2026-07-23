@@ -29,20 +29,26 @@ zag → zag-ai → openai-zig
 ## Agent-facing API
 
 ```zig
-var client = ai.Client.init(gpa, io, .{
+// Preferred: WireAdapter (OpenAI-compat is the only style today)
+var w = try ai.createWire(gpa, io, .{
     .base_url = "https://api.deepseek.com/v1",
     .api_key = key,
     .model = "deepseek-v4-flash",
     .max_retries = 2,
-});
-defer client.deinit();
+}, .openai_compat);
+defer w.deinit();
 
-const turn = try client.chatWithOptions(arena, messages, tools, .{
+const turn = try w.chat(arena, messages, tools, .{
     .temperature = 0.2,
     .max_tokens = 2048,
     .tool_choice = .auto,
 });
 // turn.content / turn.tool_calls / turn.usage
+
+// Or Client (same backend) + borrowed wire:
+var client = ai.Client.init(gpa, io, config);
+defer client.deinit();
+_ = ai.openAiCompatFromClient(&client);
 
 // Multimodal user message
 const parts = [_]ai.ContentPart{
@@ -51,25 +57,24 @@ const parts = [_]ai.ContentPart{
 };
 const mm = ai.Message.userMultimodal(&parts);
 
-// Embeddings
+// Embeddings (Client API)
 const emb = try client.embed(arena, &.{"hello world"}, .{ .model = "text-embedding-3-small" });
-// emb.vectors[0], emb.usage
 ```
 
-Stream: `stream.chatStream` / `chatStreamWithOptions`.
+Stream: `wire.chatStream` / `Client.chatStreamWithOptions` / `stream.chatStreamWithOptions`.
 
 `Client.sdkClient()` returns `*openai_zig.Client` for models/files/responses/etc.
+
+Env: `ZAG_API_STYLE=openai_compat` (default). `anthropic` is reserved and rejected until implemented.
 
 ## Resolve (harness entry)
 
 ```zig
 var rr = try ai.resolve(gpa, io, env_map, config_path);
 defer rr.deinit(gpa);
-// rr.resolved.config  — Client.init
-// rr.chat_options     — Adapter.chat_options
-// rr.model_info       — catalog entry (optional)
-// rr.contextCharBudget(default) — soft char budget for context view
-// rr.chat_retries / max_turns / stream
+// rr.resolved.config / api_style
+// rr.resolved.createWire(gpa, io) → WireAdapter
+// rr.chat_options, model_info, chat_retries, stream, …
 ```
 
 ## Errors
