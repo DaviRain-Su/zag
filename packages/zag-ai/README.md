@@ -12,8 +12,9 @@ Auth is env + JSON config only (no OAuth).
 | `config` | 共享 `Config`（base_url / key / model / retries） |
 | `http` | **中立** HTTP（`std.http` only；Bearer 或 header auth；**不**依赖 openai_zig） |
 | `wire` | **WireAdapter** + `ApiStyle` + 共享 `Error` |
-| `openai_compat` | OpenAI Chat Completions（**唯一**依赖 openai-zig resources 的适配器） |
-| `anthropic_messages` | Anthropic Messages + SSE（只用 config/http/wire） |
+| `openai_compat` | OpenAI Chat Completions + **OpenAI SSE**（唯一依赖 openai-zig resources） |
+| `anthropic_messages` | Anthropic Messages + **Anthropic SSE**（config/http/wire only） |
+| `stream` | 仅 re-export `StreamHandler` / `StreamEvent`（无厂商实现） |
 | `presets` | ProviderSpec table (`api_style`) |
 | `catalog` | Known model ids + context windows + budget helpers |
 | `registry` | Resolve provider + `createWire` |
@@ -65,9 +66,19 @@ const mm = ai.Message.userMultimodal(&parts);
 const emb = try client.embed(arena, &.{"hello world"}, .{ .model = "text-embedding-3-small" });
 ```
 
-Stream: `wire.chatStream` / `Client.chatStreamWithOptions` / `stream.chatStreamWithOptions`.
+Streaming (per adapter, same `StreamEvent` surface):
 
-`Client.sdkClient()` returns `*openai_zig.Client` for models/files/responses/etc.
+```zig
+// Preferred — works for OpenAI and Anthropic
+_ = try wire.chatStream(arena, messages, tools, handler, ctx, opts);
+
+// Or adapter-specific:
+// openai_compat.Client.chatStreamWithOptions(...)
+// anthropic_messages.Client.chatStreamWithOptions(...)
+```
+
+`stream` module only re-exports `Handler` / `Event` (no vendor code).  
+`openai_compat.Client.sdkClient()` is OpenAI-adapter-only (full openai-zig surface).
 
 Wire styles:
 

@@ -10,7 +10,6 @@ const openai = @import("openai_zig");
 const types = @import("types.zig");
 const wire = @import("wire.zig");
 const config_mod = @import("config.zig");
-const stream_mod = @import("stream.zig");
 
 const chat_res = openai.resources.chat;
 const gen = openai.generated;
@@ -113,7 +112,8 @@ pub const Client = struct {
         return try turnFromResponse(arena, parsed.value);
     }
 
-    /// Stream via openai-zig SSE; returns assembled turn.
+    /// OpenAI Chat Completions SSE stream; returns assembled turn.
+    /// (Anthropic streaming lives in `anthropic_messages.Client`, not here.)
     pub fn chatStreamWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
@@ -123,7 +123,41 @@ pub const Client = struct {
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
     ) Error!types.AssistantTurn {
-        return stream_mod.chatStreamWithOptions(self, arena, messages, tools, handler, handler_ctx, opts);
+        const chat_messages = try toChatMessages(arena, messages);
+        const chat_tools = try toChatTools(arena, tools);
+        const req = try buildChatRequest(self.config.model, chat_messages, chat_tools, opts, true);
+
+        var state: OpenAiStreamState = .{
+            .arena = arena,
+            .handler = handler,
+            .handler_ctx = handler_ctx,
+        };
+
+        self.sdk.chat().create_chat_completion_stream_with_done(
+            arena,
+            req,
+            onOpenAiSdkEvent,
+            &state,
+            onOpenAiSdkDone,
+            &state,
+        ) catch |err| {
+            if (state.err) |e| return e;
+            return mapSdkError(err);
+        };
+
+        if (state.err) |e| return e;
+        return state.finish() catch return error.OutOfMemory;
+    }
+
+    pub fn chatStream(
+        self: *Client,
+        arena: std.mem.Allocator,
+        messages: []const types.Message,
+        tools: []const types.ToolDefinition,
+        handler: ?types.StreamHandler,
+        handler_ctx: ?*anyopaque,
+    ) Error!types.AssistantTurn {
+        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, .{});
     }
 
     /// Create embeddings for one or more input strings (OpenAI-compatible `/embeddings`).
@@ -267,6 +301,154 @@ pub fn createOpenAiCompatWire(gpa: std.mem.Allocator, io: Io, config: Config) Er
 
 pub fn openAiCompatFromClient(client: *Client) wire.WireAdapter {
     return client.asWire();
+}
+
+// --- OpenAI Chat Completions SSE assembly (private to this adapter) ---
+
+const OpenAiStreamState = struct {
+    arena: std.mem.Allocator,
+    handler: ?types.StreamHandler,
+    handler_ctx: ?*anyopaque,
+    content: std.ArrayList(u8) = .empty,
+    tool_ids: std.ArrayList([]const u8) = .empty,
+    tool_names: std.ArrayList([]const u8) = .empty,
+    tool_args: std.ArrayList(std.ArrayList(u8)) = .empty,
+    finish_reason: []const u8 = "",
+    err: ?Error = null,
+
+    fn ensureToolSlot(self: *OpenAiStreamState, index: usize) !void {
+        while (self.tool_ids.items.len <= index) {
+            try self.tool_ids.append(self.arena, "");
+            try self.tool_names.append(self.arena, "");
+            try self.tool_args.append(self.arena, .empty);
+        }
+    }
+
+    fn finish(self: *OpenAiStreamState) !types.AssistantTurn {
+        const content = try self.arena.dupe(u8, self.content.items);
+        const fr = try self.arena.dupe(u8, self.finish_reason);
+        if (self.tool_ids.items.len == 0) {
+            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr, .usage = null };
+        }
+        const calls = try self.arena.alloc(types.ToolCall, self.tool_ids.items.len);
+        for (0..self.tool_ids.items.len) |i| {
+            calls[i] = .{
+                .id = try self.arena.dupe(u8, self.tool_ids.items[i]),
+                .name = try self.arena.dupe(u8, self.tool_names.items[i]),
+                .arguments = try self.arena.dupe(u8, self.tool_args.items[i].items),
+            };
+        }
+        return .{ .content = content, .tool_calls = calls, .finish_reason = fr, .usage = null };
+    }
+};
+
+fn onOpenAiSdkEvent(
+    user_ctx: ?*anyopaque,
+    event: std.json.Parsed(chat_res.CreateChatCompletionStreamResponse),
+) openai.errors.Error!void {
+    const state: *OpenAiStreamState = @ptrCast(@alignCast(user_ctx.?));
+    defer event.deinit();
+
+    for (event.value.choices) |choice| {
+        const index: usize = blk: {
+            const raw = choice.index;
+            const v: i64 = if (@TypeOf(raw) == ?i64) (raw orelse 0) else raw;
+            break :blk if (v > 0) @intCast(v) else 0;
+        };
+
+        if (choice.delta.content) |content| {
+            if (content.len > 0) {
+                state.content.appendSlice(state.arena, content) catch {
+                    state.err = error.OutOfMemory;
+                    return openai.errors.Error.HttpError;
+                };
+                if (state.handler) |h| {
+                    h(state.handler_ctx, .{ .content_delta = content }) catch {
+                        state.err = error.StreamFailed;
+                        return openai.errors.Error.HttpError;
+                    };
+                }
+            }
+        }
+
+        if (choice.delta.tool_calls) |tcs| {
+            for (tcs) |tc| {
+                const tc_index: usize = blk: {
+                    const raw = tc.index;
+                    const v: i64 = if (@TypeOf(raw) == ?i64) (raw orelse 0) else raw;
+                    break :blk if (v > 0) @intCast(v) else index;
+                };
+                state.ensureToolSlot(tc_index) catch {
+                    state.err = error.OutOfMemory;
+                    return openai.errors.Error.HttpError;
+                };
+                if (tc.id) |id| {
+                    if (id.len > 0) {
+                        state.tool_ids.items[tc_index] = state.arena.dupe(u8, id) catch {
+                            state.err = error.OutOfMemory;
+                            return openai.errors.Error.HttpError;
+                        };
+                    }
+                }
+                if (tc.function) |fn_obj| {
+                    if (fn_obj.name) |name| {
+                        if (name.len > 0) {
+                            state.tool_names.items[tc_index] = state.arena.dupe(u8, name) catch {
+                                state.err = error.OutOfMemory;
+                                return openai.errors.Error.HttpError;
+                            };
+                        }
+                    }
+                    if (fn_obj.arguments) |args| {
+                        if (args.len > 0) {
+                            state.tool_args.items[tc_index].appendSlice(state.arena, args) catch {
+                                state.err = error.OutOfMemory;
+                                return openai.errors.Error.HttpError;
+                            };
+                        }
+                    }
+                }
+                if (state.handler) |h| {
+                    h(state.handler_ctx, .{
+                        .tool_call_delta = .{
+                            .index = tc_index,
+                            .id = if (tc.id) |id| id else "",
+                            .name = if (tc.function) |f| (f.name orelse "") else "",
+                            .arguments_delta = if (tc.function) |f| (f.arguments orelse "") else "",
+                        },
+                    }) catch {
+                        state.err = error.StreamFailed;
+                        return openai.errors.Error.HttpError;
+                    };
+                }
+            }
+        }
+
+        if (choice.finish_reason) |fr| {
+            if (fr.len > 0) {
+                state.finish_reason = state.arena.dupe(u8, fr) catch {
+                    state.err = error.OutOfMemory;
+                    return openai.errors.Error.HttpError;
+                };
+                if (state.handler) |h| {
+                    h(state.handler_ctx, .{ .finish_reason = fr }) catch {
+                        state.err = error.StreamFailed;
+                        return openai.errors.Error.HttpError;
+                    };
+                }
+            }
+        }
+    }
+}
+
+fn onOpenAiSdkDone(user_ctx: ?*anyopaque) openai.errors.Error!void {
+    const state: *OpenAiStreamState = @ptrCast(@alignCast(user_ctx.?));
+    if (state.handler) |h| {
+        h(state.handler_ctx, .done) catch {
+            state.err = error.StreamFailed;
+            return openai.errors.Error.HttpError;
+        };
+    }
 }
 
 pub const EmbedOptions = struct {
