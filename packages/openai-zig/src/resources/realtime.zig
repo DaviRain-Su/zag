@@ -423,4 +423,46 @@ pub const Resource = struct {
     ) errors.Error!std.json.Parsed(gen.RealtimeCreateClientSecretResponse) {
         return self.create_realtime_client_secret_with_options(allocator, body, request_opts);
     }
+
+    /// POST /realtime/translations/client_secrets
+    pub fn create_realtime_translation_client_secret(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        body: gen.RealtimeTranslationClientSecretCreateRequest,
+    ) errors.Error!std.json.Parsed(gen.RealtimeTranslationClientSecretCreateResponse) {
+        return self.create_realtime_translation_client_secret_with_options(allocator, body, null);
+    }
+
+    pub fn create_realtime_translation_client_secret_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        body: gen.RealtimeTranslationClientSecretCreateRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.RealtimeTranslationClientSecretCreateResponse) {
+        return self.sendJsonTypedWithOptions(
+            allocator,
+            "/realtime/translations/client_secrets",
+            body,
+            gen.RealtimeTranslationClientSecretCreateResponse,
+            request_opts,
+        );
+    }
+
+    /// POST /realtime/translations/client_secrets (compat alias)
+    pub fn create_translation_client_secret(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        body: gen.RealtimeTranslationClientSecretCreateRequest,
+    ) errors.Error!std.json.Parsed(gen.RealtimeTranslationClientSecretCreateResponse) {
+        return self.create_realtime_translation_client_secret(allocator, body);
+    }
+
+    pub fn create_translation_client_secret_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        body: gen.RealtimeTranslationClientSecretCreateRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.RealtimeTranslationClientSecretCreateResponse) {
+        return self.create_realtime_translation_client_secret_with_options(allocator, body, request_opts);
+    }
 };

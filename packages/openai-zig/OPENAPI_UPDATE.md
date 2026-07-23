@@ -40,3 +40,13 @@ zig build examples -Dexamples=true
 | `resources/responses.zig` | `client.responses()` | + beta path variants (`?beta=true`) for create/get/delete/cancel/input_items/compact/input_tokens |
 
 Example: `zig build run-skills_list -Dexamples=true`
+
+## Full OpenAPI path coverage (2026-07-24)
+
+All **287** IR operations now have resource path wrappers, including:
+
+- `usage.file_search_calls` / `usage.web_search_calls`
+- `realtime.create_translation_client_secret`
+- `projects.create_project_service_account_api_key` + `update_project_service_account`
+
+Verify with a path scan over `src/resources/*.zig` against `generated/ir.json`.

@@ -680,6 +680,107 @@ pub const Resource = struct {
         );
     }
 
+    /// POST /organization/projects/{project_id}/service_accounts/{service_account_id}
+    pub fn update_project_service_account(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        project_id: []const u8,
+        service_account_id: []const u8,
+        body: gen.UpdateProjectServiceAccountBody,
+    ) errors.Error!std.json.Parsed(gen.ProjectServiceAccount) {
+        return self.update_project_service_account_with_options(allocator, project_id, service_account_id, body, null);
+    }
+
+    pub fn update_project_service_account_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        project_id: []const u8,
+        service_account_id: []const u8,
+        body: gen.UpdateProjectServiceAccountBody,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.ProjectServiceAccount) {
+        var buf: [300]u8 = undefined;
+        const path = std.fmt.bufPrint(
+            &buf,
+            "/organization/projects/{s}/service_accounts/{s}",
+            .{ project_id, service_account_id },
+        ) catch {
+            return errors.Error.SerializeError;
+        };
+        return self.sendJsonTypedWithOptions(
+            allocator,
+            .POST,
+            path,
+            body,
+            gen.ProjectServiceAccount,
+            request_opts,
+        );
+    }
+
+    /// POST /organization/projects/{project_id}/service_accounts/{service_account_id}/api_keys
+    pub fn create_project_service_account_api_key(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        project_id: []const u8,
+        service_account_id: []const u8,
+        body: gen.CreateProjectServiceAccountApiKeyBody,
+    ) errors.Error!std.json.Parsed(gen.ServiceAccountApiKeyBody) {
+        return self.create_project_service_account_api_key_with_options(
+            allocator,
+            project_id,
+            service_account_id,
+            body,
+            null,
+        );
+    }
+
+    pub fn create_project_service_account_api_key_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        project_id: []const u8,
+        service_account_id: []const u8,
+        body: gen.CreateProjectServiceAccountApiKeyBody,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.ServiceAccountApiKeyBody) {
+        var buf: [360]u8 = undefined;
+        const path = std.fmt.bufPrint(
+            &buf,
+            "/organization/projects/{s}/service_accounts/{s}/api_keys",
+            .{ project_id, service_account_id },
+        ) catch {
+            return errors.Error.SerializeError;
+        };
+        return self.sendJsonTypedWithOptions(
+            allocator,
+            .POST,
+            path,
+            body,
+            gen.ServiceAccountApiKeyBody,
+            request_opts,
+        );
+    }
+
+    /// Compat aliases
+    pub fn update_service_account(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        project_id: []const u8,
+        service_account_id: []const u8,
+        body: gen.UpdateProjectServiceAccountBody,
+    ) errors.Error!std.json.Parsed(gen.ProjectServiceAccount) {
+        return self.update_project_service_account(allocator, project_id, service_account_id, body);
+    }
+
+    pub fn create_service_account_api_key(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        project_id: []const u8,
+        service_account_id: []const u8,
+        body: gen.CreateProjectServiceAccountApiKeyBody,
+    ) errors.Error!std.json.Parsed(gen.ServiceAccountApiKeyBody) {
+        return self.create_project_service_account_api_key(allocator, project_id, service_account_id, body);
+    }
+
     /// Project users
     pub fn list_project_users(
         self: *const Resource,

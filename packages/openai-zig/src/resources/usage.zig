@@ -344,6 +344,104 @@ pub const Resource = struct {
         return self.vector_stores_with_options(allocator, params, request_opts);
     }
 
+    /// GET /organization/usage/file_search_calls
+    pub fn file_search_calls(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.getUsage(allocator, "/organization/usage/file_search_calls", params, gen.UsageResponse);
+    }
+
+    pub fn file_search_calls_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.getUsageWithOptions(
+            allocator,
+            "/organization/usage/file_search_calls",
+            params,
+            gen.UsageResponse,
+            request_opts,
+        );
+    }
+
+    pub fn usage_file_search_calls(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.file_search_calls(allocator, params);
+    }
+
+    pub fn usage_file_search_calls_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.file_search_calls_with_options(allocator, params, request_opts);
+    }
+
+    /// GET /organization/usage/web_search_calls
+    pub fn web_search_calls(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.getUsage(allocator, "/organization/usage/web_search_calls", params, gen.UsageResponse);
+    }
+
+    pub fn web_search_calls_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.getUsageWithOptions(
+            allocator,
+            "/organization/usage/web_search_calls",
+            params,
+            gen.UsageResponse,
+            request_opts,
+        );
+    }
+
+    pub fn usage_web_search_calls(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.web_search_calls(allocator, params);
+    }
+
+    pub fn usage_web_search_calls_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.web_search_calls_with_options(allocator, params, request_opts);
+    }
+
+    pub fn list_file_search_calls(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.file_search_calls(allocator, params);
+    }
+
+    pub fn list_web_search_calls(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        params: UsageParams,
+    ) errors.Error!std.json.Parsed(gen.UsageResponse) {
+        return self.web_search_calls(allocator, params);
+    }
+
     pub fn list_costs(
         self: *const Resource,
         allocator: std.mem.Allocator,
