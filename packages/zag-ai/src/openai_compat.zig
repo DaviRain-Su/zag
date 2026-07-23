@@ -101,10 +101,79 @@ pub const Client = struct {
         return try turnFromResponse(arena, parsed.value);
     }
 
+    /// Create embeddings for one or more input strings (OpenAI-compatible `/embeddings`).
+    /// Vectors and strings are allocated on `arena`.
+    pub fn embed(
+        self: *Client,
+        arena: std.mem.Allocator,
+        inputs: []const []const u8,
+        opts: EmbedOptions,
+    ) Error!EmbeddingResult {
+        if (inputs.len == 0) return error.BadRequest;
+        const model = opts.model orelse self.config.model;
+
+        const input_val: std.json.Value = blk: {
+            if (inputs.len == 1) break :blk .{ .string = inputs[0] };
+            var arr = std.json.Array.init(arena);
+            errdefer arr.deinit();
+            for (inputs) |s| {
+                try arr.append(.{ .string = s });
+            }
+            break :blk .{ .array = arr };
+        };
+
+        const req: gen.CreateEmbeddingRequest = .{
+            .input = input_val,
+            .model = .{ .string = model },
+            .dimensions = if (opts.dimensions) |d| @as(i64, @intCast(d)) else null,
+            .encoding_format = opts.encoding_format,
+            .user = opts.user,
+        };
+
+        var parsed = self.sdk.embeddings().create(arena, req) catch |err| {
+            return mapSdkError(err);
+        };
+        defer parsed.deinit();
+
+        const data = parsed.value.data;
+        const vectors = try arena.alloc([]const f64, data.len);
+        for (data, 0..) |row, i| {
+            const vec = try arena.alloc(f64, row.embedding.len);
+            @memcpy(vec, row.embedding);
+            vectors[i] = vec;
+        }
+
+        var usage: ?types.Usage = null;
+        if (parsed.value.usage) |u| {
+            usage = types.Usage.fromCounts(u.prompt_tokens, 0, u.total_tokens);
+        }
+
+        return .{
+            .model = try arena.dupe(u8, optionalSlice(parsed.value.model)),
+            .vectors = vectors,
+            .usage = usage,
+        };
+    }
+
     /// Access the full openai-zig client (models, files, responses, …).
     pub fn sdkClient(self: *Client) *openai.Client {
         return &self.sdk;
     }
+};
+
+pub const EmbedOptions = struct {
+    /// Defaults to client config model when null.
+    model: ?[]const u8 = null,
+    dimensions: ?u32 = null,
+    encoding_format: ?[]const u8 = null,
+    user: ?[]const u8 = null,
+};
+
+pub const EmbeddingResult = struct {
+    model: []const u8 = "",
+    /// One vector per input (order preserved).
+    vectors: []const []const f64 = &.{},
+    usage: ?types.Usage = null,
 };
 
 pub fn buildChatRequest(
@@ -173,15 +242,24 @@ pub fn toChatMessages(arena: std.mem.Allocator, messages: []const types.Message)
 fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.ChatMessage {
     var m: chat_res.ChatMessage = .{
         .role = msg.role.jsonName(),
-        .content = if (msg.content.len > 0) msg.content else null,
+        .content = null,
     };
+
+    if (msg.content_parts) |parts| {
+        m.content_json = try contentPartsToJson(arena, parts);
+    } else if (msg.content.len > 0) {
+        m.content = msg.content;
+    }
+
     switch (msg.role) {
         .tool => {
             m.tool_call_id = msg.tool_call_id;
+            // Tool results are always plain text in the agent harness.
             m.content = msg.content;
+            m.content_json = null;
         },
         .assistant => {
-            if (msg.content.len == 0 and msg.tool_calls != null) {
+            if (msg.content_parts == null and msg.content.len == 0 and msg.tool_calls != null) {
                 m.content = null;
             }
             if (msg.tool_calls) |calls| {
@@ -202,6 +280,37 @@ fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.Ch
         .system, .user => {},
     }
     return m;
+}
+
+fn contentPartsToJson(arena: std.mem.Allocator, parts: []const types.ContentPart) Error!std.json.Value {
+    var arr = std.json.Array.init(arena);
+    errdefer arr.deinit();
+    for (parts) |part| {
+        try arr.append(try contentPartToJson(arena, part));
+    }
+    return .{ .array = arr };
+}
+
+fn contentPartToJson(arena: std.mem.Allocator, part: types.ContentPart) Error!std.json.Value {
+    var obj: std.json.ObjectMap = .empty;
+    errdefer obj.deinit(arena);
+    switch (part) {
+        .text => |t| {
+            try obj.put(arena, "type", .{ .string = "text" });
+            try obj.put(arena, "text", .{ .string = t });
+        },
+        .image_url => |img| {
+            try obj.put(arena, "type", .{ .string = "image_url" });
+            var inner: std.json.ObjectMap = .empty;
+            errdefer inner.deinit(arena);
+            try inner.put(arena, "url", .{ .string = img.url });
+            if (img.detail) |d| {
+                try inner.put(arena, "detail", .{ .string = d });
+            }
+            try obj.put(arena, "image_url", .{ .object = inner });
+        },
+    }
+    return .{ .object = obj };
 }
 
 pub fn toChatTools(arena: std.mem.Allocator, tools: []const types.ToolDefinition) Error![]const chat_res.ChatTool {
@@ -409,8 +518,10 @@ fn writeMessageLegacy(s: *std.json.Stringify, msg: types.Message) Error!void {
         },
         .assistant => {
             s.objectField("content") catch return error.WriteFailed;
-            if (msg.content.len == 0 and msg.tool_calls != null) {
+            if (msg.content_parts == null and msg.content.len == 0 and msg.tool_calls != null) {
                 s.write(null) catch return error.WriteFailed;
+            } else if (msg.content_parts) |parts| {
+                try writeContentPartsLegacy(s, parts);
             } else {
                 s.write(msg.content) catch return error.WriteFailed;
             }
@@ -437,10 +548,44 @@ fn writeMessageLegacy(s: *std.json.Stringify, msg: types.Message) Error!void {
         },
         .system, .user => {
             s.objectField("content") catch return error.WriteFailed;
-            s.write(msg.content) catch return error.WriteFailed;
+            if (msg.content_parts) |parts| {
+                try writeContentPartsLegacy(s, parts);
+            } else {
+                s.write(msg.content) catch return error.WriteFailed;
+            }
         },
     }
     s.endObject() catch return error.WriteFailed;
+}
+
+fn writeContentPartsLegacy(s: *std.json.Stringify, parts: []const types.ContentPart) Error!void {
+    s.beginArray() catch return error.WriteFailed;
+    for (parts) |part| {
+        s.beginObject() catch return error.WriteFailed;
+        switch (part) {
+            .text => |t| {
+                s.objectField("type") catch return error.WriteFailed;
+                s.write("text") catch return error.WriteFailed;
+                s.objectField("text") catch return error.WriteFailed;
+                s.write(t) catch return error.WriteFailed;
+            },
+            .image_url => |img| {
+                s.objectField("type") catch return error.WriteFailed;
+                s.write("image_url") catch return error.WriteFailed;
+                s.objectField("image_url") catch return error.WriteFailed;
+                s.beginObject() catch return error.WriteFailed;
+                s.objectField("url") catch return error.WriteFailed;
+                s.write(img.url) catch return error.WriteFailed;
+                if (img.detail) |d| {
+                    s.objectField("detail") catch return error.WriteFailed;
+                    s.write(d) catch return error.WriteFailed;
+                }
+                s.endObject() catch return error.WriteFailed;
+            },
+        }
+        s.endObject() catch return error.WriteFailed;
+    }
+    s.endArray() catch return error.WriteFailed;
 }
 
 fn writeToolDefLegacy(s: *std.json.Stringify, def: types.ToolDefinition) Error!void {
@@ -568,4 +713,19 @@ test "mapSdkError classifies auth and rate limit" {
     try std.testing.expectEqual(error.BadRequest, mapSdkError(error.BadRequestError));
     try std.testing.expect(types.isRetryableError(error.RateLimited));
     try std.testing.expect(!types.isRetryableError(error.AuthenticationFailed));
+}
+
+test "buildRequestBody encodes multimodal content_parts" {
+    const gpa = std.testing.allocator;
+    const parts = [_]types.ContentPart{
+        .{ .text = "what is this?" },
+        .{ .image_url = .{ .url = "https://example.com/a.png", .detail = "low" } },
+    };
+    const msgs = [_]types.Message{types.Message.userMultimodal(&parts)};
+    const body = try buildRequestBody(gpa, "gpt-4o", &msgs, &.{}, .{}, false);
+    defer gpa.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"type\":\"text\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "what is this?") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "image_url") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "example.com/a.png") != null);
 }

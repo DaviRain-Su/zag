@@ -67,6 +67,38 @@ pub fn isKnownModel(provider: []const u8, id: []const u8) bool {
     return true;
 }
 
+/// Look up model: prefer (provider, id), then id-only.
+pub fn lookup(provider: []const u8, id: []const u8) ?ModelInfo {
+    if (find(provider, id)) |m| return m;
+    return findById(id);
+}
+
+/// Soft char budget for context view from catalog token window.
+///
+/// Rough rule: ~3 chars/token, reserve output headroom and 15% safety margin.
+/// Falls back to `default_max_chars` when model is unknown.
+pub fn contextBudgetChars(info: ?ModelInfo, default_max_chars: usize) usize {
+    const m = info orelse return default_max_chars;
+    const chars_per_token: u64 = 3;
+    const window: u64 = m.context_window;
+    const reserve_out: u64 = @min(m.max_output_tokens, window / 4);
+    const usable_tokens = if (window > reserve_out) window - reserve_out else window / 2;
+    const raw = usable_tokens * chars_per_token;
+    // 85% safety margin
+    const budget = (raw * 85) / 100;
+    if (budget == 0) return default_max_chars;
+    if (budget > std.math.maxInt(usize)) return std.math.maxInt(usize);
+    return @intCast(budget);
+}
+
+/// Suggested max_completion_tokens / max_tokens cap from catalog (clamped).
+pub fn suggestedMaxOutputTokens(info: ?ModelInfo) ?u32 {
+    const m = info orelse return null;
+    // Keep agent turns bounded even when catalog allows huge outputs.
+    const cap: u32 = 16_384;
+    return @min(m.max_output_tokens, cap);
+}
+
 test "catalog has deepseek flash" {
     const m = find("deepseek", "deepseek-v4-flash").?;
     try std.testing.expect(m.context_window >= 128_000);
@@ -78,4 +110,17 @@ test "list deepseek models" {
     defer list.deinit(gpa);
     try listForProvider("deepseek", &list, gpa);
     try std.testing.expect(list.items.len >= 2);
+}
+
+test "context budget from catalog" {
+    const m = find("openai", "gpt-4o-mini").?;
+    const budget = contextBudgetChars(m, 120_000);
+    try std.testing.expect(budget > 10_000);
+    try std.testing.expect(budget < m.context_window * 4);
+    try std.testing.expectEqual(@as(usize, 120_000), contextBudgetChars(null, 120_000));
+}
+
+test "lookup falls back to id" {
+    const m = lookup("unknown-provider", "gpt-4o").?;
+    try std.testing.expectEqualStrings("openai", m.provider);
 }

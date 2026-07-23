@@ -153,6 +153,11 @@ pub fn main(init: std.process.Init) !void {
     const resolved = resolve_result.resolved;
     const use_stream = want_stream or resolve_result.stream;
 
+    const context_opts = zag.context.optionsForModel(resolve_result.model_info, .{
+        .max_chars = resolve_result.context_max_chars,
+        .max_tail_messages = resolve_result.context_max_tail_messages,
+    });
+
     if (verbose) {
         std.log.info("provider id={s} name={s} model={s} key_from={s} stream={any} permission={s} shell_policy={s}", .{
             resolved.spec_id,
@@ -163,25 +168,56 @@ pub fn main(init: std.process.Init) !void {
             permission_mode.name(),
             shell_policy.name(),
         });
+        if (resolve_result.model_info) |mi| {
+            std.log.info(
+                "catalog context_window={d} max_output={d} view_max_chars={d}",
+                .{ mi.context_window, mi.max_output_tokens, context_opts.max_chars },
+            );
+        } else {
+            std.log.info("catalog miss; view_max_chars={d}", .{context_opts.max_chars});
+        }
+        if (resolve_result.chat_options.temperature) |t| {
+            std.log.info("chat temperature={d}", .{t});
+        }
+        if (resolve_result.chat_options.max_tokens) |mt| {
+            std.log.info("chat max_tokens={d}", .{mt});
+        }
+        std.log.info(
+            "retries transport={d} chat={d} timeout_ms={any}",
+            .{
+                resolved.config.max_retries,
+                resolve_result.chat_retries,
+                resolved.config.timeout_ms,
+            },
+        );
         if (session_path) |sp| std.log.info("session path={s}", .{sp});
         if (trace_path) |tp| std.log.info("trace path={s}", .{tp});
     }
 
     const client = zag.openai.Client.init(gpa, io, resolved.config);
     var adapter = zag.provider.Adapter.init(client, use_stream);
+    adapter.chat_options = resolve_result.chat_options;
     if (use_stream and verbose) {
         adapter.on_event = streamLogHandler;
         adapter.on_event_ctx = null;
     }
     defer adapter.deinit();
 
-    var agent = zag.agent.Agent.init(gpa, io, adapter.provider(), .{
+    var agent_opts: zag.agent.Options = .{
         .verbose = verbose,
         .permission_mode = permission_mode,
         .shell_policy = shell_policy,
         .trace_path = trace_path,
         .version = zag.version,
-    });
+        .context = context_opts,
+        .chat_retries = resolve_result.chat_retries,
+        .retry_base_delay_ms = resolve_result.retry_base_delay_ms,
+    };
+    if (resolve_result.max_turns) |mt| {
+        agent_opts.max_turns = mt;
+    }
+
+    var agent = zag.agent.Agent.init(gpa, io, adapter.provider(), agent_opts);
     defer agent.deinit();
 
     if (prompt_parts.items.len > 0) {
@@ -331,11 +367,22 @@ fn printUsage() !void {
         \\Tools: list_dir, read_file, write_file, run_shell
         \\Security: relative paths only; shell denylist even under --yolo
         \\
-        \\Model (packages/zag-ai — OpenAI Chat Completions only):
+        \\Model (packages/zag-ai — OpenAI Chat Completions):
         \\  Env presets: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, …
-        \\  ZAG_PROVIDER=<id>  ZAG_MODEL  ZAG_BASE_URL
-        \\  Catalog: packages/zag-ai/src/catalog.zig
-        \\  Config file example: { "provider":"deepseek", "model":"deepseek-v4-flash", "stream":true }
+        \\  ZAG_PROVIDER=<id>  ZAG_MODEL  ZAG_BASE_URL  ZAG_STREAM=1
+        \\  ZAG_TEMPERATURE  ZAG_MAX_TOKENS  ZAG_MAX_RETRIES  ZAG_TIMEOUT_MS  ZAG_CHAT_RETRIES
+        \\  Catalog budgets: packages/zag-ai/src/catalog.zig (context window → view size)
+        \\  Config file example:
+        \\    {
+        \\      "provider": "deepseek",
+        \\      "model": "deepseek-v4-flash",
+        \\      "stream": true,
+        \\      "temperature": 0.2,
+        \\      "max_tokens": 4096,
+        \\      "max_retries": 3,
+        \\      "chat_retries": 2,
+        \\      "timeout_ms": 60000
+        \\    }
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();

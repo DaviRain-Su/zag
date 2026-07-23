@@ -33,7 +33,10 @@ pub const Options = struct {
     /// Relative path for JSONL run trace; null disables.
     trace_path: ?[]const u8 = null,
     /// Package version string for trace metadata.
-    version: []const u8 = "0.3.0",
+    version: []const u8 = "0.4.0",
+    /// Loop-level retries on retryable provider errors.
+    chat_retries: u8 = 2,
+    retry_base_delay_ms: u64 = 500,
 };
 
 pub const SessionStartOptions = struct {
@@ -229,6 +232,8 @@ pub const Agent = struct {
                 .context = self.options.context,
                 .shell_policy = self.options.shell_policy,
                 .trace = if (self.trace) |*tr| tr else null,
+                .chat_retries = self.options.chat_retries,
+                .retry_base_delay_ms = self.options.retry_base_delay_ms,
             },
         };
     }

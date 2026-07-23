@@ -13,6 +13,7 @@
 //! ```
 
 const std = @import("std");
+const ai = @import("zag-ai");
 const message = @import("message.zig");
 const tool = @import("tool.zig");
 const transcript_mod = @import("transcript.zig");
@@ -35,6 +36,9 @@ pub const Options = struct {
     shell_policy: shell_policy.Mode = .protect,
     /// Optional structured audit log (not freed by loop).
     trace: ?*trace_mod.Trace = null,
+    /// Extra chat attempts on retryable provider errors (0 = no loop-level retry).
+    chat_retries: u8 = 2,
+    retry_base_delay_ms: u64 = 500,
 };
 
 pub const RunError = error{
@@ -76,17 +80,22 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             deps.options.context,
         ) catch return error.OutOfMemory;
 
-        const turn = deps.provider.chat(
-            scratch,
-            view.messages,
-            deps.toolset.tools,
-        ) catch return error.ProviderFailed;
+        const turn = try chatWithRetry(deps, scratch, view.messages);
 
         try transcript.appendAssistantTurn(turn);
         last_text = transcript.items()[transcript.items().len - 1].content;
         deps.options.observer.emit(.{ .assistant_text = last_text });
         if (deps.options.trace) |tr| {
             tr.emitAssistant(last_text) catch {};
+            tr.emitUsage(turn) catch {};
+        }
+        if (turn.usage) |u| {
+            if (deps.options.observer.on_event != null) {
+                std.log.info(
+                    "usage prompt={d} completion={d} total={d}",
+                    .{ u.prompt_tokens, u.completion_tokens, u.total_tokens },
+                );
+            }
         }
 
         if (!turn.wantsTools()) {
@@ -149,6 +158,43 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
     }
 
     return error.MaxTurnsExceeded;
+}
+
+fn chatWithRetry(
+    deps: Deps,
+    scratch: std.mem.Allocator,
+    messages: []const message.Message,
+) RunError!message.AssistantTurn {
+    const max_attempts: u32 = @as(u32, deps.options.chat_retries) + 1;
+    var attempt: u32 = 0;
+    while (attempt < max_attempts) : (attempt += 1) {
+        const result = deps.provider.chat(
+            scratch,
+            messages,
+            deps.toolset.tools,
+        );
+        if (result) |turn| {
+            return turn;
+        } else |err| {
+            const retryable = ai.isRetryableError(err);
+            const more = attempt + 1 < max_attempts;
+            if (!retryable or !more) return error.ProviderFailed;
+
+            if (deps.options.trace) |tr| {
+                tr.emitProviderRetry(attempt + 1, @errorName(err)) catch {};
+            }
+            if (deps.options.observer.on_event != null) {
+                std.log.warn(
+                    "provider retry {d}/{d} after {s}",
+                    .{ attempt + 1, deps.options.chat_retries, @errorName(err) },
+                );
+            }
+            const delay_ms = deps.options.retry_base_delay_ms * (@as(u64, 1) << @intCast(@min(attempt, 4)));
+            const duration: std.Io.Duration = .{ .nanoseconds = @intCast(delay_ms * std.time.ns_per_ms) };
+            std.Io.sleep(deps.tool_ctx.io, duration, .real) catch {};
+        }
+    }
+    return error.ProviderFailed;
 }
 
 fn finishTool(

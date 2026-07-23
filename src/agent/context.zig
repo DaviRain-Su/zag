@@ -3,8 +3,10 @@
 //! Full history stays in Session (for resume / audit). Before each `provider.chat`,
 //! build a **view**: keep system messages + a recent tail under size limits.
 //! Phase 2 is deliberately rough (drop oldest, no LLM summary yet).
+//! Catalog-aware budgets come from `zag-ai.catalog.contextBudgetChars`.
 
 const std = @import("std");
+const ai = @import("zag-ai");
 const message = @import("message.zig");
 
 pub const Options = struct {
@@ -15,6 +17,23 @@ pub const Options = struct {
     /// Never drop below this many non-system messages from the end.
     min_tail_messages: usize = 6,
 };
+
+/// Build context options from catalog model info + optional file overrides.
+pub fn optionsForModel(
+    model_info: ?ai.ModelInfo,
+    overrides: struct {
+        max_chars: ?usize = null,
+        max_tail_messages: ?usize = null,
+        min_tail_messages: ?usize = null,
+    },
+) Options {
+    const defaults = Options{};
+    return .{
+        .max_chars = overrides.max_chars orelse ai.catalog.contextBudgetChars(model_info, defaults.max_chars),
+        .max_tail_messages = overrides.max_tail_messages orelse defaults.max_tail_messages,
+        .min_tail_messages = overrides.min_tail_messages orelse defaults.min_tail_messages,
+    };
+}
 
 pub const View = struct {
     /// Borrowed message pointers into the transcript (and optional note).
@@ -91,13 +110,7 @@ pub fn viewForModel(
 fn estimateChars(msgs: []const message.Message) usize {
     var n: usize = 0;
     for (msgs) |m| {
-        n += m.content.len;
-        if (m.tool_call_id) |id| n += id.len;
-        if (m.tool_calls) |calls| {
-            for (calls) |c| {
-                n += c.id.len + c.name.len + c.arguments.len;
-            }
-        }
+        n += m.estimateChars();
     }
     return n;
 }

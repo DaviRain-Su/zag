@@ -24,14 +24,30 @@ pub const ToolCall = struct {
     arguments: []const u8,
 };
 
+/// Multimodal content part (OpenAI Chat Completions content array).
+pub const ContentPart = union(enum) {
+    text: []const u8,
+    /// Image by URL or data: URL. `detail` is optional (auto|low|high).
+    image_url: struct {
+        url: []const u8,
+        detail: ?[]const u8 = null,
+    },
+};
+
 pub const Message = struct {
     role: Role,
+    /// Plain-text content (legacy / default path).
     content: []const u8 = "",
+    /// When set, serialized as a content array (multimodal). Prefer over `content`.
+    content_parts: ?[]const ContentPart = null,
     tool_calls: ?[]const ToolCall = null,
     tool_call_id: ?[]const u8 = null,
 
     pub fn user(content: []const u8) Message {
         return .{ .role = .user, .content = content };
+    }
+    pub fn userMultimodal(parts: []const ContentPart) Message {
+        return .{ .role = .user, .content_parts = parts };
     }
     pub fn system(content: []const u8) Message {
         return .{ .role = .system, .content = content };
@@ -44,6 +60,25 @@ pub const Message = struct {
     }
     pub fn toolResult(tool_call_id: []const u8, content: []const u8) Message {
         return .{ .role = .tool, .content = content, .tool_call_id = tool_call_id };
+    }
+
+    /// Approximate character weight for context budgeting.
+    pub fn estimateChars(self: Message) usize {
+        var n: usize = self.content.len;
+        if (self.tool_call_id) |id| n += id.len;
+        if (self.tool_calls) |calls| {
+            for (calls) |c| n += c.id.len + c.name.len + c.arguments.len;
+        }
+        if (self.content_parts) |parts| {
+            for (parts) |p| {
+                switch (p) {
+                    .text => |t| n += t.len,
+                    // Images cost far more tokens than URL length; rough char proxy.
+                    .image_url => |img| n += img.url.len + 2_000,
+                }
+            }
+        }
+        return n;
     }
 };
 

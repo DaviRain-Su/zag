@@ -10,11 +10,13 @@ pub const EventKind = enum {
     run_start,
     turn,
     assistant,
+    usage,
     tool_call,
     permission,
     jail_deny,
     shell_deny,
     tool_result,
+    provider_retry,
     run_end,
 
     pub fn jsonName(self: EventKind) []const u8 {
@@ -22,11 +24,13 @@ pub const EventKind = enum {
             .run_start => "run_start",
             .turn => "turn",
             .assistant => "assistant",
+            .usage => "usage",
             .tool_call => "tool_call",
             .permission => "permission",
             .jail_deny => "jail_deny",
             .shell_deny => "shell_deny",
             .tool_result => "tool_result",
+            .provider_retry => "provider_retry",
             .run_end => "run_end",
         };
     }
@@ -78,6 +82,25 @@ pub const Trace = struct {
 
     pub fn emitAssistant(self: *Trace, text: []const u8) std.mem.Allocator.Error!void {
         try self.writeObj(.{ .kind = .assistant, .text = truncate(text, 500) });
+    }
+
+    pub fn emitUsage(self: *Trace, usage: message.AssistantTurn) std.mem.Allocator.Error!void {
+        const u = usage.usage orelse return;
+        try self.writeObj(.{
+            .kind = .usage,
+            .prompt_tokens = u.prompt_tokens,
+            .completion_tokens = u.completion_tokens,
+            .total_tokens = u.total_tokens,
+            .reasoning_tokens = u.reasoning_tokens,
+        });
+    }
+
+    pub fn emitProviderRetry(self: *Trace, attempt: u32, err_name: []const u8) std.mem.Allocator.Error!void {
+        try self.writeObj(.{
+            .kind = .provider_retry,
+            .attempt = attempt,
+            .error_name = err_name,
+        });
     }
 
     pub fn emitToolCall(self: *Trace, call: message.ToolCall) std.mem.Allocator.Error!void {
