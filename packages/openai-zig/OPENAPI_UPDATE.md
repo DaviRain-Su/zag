@@ -29,3 +29,14 @@ python3 tools/generate.py
 zig build test
 zig build examples -Dexamples=true
 ```
+
+## Resource wrappers (2026-07-24)
+
+| Module | Client access | Coverage |
+|--------|---------------|----------|
+| `resources/skills.zig` | `client.skills()` | list/create/get/delete, default version, versions CRUD, content download |
+| `resources/spend.zig` | `client.spend()` / `spend_alerts()` / `data_retention()` | org+project spend limit/alerts, data retention, hosted tool + model permissions |
+| `resources/videos.zig` | `client.videos()` | + characters, edits, extensions (JSON + multipart) |
+| `resources/responses.zig` | `client.responses()` | + beta path variants (`?beta=true`) for create/get/delete/cancel/input_items/compact/input_tokens |
+
+Example: `zig build run-skills_list -Dexamples=true`

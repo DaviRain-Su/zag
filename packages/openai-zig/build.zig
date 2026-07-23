@@ -105,6 +105,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "responses_basic", .path = "examples/responses_basic.zig", .needs_compat = true },
             .{ .name = "user_balance", .path = "examples/user_balance.zig", .needs_compat = true },
             .{ .name = "error_handling_and_options", .path = "examples/error_handling_and_options.zig", .needs_compat = false },
+            .{ .name = "skills_list", .path = "examples/skills_list.zig", .needs_compat = true },
         };
 
         const examples_step = b.step("examples", "Build selected examples");

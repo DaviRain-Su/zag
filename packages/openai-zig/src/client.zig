@@ -490,6 +490,30 @@ pub const Client = struct {
         return self.vector_stores();
     }
 
+    pub fn skills(self: *Client) resources.SkillsResource {
+        return resources.SkillsResource.init(&self.transport);
+    }
+
+    pub fn skill(self: *Client) resources.SkillsResource {
+        return self.skills();
+    }
+
+    pub fn spend(self: *Client) resources.SpendResource {
+        return resources.SpendResource.init(&self.transport);
+    }
+
+    pub fn organization_spend(self: *Client) resources.SpendResource {
+        return self.spend();
+    }
+
+    pub fn spend_alerts(self: *Client) resources.SpendResource {
+        return self.spend();
+    }
+
+    pub fn data_retention(self: *Client) resources.SpendResource {
+        return self.spend();
+    }
+
     /// Backward-compatible snake_case transport accessor.
     pub fn raw_transport(self: *Client) *transport_mod.Transport {
         return &self.transport;

@@ -447,6 +447,108 @@ pub const Resource = struct {
             request_opts,
         );
     }
+
+    // --- Beta path variants (?beta=true) ---
+
+    /// POST /responses?beta=true
+    pub fn create_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateResponseRequest,
+    ) errors.Error!std.json.Parsed(gen.Response) {
+        return common.sendJsonTyped(
+            self.transport,
+            allocator,
+            .POST,
+            "/responses?beta=true",
+            req,
+            gen.Response,
+        );
+    }
+
+    /// GET /responses/{response_id}?beta=true
+    pub fn get_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        response_id: []const u8,
+    ) errors.Error!std.json.Parsed(gen.Response) {
+        var path_buf: [160]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "/responses/{s}?beta=true", .{response_id}) catch {
+            return errors.Error.SerializeError;
+        };
+        return common.sendNoBodyTyped(self.transport, allocator, .GET, path, gen.Response);
+    }
+
+    /// DELETE /responses/{response_id}?beta=true
+    pub fn delete_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        response_id: []const u8,
+    ) errors.Error!std.json.Parsed(DeleteResponseResponse) {
+        var path_buf: [160]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "/responses/{s}?beta=true", .{response_id}) catch {
+            return errors.Error.SerializeError;
+        };
+        return common.sendNoBodyTyped(self.transport, allocator, .DELETE, path, DeleteResponseResponse);
+    }
+
+    /// POST /responses/{response_id}/cancel?beta=true
+    pub fn cancel_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        response_id: []const u8,
+    ) errors.Error!std.json.Parsed(gen.Response) {
+        var path_buf: [180]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "/responses/{s}/cancel?beta=true", .{response_id}) catch {
+            return errors.Error.SerializeError;
+        };
+        return common.sendNoBodyTyped(self.transport, allocator, .POST, path, gen.Response);
+    }
+
+    /// GET /responses/{response_id}/input_items?beta=true
+    pub fn list_input_items_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        response_id: []const u8,
+    ) errors.Error!std.json.Parsed(gen.ResponseItemList) {
+        var path_buf: [200]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "/responses/{s}/input_items?beta=true", .{response_id}) catch {
+            return errors.Error.SerializeError;
+        };
+        return common.sendNoBodyTyped(self.transport, allocator, .GET, path, gen.ResponseItemList);
+    }
+
+    /// POST /responses/compact?beta=true
+    pub fn compact_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CompactResponseRequest,
+    ) errors.Error!std.json.Parsed(gen.CompactResource) {
+        return common.sendJsonTyped(
+            self.transport,
+            allocator,
+            .POST,
+            "/responses/compact?beta=true",
+            req,
+            gen.CompactResource,
+        );
+    }
+
+    /// POST /responses/input_tokens?beta=true
+    pub fn count_input_tokens_beta(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CountInputTokensRequest,
+    ) errors.Error!std.json.Parsed(gen.TokenCountsResource) {
+        return common.sendJsonTyped(
+            self.transport,
+            allocator,
+            .POST,
+            "/responses/input_tokens?beta=true",
+            req,
+            gen.TokenCountsResource,
+        );
+    }
 };
 
 test "count input tokens request omits null optional fields" {

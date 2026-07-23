@@ -533,4 +533,163 @@ pub const Resource = struct {
     ) errors.Error!std.json.Parsed(gen.VideoResource) {
         return self.create_video_remix_multipart_with_options(allocator, video_id, payload, request_opts);
     }
+
+    // --- Characters / edits / extensions (OpenAPI 2026 surface) ---
+
+    pub const CreateVideoCharacterRequest = gen.CreateVideoCharacterBody;
+    pub const CreateVideoEditJsonRequest = gen.CreateVideoEditJsonBody;
+    pub const CreateVideoExtendJsonRequest = gen.CreateVideoExtendJsonBody;
+
+    /// POST /videos/characters
+    pub fn create_character(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateVideoCharacterRequest,
+    ) errors.Error!std.json.Parsed(gen.VideoCharacterResource) {
+        return self.create_character_with_options(allocator, req, null);
+    }
+
+    pub fn create_character_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateVideoCharacterRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.VideoCharacterResource) {
+        return self.sendJsonTypedWithOptions(
+            allocator,
+            .POST,
+            "/videos/characters",
+            req,
+            gen.VideoCharacterResource,
+            request_opts,
+        );
+    }
+
+    /// GET /videos/characters/{character_id}
+    pub fn get_character(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        character_id: []const u8,
+    ) errors.Error!std.json.Parsed(gen.VideoCharacterResource) {
+        return self.get_character_with_options(allocator, character_id, null);
+    }
+
+    pub fn get_character_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        character_id: []const u8,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.VideoCharacterResource) {
+        var path_buf: [256]u8 = undefined;
+        const path = std.fmt.bufPrint(&path_buf, "/videos/characters/{s}", .{character_id}) catch {
+            return errors.Error.SerializeError;
+        };
+        return self.sendNoBodyTypedWithOptions(
+            allocator,
+            .GET,
+            path,
+            gen.VideoCharacterResource,
+            request_opts,
+        );
+    }
+
+    /// POST /videos/edits (JSON body)
+    pub fn create_edit_json(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateVideoEditJsonRequest,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.create_edit_json_with_options(allocator, req, null);
+    }
+
+    pub fn create_edit_json_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateVideoEditJsonRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.sendJsonTypedWithOptions(
+            allocator,
+            .POST,
+            "/videos/edits",
+            req,
+            gen.VideoResource,
+            request_opts,
+        );
+    }
+
+    /// POST /videos/edits (multipart)
+    pub fn create_edit_multipart(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        payload: MultipartRequest,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.create_edit_multipart_with_options(allocator, payload, null);
+    }
+
+    pub fn create_edit_multipart_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        payload: MultipartRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.sendMultipartWithOptions(
+            allocator,
+            .POST,
+            "/videos/edits",
+            payload,
+            gen.VideoResource,
+            request_opts,
+        );
+    }
+
+    /// POST /videos/extensions (JSON body)
+    pub fn create_extension_json(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateVideoExtendJsonRequest,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.create_extension_json_with_options(allocator, req, null);
+    }
+
+    pub fn create_extension_json_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        req: CreateVideoExtendJsonRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.sendJsonTypedWithOptions(
+            allocator,
+            .POST,
+            "/videos/extensions",
+            req,
+            gen.VideoResource,
+            request_opts,
+        );
+    }
+
+    /// POST /videos/extensions (multipart)
+    pub fn create_extension_multipart(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        payload: MultipartRequest,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.create_extension_multipart_with_options(allocator, payload, null);
+    }
+
+    pub fn create_extension_multipart_with_options(
+        self: *const Resource,
+        allocator: std.mem.Allocator,
+        payload: MultipartRequest,
+        request_opts: ?transport_mod.Transport.RequestOptions,
+    ) errors.Error!std.json.Parsed(gen.VideoResource) {
+        return self.sendMultipartWithOptions(
+            allocator,
+            .POST,
+            "/videos/extensions",
+            payload,
+            gen.VideoResource,
+            request_opts,
+        );
+    }
 };

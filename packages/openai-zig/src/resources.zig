@@ -32,6 +32,8 @@ const evals_mod = @import("resources/evals.zig");
 const projects_mod = @import("resources/projects.zig");
 const vector_stores_mod = @import("resources/vector_stores.zig");
 const user_balance_mod = @import("resources/user_balance.zig");
+const skills_mod = @import("resources/skills.zig");
+const spend_mod = @import("resources/spend.zig");
 
 pub const audio = audio_mod;
 pub const chat = chat_mod;
@@ -67,6 +69,8 @@ pub const evals = evals_mod;
 pub const projects = projects_mod;
 pub const vector_stores = vector_stores_mod;
 pub const user_balance = user_balance_mod;
+pub const skills = skills_mod;
+pub const spend = spend_mod;
 
 pub const AudioResource = audio_mod.Resource;
 pub const ChatResource = chat_mod.Resource;
@@ -102,5 +106,7 @@ pub const EvalsResource = evals_mod.Resource;
 pub const ProjectsResource = projects_mod.Resource;
 pub const VectorStoresResource = vector_stores_mod.Resource;
 pub const UserBalanceResource = user_balance_mod.Resource;
+pub const SkillsResource = skills_mod.Resource;
+pub const SpendResource = spend_mod.Resource;
 
 const _signature_tests = @import("resources/signature_tests.zig");
