@@ -11,10 +11,12 @@
 
 | 项 | 要求 |
 |----|------|
-| 位置 | 建议 `packages/zag-ai/src/contract_tests.zig` 或 `testdata/contracts/` |
+| 位置 | **已有** `packages/zag-ai/src/contract_tests.zig`；可增 `testdata/contracts/` 固件 |
 | 网络 | **禁止** CI 打外网 |
 | 最少覆盖 | 非流式 chat + tools；流式拼接后最终 `tool_calls` 形状 |
 | 供应商 | ≥1 家 OpenAI-compat（DeepSeek 或 OpenAI 固件） |
+
+现状：包内 contract 测试已覆盖 turn 解析 / request body / 错误分类；H6 收口补流式固件与目录约定说明。
 
 ## 断言示例
 
