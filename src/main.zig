@@ -15,6 +15,7 @@ const default_system =
     \\- Paths are relative to the process working directory.
     \\- For edits: read first when possible, then write the full file content.
     \\- If a tool is permission-denied, do not retry blindly; explain and wait.
+    \\- Honor project instructions from AGENTS.md when present.
     \\- Be concise. When finished, answer without further tool calls.
 ;
 
@@ -28,6 +29,9 @@ pub fn main(init: std.process.Init) !void {
     var verbose = false;
     var show_help = false;
     var permission_mode: zag.permissions.Mode = .ask;
+    var session_path: ?[]const u8 = null;
+    var continue_session = false;
+    var no_project = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -50,6 +54,18 @@ pub fn main(init: std.process.Init) !void {
                 std.log.err("unknown permission mode: {s} (use ask|yolo)", .{args[i]});
                 std.process.exit(2);
             };
+        } else if (std.mem.eql(u8, a, "--session") or std.mem.eql(u8, a, "-s")) {
+            i += 1;
+            if (i >= args.len) {
+                std.log.err("{s} requires a path", .{a});
+                std.process.exit(2);
+            }
+            session_path = args[i];
+        } else if (std.mem.eql(u8, a, "--continue") or std.mem.eql(u8, a, "-c")) {
+            continue_session = true;
+            if (session_path == null) session_path = ".zag/sessions/default.jsonl";
+        } else if (std.mem.eql(u8, a, "--no-project")) {
+            no_project = true;
         } else if (std.mem.eql(u8, a, "--")) {
             i += 1;
             while (i < args.len) : (i += 1) {
@@ -68,6 +84,11 @@ pub fn main(init: std.process.Init) !void {
     if (show_help) {
         try printUsage();
         return;
+    }
+
+    // REPL with --session: continue existing file when present.
+    if (session_path != null and !continue_session and prompt_parts.items.len == 0) {
+        continue_session = true;
     }
 
     const resolved = zag.provider_config.resolve(init.environ_map) catch |err| {
@@ -92,6 +113,9 @@ pub fn main(init: std.process.Init) !void {
             resolved.config.model,
             permission_mode.name(),
         });
+        if (session_path) |sp| {
+            std.log.info("session path={s} continue={any}", .{ sp, continue_session });
+        }
     }
 
     var client = zag.openai.Client.init(gpa, io, resolved.config);
@@ -104,15 +128,26 @@ pub fn main(init: std.process.Init) !void {
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShot(&agent, prompt, verbose);
+        try runOneShot(&agent, prompt, verbose, session_path, continue_session, !no_project);
         return;
     }
 
-    try runRepl(&agent, io, permission_mode);
+    try runRepl(&agent, io, permission_mode, session_path, continue_session, !no_project);
 }
 
-fn runOneShot(agent: *zag.agent.Agent, prompt: []const u8, verbose: bool) !void {
-    const result = agent.complete(default_system, prompt) catch |err| {
+fn runOneShot(
+    agent: *zag.agent.Agent,
+    prompt: []const u8,
+    verbose: bool,
+    session_path: ?[]const u8,
+    continue_existing: bool,
+    load_project: bool,
+) !void {
+    const result = agent.completeWithSession(default_system, prompt, .{
+        .path = session_path,
+        .continue_existing = continue_existing or session_path != null,
+        .load_project_instructions = load_project,
+    }) catch |err| {
         std.log.err("agent failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
@@ -128,20 +163,43 @@ fn runOneShot(agent: *zag.agent.Agent, prompt: []const u8, verbose: bool) !void 
     }
 }
 
-fn runRepl(agent: *zag.agent.Agent, io: Io, mode: zag.permissions.Mode) !void {
-    try writeStdout(io, "zag phase-1 (edit + shell, permission=");
+fn runRepl(
+    agent: *zag.agent.Agent,
+    io: Io,
+    mode: zag.permissions.Mode,
+    session_path: ?[]const u8,
+    continue_existing: bool,
+    load_project: bool,
+) !void {
+    try writeStdout(io, "zag phase-2 (session + project + context, permission=");
     try writeStdout(io, mode.name());
     try writeStdout(io, "). Empty line or Ctrl-D to exit.\n");
+    if (session_path) |sp| {
+        try writeStdout(io, "session: ");
+        try writeStdout(io, sp);
+        try writeStdout(io, "\n");
+    }
 
-    var stdin_buf: [4096]u8 = undefined;
-    var stdin_reader = Io.File.stdin().reader(io, &stdin_buf);
-    const reader = &stdin_reader.interface;
-
-    var session = zag.agent.Session.start(agent.gpa, default_system) catch |err| {
+    var session = zag.agent.Session.start(agent.gpa, io, .{
+        .base_system = default_system,
+        .path = session_path,
+        .continue_existing = continue_existing or session_path != null,
+        .load_project_instructions = load_project,
+    }) catch |err| {
         std.log.err("session failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
     defer session.deinit();
+
+    if (session.project_source) |src| {
+        try writeStdout(io, "project instructions: ");
+        try writeStdout(io, src);
+        try writeStdout(io, "\n");
+    }
+
+    var stdin_buf: [4096]u8 = undefined;
+    var stdin_reader = Io.File.stdin().reader(io, &stdin_buf);
+    const reader = &stdin_reader.interface;
 
     while (true) {
         try writeStdout(io, "you> ");
@@ -175,7 +233,7 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
 
 fn printUsage() !void {
     const usage =
-        \\zag — Zig coding agent (Phase 1: edit + shell + permissions)
+        \\zag — Zig coding agent (Phase 2: session + project + context)
         \\
         \\Usage:
         \\  zag [flags] <prompt...>     one-shot
@@ -183,16 +241,23 @@ fn printUsage() !void {
         \\
         \\Flags:
         \\  -h, --help              show help
-        \\  -v, --verbose           log tool calls / permissions to stderr
-        \\  --ask                   permission mode ask (default): confirm write/shell
-        \\  --yolo                  permission mode yolo: auto-allow all tools
+        \\  -v, --verbose           log tool / permission / session events
+        \\  --ask                   permission mode ask (default)
+        \\  --yolo                  permission mode yolo
         \\  -p, --permission MODE   ask | yolo
+        \\  -s, --session PATH      persist transcript as JSONL
+        \\  -c, --continue          resume session (default path .zag/sessions/default.jsonl)
+        \\  --no-project            do not inject AGENTS.md / README
         \\
-        \\Environment (first matching key wins):
+        \\Environment:
         \\  ZAG_API_KEY / DEEPSEEK_API_KEY / XAI_API_KEY / OPENAI_API_KEY
         \\  ZAG_BASE_URL, ZAG_MODEL
         \\
         \\Tools: list_dir, read_file, write_file, run_shell
+        \\
+        \\Example (resume):
+        \\  zag --yolo -c -v "remember codeword is banana"
+        \\  zag --yolo -c -v "what was the codeword?"
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();

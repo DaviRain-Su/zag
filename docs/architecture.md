@@ -1,19 +1,19 @@
 # Zag 架构（随实现更新）
 
-> 描述**当前代码**。Phase 0–1：只读 + 编辑/shell + 权限。业务与样板分离。
+> 描述**当前代码**。Phase 0–2：loop、编辑/权限、会话/项目/context。
 
 ## 分层
 
 ```text
 ┌──────────────────────────────────────────────────┐
-│  main.zig     CLI：flag / env / --ask|--yolo     │
+│  main.zig     CLI：权限 / session / continue     │
 └───────────────────────────┬──────────────────────┘
                             │
 ┌───────────────────────────▼──────────────────────┐
 │  agent/           ★ 业务层                         │
 │    Agent · Session · loop · Transcript            │
-│    permissions.Gate · Provider · Toolset · Observer│
-│    message · tool                                 │
+│    permissions · context · project · session_store│
+│    Provider · Toolset · Observer · message · tool │
 └────────────┬───────────────────────┬─────────────┘
              │                       │
 ┌────────────▼──────────┐  ┌─────────▼─────────────┐
@@ -26,80 +26,65 @@
 
 | 类型 | 路径 | 一句话 |
 |------|------|--------|
-| `Agent` | `agent/agent.zig` | tools + provider + **permission gate** |
-| `Session` | `agent/agent.zig` | transcript 生命周期 |
-| `loop.run` | `agent/loop.zig` | chat → **gate** → tool → 回灌 |
-| `permissions` | `agent/permissions.zig` | ask / yolo · risk · decide |
+| `Agent` | `agent/agent.zig` | reply / complete；自动 save |
+| `Session` | `agent/agent.zig` | transcript + 可选 path |
+| `loop.run` | `agent/loop.zig` | **view** → chat → gate → tools |
+| `context` | `agent/context.zig` | full vs model view |
+| `project` | `agent/project.zig` | AGENTS.md → system |
+| `session_store` | `agent/session_store.zig` | JSONL 持久化 |
+| `permissions` | `agent/permissions.zig` | ask / yolo |
 | `Transcript` | `agent/transcript.zig` | 消息账本 |
-| `Provider` | `agent/provider.zig` | 模型端口 |
-| `Toolset` | `agent/toolset.zig` | Phase1：四工具 |
-| `Observer` | `agent/observer.zig` | tool / permission 事件 |
 
-### 调用形状
+### 会话 + 项目
 
 ```zig
-var agent = Agent.init(gpa, io, client.provider(), .{
-    .verbose = true,
-    .permission_mode = .ask, // or .yolo
+var session = try Session.start(gpa, io, .{
+    .base_system = sys,
+    .path = ".zag/sessions/default.jsonl",
+    .continue_existing = true,
+    .load_project_instructions = true,
 });
-var session = try Session.start(gpa, system_prompt);
 defer session.deinit();
-const result = try agent.reply(&session, user_text);
+const result = try agent.reply(&session, user_text); // auto-save
 ```
+
+## Context 策略（Phase 2）
+
+- **Full transcript**：Session 内存 + JSONL  
+- **Model view**：leading system + 尾部消息 + 字符预算；可插一条临时 system note  
+- 不在 loop 里破坏 full 历史  
 
 ## 权限（Phase 1）
 
+read 自动过；write/shell 在 ask 下确认；deny → soft tool error。
+
+## 工具
+
+| Tool | 风险 |
+|------|------|
+| list_dir, read_file | read |
+| write_file | write |
+| run_shell | execute |
+
+## 会话 JSONL
+
 ```text
-tool_call → riskOf(name)
-  read            → allow
-  write/execute   → ask? human : yolo allow
-  deny            → tool message "permission denied…" (soft)
+{"v":1,"type":"zag_session"}
+{"role":"system"|"user"|"assistant"|"tool", ...}
 ```
-
-| 风险 | 工具 |
-|------|------|
-| read | `list_dir`, `read_file` |
-| write | `write_file` |
-| execute | `run_shell` |
-
-CLI：`--ask`（默认）、`--yolo`、`-p ask|yolo`。
-
-## 工具一览
-
-| Tool | 模块 | 权限 |
-|------|------|------|
-| `list_dir` | `runtime/fs_tools.zig` | read |
-| `read_file` | `runtime/fs_tools.zig` | read |
-| `write_file` | `runtime/edit_tools.zig` | write |
-| `run_shell` | `runtime/edit_tools.zig` | execute |
-
-## 协议
-
-| role | 字段 |
-|------|------|
-| system/user | content |
-| assistant | content；可选 tool_calls |
-| tool | tool_call_id + content（成功、失败、**拒绝** 都走这里） |
-
-默认模型（DeepSeek preset）：`deepseek-v4-flash`。
-
-## 内存
-
-| 对象 | 策略 |
-|------|------|
-| Session | heap Arena → transcript 字符串 |
-| 每 turn | 临时 arena 给 provider |
-| Tool 输出 | GPA → dupe 进 transcript |
 
 ## 演进
 
-| Phase | 增量 |
+| Phase | 状态 |
 |-------|------|
-| 2 | 会话落盘、context、AGENTS.md |
-| 3 | 路径 jail、命令策略、结构化 trace |
+| 0 loop | ✅ |
+| 1 edit + permissions | ✅ |
+| 2 session + context | ✅ |
+| 3 jail / trace / semver | 下一步 |
 
 ## 相关
 
 - [chapters/00-loop](../chapters/00-loop/README.md)  
 - [chapters/01-edit-permissions](../chapters/01-edit-permissions/README.md)  
+- [chapters/02-session-context](../chapters/02-session-context/README.md)  
 - [roadmap.md](./roadmap.md)  

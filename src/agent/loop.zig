@@ -24,6 +24,7 @@ const provider_mod = @import("provider.zig");
 const observer_mod = @import("observer.zig");
 const toolset_mod = @import("toolset.zig");
 const permissions = @import("permissions.zig");
+const context_mod = @import("context.zig");
 
 pub const default_max_turns: u32 = 20;
 
@@ -32,6 +33,8 @@ pub const Options = struct {
     observer: observer_mod.Observer = .none(),
     /// Default yolo for tests; production CLI uses ask.
     permission_gate: permissions.Gate = .yolo(),
+    /// What slice of the transcript is sent to the model each turn.
+    context: context_mod.Options = .{},
 };
 
 pub const RunError = error{
@@ -67,9 +70,16 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         defer turn_arena_impl.deinit();
         const scratch = turn_arena_impl.allocator();
 
-        const turn = deps.provider.chat(
+        // Full transcript stays in session; model only sees a context view.
+        const view = context_mod.viewForModel(
             scratch,
             transcript.items(),
+            deps.options.context,
+        ) catch return error.OutOfMemory;
+
+        const turn = deps.provider.chat(
+            scratch,
+            view.messages,
             deps.toolset.tools,
         ) catch return error.ProviderFailed;
 

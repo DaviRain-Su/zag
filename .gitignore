@@ -3,6 +3,9 @@
 zig-out/
 zig-pkg/
 
+# Local agent sessions
+.zag/
+
 # Editor / OS
 .DS_Store
 *.swp
