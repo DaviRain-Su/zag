@@ -46,13 +46,24 @@ var w2 = try rr.resolved.createWire(gpa, io);
 defer w2.deinit();
 ```
 
-OpenAI-only helpers (when you need embeddings / full SDK):
+Embeddings (unified on WireAdapter):
+
+```zig
+if (w.supportsEmbed()) {
+    const emb = try w.embed(arena, &.{"hello world"}, .{ .model = "text-embedding-3-small" });
+    // emb.vectors[0], emb.usage
+} else {
+    // e.g. anthropic_messages → error.NotSupported
+}
+```
+
+OpenAI-only helpers (full SDK surface):
 
 ```zig
 var client = ai.OpenAiClient.init(gpa, io, config);
 defer client.deinit();
-const emb = try client.embed(arena, &.{"hi"}, .{});
 // client.sdkClient() → *openai_zig.Client
+// client.embed(...) still works (same as wire.embed for openai_compat)
 ```
 
 `ai.Client` remains an alias of `OpenAiClient` for back-compat.

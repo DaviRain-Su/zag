@@ -175,6 +175,19 @@ test "contract: factory.createWire openai_compat style" {
     }, .openai_compat);
     defer w.deinit();
     try std.testing.expect(w.apiStyle() == .openai_compat);
+    try std.testing.expect(w.supportsEmbed());
+}
+
+test "contract: anthropic wire embed is NotSupported" {
+    const gpa = std.testing.allocator;
+    var w = try factory.createWire(gpa, std.testing.io, .{
+        .base_url = "https://api.anthropic.com",
+        .api_key = "sk-ant-test",
+        .model = "claude-sonnet-4-20250514",
+    }, .anthropic_messages);
+    defer w.deinit();
+    try std.testing.expect(!w.supportsEmbed());
+    try std.testing.expectError(error.NotSupported, w.embed(gpa, &.{"hello"}, .{}));
 }
 
 test "contract: toChatMessages preserves tool result" {

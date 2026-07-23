@@ -225,6 +225,7 @@ pub const Client = struct {
         .deinit = wireDeinitNoop,
         .chat = wireChat,
         .chat_stream = wireChatStream,
+        .embed = wireEmbed,
     };
 
     const owned_vtable: wire.VTable = .{
@@ -233,6 +234,7 @@ pub const Client = struct {
         .deinit = wireDeinitOwned,
         .chat = wireChat,
         .chat_stream = wireChatStream,
+        .embed = wireEmbed,
     };
 
     fn wireApiStyle(ptr: *anyopaque) wire.ApiStyle {
@@ -276,6 +278,16 @@ pub const Client = struct {
     ) Error!types.AssistantTurn {
         const self: *Client = @ptrCast(@alignCast(ptr));
         return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts);
+    }
+
+    fn wireEmbed(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        inputs: []const []const u8,
+        opts: EmbedOptions,
+    ) Error!EmbeddingResult {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.embed(arena, inputs, opts);
     }
 };
 
@@ -439,20 +451,8 @@ fn onOpenAiSdkDone(user_ctx: ?*anyopaque) openai.errors.Error!void {
     }
 }
 
-pub const EmbedOptions = struct {
-    /// Defaults to client config model when null.
-    model: ?[]const u8 = null,
-    dimensions: ?u32 = null,
-    encoding_format: ?[]const u8 = null,
-    user: ?[]const u8 = null,
-};
-
-pub const EmbeddingResult = struct {
-    model: []const u8 = "",
-    /// One vector per input (order preserved).
-    vectors: []const []const f64 = &.{},
-    usage: ?types.Usage = null,
-};
+pub const EmbedOptions = types.EmbedOptions;
+pub const EmbeddingResult = types.EmbeddingResult;
 
 pub fn buildChatRequest(
     model: []const u8,
@@ -518,6 +518,7 @@ pub fn mapSdkError(err: anyerror) Error {
     if (std.mem.eql(u8, name, "InvalidResponse")) return error.InvalidResponse;
     if (std.mem.eql(u8, name, "StreamFailed")) return error.StreamFailed;
     if (std.mem.eql(u8, name, "BadStatus")) return error.BadStatus;
+    if (std.mem.eql(u8, name, "NotSupported")) return error.NotSupported;
     return error.HttpFailed;
 }
 

@@ -114,12 +114,23 @@ pub const Client = struct {
         return state.finish() catch return error.OutOfMemory;
     }
 
+    /// Anthropic has no public embeddings API on this wire.
+    pub fn embed(
+        _: *Client,
+        _: std.mem.Allocator,
+        _: []const []const u8,
+        _: types.EmbedOptions,
+    ) Error!types.EmbeddingResult {
+        return error.NotSupported;
+    }
+
     const borrowed_vtable: wire.VTable = .{
         .api_style = wireApiStyle,
         .name = wireNameFn,
         .deinit = wireDeinitNoop,
         .chat = wireChat,
         .chat_stream = wireChatStream,
+        .embed = wireEmbed,
     };
 
     const owned_vtable: wire.VTable = .{
@@ -128,6 +139,7 @@ pub const Client = struct {
         .deinit = wireDeinitOwned,
         .chat = wireChat,
         .chat_stream = wireChatStream,
+        .embed = wireEmbed,
     };
 
     fn wireApiStyle(_: *anyopaque) wire.ApiStyle {
@@ -169,6 +181,16 @@ pub const Client = struct {
     ) Error!types.AssistantTurn {
         const self: *Client = @ptrCast(@alignCast(ptr));
         return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts);
+    }
+
+    fn wireEmbed(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        inputs: []const []const u8,
+        opts: types.EmbedOptions,
+    ) Error!types.EmbeddingResult {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.embed(arena, inputs, opts);
     }
 };
 

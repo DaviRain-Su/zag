@@ -28,9 +28,13 @@ pub const Error = error{
     Timeout,
     ServerError,
     BadRequest,
+    /// Capability not available on this wire (e.g. embeddings on Anthropic).
+    NotSupported,
 };
 
 pub const ChatOptions = types.ChatOptions;
+pub const EmbedOptions = types.EmbedOptions;
+pub const EmbeddingResult = types.EmbeddingResult;
 
 /// Vendor wire family. New styles get a new adapter module, not agent branches.
 pub const ApiStyle = enum {
@@ -73,6 +77,12 @@ pub const VTable = struct {
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
     ) Error!types.AssistantTurn,
+    embed: *const fn (
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        inputs: []const []const u8,
+        opts: EmbedOptions,
+    ) Error!EmbeddingResult,
 };
 
 /// Type-erased wire backend.
@@ -112,6 +122,23 @@ pub const WireAdapter = struct {
         opts: ChatOptions,
     ) Error!types.AssistantTurn {
         return self.vtable.chat_stream(self.ptr, arena, messages, tools, handler, handler_ctx, opts);
+    }
+
+    /// Embeddings when the wire supports them; otherwise `error.NotSupported`.
+    pub fn embed(
+        self: WireAdapter,
+        arena: std.mem.Allocator,
+        inputs: []const []const u8,
+        opts: EmbedOptions,
+    ) Error!EmbeddingResult {
+        return self.vtable.embed(self.ptr, arena, inputs, opts);
+    }
+
+    pub fn supportsEmbed(self: WireAdapter) bool {
+        return switch (self.apiStyle()) {
+            .openai_compat => true,
+            .anthropic_messages => false,
+        };
     }
 };
 

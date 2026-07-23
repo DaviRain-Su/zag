@@ -66,7 +66,8 @@ canonical: types.Message / ToolDefinition / ChatOptions
 4. **anthropic_messages** — Messages API + 真 SSE（http only）。  
 5. **config.Config + http.Client** — 共享配置；`http` 仅 `std.http`。  
 6. **wire.Error** — 全适配器共用；`mapSdkError` 仅 openai 适配器用。  
-7. **根导出** — 优先 `createWire` / `OpenAiClient`；`Client` 为 OpenAI 别名（兼容）。
+7. **根导出** — 优先 `createWire` / `OpenAiClient`；`Client` 为 OpenAI 别名（兼容）。  
+8. **embed** — `WireAdapter.embed` + `supportsEmbed`；OpenAI 走 `/embeddings`；Anthropic `NotSupported`。
 
 ### 不变式（适配层）
 
@@ -93,7 +94,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | Usage | `AssistantTurn.usage`；trace `usage` 事件；verbose 日志 |
 | Catalog 预算 | `catalog.contextBudgetChars` → `context.optionsForModel` |
 | Contract 雏形 | `packages/zag-ai/src/contract_tests.zig`（无网络） |
-| Multimodal / embed | `ContentPart`；`Client.embed`（agent 主路径未用） |
+| Multimodal / embed | `ContentPart`；`WireAdapter.embed`（OpenAI 实现；Anthropic → `NotSupported`） |
 
 ## 错误与重试（L2 政策 = 代码）
 

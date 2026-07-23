@@ -46,13 +46,14 @@ pub const OpenAiClient = openai_compat.Client;
 /// @deprecated Use `OpenAiClient` or `createWire(..., .openai_compat)`.
 pub const Client = OpenAiClient;
 
-pub const EmbeddingResult = openai_compat.EmbeddingResult;
+pub const EmbedOptions = types.EmbedOptions;
+pub const EmbeddingResult = types.EmbeddingResult;
 
 pub const isRetryableError = types.isRetryableError;
 pub const createWire = factory.createWire;
 pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 
-pub const version = "0.5.1";
+pub const version = "0.5.2";
 
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {

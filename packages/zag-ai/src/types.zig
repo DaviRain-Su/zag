@@ -82,6 +82,23 @@ pub const Message = struct {
     }
 };
 
+/// Options for `WireAdapter.embed` (vendors ignore unsupported fields).
+pub const EmbedOptions = struct {
+    /// Defaults to client config model when null.
+    model: ?[]const u8 = null,
+    dimensions: ?u32 = null,
+    encoding_format: ?[]const u8 = null,
+    user: ?[]const u8 = null,
+};
+
+/// Result of an embedding request (arena-allocated vectors).
+pub const EmbeddingResult = struct {
+    model: []const u8 = "",
+    /// One vector per input (order preserved).
+    vectors: []const []const f64 = &.{},
+    usage: ?Usage = null,
+};
+
 /// Token usage reported by the provider (when present).
 pub const Usage = struct {
     prompt_tokens: u32 = 0,
@@ -167,6 +184,7 @@ pub const StreamHandler = *const fn (ctx: ?*anyopaque, event: StreamEvent) anyer
 pub fn isRetryableError(err: anyerror) bool {
     return switch (err) {
         error.RateLimited, error.Timeout, error.ServerError, error.HttpFailed => true,
+        // NotSupported and auth/schema errors are permanent for the request.
         else => false,
     };
 }
@@ -185,4 +203,9 @@ test "usage clamp" {
 test "isRetryableError" {
     try std.testing.expect(isRetryableError(error.RateLimited));
     try std.testing.expect(!isRetryableError(error.AuthenticationFailed));
+}
+
+test "isRetryableError does not treat NotSupported as retryable" {
+    // wire.Error.NotSupported — agent should not retry capability gaps
+    try std.testing.expect(!isRetryableError(error.NotSupported));
 }

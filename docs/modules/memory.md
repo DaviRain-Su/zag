@@ -62,7 +62,7 @@ MemoryCore
 | search / list | 关键词或 tag；结果进 ephemeral |
 | delete / wipe | 用户或 tool（需 permission） |
 
-可选后续：embeddings 检索（`zag-ai.Client.embed` 已有钩子）——**不得**作为唯一路径；无向量时全文/tag 仍可用。
+可选后续：embeddings 检索（`WireAdapter.embed` / `supportsEmbed`）——**不得**作为唯一路径；无向量时全文/tag 仍可用。
 
 ## 与 Repo map 的关系
 
