@@ -1,7 +1,6 @@
 //! Built-in provider presets (table-driven).
 //!
-//! Adding a vendor: append one `ProviderSpec` — no change to resolve logic.
-//! Wire family is `api_style` (today all builtins are `openai_compat`).
+//! Adding a vendor: append one `ProviderSpec` (set `api_style` for non-OpenAI wires).
 
 const std = @import("std");
 const wire = @import("wire.zig");

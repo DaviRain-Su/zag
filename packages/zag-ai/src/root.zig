@@ -1,11 +1,12 @@
 //! zag-ai — multi-wire LLM client for Zag (canonical messages + adapters).
 //!
-//! - Shared: `config`, `wire`, `http` (std.http, vendor-neutral)
-//! - Adapters: `openai_compat` (uses openai-zig resources), `anthropic_messages` (uses http only)
+//! - Shared: `config`, `wire`, `http` (std.http), `factory`, `stream` (event types only)
+//! - Adapters: `openai_compat` (openai-zig resources), `anthropic_messages` (http only)
 //! - Independent of agent harness (packages/zag-agent-core).
 
 const std = @import("std");
 
+/// Optional full OpenAPI SDK (for OpenAI adapter / advanced callers).
 pub const openai_zig = @import("openai_zig");
 
 pub const types = @import("types.zig");
@@ -20,7 +21,7 @@ pub const config_file = @import("config_file.zig");
 pub const wire = @import("wire.zig");
 pub const config = @import("config.zig");
 pub const http = @import("http.zig");
-// Contract tests are pulled into the package test binary via refAllDecls.
+pub const factory = @import("factory.zig");
 
 pub const Message = types.Message;
 pub const ContentPart = types.ContentPart;
@@ -28,41 +29,42 @@ pub const ToolCall = types.ToolCall;
 pub const AssistantTurn = types.AssistantTurn;
 pub const ToolDefinition = types.ToolDefinition;
 pub const StreamEvent = types.StreamEvent;
+pub const StreamHandler = types.StreamHandler;
 pub const Usage = types.Usage;
 pub const ChatOptions = types.ChatOptions;
 pub const ToolChoice = types.ToolChoice;
-pub const Client = openai_compat.Client;
-/// Shared wire config (OpenAI + Anthropic adapters).
 pub const Config = config.Config;
 pub const ProviderSpec = presets.ProviderSpec;
 pub const ModelInfo = catalog.ModelInfo;
 pub const FileConfig = config_file.FileConfig;
-pub const EmbeddingResult = openai_compat.EmbeddingResult;
 pub const WireAdapter = wire.WireAdapter;
 pub const ApiStyle = wire.ApiStyle;
+pub const WireError = wire.Error;
+
+/// OpenAI Chat Completions client (adapter-specific). Prefer `createWire` for multi-style code.
+pub const OpenAiClient = openai_compat.Client;
+/// @deprecated Use `OpenAiClient` or `createWire(..., .openai_compat)`.
+pub const Client = OpenAiClient;
+
+pub const EmbeddingResult = openai_compat.EmbeddingResult;
 
 pub const isRetryableError = types.isRetryableError;
-pub const createWire = openai_compat.createWire;
+pub const createWire = factory.createWire;
 pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 
-pub const version = "0.5.0";
+pub const version = "0.5.1";
 
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {
     resolved: registry.Resolved,
     stream: bool = false,
-    /// Per-request chat options (from config file / env).
     chat_options: ChatOptions = .{},
-    /// Catalog entry when model id is known.
     model_info: ?ModelInfo = null,
-    /// Loop-level chat retries on retryable errors.
     chat_retries: u8 = 2,
     retry_base_delay_ms: u64 = 500,
-    /// Optional harness overrides from config file.
     max_turns: ?u32 = null,
     context_max_chars: ?usize = null,
     context_max_tail_messages: ?usize = null,
-    /// Optional owned model/base_url/user overrides from config file (free with deinit).
     owned_model: ?[]u8 = null,
     owned_base_url: ?[]u8 = null,
     owned_user: ?[]u8 = null,
@@ -74,7 +76,6 @@ pub const ResolveResult = struct {
         self.* = .{ .resolved = self.resolved };
     }
 
-    /// Soft context char budget: file override > catalog estimate > default.
     pub fn contextCharBudget(self: ResolveResult, default_max_chars: usize) usize {
         if (self.context_max_chars) |n| return n;
         return catalog.contextBudgetChars(self.model_info, default_max_chars);
@@ -82,11 +83,6 @@ pub const ResolveResult = struct {
 };
 
 /// Resolve endpoint from environment, overlaid with optional JSON config file.
-/// Env secrets always win; file may set provider/model/base_url/stream/chat knobs.
-///
-/// Env overrides (when set):
-/// - `ZAG_TEMPERATURE`, `ZAG_MAX_TOKENS`, `ZAG_MAX_RETRIES`, `ZAG_TIMEOUT_MS`
-/// - `ZAG_CHAT_RETRIES`
 pub fn resolve(
     gpa: std.mem.Allocator,
     io: std.Io,
@@ -109,19 +105,24 @@ pub fn resolve(
 
     result.stream = file_cfg.stream;
 
-    // Provider from file only if env did not set ZAG_PROVIDER and we can get a key.
     if (file_cfg.provider) |pid| {
         if (env.get("ZAG_PROVIDER") == null) {
             if (presets.find(pid)) |spec| {
                 if (auth_env.resolveApiKeySource(EnvMap{ .env = env }, spec.env_keys)) |ks| {
+                    const style = if (env.get("ZAG_API_STYLE")) |s|
+                        wire.ApiStyle.parse(s) orelse spec.api_style
+                    else
+                        spec.api_style;
                     result.resolved = .{
                         .spec_id = spec.id,
                         .display_name = spec.name,
                         .api_key_source = ks.source,
+                        .api_style = style,
                         .config = .{
                             .api_key = ks.key,
                             .base_url = env.get("ZAG_BASE_URL") orelse spec.base_url,
                             .model = env.get("ZAG_MODEL") orelse spec.default_model,
+                            .api_style = style,
                         },
                     };
                 }
@@ -142,7 +143,6 @@ pub fn resolve(
         }
     }
 
-    // Transport knobs from file
     if (file_cfg.max_retries) |n| result.resolved.config.max_retries = n;
     if (file_cfg.retry_base_delay_ms) |n| {
         result.resolved.config.retry_base_delay_ms = n;
@@ -150,7 +150,6 @@ pub fn resolve(
     }
     if (file_cfg.timeout_ms) |n| result.resolved.config.timeout_ms = n;
 
-    // Chat options from file (user string owned for lifetime of ResolveResult)
     result.chat_options = file_cfg.chatOptions();
     if (file_cfg.user) |u| {
         result.owned_user = try gpa.dupe(u8, u);
@@ -205,9 +204,14 @@ fn applyEnvChatOverrides(env: *const std.process.Environ.Map, result: *ResolveRe
             result.stream = true;
         }
     }
+    if (env.get("ZAG_API_STYLE")) |s| {
+        if (wire.ApiStyle.parse(s)) |style| {
+            result.resolved.api_style = style;
+            result.resolved.config.api_style = style;
+        }
+    }
 }
 
-/// Fill max_tokens from catalog when neither file nor env set it.
 fn applyCatalogDefaults(result: *ResolveResult) void {
     if (result.chat_options.max_tokens == null and result.chat_options.max_completion_tokens == null) {
         if (catalog.suggestedMaxOutputTokens(result.model_info)) |cap| {

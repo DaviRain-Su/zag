@@ -279,26 +279,14 @@ pub const Client = struct {
     }
 };
 
-/// Factory: build a WireAdapter for the given style.
-pub fn createWire(
-    gpa: std.mem.Allocator,
-    io: Io,
-    config: Config,
-    style: wire.ApiStyle,
-) Error!wire.WireAdapter {
-    const anthropic_messages = @import("anthropic_messages.zig");
-    return switch (style) {
-        .openai_compat => createOpenAiCompatWire(gpa, io, config),
-        .anthropic_messages => anthropic_messages.createWire(gpa, io, config),
-    };
-}
-
+/// Heap-owned OpenAI-compat wire (used by `factory.createWire`).
 pub fn createOpenAiCompatWire(gpa: std.mem.Allocator, io: Io, config: Config) Error!wire.WireAdapter {
     const client = gpa.create(Client) catch return error.OutOfMemory;
     client.* = Client.init(gpa, io, config);
     return client.asWireOwned(gpa);
 }
 
+/// Borrow an existing OpenAI client as WireAdapter (caller owns Client lifetime).
 pub fn openAiCompatFromClient(client: *Client) wire.WireAdapter {
     return client.asWire();
 }

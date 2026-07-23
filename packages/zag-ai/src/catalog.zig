@@ -1,6 +1,6 @@
-//! Static model catalog (OpenAI-compatible providers only).
+//! Static model catalog (multi-vendor; ids + context windows + budgets).
 //!
-//! Inspired by pi-ai `*.models.ts` tables — ids, context windows, defaults.
+//! Inspired by pi-ai `*.models.ts` tables. Includes OpenAI-compat hosts and Anthropic.
 
 const std = @import("std");
 const presets = @import("presets.zig");

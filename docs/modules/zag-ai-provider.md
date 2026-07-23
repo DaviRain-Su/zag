@@ -61,11 +61,12 @@ canonical: types.Message / ToolDefinition / ChatOptions
 ### 实现节奏
 
 1. **文档** — 本页 + architecture。  
-2. **WireAdapter** — `wire.zig`；`createWire` / `Resolved.createWire`。  
-3. **openai_compat** — Chat Completions（默认）。  
-4. **anthropic_messages** — Messages API + **真 SSE**（`content_block_delta` / `tool_use`）。  
-5. **config.Config + http.Client** — 共享配置；`http` 仅用 `std.http`（不 import openai_zig）。  
-6. **wire.Error** — 全适配器共用；`mapSdkError` 仅 openai 适配器用。
+2. **WireAdapter** — `wire.zig`；**`factory.createWire`** / `Resolved.createWire`。  
+3. **openai_compat** — Chat Completions + SSE（默认 style；唯一依赖 openai-zig resources）。  
+4. **anthropic_messages** — Messages API + 真 SSE（http only）。  
+5. **config.Config + http.Client** — 共享配置；`http` 仅 `std.http`。  
+6. **wire.Error** — 全适配器共用；`mapSdkError` 仅 openai 适配器用。  
+7. **根导出** — 优先 `createWire` / `OpenAiClient`；`Client` 为 OpenAI 别名（兼容）。
 
 ### 不变式（适配层）
 

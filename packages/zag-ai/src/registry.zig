@@ -5,9 +5,9 @@
 const std = @import("std");
 const auth_env = @import("auth_env.zig");
 const presets = @import("presets.zig");
-const openai_compat = @import("openai_compat.zig");
 const config_mod = @import("config.zig");
 const wire = @import("wire.zig");
+const factory = @import("factory.zig");
 
 pub const Error = error{
     MissingApiKey,
@@ -31,8 +31,8 @@ pub const Resolved = struct {
     }
 
     /// Build a WireAdapter for this resolution (heap client; call `adapter.deinit()`).
-    pub fn createWire(self: Resolved, gpa: std.mem.Allocator, io: std.Io) openai_compat.Error!wire.WireAdapter {
-        return openai_compat.createWire(gpa, io, self.config, self.api_style);
+    pub fn createWire(self: Resolved, gpa: std.mem.Allocator, io: std.Io) wire.Error!wire.WireAdapter {
+        return factory.createWire(gpa, io, self.config, self.api_style);
     }
 };
 
@@ -44,7 +44,7 @@ pub const Resolved = struct {
 /// 3. First builtin preset whose env key is set (table order in presets.zig)
 ///
 /// Overrides: `ZAG_BASE_URL`, `ZAG_MODEL` always win when set.
-/// Optional: `ZAG_API_STYLE=openai_compat|anthropic` (anthropic not implemented).
+/// Optional: `ZAG_API_STYLE=openai_compat|anthropic_messages`.
 pub fn resolveFromEnv(env: *const std.process.Environ.Map) Error!Resolved {
     return resolveFromGet(struct {
         env: *const std.process.Environ.Map,

@@ -50,9 +50,10 @@ pub const provider_config_file = ai.config_file;
 
 /// Back-compat alias.
 pub const openai = struct {
-    pub const Client = ai.Client;
+    /// OpenAI Chat Completions client (adapter-specific).
+    pub const Client = ai.OpenAiClient;
     pub const Config = ai.Config;
-    pub const Error = ai.wire.Error;
+    pub const Error = ai.WireError;
 };
 
 pub const provider_config = struct {

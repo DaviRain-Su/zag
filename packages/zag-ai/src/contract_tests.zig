@@ -6,6 +6,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const openai_compat = @import("openai_compat.zig");
+const factory = @import("factory.zig");
 const gen = @import("openai_zig").generated;
 
 test "contract: assistant text stop turn" {
@@ -152,10 +153,10 @@ test "contract: WireAdapter vtable exposes openai_compat style" {
     try std.testing.expectEqualStrings("openai_compat", w.name());
 }
 
-test "contract: createWire accepts anthropic_messages style" {
+test "contract: factory.createWire accepts anthropic_messages style" {
     const gpa = std.testing.allocator;
     // Init only — no network until chat.
-    var w = try openai_compat.createWire(gpa, std.testing.io, .{
+    var w = try factory.createWire(gpa, std.testing.io, .{
         .base_url = "https://api.anthropic.com",
         .api_key = "sk-ant-test",
         .model = "claude-sonnet-4-20250514",
@@ -163,6 +164,17 @@ test "contract: createWire accepts anthropic_messages style" {
     defer w.deinit();
     try std.testing.expect(w.apiStyle() == .anthropic_messages);
     try std.testing.expectEqualStrings("anthropic_messages", w.name());
+}
+
+test "contract: factory.createWire openai_compat style" {
+    const gpa = std.testing.allocator;
+    var w = try factory.createWire(gpa, std.testing.io, .{
+        .base_url = "https://example.invalid/v1",
+        .api_key = "test",
+        .model = "test-model",
+    }, .openai_compat);
+    defer w.deinit();
+    try std.testing.expect(w.apiStyle() == .openai_compat);
 }
 
 test "contract: toChatMessages preserves tool result" {

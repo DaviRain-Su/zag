@@ -8,12 +8,12 @@
 //! - `anthropic_messages` — Anthropic Messages API (`anthropic_messages.zig`)
 //!
 //! This file has **no** dependency on protocol packages (avoids import cycles).
-//! Factories live in `openai_compat.createWire` / `registry.Resolved.createWire`.
+//! Factory: `factory.createWire` / `registry.Resolved.createWire`.
 
 const std = @import("std");
 const types = @import("types.zig");
 
-/// Shared error set for all wire backends (matches openai_compat today).
+/// Shared error set for all wire backends (OpenAI, Anthropic, …).
 pub const Error = error{
     HttpFailed,
     BadStatus,

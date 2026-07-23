@@ -1,4 +1,4 @@
-//! Shared chat types for OpenAI-compatible APIs (wire + transcript shapes).
+//! Shared chat types for all wire adapters (canonical transcript + request shapes).
 
 const std = @import("std");
 
@@ -24,7 +24,7 @@ pub const ToolCall = struct {
     arguments: []const u8,
 };
 
-/// Multimodal content part (OpenAI Chat Completions content array).
+/// Multimodal content part (adapters map to vendor wire shapes).
 pub const ContentPart = union(enum) {
     text: []const u8,
     /// Image by URL or data: URL. `detail` is optional (auto|low|high).
@@ -143,7 +143,7 @@ pub const ChatOptions = struct {
     parallel_tool_calls: ?bool = null,
     user: ?[]const u8 = null,
     seed: ?u64 = null,
-    /// Free-form provider fields merged into the JSON body (via openai-zig `extra_body`).
+    /// Free-form vendor fields (OpenAI adapter maps to `extra_body`; others may ignore).
     extra_body: ?std.json.Value = null,
 };
 

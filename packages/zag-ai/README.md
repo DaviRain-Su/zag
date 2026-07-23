@@ -1,6 +1,6 @@
 # zag-ai
 
-Monorepo AI package for Zag — agent-facing OpenAI Chat Completions layer over **openai-zig**.
+Multi-wire LLM package for Zag: **canonical messages** + **pluggable WireAdapters**.
 
 Auth is env + JSON config only (no OAuth).
 
@@ -8,148 +8,79 @@ Auth is env + JSON config only (no OAuth).
 
 | Module | Role |
 |--------|------|
-| `types` | Message / ContentPart / ToolCall / Usage / ChatOptions / StreamEvent / StreamHandler |
-| `config` | 共享 `Config`（base_url / key / model / retries） |
-| `http` | **中立** HTTP（`std.http` only；Bearer 或 header auth；**不**依赖 openai_zig） |
-| `wire` | **WireAdapter** + `ApiStyle` + 共享 `Error` |
-| `openai_compat` | OpenAI Chat Completions + **OpenAI SSE**（唯一依赖 openai-zig resources） |
-| `anthropic_messages` | Anthropic Messages + **Anthropic SSE**（config/http/wire only） |
-| `stream` | 仅 re-export `StreamHandler` / `StreamEvent`（无厂商实现） |
-| `presets` | ProviderSpec table (`api_style`) |
-| `catalog` | Known model ids + context windows + budget helpers |
-| `registry` | Resolve provider + `createWire` |
-| `auth_env` | API key from env vars |
-| `config_file` | `.zag/config.json` / `zag.json` (chat + transport knobs) |
-| `openai_compat` | Default WireAdapter: chat + stream + embeddings (**via openai-zig**) |
-| `stream` | SSE streaming chat (**via openai-zig**) |
+| `types` | Canonical Message / ToolCall / Usage / ChatOptions / StreamEvent |
+| `config` | Shared `Config` (base_url / key / model / retries) |
+| `wire` | `WireAdapter` vtable, `ApiStyle`, shared `Error` |
+| `http` | Neutral `std.http` client (Bearer or header auth) |
+| `factory` | `createWire(style)` — vendor-neutral |
+| `stream` | Re-export stream **types** only (no vendor impl) |
+| `openai_compat` | OpenAI Chat Completions + SSE (**only** openai-zig consumer for chat) |
+| `anthropic_messages` | Anthropic Messages + SSE (http only) |
+| `presets` / `catalog` / `registry` | Resolve + model tables |
+| `config_file` | `.zag/config.json` |
 | `contract_tests` | Wire-shape tests (no network) |
-| `openai_zig` | Re-export of the full SDK |
 
 ## Dependency
 
 ```
-zag → zag-ai → openai-zig
+agent-core / coding-agent / cli
+        → zag-ai  (wire + factory + adapters)
+              ├─ openai_compat → openai-zig
+              └─ anthropic_messages → std.http only
 ```
 
-## Agent-facing API
+## Preferred API
 
 ```zig
-// Preferred: WireAdapter (OpenAI-compat is the only style today)
-var w = try ai.createWire(gpa, io, .{
-    .base_url = "https://api.deepseek.com/v1",
-    .api_key = key,
-    .model = "deepseek-v4-flash",
-    .max_retries = 2,
-}, .openai_compat);
+// Multi-style entry
+var w = try ai.createWire(gpa, io, config, .openai_compat);
+// or .anthropic_messages
 defer w.deinit();
+const turn = try w.chat(arena, messages, tools, opts);
+_ = try w.chatStream(arena, messages, tools, handler, ctx, opts);
 
-const turn = try w.chat(arena, messages, tools, .{
-    .temperature = 0.2,
-    .max_tokens = 2048,
-    .tool_choice = .auto,
-});
-// turn.content / turn.tool_calls / turn.usage
-
-// Or Client (same backend) + borrowed wire:
-var client = ai.Client.init(gpa, io, config);
-defer client.deinit();
-_ = ai.openAiCompatFromClient(&client);
-
-// Multimodal user message
-const parts = [_]ai.ContentPart{
-    .{ .text = "describe this" },
-    .{ .image_url = .{ .url = "https://example.com/a.png", .detail = "low" } },
-};
-const mm = ai.Message.userMultimodal(&parts);
-
-// Embeddings (Client API)
-const emb = try client.embed(arena, &.{"hello world"}, .{ .model = "text-embedding-3-small" });
+// Resolve then wire
+var rr = try ai.resolve(gpa, io, env, null);
+defer rr.deinit(gpa);
+var w2 = try rr.resolved.createWire(gpa, io);
+defer w2.deinit();
 ```
 
-Streaming (per adapter, same `StreamEvent` surface):
+OpenAI-only helpers (when you need embeddings / full SDK):
 
 ```zig
-// Preferred — works for OpenAI and Anthropic
-_ = try wire.chatStream(arena, messages, tools, handler, ctx, opts);
-
-// Or adapter-specific:
-// openai_compat.Client.chatStreamWithOptions(...)
-// anthropic_messages.Client.chatStreamWithOptions(...)
+var client = ai.OpenAiClient.init(gpa, io, config);
+defer client.deinit();
+const emb = try client.embed(arena, &.{"hi"}, .{});
+// client.sdkClient() → *openai_zig.Client
 ```
 
-`stream` module only re-exports `Handler` / `Event` (no vendor code).  
-`openai_compat.Client.sdkClient()` is OpenAI-adapter-only (full openai-zig surface).
+`ai.Client` remains an alias of `OpenAiClient` for back-compat.
 
-Wire styles:
+## Wire styles
 
-| Style | Env / preset | Endpoint |
+| Style | How to select | Endpoint |
 |-------|----------------|----------|
-| `openai_compat` (default) | most presets | `/v1/chat/completions` |
+| `openai_compat` | default presets, `ZAG_API_STYLE=openai` | `/chat/completions` |
 | `anthropic_messages` | `ZAG_PROVIDER=anthropic` or `ZAG_API_STYLE=anthropic` | `/v1/messages` |
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 export ZAG_PROVIDER=anthropic
-# optional: ZAG_MODEL=claude-sonnet-4-20250514
-```
-
-## Resolve (harness entry)
-
-```zig
-var rr = try ai.resolve(gpa, io, env_map, config_path);
-defer rr.deinit(gpa);
-// rr.resolved.config / api_style
-// rr.resolved.createWire(gpa, io) → WireAdapter
-// rr.chat_options, model_info, chat_retries, stream, …
+zig build run -- --stream -v "hello"
 ```
 
 ## Errors
 
-| Error | Typical cause | Retry? |
-|-------|---------------|--------|
-| `AuthenticationFailed` | bad key | no |
-| `RateLimited` | 429 | yes |
-| `Timeout` | network/timeout | yes |
-| `ServerError` | 5xx | yes |
-| `BadRequest` | 4xx schema | no |
-| `InvalidResponse` | bad JSON | no |
+Shared `wire.Error` / `ai.WireError`.  
+`openai_compat.mapSdkError` maps **openai-zig** names only.
 
-`ai.isRetryableError(err)` for policy. Transport retries live in openai-zig; the agent loop can retry again via `chat_retries`.
-
-## Config file example
-
-```json
-{
-  "provider": "deepseek",
-  "model": "deepseek-v4-flash",
-  "stream": true,
-  "temperature": 0.2,
-  "max_tokens": 4096,
-  "max_retries": 3,
-  "retry_base_delay_ms": 500,
-  "timeout_ms": 60000,
-  "chat_retries": 2,
-  "max_turns": 20,
-  "context_max_chars": 100000,
-  "parallel_tool_calls": true,
-  "user": "zag-dev"
-}
-```
-
-Env overrides (when set): `ZAG_TEMPERATURE`, `ZAG_MAX_TOKENS`, `ZAG_MAX_COMPLETION_TOKENS`,
-`ZAG_MAX_RETRIES`, `ZAG_TIMEOUT_MS`, `ZAG_CHAT_RETRIES`, `ZAG_STREAM`.
-
-## Catalog context budgets
-
-Known models in `catalog.zig` supply `context_window` / `max_output_tokens`.
-`catalog.contextBudgetChars` converts that into a soft char budget for the harness
-context view (≈3 chars/token, reserve output, 15% margin). File `context_max_chars`
-wins when set.
+`ai.isRetryableError(err)` for loop policy.
 
 ## Tests
 
 ```bash
 cd packages/zag-ai && zig build test
-# or monorepo root:
+# or monorepo:
 zig build test
 ```
