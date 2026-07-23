@@ -38,7 +38,8 @@ pub const Resolved = struct {
 };
 
 const deepseek_base = "https://api.deepseek.com/v1";
-const deepseek_model = "deepseek-chat";
+/// DeepSeek V4 Flash — API id is `deepseek-v4-flash` (OpenAI-compatible).
+const deepseek_model = "deepseek-v4-flash";
 const xai_base = "https://api.x.ai/v1";
 const xai_model = "grok-4-latest";
 const openai_base = "https://api.openai.com/v1";
@@ -140,11 +141,11 @@ test "resolve DeepSeek preset" {
 test "resolve DeepSeek with model override" {
     const env = TestEnv{ .pairs = &.{
         .{ "DEEPSEEK_API_KEY", "sk-deep" },
-        .{ "ZAG_MODEL", "deepseek-reasoner" },
+        .{ "ZAG_MODEL", "deepseek-v4-pro" },
     } };
     const r = try resolveFromGet(env);
     try std.testing.expect(r.preset == .deepseek);
-    try std.testing.expectEqualStrings("deepseek-reasoner", r.config.model);
+    try std.testing.expectEqualStrings("deepseek-v4-pro", r.config.model);
     try std.testing.expectEqualStrings(deepseek_base, r.config.base_url);
 }
 

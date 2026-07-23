@@ -106,4 +106,5 @@
 
 - 外链可能变更；发现 404 时更新本文件并在 PR/提交说明里提一句。  
 - 新增「必读」级资料时：先写进本表，再在 `roadmap.md` 对应 Phase 挂引用。  
-- Zag 自己的设计文档进 `docs/architecture.md`（待建），不要和外部 references 混成一篇。  
+- Zag 自己的设计文档进 `docs/architecture.md`，不要和外部 references 混成一篇。  
+- 章节教程在 `chapters/`，与对应 Phase 代码同步更新。

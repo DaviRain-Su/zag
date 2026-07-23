@@ -199,7 +199,7 @@ fn printUsage() !void {
         \\
         \\Environment (first matching key wins):
         \\  ZAG_API_KEY        explicit key (+ ZAG_BASE_URL / ZAG_MODEL)
-        \\  DEEPSEEK_API_KEY   DeepSeek  (api.deepseek.com, deepseek-chat)
+        \\  DEEPSEEK_API_KEY   DeepSeek  (api.deepseek.com, deepseek-v4-flash)
         \\  XAI_API_KEY        xAI       (api.x.ai, grok-4-latest)
         \\  OPENAI_API_KEY     OpenAI    (api.openai.com, gpt-4o-mini)
         \\  ZAG_BASE_URL       override API base for any preset

@@ -251,9 +251,9 @@ zag/
   docs/
     roadmap.md       ← 本文件
     references.md    ← 链接与书单
-    architecture.md  ← 以后补
-  chapters/          ← 可选：每章说明（可后建）
-    00-loop/
+    architecture.md  ← 模块边界（随实现更新）
+  chapters/          ← 每章教程（与代码同步）
+    00-loop/         ← Phase 0 已写
     01-edit-permissions/
     02-session-context/
     03-production/
@@ -281,4 +281,6 @@ zag/
 ## 相关文档
 
 - [references.md](./references.md) — 链接全集与分类  
+- [architecture.md](./architecture.md) — 当前模块边界与协议  
+- [chapters/00-loop](../chapters/00-loop/README.md) — Phase 0 教程（与代码同步）  
 - 根目录 [README.md](../README.md) — 项目定位与入口  

@@ -8,49 +8,54 @@
 
 | 文档 | 内容 |
 |------|------|
-| **[docs/roadmap.md](./docs/roadmap.md)** | 从零实现四阶段路线：每阶段目标、实现清单、读什么、验收 |
-| **[docs/references.md](./docs/references.md)** | 参考资料与链接全集（Ball / Aider / goose / Hyper 等） |
+| **[chapters/00-loop](./chapters/00-loop/README.md)** | **Phase 0 教程**：怎么跑、心智模型、逐文件导读、练习 |
+| **[docs/roadmap.md](./docs/roadmap.md)** | 四阶段路线：目标、读什么、验收 |
+| **[docs/architecture.md](./docs/architecture.md)** | 当前模块边界与协议 |
+| **[docs/references.md](./docs/references.md)** | 外部资料（Ball / Aider / goose / Hyper…） |
 
 ## 阶段一览
 
 ```
-Phase 0  最小真理     loop + 只读 tools
+Phase 0  最小真理     loop + 只读 tools     ← 已实现 + 教程
 Phase 1  真·Code      写文件 + 权限
 Phase 2  日用级       会话 / context / 项目说明
 Phase 3  生产向       沙箱 / 可观测 / 稳定边界
 ```
 
-## 状态
+## 快速开始（Phase 0）
 
-**Phase 0 已落地**：最小 agent loop + 只读 tools（`list_dir` / `read_file`）+ OpenAI 兼容 provider。
+需要 Zig **0.16**。
+
+```bash
+# 推荐 DeepSeek（默认模型 deepseek-v4-flash）
+export DEEPSEEK_API_KEY=sk-...
+
+zig build test
+zig build run -- -v "这个项目有几个源文件？读一下 build.zig 摘要。"
+```
+
+| 环境变量 | 说明 |
+|----------|------|
+| `DEEPSEEK_API_KEY` | DeepSeek；默认 `https://api.deepseek.com/v1` + **`deepseek-v4-flash`** |
+| `XAI_API_KEY` / `OPENAI_API_KEY` | 其它厂商 preset |
+| `ZAG_API_KEY` + `ZAG_BASE_URL` + `ZAG_MODEL` | 完全自定义 |
+| `ZAG_MODEL` | 覆盖当前 preset 的模型（任意 key 都可配合使用） |
+
+Key 优先级：`ZAG_API_KEY` → `DEEPSEEK_API_KEY` → `XAI_API_KEY` → `OPENAI_API_KEY`。
 
 ```text
 src/
   agent/      # message、tool、loop
   runtime/    # fs_tools（只读）
-  provider/   # openai-compatible chat
-  main.zig    # CLI：one-shot / REPL
+  provider/   # config + openai-compatible chat
+  main.zig
 chapters/
-  00-loop/    # 本章说明
+  00-loop/    # 本章教程（与代码同步）
 ```
-
-### 快速开始（Phase 0）
-
-```bash
-# 任选一个 API key（优先级：ZAG_ > DEEPSEEK_ > XAI_ > OPENAI_）
-export DEEPSEEK_API_KEY=...   # 默认 deepseek-chat @ api.deepseek.com
-# export XAI_API_KEY=...
-# export OPENAI_API_KEY=...
-
-zig build run -- -v "这个项目有几个源文件？读一下 build.zig 摘要。"
-```
-
-可用 `ZAG_BASE_URL` / `ZAG_MODEL` 覆盖任意 preset 的默认值。  
-详见 [chapters/00-loop](./chapters/00-loop/README.md)。
 
 ## 相关
 
-- 工业对照（本机）：Hyper / Grok Build 等 Rust Code Agent 实现  
+- 工业对照（本机）：Hyper / Grok Build 等  
 - 教学标杆：[How to Build an Agent (Go)](https://ampcode.com/how-to-build-an-agent)  
 
 ## 许可
