@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/agent/trace.zig`、`observer.zig` |
+| 代码 | `packages/zag-agent-core/src/{trace,observer}.zig` |
 | 成熟度 | L1 → **L2（H7）** → L3（dashboard，C9） |
 | 对标 | Hyper telemetry/dashboard；SECURITY 审计 |
 

@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/runtime/edit_tools.zig`、`fs_tools.zig`、`toolset.zig` |
+| 代码 | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`、`toolset.zig` |
 | 成熟度 | write=L1；edit/search=L0 → **L2（H2）** → L3（C4） |
 | 对标 | Hyper hashline；omp；Codex apply_patch |
 

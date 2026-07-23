@@ -11,7 +11,14 @@
 
 1. **加深已有表面**，不新增产品品类。  
 2. 每切片：规格 → 实现 → 回写 maturity → 至少 1 条测试/golden。  
-3. 出门条件见 maturity「L2 总验收」。  
+3. 出门条件见 maturity「L2 总验收」。
+
+## 已知问题（H 内必修）
+
+| 问题 | 位置 | 说明 |
+|------|------|------|
+| `--trace` 可选参吞 prompt | `zag-cli` | `zig build run -- --yolo --trace "list_dir ."` 会把 prompt 当 trace 路径，写出名为 `list_dir .` 的垃圾文件。改为 `--trace=PATH` 或仅当下一参数以 `.jsonl`/路径形态出现才消费（含测试） |
+| core → zag-ai 依赖残留 | `zag-agent-core` | canonical 类型与 `ChatError` 借自 zag-ai；**H 内抽 `zag-types`** 解开（[packaging §2.1](../packaging.md#21-已知残留core-仍依赖-zag-ai下一步要解)） |  
 4. **不做** Memory Repo / repo map / subagent / MCP（属 C 轨；见 [memory.md](../modules/memory.md)）。
 
 ---

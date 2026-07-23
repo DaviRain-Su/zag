@@ -141,13 +141,13 @@ C5（H 之后）      repo map → Memory Repo MVP（默认关）
 
 设计：[packaging.md](./packaging.md)（对齐 Grok Build workspace 分层）。
 
-| 阶段 | Packaging 动作 |
-|------|----------------|
-| **Phase H** | 不拆包；按目标包边界整理目录与 import 方向（`modules/*` 即包 API 草稿） |
-| **C4–C5** | H2/H5 稳定后拆出 `zag-tools` / `zag-workspace`；canonical 类型归 `zag-types` |
-| **C6** | `src/agent` 分为 `zag-agent`（定义）+ `zag-kernel`（编排；SDK 主入口） |
-| **C9** | `zag-cli` / `zag-tui` / `zag-acp` 产品面成包；`zag` bin 只组装 |
-| 发布 | 满足 packaging §3 四条标准的包 mirror 拆 repo（首个候选 `openai-zig`） |
+| 阶段 | Packaging 动作 | 状态 |
+|------|----------------|------|
+| 骨架拆分 | `zag-agent-core`（kernel）+ `zag-coding-agent`（产品 harness）+ `zag-cli`（产品壳）；main 薄入口 | ✅ 0.5.0（`8c5f543`/`076183e`） |
+| **Phase H（下一步）** | 抽 **`zag-types`**：canonical 类型 + 中性 ChatError 下沉 L0，解开 core→zag-ai 依赖（packaging §2.1） | ⏳ |
+| C4–C5 | H2/H5 出门后拆 `zag-tools`（自 coding-agent/runtime）/ `zag-workspace`（自 core） | 排期 |
+| C9 | `zag-tui` / `zag-acp` 产品面成包；`zag` bin 只组装 | 排期 |
+| 发布 | 满足 packaging §3 四条标准的包 mirror 拆 repo（首个候选 `openai-zig`） | 排期 |
 
 规则：**每个 C 轨新能力必须在设计中声明落点包**；不允许直接长在 main/cli。
 
@@ -184,10 +184,12 @@ zag/
     phases/            H + C4–C9
     quality/
   chapters/            教程（00–03 tutorial；H planned）
-  src/agent/           harness 业务
-  src/runtime/         FS / shell
-  packages/zag-ai/     agent 友好模型面
-  packages/openai-zig/ 线协议 / OpenAPI（可独立复用）
+  packages/zag-agent-core/    harness 内核（loop · 纯 Provider · session）
+  packages/zag-coding-agent/  产品 harness（Agent · toolset · runtime · WireProvider）
+  packages/zag-cli/           产品壳（flags · REPL）
+  packages/zag-ai/            agent 友好模型面（resolve · WireAdapter）
+  packages/openai-zig/        线协议 / OpenAPI（可独立复用）
+  src/main.zig                进程薄入口 → zag_cli.run
 ```
 
 ---

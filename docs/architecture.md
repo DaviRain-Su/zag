@@ -84,7 +84,7 @@
 
 | 概念 | 含义 |
 |------|------|
-| **Loop** | 单角色工作环：模型决定 tool → 执行 → soft-fail 回灌。≈ Pi-agent-core。代码：`src/agent/loop.zig`。 |
+| **Loop** | 单角色工作环：模型决定 tool → 执行 → soft-fail 回灌。≈ Pi-agent-core。代码：`packages/zag-agent-core/src/loop.zig`。 |
 | **Graph / DAG** | **多角色编排**：谁先谁后、分支汇合、失败回边。每个 **agentic 节点** 内部仍跑 Loop。 |
 | **确定性节点** | 可非 LLM：permission gate、跑测试、worktree 隔离——与 agentic 节点混排。 |
 

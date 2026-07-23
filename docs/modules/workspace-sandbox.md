@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/agent/workspace.zig`、`shell_policy.zig` |
+| 代码 | `packages/zag-agent-core/src/{workspace,shell_policy}.zig` |
 | 成熟度 | L1 → **L2（H5）** → L3（OS sandbox，C7） |
 | 对标 | Hyper sandbox；Codex sandbox；Droid readiness（轻量） |
 

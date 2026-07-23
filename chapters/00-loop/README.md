@@ -44,22 +44,23 @@ transcript ──► provider.chat ──► assistant
 
 按这个顺序读（短 → 完整故事）：
 
+> 0.5.0 拆包后路径：core = `packages/zag-agent-core/src`，coding = `packages/zag-coding-agent/src`。
+
 | 顺序 | 文件 | 你在看什么 |
 |------|------|------------|
-| 1 | `src/agent/message.zig` | 消息 / tool_call 领域类型 |
-| 2 | `src/agent/transcript.zig` | 账本：append user/assistant/tool |
-| 3 | `src/agent/loop.zig` | **harness 主循环（核心业务）** |
-| 4 | `src/agent/agent.zig` | `Agent` / `Session` 外观 |
-| 5 | `src/agent/tool.zig` + `toolset.zig` | tool 契约与 Phase0 工具包 |
-| 6 | `src/agent/provider.zig` | 模型端口（接口，无 HTTP） |
-| 7 | `src/agent/observer.zig` | 可选事件（`-v`） |
+| 1 | core `message.zig` | 消息 / tool_call 领域类型 |
+| 2 | core `transcript.zig` | 账本：append user/assistant/tool |
+| 3 | core `loop.zig` | **harness 主循环（核心业务）** |
+| 4 | coding `agent.zig` | `Agent` / `Session` 外观 |
+| 5 | core `tool.zig` + coding `toolset.zig` | tool 契约与 Phase0 工具包 |
+| 6 | core `provider.zig` | 模型端口（纯 vtable，无 HTTP） |
+| 7 | core `observer.zig` | 可选事件（`-v`） |
 
 **先不要读**（除非你在修协议/IO）：
 
-- `src/provider/openai_compat.zig` — 唯一线协议 HTTP+JSON  
-- `src/provider/presets.zig` / `registry.zig` — 厂商表与 env 解析  
-- `src/runtime/fs_tools.zig` — 具体怎么读磁盘  
-- `src/main.zig` — CLI 壳  
+- `packages/zag-ai/` — 线协议与厂商表（openai_compat / presets / registry）  
+- coding `runtime/fs_tools.zig` — 具体怎么读磁盘  
+- `packages/zag-cli/src/cli.zig` + `src/main.zig` — CLI 壳  
 
 分层图见 [architecture.md](../../docs/architecture.md)。
 

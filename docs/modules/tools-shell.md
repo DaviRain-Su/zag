@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/runtime/edit_tools.zig`（`run_shell`） |
+| 代码 | `packages/zag-coding-agent/src/runtime/edit_tools.zig`（`run_shell`）+ core `shell_policy` |
 | 成熟度 | L1 → L2（随 H2/H5）→ L3（后台 job） |
 | 对标 | Hyper background tasks；Codex sandbox shell |
 

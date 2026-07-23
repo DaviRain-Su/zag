@@ -49,7 +49,7 @@
 | 包 | 职责 | Zag 落点 |
 |----|------|----------|
 | `@earendil-works/pi-ai` | 多厂商 LLM、tools 流、catalog | `packages/zag-ai` + `openai-zig` |
-| `@earendil-works/pi-agent-core` | stateful loop、events、`transformContext` → `convertToLlm` | `src/agent/loop.zig`、Provider 端口 |
+| `@earendil-works/pi-agent-core` | stateful loop、events、`transformContext` → `convertToLlm` | `zag-agent-core/src/loop.zig`、Provider 端口 |
 | `@earendil-works/pi-coding-agent` | CLI、sessions 树、compaction、extensions、skills | `main` + session/context；扩展属 C8 |
 | docs: [compaction](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md)、[sessions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sessions.md)、[extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) | 深度规格 | H4 / C5 / C8 |
 

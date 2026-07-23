@@ -23,12 +23,12 @@
 
 | 子系统 | 现状 | 证据 | L2 验收（一句话） | L3 方向 | 对标 |
 |--------|:----:|------|-------------------|---------|------|
-| Loop / Turn | L1 | `src/agent/loop.zig`（含 `chatWithRetry`） | 统一可机读 tool 错误；cancel 干净结束；max_turns/超时进 trace；≥2 golden | 并行只读、steer、Turn 生命周期 | Pi loop；Nanocodex Turn |
-| Tools · read | L1 | `src/runtime/fs_tools.zig` | jail 内 list/read 稳定；大文件截断可解释 | LSP 诊断闭环 | Hyper tools |
-| Tools · write/edit | L1 | `src/runtime/edit_tools.zig`（整文件 write） | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
+| Loop / Turn | L1 | `packages/zag-agent-core/src/loop.zig`（含 `chatWithRetry`） | 统一可机读 tool 错误；cancel 干净结束；max_turns/超时进 trace；≥2 golden | 并行只读、steer、Turn 生命周期 | Pi loop；Nanocodex Turn |
+| Tools · read | L1 | `packages/zag-coding-agent/src/runtime/fs_tools.zig` | jail 内 list/read 稳定；大文件截断可解释 | LSP 诊断闭环 | Hyper tools |
+| Tools · write/edit | L1 | `packages/zag-coding-agent/src/runtime/edit_tools.zig`（整文件 write） | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
 | Tools · search | L0 | — | `grep` + `glob` 在 jail 内，结果有 budget | AST / codebase-graph | Hyper；Aider |
 | Tools · shell | L1 | `edit_tools.zig` `run_shell` | 超时/截断/exit code 统一形状；policy 测试矩阵绿 | 后台 job + monitor | Hyper background |
-| Permissions | L1 | `src/agent/permissions.zig` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
+| Permissions | L1 | `packages/zag-agent-core/src/permissions.zig` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
 | Workspace / Sandbox | L1 | `workspace.zig` + `shell_policy.zig` | jail + denylist + **secret redact** + `/doctor` 最小；SECURITY 诚实 | OS sandbox（seatbelt/bwrap） | Hyper sandbox；Codex |
 | Context / Compaction | L1 | `context.zig`（截断 + catalog 预算） | 四层 prompt；超限 compaction（摘要+最近 N）落盘可解释 | repo map；智能选文件；**Memory 挂载点** | Pi；Aider；Hyper |
 | Session / Resume | L1 | `session_store.zig` | schema 版本 + 迁移；transcript≠view 边界写死 | session 树 / fork / 旁支 | Pi；Nanocodex fork |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 规格 [modules/memory.md](./modules/memory.md) | （H 不做）C5：默认关；可审可删；注入 ephemeral | embed 检索可选 | Hyper memory |
 | Subagents / Oracle | L0 | — | （H 不做）C6：typed 子代理 + Oracle pin + 对话点名触发 | Advisor；worktree fan-out | Amp；Hyper design-oracle |
 | Extensions | L0 | — | （H 不做）C8：Skills 目录可加载 | Hooks + MCP + plugin 包 | Pi；goose；Hyper |
-| UX | L1 | `src/main.zig` CLI | headless 友好 exit code + 稳定 flag；文档与行为一致 | TUI；ACP | Hyper pager；Codex |
+| UX | L1 | `packages/zag-cli/src/cli.zig`（main 为薄入口）；**已知 bug：`--trace` 可选参会吞掉 prompt**（`--trace "list_dir ."` 把 prompt 当路径） | headless 友好 exit code + **稳定 flag（修 `--trace` 歧义）**；文档与行为一致 | TUI；ACP | Hyper pager；Codex |
 | Quality / Evals | L0 | 包测 + 少量 harness 单测 | H 起：golden + security eval 可 CI | edit eval；cost 基线 | Nanocodex contracts |
 
 ---

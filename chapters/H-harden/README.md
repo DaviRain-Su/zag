@@ -35,13 +35,13 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 
 | 切片 | 规格 | 主要代码（现状） |
 |------|------|------------------|
-| H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | `src/agent/loop.zig` |
-| H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `src/runtime/edit_tools.zig` |
-| H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `src/agent/permissions.zig` |
+| H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | `zag-agent-core/src/loop.zig` |
+| H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `zag-coding-agent/src/runtime/edit_tools.zig` |
+| H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `zag-agent-core/src/permissions.zig` |
 | H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | `context.zig` · `session_store.zig` |
 | H5 Safety | [workspace-sandbox.md](../../docs/modules/workspace-sandbox.md) | `workspace.zig` · `shell_policy.zig` |
 | H6 Provider | [zag-ai-provider.md](../../docs/modules/zag-ai-provider.md) | `packages/zag-ai/` + `provider.zig`（retry/usage **部分已有**） |
-| H7 Trace | [trace-observability.md](../../docs/modules/trace-observability.md) | `src/agent/trace.zig`（usage 事件雏形） |
+| H7 Trace | [trace-observability.md](../../docs/modules/trace-observability.md) | `zag-agent-core/src/trace.zig`（usage 事件雏形） |
 
 **明确不做（本章）：** Memory Repo、repo map、subagent、MCP —— 见 [memory.md](../../docs/modules/memory.md) / Capability 轨。
 

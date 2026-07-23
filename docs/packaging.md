@@ -55,27 +55,29 @@ L6 发行      xai-grok-pager-bin（单一二进制，组装 L4+L5）
 
 ---
 
-## 2. Zag 目标包分层
+## 2. Zag 包分层（0.5.0 已落地骨架）
 
-Zig monorepo，`packages/` 下逐步成形。**目录即未来包边界**；现有 `src/agent` 是 L3+L4 的胚胎。
+Zig monorepo。**2026-07-24 已完成第一轮拆包**（`8c5f543` + `076183e`）：
+`zag-agent-core` / `zag-coding-agent` / `zag-cli` 各自独立 `build.zig(.zon)`，`src/main.zig` 只剩进程入口，`src/root.zig` 为 umbrella re-export。
 
 ```text
-L0 契约          zag-types           message · tool 定义/调用/结果 · sampling · config · workspace 类型（无 IO）
-L1 基础设施      （暂并入各包；token 估算 / paths 等膨胀后再拆 zag-utils）
-L2 领域服务      openai-zig          HTTP SDK（已存在，最底层传输）
-                 zag-ai              providers · catalog · stream · contract（已存在）
-                 zag-tools           fs/edit/grep/shell 工具实现（H2 后拆出）
-                 zag-workspace       jail · git · worktree（H5 后拆出）
+L0 契约          zag-types           canonical message · tool 协议 · 中性 ChatError（**下一步拆出**；现暂住 zag-ai/types）
+L1 基础设施      （暂并入各包；token 估算 / paths 膨胀后再拆 zag-utils）
+L2 领域服务      openai-zig          HTTP SDK ✅
+                 zag-ai              resolve · WireAdapter · catalog · stream · contract ✅
+                 zag-tools           fs/edit/grep/shell 实现（今在 coding-agent/runtime；H2 稳定后拆出）
+                 zag-workspace       jail · git · worktree（今在 agent-core；H5 稳定后拆出）
                  zag-sandbox         OS 沙箱（C7 新包）
                  zag-hooks / zag-mcp / zag-memory / zag-compaction（C 轨按需新包）
-L3 agent 定义    zag-agent           Agent/子代理/persona = 工具 + 采样 + hooks 组合（C6 拆出）
+L3 产品 harness  zag-coding-agent ✅  Agent/Session 外观 · 默认 toolset · WireProvider 桥 · runtime tools
 L4 内核 ★SDK 主入口
-                 zag-kernel          session · turn loop · permissions · trace · subagent 编排
-L5 产品面        zag-cli             headless/CLI（现 src/main.zig 迁移方向）
-                 zag-tui             TUI（C9）
-                 zag-acp             ACP 嵌 IDE（C9）
-L6 发行          zag (bin)           all-in-one 组装
+                 zag-agent-core ✅    loop · 纯 Provider 端口 · session · permissions · trace
+L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
+                 zag-tui / zag-acp   （C9）
+L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run` ✅
 ```
+
+> 命名说明：早稿虚名 `zag-kernel` / `zag-agent` 已由实际包名 **`zag-agent-core`** / **`zag-coding-agent`** 取代（Pi 式命名，分层语义与 Grok Build shell/agent 一致）。文档一律用实际包名。
 
 ### 依赖规则（强制）
 
@@ -84,29 +86,35 @@ L6 发行          zag (bin)           all-in-one 组装
 3. HTTP/网络细节 quarantine 在 `openai-zig` / `zag-ai` / 未来 `zag-mcp` 内部；`zag-kernel` 不见 HTTP。
 4. 每个包独立 `zig build test`；契约测试放在被依赖方。
 
-### 与现有代码 / 概念名映射
+### 概念层 ↔ 实际包名
 
-[architecture.md](./architecture.md) 的概念层 ↔ 包名：
+| 概念层（architecture） | 实际包 | 状态 |
+|------------------------|--------|------|
+| Product shell | zag-cli（+ C9 zag-tui / zag-acp）+ zag (bin) | ✅ |
+| Kernel（Agent Core） | **zag-agent-core** | ✅ |
+| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅ |
+| Model plane（canonical + WireAdapter） | zag-ai + openai-zig | ✅ |
+| Runtime / 领域包 | zag-tools / zag-workspace / zag-sandbox | 待拆（下表） |
+| 契约 | zag-types | **下一步** |
 
-| 概念层（architecture） | 包（本文件） |
-|------------------------|--------------|
-| Product shell | zag-cli / zag-tui / zag-acp + zag (bin) |
-| Kernel（Agent Core） | zag-kernel（+ C6 拆出 zag-agent） |
-| Model plane（canonical + WireAdapter） | zag-ai（adapters）+ openai-zig（首个 wire 后端） |
-| Runtime | zag-tools / zag-workspace / zag-sandbox |
-| 契约 | zag-types（canonical 类型现暂住 `zag-ai/types`，届时上提） |
+### 后续拆分排期
 
-| 现在 | 未来包 | 拆分时机 |
-|------|--------|----------|
-| `packages/openai-zig` | openai-zig | 已就位 |
-| `packages/zag-ai` | zag-ai | 已就位 |
-| `zag-ai/types` + `src/agent/{message,tool}.zig` 中的类型 | zag-types | H 期间先归目录，C 轨拆包 |
-| `src/runtime/*` + toolset | zag-tools | H2 完成后 |
-| `src/agent/{workspace,shell_policy}.zig` | zag-workspace | H5 完成后 |
-| `src/agent/{loop,permissions,context,session_store,trace,agent}.zig` | zag-kernel | C6 前后（subagent 需要它成形） |
-| `src/main.zig` | zag-cli | zag-kernel 拆出后 |
+| 拆什么 | 从哪拆 | 时机 | 动机 |
+|--------|--------|------|------|
+| **zag-types**（canonical message/tool/usage + 中性 ChatError） | `zag-ai/types` + core 的 `message/tool.zig` re-export | **H 内，优先** | 见 §2.1：解开 core → zag-ai 依赖 |
+| zag-tools | `zag-coding-agent/src/runtime/*` + toolset | H2 出门后 | 编辑面 API 稳定 |
+| zag-workspace | `zag-agent-core` 的 `workspace/shell_policy` | H5 出门后 | 安全面独立演进 + C7 sandbox 挂点 |
+| zag-agent（若需要） | coding-agent 中的 agent 定义 | C6 | subagent/persona 成形时再议，勿提前 |
 
-**原则：先按包边界整理目录与 import 方向（零成本），API 稳定后才真正 `build.zig.zon` 化。**
+### 2.1 已知残留：core 仍依赖 zag-ai（下一步要解）
+
+现状 `zag-agent-core` 的「纯」只到**源码级**（不 import `Client`/`openai_compat`），
+但 `message.zig` / `tool.zig` / `provider.zig` 仍 `@import("zag-ai")` 取 canonical 类型与 `ChatError = ai.wire.Error`：
+
+- 依赖图级不纯：core → zag-ai →（传递）openai-zig；
+- 错误集方向反了：**core 应定义中性 ChatError，adapter 负责映射**，而不是 core 借 wire 的错误集。
+
+解法 = 拆 **zag-types**：canonical 类型 + 中性错误集下沉 L0；`zag-ai` 与 `zag-agent-core` 都依赖 zag-types，core 不再依赖 zag-ai。这是 Packaging 轨的**下一个动作**。
 
 ---
 
@@ -147,15 +155,15 @@ var agent = zag.Agent.init(gpa, io, provider, .{
 
 ## 5. 与路线图的关系
 
-- **Phase H**：不拆包；但 H 各切片的模块规格（`docs/modules/*`）即未来包的 API 草稿，实现时按第 2 节目录归位。
-- **C 轨**：每个新能力必须在设计中声明「落进哪个包」；不允许新能力直接长在 zag-cli/main 里。
+- **Phase H**：骨架拆分已提前完成（core/coding/cli）；H 内 Packaging 动作只剩 **zag-types 抽取**（§2.1）。其余 H 切片按模块规格实现，不再动包结构。
+- **C 轨**：每个新能力必须在设计中声明「落进哪个包」；不允许新能力直接长在 zag-cli/main 里。tools/workspace 拆分挂 H2/H5 出门之后（见 §2 排期表）。
 - **maturity.md** 增补视角：某包达到「API 冻结 + 测试自洁」即可标记 SDK-ready。
 
 ## 6. 刻意不做
 
-- 一开始就把 `src/agent` 炸成十个 zon 包（先目录、后包、最后 repo）；
+- 在 H 内继续碎拆（zag-types 之外的拆分等 H2/H5 出门）；
 - 双向同步的多 repo 开发流；
-- 为对齐 Grok Build 而复刻其 60+ crate 粒度——Zag 按第 2 节 10 包量级起步，膨胀再分。
+- 为对齐 Grok Build 而复刻其 60+ crate 粒度——当前 6 包 + 排期 3 包足够，膨胀再分。
 
 ## 相关
 

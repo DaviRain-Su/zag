@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/agent/loop.zig` |
+| 代码 | `packages/zag-agent-core/src/loop.zig` |
 | 分层 | **Agent Core 内核**（[architecture 总图](../architecture.md#目标分层总图钉死)） |
 | 成熟度 | L1 → **L2（H1）** → L3（C6 Turn/steer；Graph 节点内仍用本 Loop） |
 | 对标 | Pi-agent-core loop；Nanocodex Turn |

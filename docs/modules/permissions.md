@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/agent/permissions.zig` |
+| 代码 | `packages/zag-agent-core/src/permissions.zig` |
 | 成熟度 | L1（ask/yolo）→ **L2（H3）** → L3（细粒度 + plan 产品化） |
 | 对标 | Hyper permissions-and-safety；Claude Code 默认 UX |
 

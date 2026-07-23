@@ -64,11 +64,13 @@ Session (full transcript, durable)
 
 | 顺序 | 文件 | 业务点 |
 |------|------|--------|
-| 1 | `src/agent/session_store.zig` | JSONL 字段与 round-trip |
-| 2 | `src/agent/project.zig` | AGENTS.md 加载与 compose system |
-| 3 | `src/agent/context.zig` | view：system + 尾部 + 预算 |
-| 4 | `src/agent/agent.zig` | Session.start / save / reply 自动存 |
-| 5 | `src/agent/loop.zig` | chat 前 `viewForModel` |
+| 1 | core `session_store.zig` | JSONL 字段与 round-trip |
+| 2 | coding `project.zig` | AGENTS.md 加载与 compose system |
+| 3 | core `context.zig` | view：system + 尾部 + 预算 |
+| 4 | coding `agent.zig` | Session.start / save / reply 自动存 |
+| 5 | core `loop.zig` | chat 前 `viewForModel` |
+
+（core = `packages/zag-agent-core/src`，coding = `packages/zag-coding-agent/src`）
 
 ---
 

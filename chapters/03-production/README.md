@@ -65,10 +65,12 @@ execute → tool result → transcript + trace
 
 | 顺序 | 文件 | 业务点 |
 |------|------|--------|
-| 1 | `src/agent/workspace.zig` | 路径 jail 规则 |
-| 2 | `src/agent/shell_policy.zig` | 命令 denylist |
-| 3 | `src/agent/trace.zig` | 结构化事件 |
-| 4 | `src/agent/loop.zig` | 三道门顺序 |
+| 1 | core `workspace.zig` | 路径 jail 规则 |
+| 2 | core `shell_policy.zig` | 命令 denylist |
+| 3 | core `trace.zig` | 结构化事件 |
+| 4 | core `loop.zig` | 三道门顺序 |
+
+（core = `packages/zag-agent-core/src`）
 | 5 | `SECURITY.md` | 产品安全说明 |
 
 ---

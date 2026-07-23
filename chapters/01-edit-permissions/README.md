@@ -63,11 +63,13 @@ tool_call
 
 | 顺序 | 文件 | 业务点 |
 |------|------|--------|
-| 1 | `src/agent/permissions.zig` | Mode / Risk / Gate / 拒绝文案 |
-| 2 | `src/agent/loop.zig` | 执行前 `decide`；deny → soft error |
-| 3 | `src/agent/agent.zig` | `permission_mode` 接线 |
-| 4 | `src/agent/toolset.zig` | `Phase1Storage` 四个 tool |
-| 5 | `src/runtime/edit_tools.zig` | write / shell **实现**（基建） |
+| 1 | core `permissions.zig` | Mode / Risk / Gate / 拒绝文案 |
+| 2 | core `loop.zig` | 执行前 `decide`；deny → soft error |
+| 3 | coding `agent.zig` | `permission_mode` 接线 |
+| 4 | coding `toolset.zig` | `Phase1Storage` 四个 tool |
+| 5 | coding `runtime/edit_tools.zig` | write / shell **实现**（基建） |
+
+（core = `packages/zag-agent-core/src`，coding = `packages/zag-coding-agent/src`）
 
 Phase 0 文件（message / transcript / provider port）不变。
 

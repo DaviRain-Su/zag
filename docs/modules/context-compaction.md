@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/agent/context.zig`、`project.zig` |
+| 代码 | `packages/zag-agent-core/src/context.zig`、`zag-coding-agent/src/project.zig` |
 | 成熟度 | L1（截断）→ **L2（H4）** → L3（repo map，C5） |
 | 对标 | Pi session/compaction；Aider repo map；Hyper compaction |
 

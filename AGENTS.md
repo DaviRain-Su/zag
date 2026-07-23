@@ -1,7 +1,7 @@
 # Zag project notes (for the coding agent)
 
 - This is **Zag**: a Zig coding-agent tutorial + implementation.
-- Prefer changing **business** code under `src/agent/`; put FS/shell details in `src/runtime/`.
+- Business code lives in packages (0.5.0 split): kernel loop/session/permissions in `packages/zag-agent-core/`; product harness (Agent facade, toolset, runtime fs/shell tools, WireProvider) in `packages/zag-coding-agent/`; CLI shell in `packages/zag-cli/`; `src/main.zig` is a thin entry only. New capabilities must declare their target package (`docs/packaging.md`).
 - Keep **chapters/** in sync when behavior changes; keep **docs/maturity.md** in sync when capability level changes.
 - Default permission mode is **ask**; do not suggest `--yolo` for production.
 - Sessions are JSONL under `.zag/sessions/` when the user passes `-c` / `--session`.

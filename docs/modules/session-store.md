@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `src/agent/session_store.zig`、`transcript.zig` |
+| 代码 | `packages/zag-agent-core/src/{session_store,transcript}.zig` |
 | 成熟度 | L1 → **L2（H4）** → L3（fork/树，C5） |
 | 对标 | Pi session；Hyper sessions；Nanocodex checkpoint |
 
