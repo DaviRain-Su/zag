@@ -16,7 +16,7 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 | Permission remember | enabled for an approved built-in write path; `--no-remember` disables | canonical remembered-path identity is not yet claimed to be shared with real containment |
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
 | Workspace path check | lexical deny of absolute/`..`/drive/UNC **plus** realpath containment for file tools | **software check-time** only; residual TOCTOU under concurrent FS races; not an OS sandbox |
-| Shell policy | `protect`; blocks selected catastrophic command patterns | denylist only; shell is **not** contained by the file-path jail or OS sandbox; stable runtime outcome Gate is open in `h-shell-001` |
+| Shell policy/runtime | `protect`; stable synchronous `shell-v1`; 30 KiB/stream + bounded body | denylist only; shell is **not** contained by the file-path jail or OS sandbox; package evidence landed, independent/main Gate pending in `h-shell-001` |
 | Trace | optional local JSONL events | lifecycle/schema L2; redaction before serialize (h-redact-001) |
 | Secret redaction | configured keys + common API-key shapes before verbose/trace/session | not DLP; `.zag/` still sensitive; no zeroization claim |
 
@@ -35,13 +35,13 @@ Built-in file tools (`read_file`, `list_dir`, `grep`, `glob`, `write_file`, `sea
 
 **Trust boundary:** the host OS account is trusted; **workspace contents (including pre-seeded symlinks) are not**. This is check-time software enforcement, **not** an OS sandbox. A concurrent process under the same account can still race paths between check and use (TOCTOU residual). Shell is a separate boundary.
 
-## Shell/process boundary (`h-shell-001` open)
+## Shell/process boundary (`h-shell-001` in progress)
 
-`run_shell` is foreground and synchronous. It passes execute permission and descriptor-selected `protect|off` policy, then invokes Zig 0.16 `std.process.run`. The current handler does not provide an OS sandbox or workspace path containment.
+`run_shell` is foreground and synchronous. It passes execute permission and descriptor-selected `protect|off` policy, then invokes Zig 0.16 `std.process.run`. The handler emits stable `shell-v1` success/nonzero/signal/timeout/output-limit/process-failure headers, uses a one-time absolute `.awake` capture deadline, caps stdout/stderr at 30 KiB each, and proves the complete body is at most 64 KiB before allocation/write. Runtime diagnostics omit command text, configured/test shell path, and raw Zig error names; `OutOfMemory` remains hard typed. This remains a trusted-host runner, not workspace path containment or an OS sandbox.
 
-Zig's post-spawn error unwind installs `defer child.kill(io)`, which synchronously kills/reaps the spawned **direct child** on timeout/output-limit errors. `h-shell-001` must pin that behavior with deterministic fixtures and expose stable `shell-v1` success/nonzero/signal/timeout/output-limit/process-failure headers. Until it lands, those failures still collapse to generic Tool diagnostics and the combined stdout/stderr Tool-body budget is not an L2 claim.
+Zig's post-spawn error unwind installs `defer child.kill(io)`, which synchronously kills/reaps the spawned **direct child** before timeout/output-limit returns. Permanent macOS/Linux fixtures record that direct PID and prove it is gone after the handler returns; they make no end-to-end wall-clock bound. Package evidence has landed on the task branch, but independent review and the main std/curl Gate remain pending, so this is not yet a Phase H L2 claim.
 
-Direct-child cleanup is **not** process-tree ownership. Descendants, detached/background commands, PTY, network isolation, and mid-flight user cancellation of an already running Tool remain unsupported. No trace event or timeout result may be interpreted as proving those capabilities.
+Direct-child cleanup is **not** process-tree ownership. Descendants, detached/background commands, PTY, network isolation, and mid-flight user cancellation of an already running Tool remain unsupported. A command that closes captured pipes before continuing may reach an untimed wait. No trace event or timeout result may be interpreted as proving those capabilities.
 
 ## Known release blockers
 
@@ -106,7 +106,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (already-running Tool/shell preemption is separate post-H process work) |
 | ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001 |
 | ~~default Agent policy/containment composition~~ | **done evidence** h-integration-001; independent review + main std/curl passed |
-| stable synchronous shell outcomes/body budget/direct-child trace evidence | **open** Phase H P1 h-shell-001 |
+| stable synchronous shell outcomes/body budget/direct-child trace evidence | **in progress:** package evidence landed; independent/main Gate pending in Phase H P1 h-shell-001 |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |
 
@@ -119,4 +119,4 @@ A security/correctness fix must:
 3. implement the fix without weakening the default `ask` policy;
 4. update [maturity](./docs/maturity.md) and the relevant teaching chapter in the same delivery.
 
-[h-doctor-001](./docs/plan/tasks/h-doctor-001.md) implements `zag --doctor`: a provider-independent, path-free human-readable control report that runs **before** API-key/provider resolve, wire, Agent/session/trace, or network work. It reports fixed enum statuses only (project/test candidate presence, permission, shell policy, lexical jail, real file containment, redaction-on-run, `os_sandbox=not_implemented`, `shell_containment=not_path_contained`). Doctor never mutates policy and never claims an OS sandbox. It is not the stable JSON/exit protocol of headless-001. [h-integration-001](./docs/plan/tasks/h-integration-001.md) Agent.reply policy/containment and between-Tool cancellation evidence passed independent review and main std/curl; its final Phase H closeout is now blocked on [h-shell-001](./docs/plan/tasks/h-shell-001.md), not on those retained fixtures.
+[h-doctor-001](./docs/plan/tasks/h-doctor-001.md) implements `zag --doctor`: a provider-independent, path-free human-readable control report that runs **before** API-key/provider resolve, wire, Agent/session/trace, or network work. It reports fixed enum statuses only (project/test candidate presence, permission, shell policy, lexical jail, real file containment, redaction-on-run, `os_sandbox=not_implemented`, `shell_containment=not_path_contained`). Doctor never mutates policy and never claims an OS sandbox. It is not the stable JSON/exit protocol of headless-001. [h-shell-001](./docs/plan/tasks/h-shell-001.md) now has package implementation/evidence but remains in-progress pending independent/main Gate. [h-integration-001](./docs/plan/tasks/h-integration-001.md) Agent.reply policy/containment and between-Tool cancellation evidence passed independent review and main std/curl; its final Phase H closeout remains blocked, not invalidated.

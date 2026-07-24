@@ -70,8 +70,8 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-provider-001](./plan/tasks/h-provider-001.md) | trace | enforced deadline/in-flight cancel/partial Tool safety |
 | [h-redact-001](./plan/tasks/h-redact-001.md) | session + trace | shared pre-persistence redaction |
 | [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | **done:** no-key readiness/control truth; no policy mutation or OS-sandbox claim |
-| [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **ready:** shell-v1 outcomes, bounded capture/body, direct-child cleanup evidence, Agent/session/trace composition |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 + doctor + shell | **blocked:** original Agent composition evidence passed independent/main Gate; final Phase H audit waits for shell |
+| [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **in-progress:** package shell-v1/budget/direct-child/Agent evidence landed; independent/main Gate pending |
+| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 + doctor + shell | **blocked:** original Agent composition evidence passed independent/main Gate; final Phase H audit still waits for shell `done` |
 
 Phase H exits only after shell passes its isolated Gate, integration returns to ready for the sentence-by-sentence closeout, both backends pass again on main, and [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit) remains true.
 

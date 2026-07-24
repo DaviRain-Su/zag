@@ -140,7 +140,7 @@ role=tool  content="error: code=permission_denied message=…"
 |------|------|
 | `command` | 交给 `/bin/sh -c` |
 
-本地 descriptor：`risk=execute`，`shell=command_argument`（policy 不靠名字猜）。
+本地 descriptor：`risk=execute`，`shell=command_argument`（policy 不靠名字猜）。同步 handler 使用 `shell-v1` first line 区分 success/nonzero/signal/timeout/output-limit/process failure；每流 30 KiB，timeout/output-limit 不伪造 partial output。这里只覆盖 foreground direct child，不是 PTY/background/process-tree supervisor。
 
 ---
 
@@ -180,7 +180,7 @@ role=tool  content="error: code=permission_denied message=…"
 
 整文件 `write_file` + 全局 ask/yolo 只够 **Teaching** 演示编辑路径。
 **D-007 / h-tool-runtime-001 已补：** 强制 capabilities、instance-aware handler、Provider 只见 definitions；h-workspace-001 已补 symlink-aware file containment。
-**仍缺/不宣称：** `h-shell-001` 的 shell-v1 runtime/budget/direct-child/trace Gate、mid-flight shell cancellation/process-tree ownership、一般 atomic write-fault guarantee、完整 Plan UX 与 path-domain 细策略。
+**Package 已落地、Gate pending：** `h-shell-001` 的 shell-v1 runtime/budget/direct-child/parsed-trace fixtures 已进入 suite，但独立/main Gate 与最终 Phase H audit 未完成。**仍不宣称：** mid-flight shell cancellation/process-tree ownership、一般 atomic write-fault guarantee、完整 Plan UX 与 path-domain 细策略。
 
 ---
 

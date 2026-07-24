@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — `h-shell-001` ready, integration closeout blocked** |
+| Status | **In progress; not L2 — `h-shell-001` package evidence landed/Gate pending, integration closeout blocked** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
@@ -83,8 +83,8 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 
 ### Remaining
 
-- [h-shell-001](../plan/tasks/h-shell-001.md) (**ready**) implements `shell-v1`: stable success/nonzero/signal/timeout/output-limit/process-failure headers, 30 KiB per-stream and 64 KiB total body bounds, honest no-partial overflow, direct-child timeout/output-limit cleanup evidence, and Agent/session/trace composition;
-- h-shell-001 does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, or OS sandbox;
+- [h-shell-001](../plan/tasks/h-shell-001.md) (**in-progress**) has landed package `shell-v1` implementation/evidence: stable success/nonzero/signal/timeout/output-limit/process-failure headers, 30 KiB per-stream and 64 KiB total body bounds, honest no-partial overflow, direct-child timeout/output-limit cleanup fixtures, and Agent/session/trace composition; independent review and main std/curl Gate remain pending;
+- h-shell-001 does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline;
 - canonical permission-path identity and general write-fault atomic/no-partial-mutation guarantees remain unclaimed; C4 edit sharpness/change review remains post-H capability.
 
 ## H3 — Tool runtime / permissions
@@ -197,7 +197,7 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 
 ### Remaining
 
-- h-shell-001 must prove shell policy/runtime first-line classifications survive matching transcript/session/trace projection and end in one recovered terminal;
+- h-shell-001 package fixtures prove shell policy/runtime first-line classifications survive matching transcript/session/trace projection and end in one recovered terminal; independent/main Gate and final audit remain pending;
 - external-consumer gates in CI;
 - dashboard / correlation (L3).
 
@@ -212,7 +212,7 @@ P0 session + Tool + workspace + trace
 Tool runtime + trace
          │
          ▼
-h-shell-001（synchronous shell-v1 + direct-child/trace evidence）ready
+h-shell-001（package evidence landed；independent/main Gate pending）in-progress
          │
          ▼
 h-integration-001（original Agent chains verified；final closeout blocked on shell）
@@ -230,4 +230,4 @@ This is a DAG. Independent P0 work may overlap in isolated worktrees when task p
 
 ## Exit
 
-Phase H exits only after h-shell-001 passes independent review and main std/curl, h-integration-001 returns to ready for the final sentence-by-sentence audit, both backends pass again on main, and all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) remain true. A green current suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.
+Phase H exits only after the in-progress h-shell-001 package evidence passes independent review and main std/curl, h-integration-001 returns to ready for the final sentence-by-sentence audit, both backends pass again on main, and all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) remain true. A green current suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.

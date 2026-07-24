@@ -5,9 +5,11 @@
 //! boundary (not contained by the path jail).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const core = @import("zag-agent-core");
 const tool = core.tool;
+const trace = core.trace;
 const workspace = core.workspace;
 
 pub const search_replace_def: tool.Definition = .{
@@ -71,8 +73,8 @@ pub const write_file_def: tool.Definition = .{
 pub const run_shell_def: tool.Definition = .{
     .name = "run_shell",
     .description =
-    \\Run a shell command in the working directory via /bin/sh -c.
-    \\Stdout and stderr are captured and truncated. Default timeout ~30s.
+    \\Run a foreground shell command in the working directory via /bin/sh -c.
+    \\Stdout and stderr are captured with fixed limits and a 30s capture deadline.
     \\Subject to permission checks (ask/yolo). Prefer for build/test/git status, not interactive programs.
     ,
     .parameters_json =
@@ -92,9 +94,48 @@ pub const run_shell_def: tool.Definition = .{
 
 const max_write_bytes: u32 = 512 * 1024;
 const max_read_for_edit: u32 = max_write_bytes + 1;
-const max_shell_output: u32 = @intCast(tool.max_result_bytes);
-const shell_timeout_secs: i64 = 30;
+const production_shell_path = "/bin/sh";
+const shell_capture_timeout_ms: u32 = 30_000;
+const max_shell_stream_bytes: usize = 30 * 1024;
+const max_shell_envelope_bytes: usize = 4 * 1024;
 const max_diff_bytes: u32 = 4 * 1024;
+
+const ShellConfig = struct {
+    shell_path: []const u8 = production_shell_path,
+    timeout_ms: u32 = shell_capture_timeout_ms,
+    stdout_limit: usize = max_shell_stream_bytes,
+    stderr_limit: usize = max_shell_stream_bytes,
+};
+
+var test_shell_config: if (builtin.is_test) ShellConfig else void =
+    if (builtin.is_test) .{} else {};
+
+fn activeShellConfig() ShellConfig {
+    if (builtin.is_test) return test_shell_config;
+    return .{};
+}
+
+/// Test-only shell seam. The empty production namespace exposes no controls.
+/// It deliberately contains only the four contract-approved settings.
+pub const testing = if (builtin.is_test) struct {
+    pub fn configure(
+        shell_path: []const u8,
+        timeout_ms: u32,
+        stdout_limit: usize,
+        stderr_limit: usize,
+    ) void {
+        test_shell_config = .{
+            .shell_path = shell_path,
+            .timeout_ms = timeout_ms,
+            .stdout_limit = stdout_limit,
+            .stderr_limit = stderr_limit,
+        };
+    }
+
+    pub fn reset() void {
+        test_shell_config = .{};
+    }
+} else struct {};
 
 pub const ReplaceError = error{
     AnchorNotFound,
@@ -427,67 +468,108 @@ fn captureGitDiff(ctx: tool.Context, path: []const u8) ![]u8 {
     return result.stdout;
 }
 
+const ShellResultCode = enum {
+    shell_success,
+    shell_nonzero,
+    shell_signal,
+    shell_timeout,
+    shell_output_limit,
+    shell_process_failure,
+
+    fn name(self: ShellResultCode) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const stdout_section = "--- stdout ---\n";
+const stderr_section = "--- stderr ---\n";
+
+const ShellFormatError = error{
+    OutOfMemory,
+    ShellEnvelopeTooLong,
+    ShellBodyTooLong,
+};
+
+const ShellBodyLayout = struct {
+    envelope_len: usize,
+    body_len: usize,
+};
+
 pub fn runShell(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
     _ = instance;
     const command = try tool.requireStringField(ctx.allocator, arguments_json, "command");
     defer ctx.allocator.free(command);
     if (command.len == 0) return error.InvalidArguments;
 
-    const argv = [_][]const u8{ "/bin/sh", "-c", command };
+    const config = activeShellConfig();
+    const argv = [_][]const u8{ config.shell_path, "-c", command };
+
+    // Convert the one 30,000 ms `.awake` duration to one absolute capture
+    // deadline before entering `std.process.run`. Passing a duration here would
+    // let each MultiReader fill convert it afresh and reset the capture budget.
+    const capture_duration: Io.Timeout = .{ .duration = .{
+        .raw = .fromMilliseconds(@intCast(config.timeout_ms)),
+        .clock = .awake,
+    } };
+    const capture_deadline = capture_duration.toDeadline(ctx.io);
+
     const result = std.process.run(ctx.allocator, ctx.io, .{
         .argv = &argv,
         .cwd = .{ .dir = ctx.cwd },
-        .stdout_limit = .limited(max_shell_output),
-        .stderr_limit = .limited(max_shell_output),
-        .timeout = .{
-            .duration = .{
-                .raw = .fromSeconds(shell_timeout_secs),
-                .clock = .real,
-            },
-        },
-    }) catch |err| return shellRunError(ctx.allocator, command, err);
+        .stdout_limit = .limited(config.stdout_limit),
+        .stderr_limit = .limited(config.stderr_limit),
+        .timeout = capture_deadline,
+    }) catch |err| return shellRunError(ctx.allocator, config, err);
     defer ctx.allocator.free(result.stdout);
     defer ctx.allocator.free(result.stderr);
 
-    return formatShellResult(ctx.allocator, result.term, result.stdout, result.stderr);
+    return formatShellResult(ctx.allocator, result.term, result.stdout, result.stderr) catch |err| switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.ShellEnvelopeTooLong, error.ShellBodyTooLong => error.ToolFailed,
+    };
 }
 
+/// `std.process.run` does not expose a reliable finer-grained phase. All run
+/// errors therefore use fixed `stage=run`; no command, shell path, or raw error
+/// name is admitted to diagnostics. OOM remains a hard typed host error.
 fn shellRunError(
     gpa: std.mem.Allocator,
-    command: []const u8,
+    config: ShellConfig,
     err: anyerror,
 ) tool.HandlerError![]u8 {
-    const core_err = @import("zag-agent-core").tool_error;
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
-        error.Timeout => {
-            const msg = try std.fmt.allocPrint(
-                gpa,
-                "command timed out after {d}s: {s}",
-                .{ shell_timeout_secs, command },
-            );
-            defer gpa.free(msg);
-            return core_err.format(gpa, .tool_failed, msg);
-        },
-        error.StreamTooLong => {
-            const msg = try std.fmt.allocPrint(
-                gpa,
-                "command output exceeded {d} bytes (truncated). Command: {s}",
-                .{ max_shell_output, command },
-            );
-            defer gpa.free(msg);
-            return core_err.format(gpa, .tool_failed, msg);
-        },
-        else => {
-            const msg = try std.fmt.allocPrint(
-                gpa,
-                "failed to run command ({s}): {s}",
-                .{ @errorName(err), command },
-            );
-            defer gpa.free(msg);
-            return core_err.format(gpa, .tool_failed, msg);
-        },
+        error.Timeout => ownShellHeader(
+            gpa,
+            "error: code={s} format=shell-v1 timeout_ms={d} partial_output_available=false cleanup_scope=direct_child",
+            .{ ShellResultCode.shell_timeout.name(), config.timeout_ms },
+        ),
+        error.StreamTooLong => ownShellHeader(
+            gpa,
+            "error: code={s} format=shell-v1 stdout_limit_bytes={d} stderr_limit_bytes={d} exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
+            .{
+                ShellResultCode.shell_output_limit.name(),
+                config.stdout_limit,
+                config.stderr_limit,
+            },
+        ),
+        else => ownShellHeader(
+            gpa,
+            "error: code={s} format=shell-v1 stage=run partial_output_available=false",
+            .{ShellResultCode.shell_process_failure.name()},
+        ),
     };
+}
+
+fn ownShellHeader(
+    gpa: std.mem.Allocator,
+    comptime fmt: []const u8,
+    args: anytype,
+) tool.HandlerError![]u8 {
+    var header_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const header = std.fmt.bufPrint(&header_buf, fmt, args) catch return error.ToolFailed;
+    std.debug.assert(std.mem.indexOfScalar(u8, header, '\n') == null);
+    return gpa.dupe(u8, header) catch return error.OutOfMemory;
 }
 
 fn formatShellResult(
@@ -495,31 +577,117 @@ fn formatShellResult(
     term: std.process.Child.Term,
     stdout: []const u8,
     stderr: []const u8,
-) tool.HandlerError![]u8 {
-    var out: Io.Writer.Allocating = .init(gpa);
-    errdefer out.deinit();
+) ShellFormatError![]u8 {
+    var header_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const header = formatShellTermHeader(&header_buf, term, stdout.len, stderr.len) catch
+        return error.ShellEnvelopeTooLong;
+    std.debug.assert(std.mem.indexOfScalar(u8, header, '\n') == null);
 
-    switch (term) {
-        .exited => |c| out.writer.print("exit_code: {d}\n", .{c}) catch return error.OutOfMemory,
-        .signal => |s| out.writer.print("signal: {d}\n", .{@intFromEnum(s)}) catch return error.OutOfMemory,
-        .stopped => |s| out.writer.print("stopped: {d}\n", .{@intFromEnum(s)}) catch return error.OutOfMemory,
-        .unknown => |u| out.writer.print("unknown_status: {d}\n", .{u}) catch return error.OutOfMemory,
-    }
-    try appendStream(&out, "--- stdout ---\n", stdout);
-    try appendStream(&out, "--- stderr ---\n", stderr);
-    if (stdout.len == 0 and stderr.len == 0) {
-        out.writer.writeAll("(no output)\n") catch return error.OutOfMemory;
-    }
-    return out.toOwnedSlice() catch return error.OutOfMemory;
+    const stdout_needs_newline = needsTrailingNewline(stdout);
+    const stderr_needs_newline = needsTrailingNewline(stderr);
+    const layout = try checkedShellBodyLayout(
+        header.len,
+        stdout.len,
+        stderr.len,
+        stdout_needs_newline,
+        stderr_needs_newline,
+    );
+
+    // Allocation and writes happen only after checked arithmetic proves both
+    // the 4 KiB envelope and shared 64 KiB Tool-result ceiling.
+    const body = try gpa.alloc(u8, layout.body_len);
+    errdefer gpa.free(body);
+    var writer: Io.Writer = .fixed(body);
+    writeFixed(&writer, header);
+    writeFixed(&writer, "\n");
+    writeFixed(&writer, stdout_section);
+    writeFixed(&writer, stdout);
+    if (stdout_needs_newline) writeFixed(&writer, "\n");
+    writeFixed(&writer, stderr_section);
+    writeFixed(&writer, stderr);
+    if (stderr_needs_newline) writeFixed(&writer, "\n");
+    std.debug.assert(writer.buffered().len == layout.body_len);
+    return body;
 }
 
-fn appendStream(out: *Io.Writer.Allocating, header: []const u8, body: []const u8) tool.HandlerError!void {
-    if (body.len == 0) return;
-    out.writer.writeAll(header) catch return error.OutOfMemory;
-    out.writer.writeAll(body) catch return error.OutOfMemory;
-    if (body[body.len - 1] != '\n') {
-        out.writer.writeAll("\n") catch return error.OutOfMemory;
+fn formatShellTermHeader(
+    buf: []u8,
+    term: std.process.Child.Term,
+    stdout_len: usize,
+    stderr_len: usize,
+) error{NoSpaceLeft}![]u8 {
+    return switch (term) {
+        .exited => |exit_code| if (exit_code == 0)
+            std.fmt.bufPrint(
+                buf,
+                "ok: code={s} format=shell-v1 exit_code=0 stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
+                .{ ShellResultCode.shell_success.name(), stdout_len, stderr_len },
+            )
+        else
+            std.fmt.bufPrint(
+                buf,
+                "error: code={s} format=shell-v1 exit_code={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
+                .{ ShellResultCode.shell_nonzero.name(), exit_code, stdout_len, stderr_len },
+            ),
+        .signal => |signal| std.fmt.bufPrint(
+            buf,
+            "error: code={s} format=shell-v1 signal={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
+            .{ ShellResultCode.shell_signal.name(), @intFromEnum(signal), stdout_len, stderr_len },
+        ),
+        .stopped => |signal| std.fmt.bufPrint(
+            buf,
+            "error: code={s} format=shell-v1 stage=term term=stopped signal={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
+            .{ ShellResultCode.shell_process_failure.name(), @intFromEnum(signal), stdout_len, stderr_len },
+        ),
+        .unknown => |status| std.fmt.bufPrint(
+            buf,
+            "error: code={s} format=shell-v1 stage=term term=unknown status={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
+            .{ ShellResultCode.shell_process_failure.name(), status, stdout_len, stderr_len },
+        ),
+    };
+}
+
+fn checkedShellBodyLayout(
+    header_len: usize,
+    stdout_len: usize,
+    stderr_len: usize,
+    stdout_needs_newline: bool,
+    stderr_needs_newline: bool,
+) ShellFormatError!ShellBodyLayout {
+    var envelope_len: usize = 0;
+    envelope_len = std.math.add(usize, envelope_len, header_len) catch
+        return error.ShellEnvelopeTooLong;
+    envelope_len = std.math.add(usize, envelope_len, 1) catch
+        return error.ShellEnvelopeTooLong;
+    envelope_len = std.math.add(usize, envelope_len, stdout_section.len) catch
+        return error.ShellEnvelopeTooLong;
+    if (stdout_needs_newline) {
+        envelope_len = std.math.add(usize, envelope_len, 1) catch
+            return error.ShellEnvelopeTooLong;
     }
+    envelope_len = std.math.add(usize, envelope_len, stderr_section.len) catch
+        return error.ShellEnvelopeTooLong;
+    if (stderr_needs_newline) {
+        envelope_len = std.math.add(usize, envelope_len, 1) catch
+            return error.ShellEnvelopeTooLong;
+    }
+    if (envelope_len > max_shell_envelope_bytes) return error.ShellEnvelopeTooLong;
+
+    var body_len = std.math.add(usize, stdout_len, stderr_len) catch
+        return error.ShellBodyTooLong;
+    body_len = std.math.add(usize, body_len, envelope_len) catch
+        return error.ShellBodyTooLong;
+    if (body_len > tool.max_result_bytes) return error.ShellBodyTooLong;
+
+    return .{ .envelope_len = envelope_len, .body_len = body_len };
+}
+
+fn needsTrailingNewline(bytes: []const u8) bool {
+    return bytes.len > 0 and bytes[bytes.len - 1] != '\n';
+}
+
+fn writeFixed(writer: *Io.Writer, bytes: []const u8) void {
+    writer.writeAll(bytes) catch unreachable; // exact checked body_len capacity
 }
 
 const path_write_caps: tool.ToolCapabilities = .{
@@ -693,7 +861,295 @@ test "search_replace write_file run_shell in tmp dir" {
     const shell = try runShell(ctx, null, "{\"command\":\"echo shell-ok\"}");
     defer gpa.free(shell);
     try std.testing.expect(std.mem.indexOf(u8, shell, "shell-ok") != null);
-    try std.testing.expect(std.mem.indexOf(u8, shell, "exit_code: 0") != null);
+    try std.testing.expect(std.mem.startsWith(u8, shell, "ok: code=shell_success format=shell-v1 exit_code=0 "));
+}
+
+fn requireRealPosixShellFixture() !void {
+    switch (builtin.os.tag) {
+        .macos, .linux => {},
+        else => return error.SkipZigTest,
+    }
+}
+
+fn firstLine(body: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, body, '\n') orelse body.len;
+    return body[0..end];
+}
+
+fn expectRecordedDirectChildGone(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+) !void {
+    const raw = try cwd.readFileAlloc(io, path, gpa, .limited(64));
+    defer gpa.free(raw);
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    const pid = try std.fmt.parseInt(std.posix.pid_t, trimmed, 10);
+    try std.testing.expect(pid > 0);
+
+    // Signal zero performs no mutation. `ProcessNotFound` immediately after
+    // handler return proves Zig's unwind has killed and reaped this direct PID.
+    const signal_zero: std.posix.SIG = @enumFromInt(0);
+    try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, signal_zero));
+}
+
+test "shell-v1 success preserves exact stdout and stderr sections" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const body = try runShell(ctx, null,
+        \\{"command":"printf out; printf err >&2"}
+    );
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=3 stderr_bytes=3 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\nout\n--- stderr ---\nerr\n",
+        body,
+    );
+}
+
+test "shell-v1 nonzero exit and POSIX signal retain exact terms" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const nonzero = try runShell(ctx, null,
+        \\{"command":"printf no; printf bad >&2; exit 7"}
+    );
+    defer gpa.free(nonzero);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=2 stderr_bytes=3 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\nno\n--- stderr ---\nbad\n",
+        nonzero,
+    );
+
+    const signaled = try runShell(ctx, null,
+        \\{"command":"kill -TERM $$"}
+    );
+    defer gpa.free(signaled);
+    var expected: [512]u8 = undefined;
+    const expected_body = try std.fmt.bufPrint(
+        &expected,
+        "error: code=shell_signal format=shell-v1 signal={d} stdout_bytes=0 stderr_bytes=0 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\n--- stderr ---\n",
+        .{@intFromEnum(std.posix.SIG.TERM)},
+    );
+    try std.testing.expectEqualStrings(expected_body, signaled);
+}
+
+test "shell-v1 timeout returns after Zig std direct-child cleanup" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.configure(production_shell_path, 500, max_shell_stream_bytes, max_shell_stream_bytes);
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const body = try runShell(ctx, null,
+        \\{"command":": RAW_TIMEOUT_COMMAND_SECRET; echo $$ > timeout.pid; while :; do :; done"}
+    );
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_timeout format=shell-v1 timeout_ms=500 partial_output_available=false cleanup_scope=direct_child",
+        body,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, body, "RAW_TIMEOUT_COMMAND_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "--- stdout ---") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "--- stderr ---") == null);
+    try expectRecordedDirectChildGone(gpa, io, tmp.dir, "timeout.pid");
+}
+
+test "shell-v1 output limit returns no fake partial and cleans direct child" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.configure(production_shell_path, shell_capture_timeout_ms, 16, 17);
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const body = try runShell(ctx, null,
+        \\{"command":": RAW_OUTPUT_COMMAND_SECRET; echo $$ > output.pid; while :; do printf 0123456789; done"}
+    );
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_output_limit format=shell-v1 stdout_limit_bytes=16 stderr_limit_bytes=17 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
+        body,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, body, "RAW_OUTPUT_COMMAND_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "--- stdout ---") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "--- stderr ---") == null);
+    try expectRecordedDirectChildGone(gpa, io, tmp.dir, "output.pid");
+}
+
+test "shell-v1 invalid shell path is sanitized stage=run process failure" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const invalid_path = "/zag-test-does-not-exist/RAW_SHELL_PATH_SECRET";
+    testing.configure(invalid_path, shell_capture_timeout_ms, max_shell_stream_bytes, max_shell_stream_bytes);
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const body = try runShell(ctx, null,
+        \\{"command":": RAW_PROCESS_COMMAND_SECRET"}
+    );
+    defer gpa.free(body);
+
+    try std.testing.expectEqualStrings(
+        "error: code=shell_process_failure format=shell-v1 stage=run partial_output_available=false",
+        body,
+    );
+    for ([_][]const u8{
+        invalid_path,
+        "RAW_SHELL_PATH_SECRET",
+        "RAW_PROCESS_COMMAND_SECRET",
+        "FileNotFound",
+        "AccessDenied",
+        "InvalidExe",
+    }) |forbidden| {
+        try std.testing.expect(std.mem.indexOf(u8, body, forbidden) == null);
+    }
+}
+
+test "shell-v1 stopped and unknown terms use fixed stage=term taxonomy" {
+    const gpa = std.testing.allocator;
+
+    const stopped = try formatShellResult(gpa, .{ .stopped = .STOP }, "s", "ee\n");
+    defer gpa.free(stopped);
+    var stopped_expected_buf: [512]u8 = undefined;
+    const stopped_expected = try std.fmt.bufPrint(
+        &stopped_expected_buf,
+        "error: code=shell_process_failure format=shell-v1 stage=term term=stopped signal={d} stdout_bytes=1 stderr_bytes=3 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\ns\n--- stderr ---\nee\n",
+        .{@intFromEnum(std.posix.SIG.STOP)},
+    );
+    try std.testing.expectEqualStrings(stopped_expected, stopped);
+
+    const unknown_status = std.math.maxInt(u32);
+    const unknown = try formatShellResult(gpa, .{ .unknown = unknown_status }, "", "u");
+    defer gpa.free(unknown);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_process_failure format=shell-v1 stage=term term=unknown status=4294967295 stdout_bytes=0 stderr_bytes=1 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\n--- stderr ---\nu\n",
+        unknown,
+    );
+}
+
+test "shell-v1 maximum formatter is checked before allocation and stays under 64 KiB" {
+    const gpa = std.testing.allocator;
+    var stdout: [max_shell_stream_bytes]u8 = undefined;
+    var stderr: [max_shell_stream_bytes]u8 = undefined;
+    @memset(&stdout, 'O');
+    @memset(&stderr, 'E');
+
+    const body = try formatShellResult(gpa, .{ .exited = 0 }, &stdout, &stderr);
+    defer gpa.free(body);
+    const envelope_len = body.len - stdout.len - stderr.len;
+    try std.testing.expect(envelope_len <= max_shell_envelope_bytes);
+    try std.testing.expect(body.len <= tool.max_result_bytes);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=30720 stderr_bytes=30720 stdout_truncated=false stderr_truncated=false",
+        firstLine(body),
+    );
+    try std.testing.expect(std.mem.indexOf(u8, body, stdout_section) != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, stderr_section) != null);
+
+    try std.testing.expectError(
+        error.ShellEnvelopeTooLong,
+        checkedShellBodyLayout(std.math.maxInt(usize), 0, 0, false, false),
+    );
+    try std.testing.expectError(
+        error.ShellBodyTooLong,
+        checkedShellBodyLayout(1, std.math.maxInt(usize), 1, false, false),
+    );
+    try std.testing.expectError(
+        error.ShellBodyTooLong,
+        checkedShellBodyLayout(1, tool.max_result_bytes, 0, false, false),
+    );
+}
+
+test "shell-v1 maximum header remains complete in parsed capped trace" {
+    const gpa = std.testing.allocator;
+    const config: ShellConfig = .{
+        .stdout_limit = std.math.maxInt(usize),
+        .stderr_limit = std.math.maxInt(usize) - 1,
+    };
+    const header = try shellRunError(gpa, config, error.StreamTooLong);
+    defer gpa.free(header);
+    try std.testing.expect(header.len <= trace.cap_tool_result_body);
+    try std.testing.expectEqualStrings(header, firstLine(header));
+
+    const full_len = header.len + 1 + trace.cap_tool_result_body;
+    const full = try gpa.alloc(u8, full_len);
+    defer gpa.free(full);
+    @memcpy(full[0..header.len], header);
+    full[header.len] = '\n';
+    @memset(full[header.len + 1 ..], 'x');
+
+    var tr = trace.Trace.init(gpa, std.testing.io, null, Io.Dir.cwd());
+    defer tr.deinit();
+    try tr.emitRunStart(.{ .version = "test", .permission = "yolo", .shell_policy = "protect" });
+    try tr.emitToolResult("run_shell", full);
+    try tr.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" });
+
+    var tool_result_count: u32 = 0;
+    var lines = std.mem.splitScalar(u8, tr.buf.items, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{});
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.TestUnexpectedResult;
+        const kind_value = parsed.value.object.get("kind") orelse return error.TestUnexpectedResult;
+        if (kind_value != .string) return error.TestUnexpectedResult;
+        if (!std.mem.eql(u8, kind_value.string, "tool_result")) continue;
+        tool_result_count += 1;
+        const body_value = parsed.value.object.get("body") orelse return error.TestUnexpectedResult;
+        if (body_value != .string) return error.TestUnexpectedResult;
+        try std.testing.expect(body_value.string.len <= trace.cap_tool_result_body);
+        try std.testing.expectEqualStrings(header, firstLine(body_value.string));
+    }
+    try std.testing.expectEqual(@as(u32, 1), tool_result_count);
+}
+
+test "shell-v1 OOM is hard typed for run error and formatter" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectError(error.OutOfMemory, shellRunError(gpa, .{}, error.OutOfMemory));
+
+    var failing_format = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        formatShellResult(failing_format.allocator(), .{ .exited = 0 }, "", ""),
+    );
+    try std.testing.expect(failing_format.has_induced_failure);
+
+    var failing_header = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        shellRunError(failing_header.allocator(), .{}, error.Timeout),
+    );
+    try std.testing.expect(failing_header.has_induced_failure);
 }
 
 test "symlink containment: write/search_replace cannot mutate outside" {

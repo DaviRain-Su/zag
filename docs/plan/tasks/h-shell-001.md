@@ -1,7 +1,7 @@
 ---
 id: h-shell-001
 scope: phase-h/shell-runtime-observability
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-tool-runtime-001, h-trace-001]
 ---
@@ -13,6 +13,12 @@ Close the missed Phase H shell blocker without introducing a process supervisor:
 This task does **not** implement or claim mid-flight user cancellation of an already running Tool, process-group/tree ownership, background jobs, PTY, network/OS sandboxing, or detached-command supervision. Those remain post-H process-supervisor work.
 
 `h-integration-001` retains its independently verified and main-merged composition evidence but cannot close Phase H until this task lands and the full integration/main Gate runs again.
+
+# develop state
+
+The package implementation and permanent module/Agent fixtures are landed on the isolated `task/h-shell-001` branch: shell-v1 formatting, absolute capture deadline, bounded capture/body arithmetic, direct-child cleanup fixtures, and transcript/session/resume/parsed-trace composition all execute in the coding-agent suite.
+
+Isolated local evidence passes: default backend `30/30` build steps and `379/379` tests; curl backend `32/32` build steps and `378/378` tests; docs lint plus readability/security score checks (`91/100`, `64/100`). The task remains **in-progress** until independent review plus the main-branch Gate pass. `h-integration-001` remains **blocked**, and Phase H remains below L2.
 
 # contract source
 

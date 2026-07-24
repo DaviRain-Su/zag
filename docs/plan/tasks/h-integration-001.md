@@ -24,9 +24,9 @@ This evidence closes the previously missing Agent product chains. It does **not*
 
 # blocker
 
-The Phase H exit audit found a previously omitted module gate: synchronous shell outcomes still collapse timeout/output-limit/process failures, the total result budget is not proven, and shell policy/runtime trace evidence is incomplete.
+The Phase H exit audit found a previously omitted shell module gate. `h-shell-001` now has package implementation and permanent module/Agent evidence for stable timeout/output-limit/process outcomes, total body budget, direct-child cleanup, and parsed trace projection; its independent review and main-branch Gate are not yet complete.
 
-[h-shell-001](./h-shell-001.md) now owns that blocker. This task remains **blocked** until shell is `done`; then it returns to `ready` for the final main-branch std/curl Gate and sentence-by-sentence Phase H exit audit.
+[h-shell-001](./h-shell-001.md) still owns that blocker and remains **in-progress**. This task remains **blocked** until shell is `done`; then it returns to `ready` for the final main-branch std/curl Gate and sentence-by-sentence Phase H exit audit.
 
 # context
 
@@ -61,7 +61,7 @@ The Phase H exit audit found a previously omitted module gate: synchronous shell
    - the executed and pending calls retain exact original provider Tool-call IDs;
    - every pending call receives a machine-readable `cancelled` body without handler invocation;
    - API Result, transcript, persisted/resumed session, and one parsed trace terminal agree on `cancelled`.
-3. **Synchronous shell composition — blocked on `h-shell-001`.** Policy denial and each required shell-v1 runtime class must survive the matching transcript/session/trace chain and recover through exactly one truthful terminal.
+3. **Synchronous shell composition — package evidence landed in `h-shell-001`; Gate pending.** Policy denial and each required shell-v1 runtime class now survive the matching transcript/session/resume/parsed-trace chain and recover through exactly one truthful terminal in package fixtures. This task remains blocked until that evidence passes the independent/main Gate.
 
 This task verifies only between-Tool cancellation. It must not claim that an already running Tool/shell process can be preempted; that process-ownership work is post-H.
 

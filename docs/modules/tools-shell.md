@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | coding-agent `runtime/edit_tools.zig` (`run_shell`) + core `shell_policy` |
-| Current maturity | **L1** — synchronous execution exists; stable outcome/budget/trace evidence is open in `h-shell-001` |
+| Current maturity | **L1** — shell-v1 package implementation/evidence landed; independent/main Gate and final Phase H audit remain open |
 | Target | L2 H synchronous correctness → L3 background/process supervisor |
 | Reference | Hyper background tasks; Codex sandbox shell; Zig 0.16 `std.process.run` |
 
@@ -101,22 +101,21 @@ Module fixtures cover success with both streams, exit 7, POSIX signal, short cap
 
 Tests use no network. POSIX shell/signal fixtures may skip on unsupported platforms, but supported macOS/Linux Gate hosts must prove that the real path ran.
 
-## Current gaps
+## Current delivery state
 
-- `error.Timeout`, `error.StreamTooLong`, and process failures still collapse to generic `tool_failed` diagnostics.
-- stdout and stderr currently each receive the old 64 KiB capture limit, so the formatted Tool body is not proven to fit the shared 64 KiB result budget.
-- Stable shell runtime headers and their Agent/session/trace composition matrix are not yet permanent fixtures.
+The isolated task branch now contains the permanent package evidence: timeout/output-limit/process errors map to shell-v1, capture is 30 KiB per stream, checked formatting proves the shared 64 KiB body, direct-child PID fixtures exercise Zig std unwind, and Agent policy/runtime outcomes round-trip through transcript/session/resume/parsed trace to one recovered terminal. The remaining gap is delivery evidence, not a broader process supervisor: independent review, both main-branch backend Gates, and the final Phase H audit are still pending.
 
-Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**ready**). `h-integration-001` closeout and Phase H exit remain blocked until this contract lands and passes independent plus main-branch Gates.
+Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**in-progress**). `h-integration-001` closeout and Phase H exit remain blocked until this task is `done`; package-local green tests do not promote maturity by themselves.
 
 ## L2 acceptance
 
-- [ ] success/nonzero/signal/timeout/output-limit/process-failure/policy matrix uses the stable contract above, including stopped/unknown term fields.
-- [ ] timeout/output-limit prove synchronous direct-child cleanup without an end-to-end wall bound or process-tree claim.
-- [ ] checked formatter arithmetic keeps every Tool body within 64 KiB; unavailable partial output is reported honestly.
-- [ ] every shell-v1 first line fits the trace Tool-result cap and survives parsed trace truncation.
-- [ ] shell policy and runtime results are reconstructable from transcript/session/trace with one truthful terminal.
-- [ ] docs and behavior agree that mid-flight Tool cancellation, PTY, background jobs, process-tree ownership, and OS sandbox are absent.
+- [x] package success/nonzero/signal/timeout/output-limit/process-failure/policy matrix uses the stable contract above, including stopped/unknown term fields.
+- [x] package timeout/output-limit fixtures prove synchronous direct-child cleanup without an end-to-end wall bound or process-tree claim.
+- [x] checked formatter arithmetic keeps every Tool body within 64 KiB; unavailable partial output is reported honestly.
+- [x] every shell-v1 first line fits the trace Tool-result cap and survives parsed trace truncation.
+- [x] package shell policy and runtime results are reconstructable from transcript/session/trace with one truthful terminal.
+- [x] docs and behavior agree that mid-flight Tool cancellation, PTY, background jobs, process-tree ownership, and OS sandbox are absent.
+- [ ] independent review, main std/curl Gate, and final integration/Phase H audit pass.
 
 ## L3
 

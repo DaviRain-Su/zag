@@ -14,6 +14,7 @@ const core = @import("zag-agent-core");
 const ai = @import("zag-ai");
 const toolset_mod = @import("toolset.zig");
 const project_mod = @import("project.zig");
+const edit_tools = @import("runtime/edit_tools.zig");
 
 const message = core.message;
 const tool = core.tool;
@@ -3681,6 +3682,118 @@ fn expectUniqueStructuredRunEnd(
     if (run_end_count != 1) return error.TestUnexpectedResult;
 }
 
+const ShellTraceBodyExpect = union(enum) {
+    first_line: []const u8,
+    code: tool_error.Code,
+};
+
+const StructuredShellTraceExpect = struct {
+    call_id: []const u8,
+    body: ShellTraceBodyExpect,
+    shell_deny_count: u32,
+};
+
+fn bodyFirstLine(body: []const u8) []const u8 {
+    const end = std.mem.indexOfScalar(u8, body, '\n') orelse body.len;
+    return body[0..end];
+}
+
+/// Parse every trace line and bind one descriptor-selected shell decision to
+/// one call/result plus the same-object recovered terminal. Runtime shell-v1
+/// results have no shell_deny event; policy denial has exactly one.
+fn expectStructuredShellTrace(
+    gpa: std.mem.Allocator,
+    buf: []const u8,
+    expected: StructuredShellTraceExpect,
+) !void {
+    var run_start_count: u32 = 0;
+    var permission_count: u32 = 0;
+    var shell_deny_count: u32 = 0;
+    var tool_call_count: u32 = 0;
+    var tool_result_count: u32 = 0;
+    var run_end_count: u32 = 0;
+
+    var lines = std.mem.splitScalar(u8, buf, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
+            return error.TestUnexpectedResult;
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.TestUnexpectedResult;
+        const obj = parsed.value.object;
+        const kind_v = obj.get("kind") orelse return error.TestUnexpectedResult;
+        if (kind_v != .string) return error.TestUnexpectedResult;
+        const kind = kind_v.string;
+
+        if (std.mem.eql(u8, kind, "run_start")) {
+            run_start_count += 1;
+            const policy_v = obj.get("shell_policy") orelse return error.TestUnexpectedResult;
+            if (policy_v != .string or !std.mem.eql(u8, policy_v.string, "protect"))
+                return error.TestUnexpectedResult;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "permission")) {
+            permission_count += 1;
+            const name_v = obj.get("name") orelse return error.TestUnexpectedResult;
+            const risk_v = obj.get("risk") orelse return error.TestUnexpectedResult;
+            const allowed_v = obj.get("allowed") orelse return error.TestUnexpectedResult;
+            if (name_v != .string or !std.mem.eql(u8, name_v.string, "run_shell"))
+                return error.TestUnexpectedResult;
+            if (risk_v != .string or !std.mem.eql(u8, risk_v.string, "execute"))
+                return error.TestUnexpectedResult;
+            if (allowed_v != .bool or !allowed_v.bool) return error.TestUnexpectedResult;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "shell_deny")) {
+            shell_deny_count += 1;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "tool_call")) {
+            tool_call_count += 1;
+            const id_v = obj.get("id") orelse return error.TestUnexpectedResult;
+            const name_v = obj.get("name") orelse return error.TestUnexpectedResult;
+            if (id_v != .string or !std.mem.eql(u8, id_v.string, expected.call_id))
+                return error.TestUnexpectedResult;
+            if (name_v != .string or !std.mem.eql(u8, name_v.string, "run_shell"))
+                return error.TestUnexpectedResult;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "tool_result")) {
+            tool_result_count += 1;
+            const name_v = obj.get("name") orelse return error.TestUnexpectedResult;
+            const body_v = obj.get("body") orelse return error.TestUnexpectedResult;
+            if (name_v != .string or !std.mem.eql(u8, name_v.string, "run_shell"))
+                return error.TestUnexpectedResult;
+            if (body_v != .string) return error.TestUnexpectedResult;
+            switch (expected.body) {
+                .first_line => |header| {
+                    if (!std.mem.eql(u8, bodyFirstLine(body_v.string), header))
+                        return error.TestUnexpectedResult;
+                },
+                .code => |code| {
+                    if (!tool_error.hasCode(body_v.string, code)) return error.TestUnexpectedResult;
+                },
+            }
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "run_end")) {
+            run_end_count += 1;
+            const ok_v = obj.get("ok") orelse return error.TestUnexpectedResult;
+            const stop_v = obj.get("stop_reason") orelse return error.TestUnexpectedResult;
+            if (ok_v != .bool or !ok_v.bool) return error.TestUnexpectedResult;
+            if (stop_v != .string or !std.mem.eql(u8, stop_v.string, "completed"))
+                return error.TestUnexpectedResult;
+        }
+    }
+
+    try std.testing.expectEqual(@as(u32, 1), run_start_count);
+    try std.testing.expectEqual(@as(u32, 1), permission_count);
+    try std.testing.expectEqual(expected.shell_deny_count, shell_deny_count);
+    try std.testing.expectEqual(@as(u32, 1), tool_call_count);
+    try std.testing.expectEqual(@as(u32, 1), tool_result_count);
+    try std.testing.expectEqual(@as(u32, 1), run_end_count);
+}
+
 test "h-integration: default Agent ask-deny write leaves target, permission_denied, save/resume+trace" {
     // Goal: default built-in write_file through Agent.reply under ask/deny gate —
     // no FS mutation, descriptor-derived permission_denied, original Tool-call ID
@@ -3943,6 +4056,322 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
     );
     try expectSessionBytesForbidNeedle(gpa, io, sess_path, "OUTSIDE_SECRET");
     try expectSessionBytesForbidNeedle(gpa, io, sess_path, outside_bytes);
+}
+
+const ShellRecoveryProvider = struct {
+    call_id: []const u8,
+    command: []const u8,
+    recovery: []const u8,
+    expected_body: ShellTraceBodyExpect,
+    step: u32 = 0,
+
+    fn chat(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const message.Message,
+        _: []const tool.Definition,
+        _: provider_mod.RequestControl,
+    ) provider_mod.ChatError!message.AssistantTurn {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.step += 1;
+        if (self.step == 1) {
+            const calls = try arena.alloc(message.ToolCall, 1);
+            calls[0] = .{
+                .id = try arena.dupe(u8, self.call_id),
+                .name = try arena.dupe(u8, "run_shell"),
+                .arguments = try std.fmt.allocPrint(arena, "{{\"command\":{f}}}", .{
+                    std.json.fmt(self.command, .{}),
+                }),
+            };
+            return .{ .content = "", .tool_calls = calls, .finish_reason = "tool_calls" };
+        }
+        if (self.step != 2) return error.InvalidResponse;
+
+        const body = toolBodyById(messages, self.call_id) orelse return error.InvalidResponse;
+        if (!assistantHasCallId(messages, self.call_id)) return error.InvalidResponse;
+        switch (self.expected_body) {
+            .first_line => |header| {
+                if (!std.mem.eql(u8, bodyFirstLine(body), header)) return error.InvalidResponse;
+            },
+            .code => |code| {
+                if (!tool_error.hasCode(body, code)) return error.InvalidResponse;
+            },
+        }
+        return .{
+            .content = try arena.dupe(u8, self.recovery),
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        };
+    }
+};
+
+const ShellDenyProbe = struct {
+    invocations: *u32,
+
+    fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+        const self: *ShellDenyProbe = @ptrCast(@alignCast(instance.?));
+        self.invocations.* += 1;
+        return ctx.allocator.dupe(u8, "unexpected shell handler invocation") catch
+            return error.OutOfMemory;
+    }
+};
+
+test "h-shell: default protect policy deny skips handler and roundtrips session trace" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-h-shell-policy";
+    const sess_path = ".zag-test-h-shell-policy/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    edit_tools.testing.reset();
+    defer edit_tools.testing.reset();
+
+    var provider_state: ShellRecoveryProvider = .{
+        .call_id = "shell-policy-1",
+        .command = "rm -rf /",
+        .recovery = "policy-deny-recovered",
+        .expected_body = .{ .code = .shell_deny },
+    };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &provider_state,
+        .vtable = &.{ .chat = ShellRecoveryProvider.chat },
+    }, .{
+        .permission_mode = .yolo,
+        // `shell_policy` intentionally omitted: product default `.protect`.
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var handler_invocations: u32 = 0;
+    var probe: ShellDenyProbe = .{ .invocations = &handler_invocations };
+    const deny_tools = [_]tool.Tool{.{
+        .descriptor = agent.tools_storage.tools[6].descriptor,
+        .instance = &probe,
+        .handler = ShellDenyProbe.handle,
+    }};
+    agent.test_tools = &deny_tools;
+
+    var expected_body: ?[]u8 = null;
+    defer if (expected_body) |body| gpa.free(body);
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        const result = try agent.reply(&session, "attempt denied shell command");
+        try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+        try std.testing.expectEqualStrings("policy-deny-recovered", result.final_text);
+        try std.testing.expectEqual(@as(u32, 0), handler_invocations);
+        try std.testing.expectEqual(@as(u32, 2), provider_state.step);
+
+        const body = try expectPairedToolId(session.transcript.items(), "shell-policy-1");
+        try std.testing.expect(tool_error.hasCode(body, .shell_deny));
+        try std.testing.expect(std.mem.indexOf(u8, body, "format=shell-v1") == null);
+        expected_body = try gpa.dupe(u8, body);
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try expectStructuredShellTrace(gpa, tr.buf.items, .{
+            .call_id = "shell-policy-1",
+            .body = .{ .code = .shell_deny },
+            .shell_deny_count = 1,
+        });
+        try expectRunEnd(tr, true, "completed");
+        try expectSessionPairedOutcome(
+            gpa,
+            io,
+            sess_path,
+            "shell-policy-1",
+            .{ .exact = expected_body.? },
+        );
+    }
+
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    const resumed_body = try expectPairedToolId(resumed.transcript.items(), "shell-policy-1");
+    try std.testing.expectEqualStrings(expected_body.?, resumed_body);
+    try std.testing.expectEqual(@as(u32, 0), handler_invocations);
+}
+
+const AgentShellFixture = struct {
+    dir_name: []const u8,
+    call_id: []const u8,
+    command: []const u8,
+    shell_path: []const u8 = "/bin/sh",
+    timeout_ms: u32 = 30_000,
+    stdout_limit: usize = 30 * 1024,
+    stderr_limit: usize = 30 * 1024,
+    expected_header: []const u8,
+    forbidden_result_bytes: []const []const u8 = &.{},
+};
+
+fn requireAgentRealShellFixture() !void {
+    switch (builtin.os.tag) {
+        .macos, .linux => {},
+        else => return error.SkipZigTest,
+    }
+}
+
+fn runAgentShellFixture(fixture: AgentShellFixture) !void {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const sess_path = try std.fmt.allocPrint(gpa, "{s}/s.jsonl", .{fixture.dir_name});
+    defer gpa.free(sess_path);
+    Io.Dir.cwd().deleteTree(io, fixture.dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, fixture.dir_name);
+    defer Io.Dir.cwd().deleteTree(io, fixture.dir_name) catch {};
+
+    edit_tools.testing.configure(
+        fixture.shell_path,
+        fixture.timeout_ms,
+        fixture.stdout_limit,
+        fixture.stderr_limit,
+    );
+    defer edit_tools.testing.reset();
+
+    var provider_state: ShellRecoveryProvider = .{
+        .call_id = fixture.call_id,
+        .command = fixture.command,
+        .recovery = "shell-runtime-recovered",
+        .expected_body = .{ .first_line = fixture.expected_header },
+    };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &provider_state,
+        .vtable = &.{ .chat = ShellRecoveryProvider.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var expected_body: ?[]u8 = null;
+    defer if (expected_body) |body| gpa.free(body);
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        const result = try agent.reply(&session, "run shell fixture");
+        try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+        try std.testing.expectEqualStrings("shell-runtime-recovered", result.final_text);
+        try std.testing.expectEqual(@as(u32, 2), provider_state.step);
+
+        const body = try expectPairedToolId(session.transcript.items(), fixture.call_id);
+        try std.testing.expectEqualStrings(fixture.expected_header, bodyFirstLine(body));
+        try std.testing.expect(body.len <= tool.max_result_bytes);
+        try std.testing.expect(std.mem.indexOf(u8, body, "code=shell_deny") == null);
+        for (fixture.forbidden_result_bytes) |forbidden| {
+            try std.testing.expect(std.mem.indexOf(u8, body, forbidden) == null);
+        }
+        expected_body = try gpa.dupe(u8, body);
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try expectStructuredShellTrace(gpa, tr.buf.items, .{
+            .call_id = fixture.call_id,
+            .body = .{ .first_line = fixture.expected_header },
+            .shell_deny_count = 0,
+        });
+        try expectRunEnd(tr, true, "completed");
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"stop_reason\":\"timeout\"") == null);
+        try expectSessionPairedOutcome(
+            gpa,
+            io,
+            sess_path,
+            fixture.call_id,
+            .{ .exact = expected_body.? },
+        );
+    }
+
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    const resumed_body = try expectPairedToolId(resumed.transcript.items(), fixture.call_id);
+    try std.testing.expectEqualStrings(expected_body.?, resumed_body);
+    try expectSessionPairedOutcome(
+        gpa,
+        io,
+        sess_path,
+        fixture.call_id,
+        .{ .exact = expected_body.? },
+    );
+}
+
+test "h-shell: Agent success and nonzero compose transcript session resume trace terminal" {
+    try requireAgentRealShellFixture();
+    try runAgentShellFixture(.{
+        .dir_name = ".zag-test-h-shell-agent-success",
+        .call_id = "shell-success-1",
+        .command = "printf agent-out; printf agent-err >&2",
+        .expected_header = "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=9 stderr_bytes=9 stdout_truncated=false stderr_truncated=false",
+    });
+    try runAgentShellFixture(.{
+        .dir_name = ".zag-test-h-shell-agent-nonzero",
+        .call_id = "shell-nonzero-1",
+        .command = "printf nz; printf bad >&2; exit 7",
+        .expected_header = "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=2 stderr_bytes=3 stdout_truncated=false stderr_truncated=false",
+    });
+}
+
+test "h-shell: Agent timeout and output limit are soft recovered completed outcomes" {
+    try requireAgentRealShellFixture();
+    try runAgentShellFixture(.{
+        .dir_name = ".zag-test-h-shell-agent-timeout",
+        .call_id = "shell-timeout-1",
+        .command = ": AGENT_TIMEOUT_COMMAND_SECRET; while :; do :; done",
+        .timeout_ms = 100,
+        .expected_header = "error: code=shell_timeout format=shell-v1 timeout_ms=100 partial_output_available=false cleanup_scope=direct_child",
+        .forbidden_result_bytes = &.{ "AGENT_TIMEOUT_COMMAND_SECRET", "--- stdout ---", "--- stderr ---" },
+    });
+    try runAgentShellFixture(.{
+        .dir_name = ".zag-test-h-shell-agent-output",
+        .call_id = "shell-output-1",
+        .command = ": AGENT_OUTPUT_COMMAND_SECRET; while :; do printf abcdefghijklmnop; done",
+        .stdout_limit = 12,
+        .stderr_limit = 13,
+        .expected_header = "error: code=shell_output_limit format=shell-v1 stdout_limit_bytes=12 stderr_limit_bytes=13 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
+        .forbidden_result_bytes = &.{ "AGENT_OUTPUT_COMMAND_SECRET", "--- stdout ---", "--- stderr ---" },
+    });
+}
+
+test "h-shell: Agent sanitized process failure composes and recovers" {
+    try requireAgentRealShellFixture();
+    const invalid_path = "/zag-test-missing/AGENT_RAW_SHELL_PATH_SECRET";
+    try runAgentShellFixture(.{
+        .dir_name = ".zag-test-h-shell-agent-process-failure",
+        .call_id = "shell-process-failure-1",
+        .command = ": AGENT_PROCESS_COMMAND_SECRET",
+        .shell_path = invalid_path,
+        .expected_header = "error: code=shell_process_failure format=shell-v1 stage=run partial_output_available=false",
+        .forbidden_result_bytes = &.{
+            invalid_path,
+            "AGENT_RAW_SHELL_PATH_SECRET",
+            "AGENT_PROCESS_COMMAND_SECRET",
+            "FileNotFound",
+            "AccessDenied",
+            "InvalidExe",
+        },
+    });
 }
 
 /// Instance state for between-Tool cancel: first handler runs, then requests cancel.

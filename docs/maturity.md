@@ -11,7 +11,7 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**总状态（2026-07-25 exit audit）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。原 h-integration Agent 组合证据已经独立验收并在 main 的 std/curl Gate 通过，但同步 shell runtime/observability 合同仍由 `h-shell-001` 阻塞。
+**总状态（2026-07-25 exit audit）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。原 h-integration Agent 组合证据已经独立验收并在 main 的 std/curl Gate 通过；`h-shell-001` 的 package runtime/observability 实现与矩阵已落地，但独立/main Gate 与最终 audit 仍阻塞 Phase H。
 
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
@@ -25,7 +25,7 @@
 | Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；`buildTool`+`validateTools`+`loop.run` 对 missing/invalid caps fail-closed；path/shell 参数校验；Provider/WireProvider 仅 ToolDefinition；`.cooperative` 仅为声明（handler preemption 属 post-H shell/process work） | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
 | Tools · read/search | **L1+** | list/read/grep/glob + budgets；h-workspace-001 symlink-aware containment 与 walker fixture 已落地；独立 row promotion 仍需按模块 acceptance 审计，不由 Phase H 绿测自动获得 | 结果有界 + walker 矩阵稳定 | LSP/repo map integration |
 | Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff；descriptor + Guard containment 已落地；canonical permission-path identity 和一般 write-fault/no-partial-mutation 保证未宣称 | containment 下 stale/ambiguous 可恢复且不误写；write fault contract 明确 | hashline/apply_patch、hunk review |
-| Tools · shell | **L1** | permission + descriptor-selected policy + synchronous runner 存在；timeout/output-limit/process failure 仍折叠 generic `tool_failed`，总 body budget 与 trace 组合未证明；`h-shell-001` ready；denylist 不是 sandbox | `shell-v1` outcome matrix、30 KiB/stream + 64 KiB body、direct-child cleanup、policy/runtime trace evidence | background job/process supervisor |
+| Tools · shell | **L1** | `h-shell-001` package 已落地 shell-v1 outcome、30 KiB/stream、checked 64 KiB body、direct-child cleanup 与 Agent/session/trace 矩阵；独立/main Gate 未过，denylist 不是 sandbox | package matrix ✅；independent/main Gate + final audit open | background job/process supervisor |
 | Permissions | **L2** | D-007: Gate/Ask/plan/remember 消费 descriptor.risk；custom write/execute 与 built-in 同 gate；无 `riskOf(name)`；canonical contained-path remember identity 不额外宣称 | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
 | Workspace / Safety | **L2** | lexical + symlink-aware file containment（Root/Guard、loop+handler 双检、`code=jail_deny`）+ secret redaction + provider-independent doctor；default Agent ask-deny write / yolo escaping-symlink jail composition 已独立验收并通过 main std/curl；shell 是单独非 path-jail 边界；无 OS sandbox claim | file containment ✅；redaction ✅；doctor ✅；Agent policy/containment composition ✅ | OS sandbox/network/worktree |
 | Context / Compaction | **L2** | h-context-001: fixed-point final-view；ID 精确 tool bundle fail-closed→`invalid_context`；lineage 截断有 digest/marker；共享 summary_cap=800；UTF-8 sanitize；session/trace 成功路径 byte-equal；soft min_tail；OOM 不静默 | final returned view 与 dropped/summary/session/trace 一致 ✅ | repo map、智能选文件 |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | P0/P1 module faults、doctor no-key/process、default Agent policy/containment、between-Tool cancel 均已进入 suite 并通过独立/main Gate；`h-shell-001` 的 outcome/budget/direct-child/trace matrix 尚未进入永久 CI | existing real-composition matrix ✅；shell-v1 matrix open；不得削弱断言 | edit/cost/performance baselines |
+| Quality / Evals | **L1+** | P0/P1 既有证据已通过独立/main Gate；`h-shell-001` outcome/budget/direct-child/parsed-trace package matrix 已进入 suite，但独立/main Gate pending | existing real-composition matrix ✅；shell package matrix landed；Gate open；不得削弱断言 | edit/cost/performance baselines |
 
 ## Phase H production-floor exit
 
@@ -50,9 +50,9 @@
 5. **Context accounting ✅**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致。
 6. **Secrets ✅**：fake configured key 不出现在 verbose、trace、session fixtures；`.zag/` 仍标敏感；无 zeroization/DLP 声称。
 7. **Deadline/cancel ✅（按 H 边界）**：curl 真正执行 provider deadline/active cancel；std 配置 deadline 显式 `unsupported_control`；半截 Tool call 不执行；accepted multi-Tool turn 的 between-Tool cancel 组合 fixture 已验收。已运行 Tool/shell 的 mid-flight preemption 不属于 H，作为 post-H process work 保持显式 open。
-8. **Editing/runtime — OPEN (`h-shell-001`)**：search_replace/grep/glob 可用；shell success/nonzero/signal/timeout/output-limit/process-failure/deny 必须是稳定机器可读形状，完整 Tool body 有界，不能伪造 partial output。
-9. **Observability — OPEN (`h-shell-001`)**：trace schema/version/terminal/I/O/redaction 已达 L2；还需证明 permission/shell deny 与 shell runtime first-line classification 可从 transcript/session/trace 复盘，且 shell timeout 不冒充 Agent/provider timeout。
-10. **Regression evidence ✅（现有 Gate）**：goldens + P0/P1 module faults + provider-independent doctor + default Agent policy/containment chain + between-Tool cancel 组合 fixtures 已进 package suite并通过独立与 main std/curl Gate；shell 新增矩阵仍必须按第 8/9 条进入永久 CI。
+8. **Editing/runtime — GATE OPEN (`h-shell-001`)**：package fixtures 已证明 shell success/nonzero/signal/timeout/output-limit/process-failure/deny 的稳定形状、完整 Tool body 有界且无伪造 partial output；独立/main Gate 尚未完成。
+9. **Observability — GATE OPEN (`h-shell-001`)**：package fixtures 已从 transcript/session/resume/parsed trace 复盘 permission/shell deny 与 runtime first-line classification，并证明 shell timeout 以 recovered `completed` 收口；独立/main Gate 与最终 audit 尚未完成。
+10. **Regression evidence — PARTIAL GATE**：既有 goldens/P0/P1/doctor/default policy/containment/between-Tool cancel 已通过独立与 main std/curl Gate；shell 新矩阵已进入 package suite，但仍待独立与 main std/curl Gate。
 11. **Documentation truth ✅（当前基线）**：README、SECURITY、architecture、Phase H、module/task DAG 与本表一致，不声称 OS sandbox、process-tree cleanup、mid-flight Tool preemption、atomic edit fault guarantee 或 SDK-ready 已具备。
 
 L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。
@@ -79,7 +79,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Phase 1 | write/shell/ask | descriptor-driven risk L2；file symlink containment closed；shell-v1 runtime open |
 | Phase 2 | session/context | durability/open L2；compaction accounting L2 |
 | Phase 3 | lexical jail/policy/trace | real file containment、truthful/versioned trace、redaction closed；no OS sandbox |
-| **Phase H** | raises existing surfaces | active `h-shell-001` → integration closeout → full exit audit |
+| **Phase H** | raises existing surfaces | in-progress `h-shell-001`（package evidence landed/Gate pending）→ blocked integration closeout → full exit audit |
 
 ## Maintenance
 

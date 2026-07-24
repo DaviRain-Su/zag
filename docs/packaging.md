@@ -167,7 +167,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 
 ## 5. 与路线图的关系
 
-- **Phase H**：保持当前 package layout；session、Tool descriptor、containment、trace、context、redact、provider control 已落地，当前补 synchronous shell-v1/observability 与最终 audit。
+- **Phase H**：保持当前 package layout；session、Tool descriptor、containment、trace、context、redact、provider control 已落地；synchronous shell-v1/observability package evidence 已落地但 `h-shell-001` Gate 尚未完成，之后仍需最终 audit。
 - **SDK-ready Gate**：完成 public composition 和 external consumer；不由 Phase H 或 package count 自动获得。
 - **Headless Gate**：提供 process contract，早于 TUI/ACP polish。
 - **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。

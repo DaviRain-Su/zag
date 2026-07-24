@@ -41,7 +41,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | Slice | Spec | Current truth |
 |-------|------|---------------|
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | L2：soft errors/serial/goldens + facade terminal；provider active control；accepted multi-Tool between-call Agent composition 已通过独立/main Gate；mid-flight Tool preemption post-H |
-| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | file descriptors/containment landed；write-fault claims remain conservative；`h-shell-001` ready for shell-v1/budget/direct-child/trace |
+| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | file descriptors/containment landed；write-fault claims remain conservative；`h-shell-001` package shell-v1/budget/direct-child/trace evidence landed，Gate pending |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
@@ -63,9 +63,9 @@ h-integration original Agent chains（independent + main Gate）✅ evidence
 
 Tool runtime + trace
   ↓
-h-shell-001（shell-v1 + bounded direct-child/trace evidence）ready
+h-shell-001（package evidence landed；independent/main Gate pending）in-progress
   ↓
-h-integration-001 final closeout blocked until shell
+h-integration-001 final closeout remains blocked until shell done
   ↓
 full Phase H exit audit
   ↓
@@ -94,4 +94,4 @@ Each task adds its named failure fixture before claiming closeout. Live provider
 
 ## 5. Exit
 
-All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. Current order is h-shell-001 isolated develop/verify → main std/curl → h-integration-001 final audit. H completion does not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, or OS sandbox, and does not automatically imply SDK-ready or headless-ready.
+All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. h-shell-001 isolated package implementation/evidence is landed; remaining order is independent review/main std+cURL → h-integration-001 final audit. H completion does not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, or OS sandbox, and does not automatically imply SDK-ready or headless-ready.

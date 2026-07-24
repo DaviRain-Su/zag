@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **L1+** — descriptors and symlink-aware containment landed; write-fault and shell integration gates remain |
+| Current maturity | **L1+** — descriptors and symlink-aware containment landed; write-fault claims remain conservative; shell package evidence landed but its Gate is pending |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -32,7 +32,7 @@ D-007 descriptors and h-workspace-001 symlink-aware containment are complete for
 
 - canonical contained-path identity is not yet shared/proven for permission remember;
 - write/edit fault fixtures do not yet establish an atomic truncate-write or general no-partial-write guarantee;
-- synchronous shell outcomes still need the separate [`shell-v1` contract](./tools-shell.md) and Agent/trace evidence in `h-shell-001`.
+- the separate [`shell-v1` contract](./tools-shell.md) and Agent/trace package evidence have landed in `h-shell-001`, whose independent/main Gate is still pending.
 
 Do not infer an atomic write guarantee merely from containment success. Read/search containment evidence may be promoted independently after its row is audited; it does not waive write/edit failure requirements.
 
@@ -44,7 +44,7 @@ Do not infer an atomic write guarantee merely from containment success. Read/sea
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] contained-path identity is shared with permission remember.
 - [ ] write/edit failure fixtures prove no unintended partial mutation.
-- [ ] shell/error integration passes the common lifecycle contract (`h-shell-001`).
+- [x] shell/error integration package fixtures pass the common lifecycle contract (`h-shell-001`); independent/main Gate remains pending and does not promote this row.
 
 ## L3 (C4)
 
