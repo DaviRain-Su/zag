@@ -64,10 +64,12 @@ Body history (after leading transcript systems) is validated before trim:
 | `context.summary_cap` | **800** |
 | `Options.summary_max_chars` | clamped via `effectiveSummaryMax` / `clampSummaryBudget` |
 | `trace.cap_compaction_summary` | alias of `context.summary_cap` |
+| `summaryFloor(dropped, prior_len)` | minimum reserved bytes (always ≤ 800) |
 
 - Request `0` → use full cap.
 - Request `> 800` → clamp to 800.
-- Tiny requests still reserve room for a complete dropped-count header.
+- Tiny requests raise to `summaryFloor`: complete dropped-count header **plus**, when a prior session summary exists, a minimal truncated lineage record (`prior_bytes`, `kept_bytes=0`, full `wyhash64` 16-hex digest, `[LINEAGE_TRUNCATED]`).
+- Construction stays in-budget: lineage is never written long then generically cut.
 - Built events always have `summary.len <= summary_cap` and valid UTF-8.
 
 ### Lineage
@@ -75,9 +77,9 @@ Body history (after leading transcript systems) is validated before trim:
 | Case | Behavior |
 |------|----------|
 | Prior fits in residual budget | Exact prior bytes under `Prior session context:` |
-| Prior does not fit | Explicit record: `prior_bytes`, `kept_bytes`, `digest=wyhash64:…`, kept prefix, `[LINEAGE_TRUNCATED]` |
+| Prior does not fit (or only floor room) | Explicit record: `prior_bytes`, `kept_bytes` (may be 0), `digest=wyhash64:{16 hex}`, optional kept prefix, `[LINEAGE_TRUNCATED]` |
 
-Never silently truncate prior summary bytes without the marker/digest record.
+Never silently truncate prior summary bytes without the marker/digest record. Tiny `summary_max_chars` (e.g. 1 or 8) with a large prior still keeps full `prior_bytes` + full digest + marker.
 
 ### Invalid UTF-8
 

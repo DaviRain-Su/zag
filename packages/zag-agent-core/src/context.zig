@@ -82,13 +82,14 @@ pub const Options = struct {
     /// Never drop below this many history messages from the end.
     min_tail_messages: usize = 6,
     /// Requested max chars for the heuristic summary. Clamped to `summary_cap`.
-    /// `0` means use `summary_cap`. Tiny values still reserve room for the
-    /// dropped-count header (never lose the omitted-count line).
+    /// `0` means use `summary_cap`. Tiny values raise to a floor that always
+    /// holds the dropped-count header and, when a prior session summary exists,
+    /// a minimal truncated lineage record (prior_bytes/kept_bytes=0/digest/marker).
     summary_max_chars: usize = default_summary_max_chars,
 
-    /// Effective summary budget after clamp to the shared cap and header floor.
-    pub fn effectiveSummaryMax(self: Options, dropped_count: usize) usize {
-        return clampSummaryBudget(self.summary_max_chars, dropped_count);
+    /// Effective summary budget after clamp to the shared cap and content floor.
+    pub fn effectiveSummaryMax(self: Options, dropped_count: usize, prior_session: []const u8) usize {
+        return clampSummaryBudget(self.summary_max_chars, dropped_count, prior_session.len);
     }
 };
 
@@ -132,24 +133,62 @@ pub const View = struct {
     compaction: ?CompactionEvent = null,
 };
 
-/// Clamp requested summary budget: 0 → full cap; always ≤ summary_cap; at least
-/// long enough for the dropped-count header for `dropped_count`.
-pub fn clampSummaryBudget(requested: usize, dropped_count: usize) usize {
-    const floor = droppedHeaderLen(dropped_count);
+/// Clamp requested summary budget: 0 → full cap; always ≤ `summary_cap`; at least
+/// `summaryFloor(dropped_count, prior_len)` so the dropped header (and minimal
+/// lineage when prior exists) cannot be lost to a tiny request.
+pub fn clampSummaryBudget(requested: usize, dropped_count: usize, prior_len: usize) usize {
+    const floor = summaryFloor(dropped_count, prior_len);
+    std.debug.assert(floor <= summary_cap);
     const base: usize = if (requested == 0) summary_cap else requested;
     const capped = @min(base, summary_cap);
     if (capped >= floor) return capped;
-    // Tiny request: still emit a complete header (fits in summary_cap for any usize).
-    return @min(floor, summary_cap);
+    return floor;
+}
+
+/// Minimum summary bytes that must be reserved for a complete dropped header
+/// and, when `prior_len > 0`, a minimal truncated lineage record
+/// (`prior_bytes`, `kept_bytes=0`, full wyhash64 digest, `[LINEAGE_TRUNCATED]`).
+/// Always ≤ `summary_cap` for any practical dropped/prior size.
+pub fn summaryFloor(dropped_count: usize, prior_len: usize) usize {
+    const hdr = droppedHeaderLen(dropped_count);
+    if (prior_len == 0) {
+        std.debug.assert(hdr <= summary_cap);
+        return hdr;
+    }
+    const lin = minimalTruncatedLineageLen(prior_len);
+    const floor = hdr + lin;
+    std.debug.assert(floor <= summary_cap);
+    return floor;
 }
 
 fn droppedHeaderLen(dropped_count: usize) usize {
     // "[compaction] {d} earlier messages omitted from the model view.\n"
-    var buf: [80]u8 = undefined;
+    var buf: [96]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "[compaction] {d} earlier messages omitted from the model view.\n", .{dropped_count}) catch {
-        return 64;
+        return 80;
     };
     return s.len;
+}
+
+fn decimalDigits(n: usize) usize {
+    if (n < 10) return 1;
+    var d: usize = 0;
+    var x = n;
+    while (x > 0) : (x /= 10) d += 1;
+    return d;
+}
+
+/// Length of the minimal truncated lineage record (no kept prefix), with
+/// fixed-width 16-digit hex digest so floor is independent of digest value.
+pub fn minimalTruncatedLineageLen(prior_len: usize) usize {
+    // Prior session context (truncated):\n
+    // prior_bytes=N kept_bytes=0 digest=wyhash64:HHHHHHHHHHHHHHHH\n
+    // [LINEAGE_TRUNCATED]\n
+    const line1 = "Prior session context (truncated):\n".len;
+    const line2 = "prior_bytes=".len + decimalDigits(prior_len) +
+        " kept_bytes=0 digest=wyhash64:".len + 16 + 1; // +1 = '\n'
+    const line3 = lineage_truncated_marker.len + 1;
+    return line1 + line2 + line3;
 }
 
 /// Build a model-facing view with four layers + history tail.
@@ -202,7 +241,7 @@ pub fn viewForModel(
         var iter: usize = 0;
         while (iter < max_iters) : (iter += 1) {
             const dropped = start;
-            const budget = opts.effectiveSummaryMax(dropped);
+            const budget = opts.effectiveSummaryMax(dropped, layers.session);
             const summary = try buildSummary(
                 arena,
                 body[0..dropped],
@@ -211,6 +250,7 @@ pub fn viewForModel(
                 layers.session,
             );
             std.debug.assert(summary.len <= summary_cap);
+            std.debug.assert(summary.len <= budget);
 
             if (use_layers) {
                 layer_chars = layerEstimate(layers, summary);
@@ -227,7 +267,7 @@ pub fn viewForModel(
             }
         } else {
             const dropped = start;
-            const budget = opts.effectiveSummaryMax(dropped);
+            const budget = opts.effectiveSummaryMax(dropped, layers.session);
             const summary = try buildSummary(
                 arena,
                 body[0..dropped],
@@ -465,6 +505,7 @@ fn buildLayerMessages(
 /// Build a bounded UTF-8-safe summary for the final omitted set.
 /// Prior session bytes are preserved exactly when they fit; otherwise an
 /// explicit truncated lineage record is written (never silent truncation).
+/// All writes stay within `max_chars` — never construct then generically cut.
 fn buildSummary(
     arena: std.mem.Allocator,
     dropped_msgs: []const message.Message,
@@ -472,52 +513,54 @@ fn buildSummary(
     dropped_count: usize,
     prior_session: []const u8,
 ) error{OutOfMemory}![]const u8 {
+    const floor = summaryFloor(dropped_count, prior_session.len);
+    std.debug.assert(max_chars >= floor);
+    std.debug.assert(max_chars <= summary_cap);
+
     var body: std.Io.Writer.Allocating = .init(arena);
     errdefer body.deinit();
 
-    // Header is always complete (budget floor guarantees room for this line).
+    // Header is always complete (budget floor guarantees room).
     body.writer.print(
         "[compaction] {d} earlier messages omitted from the model view.\n",
         .{dropped_count},
     ) catch return error.OutOfMemory;
+    std.debug.assert(body.written().len <= max_chars);
 
-    // Lineage before highlights so prior session is never silently erased.
+    // Lineage before highlights — constructed fully within remaining room.
     if (prior_session.len > 0) {
         try writeLineage(&body, arena, prior_session, max_chars);
+        std.debug.assert(body.written().len <= max_chars);
     }
 
-    if (body.written().len < max_chars) {
-        body.writer.print("Highlights:\n", .{}) catch return error.OutOfMemory;
-    }
-    for (dropped_msgs) |m| {
-        if (body.written().len >= max_chars) break;
-        const role = m.role.jsonName();
-        const sanitized = try sanitizeUtf8(arena, m.content);
-        const snippet = truncateUtf8(sanitized, 120);
-        body.writer.print("- {s}: {s}\n", .{ role, snippet }) catch return error.OutOfMemory;
+    // Highlights only if residual room remains after mandatory sections.
+    const hl_tag = "Highlights:\n";
+    if (body.written().len + hl_tag.len < max_chars) {
+        body.writer.print("{s}", .{hl_tag}) catch return error.OutOfMemory;
+        for (dropped_msgs) |m| {
+            const role = m.role.jsonName();
+            const sanitized = try sanitizeUtf8(arena, m.content);
+            const snippet = truncateUtf8(sanitized, 120);
+            var line_buf: [200]u8 = undefined;
+            const line = std.fmt.bufPrint(&line_buf, "- {s}: {s}\n", .{ role, snippet }) catch continue;
+            if (body.written().len + line.len > max_chars) break;
+            body.writer.print("{s}", .{line}) catch return error.OutOfMemory;
+        }
     }
     body.writer.flush() catch {};
 
-    var owned = body.toOwnedSlice() catch return error.OutOfMemory;
-    if (owned.len > max_chars) {
-        const cut = truncateUtf8(owned, max_chars);
-        if (cut.len < owned.len) {
-            owned = arena.realloc(owned, cut.len) catch return error.OutOfMemory;
-        }
-    }
-    // Ensure we never exceed the shared hard cap either.
-    if (owned.len > summary_cap) {
-        const cut = truncateUtf8(owned, summary_cap);
-        owned = arena.realloc(owned, cut.len) catch return error.OutOfMemory;
-    }
+    const owned = body.toOwnedSlice() catch return error.OutOfMemory;
+    // Construction is in-bounds; no whole-summary truncation that could eat lineage.
+    std.debug.assert(owned.len <= max_chars);
+    std.debug.assert(owned.len <= summary_cap);
     if (!std.unicode.utf8ValidateSlice(owned)) {
-        // Sanitization path should prevent this; re-sanitize whole buffer.
-        const fixed = try sanitizeUtf8(arena, owned);
-        return fixed;
+        return try sanitizeUtf8(arena, owned);
     }
     return owned;
 }
 
+/// Write exact prior or a truncated lineage record fully within
+/// `max_chars - body.written().len`. Never intentionally overruns then cuts.
 fn writeLineage(
     body: *std.Io.Writer.Allocating,
     arena: std.mem.Allocator,
@@ -525,58 +568,69 @@ fn writeLineage(
     max_chars: usize,
 ) error{OutOfMemory}!void {
     const prior_clean = try sanitizeUtf8(arena, prior_session);
-    const prefix = "Prior session context:\n";
-    const room_after_prefix = if (body.written().len + prefix.len < max_chars)
-        max_chars - body.written().len - prefix.len
-    else
-        0;
-
-    // Exact prior when it fits entirely (plus trailing newline).
-    if (prior_clean.len + 1 <= room_after_prefix) {
-        body.writer.print("{s}{s}\n", .{ prefix, prior_clean }) catch return error.OutOfMemory;
-        return;
-    }
-
-    // Explicit truncated lineage record — never silent byte cut of prior alone.
     const digest = std.hash.Wyhash.hash(0, prior_clean);
-    // Record lines (deterministic):
-    // Prior session context (truncated):
-    // prior_bytes=N kept_bytes=K digest=wyhash64:HEX
-    // kept:
-    // <prefix>
-    // [LINEAGE_TRUNCATED]
-    const record_hdr = "Prior session context (truncated):\n";
-    var meta_buf: [128]u8 = undefined;
-    // Reserve marker + newlines; compute kept budget from remaining room.
-    const marker_line_len = lineage_truncated_marker.len + 1;
-    const meta_probe = std.fmt.bufPrint(&meta_buf, "prior_bytes={d} kept_bytes={d} digest=wyhash64:{x}\nkept:\n", .{
-        prior_clean.len,
-        @as(usize, 0),
-        digest,
-    }) catch return error.OutOfMemory;
+    const used = body.written().len;
+    if (used >= max_chars) return;
+    const room = max_chars - used;
 
-    body.writer.print("{s}", .{record_hdr}) catch return error.OutOfMemory;
-    const room_for_rest = if (body.written().len < max_chars) max_chars - body.written().len else 0;
-    // meta (with real kept) + kept + marker
-    const meta_overhead = meta_probe.len + 8; // digit width slack for kept_bytes
-    if (room_for_rest <= meta_overhead + marker_line_len) {
-        // Extremely tight: emit marker-only lineage.
-        body.writer.print("prior_bytes={d} kept_bytes=0 digest=wyhash64:{x}\n{s}\n", .{
-            prior_clean.len,
-            digest,
-            lineage_truncated_marker,
-        }) catch return error.OutOfMemory;
+    // Exact prior when it fits entirely.
+    const exact_prefix = "Prior session context:\n";
+    if (exact_prefix.len + prior_clean.len + 1 <= room) {
+        body.writer.print("{s}{s}\n", .{ exact_prefix, prior_clean }) catch return error.OutOfMemory;
         return;
     }
-    const kept_budget = room_for_rest - meta_overhead - marker_line_len;
-    const kept = truncateUtf8(prior_clean, kept_budget);
-    body.writer.print("prior_bytes={d} kept_bytes={d} digest=wyhash64:{x}\nkept:\n{s}\n{s}\n", .{
-        prior_clean.len,
-        kept.len,
-        digest,
-        kept,
-        lineage_truncated_marker,
-    }) catch return error.OutOfMemory;
+
+    // Minimal truncated record (kept_bytes=0, no kept section) — floor-guaranteed.
+    const min_len = minimalTruncatedLineageLen(prior_clean.len);
+    std.debug.assert(min_len <= room);
+
+    // Prefer form with a kept prefix when residual room allows.
+    // Form B:
+    //   Prior session context (truncated):\n
+    //   prior_bytes=N kept_bytes=K digest=wyhash64:HHHHHHHHHHHHHHHH\n
+    //   kept:\n
+    //   {prefix}\n
+    //   [LINEAGE_TRUNCATED]\n
+    if (try writeTruncatedLineageWithKept(body, prior_clean, digest, room)) return;
+
+    // Floor form: metadata + marker, zero kept prefix.
+    body.writer.print(
+        "Prior session context (truncated):\nprior_bytes={d} kept_bytes=0 digest=wyhash64:{x:0>16}\n{s}\n",
+        .{ prior_clean.len, digest, lineage_truncated_marker },
+    ) catch return error.OutOfMemory;
+}
+
+/// Try to write truncated lineage with a UTF-8-safe kept prefix. Returns true if written.
+fn writeTruncatedLineageWithKept(
+    body: *std.Io.Writer.Allocating,
+    prior_clean: []const u8,
+    digest: u64,
+    room: usize,
+) error{OutOfMemory}!bool {
+    const line1 = "Prior session context (truncated):\n";
+    const kept_label = "kept:\n";
+    const marker_line = lineage_truncated_marker.len + 1;
+
+    // Shrink kept until form B fits in `room`.
+    var k = prior_clean.len;
+    while (true) {
+        const kept = truncateUtf8(prior_clean, k);
+        k = kept.len;
+        const meta_len = "prior_bytes=".len + decimalDigits(prior_clean.len) +
+            " kept_bytes=".len + decimalDigits(k) +
+            " digest=wyhash64:".len + 16 + 1;
+        const total = line1.len + meta_len + kept_label.len + k + 1 + marker_line;
+        if (total <= room) {
+            body.writer.print(
+                "{s}prior_bytes={d} kept_bytes={d} digest=wyhash64:{x:0>16}\nkept:\n{s}\n{s}\n",
+                .{ line1, prior_clean.len, k, digest, kept, lineage_truncated_marker },
+            ) catch return error.OutOfMemory;
+            return true;
+        }
+        if (k == 0) return false;
+        // Drop at least one byte (and realign UTF-8 on next iteration).
+        k -= 1;
+    }
 }
 
 /// Replace invalid UTF-8 sequences with U+FFFD. Valid input is returned as a
@@ -1104,10 +1158,10 @@ test "h-context: lineage exact fit and truncated record with digest" {
     try std.testing.expect(std.mem.indexOf(u8, sum, "earlier messages omitted") != null);
     try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
 
-    // Digest matches full prior.
+    // Digest matches full prior (fixed-width hex).
     const digest = std.hash.Wyhash.hash(0, prior790);
     var dig_buf: [48]u8 = undefined;
-    const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x}", .{digest});
+    const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x:0>16}", .{digest});
     try std.testing.expect(std.mem.indexOf(u8, sum, dig_needle) != null);
 }
 
@@ -1127,8 +1181,14 @@ test "h-context: shared summary_cap clamp and tiny budget keeps header" {
     };
 
     // > summary_cap request clamps.
-    try std.testing.expectEqual(@as(usize, summary_cap), clampSummaryBudget(5000, 3));
-    try std.testing.expectEqual(@as(usize, summary_cap), clampSummaryBudget(0, 3));
+    try std.testing.expectEqual(@as(usize, summary_cap), clampSummaryBudget(5000, 3, 0));
+    try std.testing.expectEqual(@as(usize, summary_cap), clampSummaryBudget(0, 3, 0));
+    // Floor with prior raises above tiny request and stays ≤ cap.
+    const floor_prior = summaryFloor(4, 790);
+    try std.testing.expect(floor_prior > droppedHeaderLen(4));
+    try std.testing.expect(floor_prior <= summary_cap);
+    try std.testing.expectEqual(floor_prior, clampSummaryBudget(1, 4, 790));
+    try std.testing.expectEqual(floor_prior, clampSummaryBudget(8, 4, 790));
 
     const v_over = try viewForModel(arena, &full, .{
         .max_tail_messages = 2,
@@ -1153,6 +1213,67 @@ test "h-context: shared summary_cap clamp and tiny budget keeps header" {
     const needle = try std.fmt.bufPrint(&count_buf, "{d} earlier", .{v_tiny.compaction.?.dropped});
     try std.testing.expect(std.mem.indexOf(u8, s, needle) != null);
     try std.testing.expect(s.len <= summary_cap);
+}
+
+test "h-context: tiny budget with 790-byte prior keeps full lineage metadata" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    // Force two-stage char growth so summary is rebuilt under pressure.
+    const pad = "X" ** 80;
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("early-1 " ++ pad),
+        .assistantText("early-a1 " ++ pad),
+        .user("early-2 " ++ pad),
+        .assistantText("early-a2 " ++ pad),
+        .user("mid-1 " ++ pad),
+        .assistantText("mid-a1 " ++ pad),
+        .user("late-u"),
+        .assistantText("late-a"),
+    };
+
+    var prior: [790]u8 = undefined;
+    @memset(&prior, 'R');
+    const prior790 = prior[0..];
+    const digest = std.hash.Wyhash.hash(0, prior790);
+    var dig_buf: [48]u8 = undefined;
+    const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x:0>16}", .{digest});
+
+    for ([_]usize{ 1, 8 }) |tiny| {
+        const floor = summaryFloor(6, 790); // lower bound; actual dropped may differ
+        try std.testing.expect(floor <= summary_cap);
+
+        const v = try viewForModel(arena, &full, .{
+            .max_tail_messages = 0,
+            .max_chars = 420, // two-stage pressure
+            .min_tail_messages = 2,
+            .summary_max_chars = tiny,
+        }, .{ .system = "base-system", .session = prior790 });
+
+        try std.testing.expect(v.compaction != null);
+        const sum = v.compaction.?.summary;
+        try std.testing.expect(sum.len <= summary_cap);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
+
+        // Complete dropped header.
+        try std.testing.expect(std.mem.indexOf(u8, sum, "earlier messages omitted") != null);
+        var count_buf: [32]u8 = undefined;
+        const count_needle = try std.fmt.bufPrint(&count_buf, "{d} earlier", .{v.compaction.?.dropped});
+        try std.testing.expect(std.mem.indexOf(u8, sum, count_needle) != null);
+
+        // Full lineage metadata (kept_bytes may be 0 under tiny floor).
+        try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=790") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, dig_needle) != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, lineage_truncated_marker) != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, "kept_bytes=") != null);
+
+        // Floor for this actual dropped count holds.
+        const f2 = summaryFloor(v.compaction.?.dropped, 790);
+        try std.testing.expect(sum.len >= f2);
+        try std.testing.expect(f2 <= summary_cap);
+    }
 }
 
 test "h-context: invalid UTF-8 sanitized to U+FFFD not OOM" {

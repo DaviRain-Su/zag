@@ -32,7 +32,7 @@ Make compaction accounting describe the final model view after every trimming st
 - Fixed-point `viewForModel`: validate tool bundles → count trim → legal align → char trim by atomic units → build summary (+ lineage) → re-cost → rebuild until stable; bound `body.len+1`; worst-case **O(n²)** documented.
 - Tool bundles: nonempty unique IDs; contiguous results in call order; orphan/unknown/duplicate/missing/ooo/incomplete → `InvalidContext` → terminal `invalid_context` (provider not called).
 - Atomic boundary: start inside results → carrier assistant; further trim skips assistant+all results together.
-- Lineage: exact prior when fit; else `prior_bytes`/`kept_bytes`/`digest=wyhash64`/`[LINEAGE_TRUNCATED]`; header always complete.
+- Lineage: exact prior when fit; else truncated record with full digest; floor includes header+min lineage when prior exists so tiny budgets (1/8) cannot drop prior_bytes/digest/marker; no whole-summary cut after overrun.
 - Shared `context.summary_cap` = 800; Options clamped; `trace.cap_compaction_summary` aliases it; `emitCompactionEvent`.
 - Invalid UTF-8 → U+FFFD sanitize (not OOM).
 - Soft budget / `min_tail`: honest stop; two-stage fixture requires final > intermediate.

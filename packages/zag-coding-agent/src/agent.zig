@@ -2115,3 +2115,151 @@ test "h-context: large prior lineage survives save/resume with marker or exact" 
     try std.testing.expectEqual(gen_saved, resumed.compaction_gen);
     try std.testing.expectEqualStrings(summary_saved, resumed.compaction_summary.?);
 }
+
+test "h-context: tiny-budget prior lineage survives save/resume/recompact chain" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-context-tiny-lineage";
+    const path = ".zag-test-h-context-tiny-lineage/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var prior: [790]u8 = undefined;
+    @memset(&prior, 'T');
+    const digest = std.hash.Wyhash.hash(0, &prior);
+    var dig_buf: [48]u8 = undefined;
+    const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x:0>16}", .{digest});
+
+    var gen_after_first: u32 = 0;
+    var summary_after_first: []u8 = undefined;
+
+    {
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .max_turns = 4,
+            .context = .{
+                .max_tail_messages = 2,
+                .max_chars = 0,
+                .min_tail_messages = 2,
+                .summary_max_chars = 1, // tiny → floor with prior lineage
+            },
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        session.compaction_summary = try session.arena_impl.allocator().dupe(u8, &prior);
+        session.compaction_gen = 1;
+
+        var i: usize = 0;
+        while (i < 8) : (i += 1) {
+            try session.transcript.appendUser("u");
+            try session.transcript.appendAssistantTurn(.{
+                .content = "a",
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            });
+        }
+
+        _ = try agent.reply(&session, "compact-1");
+        try std.testing.expectEqual(@as(u32, 2), session.compaction_gen);
+        try std.testing.expect(session.compaction_summary != null);
+        const sum = session.compaction_summary.?;
+        try std.testing.expect(sum.len <= context_mod.summary_cap);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
+        try std.testing.expect(std.mem.indexOf(u8, sum, "earlier messages omitted") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=790") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, dig_needle) != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, context_mod.lineage_truncated_marker) != null);
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        const parsed = try parseCompactionFromTrace(gpa, tr.buf.items);
+        defer gpa.free(parsed.summary);
+        try std.testing.expectEqualStrings(sum, parsed.summary);
+
+        try session.save();
+        gen_after_first = session.compaction_gen;
+        summary_after_first = try gpa.dupe(u8, sum);
+    }
+    defer gpa.free(summary_after_first);
+
+    // Resume → compact again → gen +1; lineage still auditable.
+    {
+        var resumed = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = false,
+        });
+        // Manual deinit before second resume (exclusive writer lock).
+        try std.testing.expectEqual(gen_after_first, resumed.compaction_gen);
+        try std.testing.expectEqualStrings(summary_after_first, resumed.compaction_summary.?);
+
+        var calls2: u32 = 0;
+        var mock2: MockChat = .{ .calls = &calls2, .mode = .text };
+        var agent2 = Agent.init(gpa, io, mockProvider(&mock2), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .max_turns = 4,
+            .context = .{
+                .max_tail_messages = 2,
+                .max_chars = 0,
+                .min_tail_messages = 2,
+                .summary_max_chars = 8,
+            },
+        });
+        defer agent2.deinit();
+        agent2.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+        // Seed more body so another compaction is needed.
+        try resumed.transcript.appendUser("extra-u");
+        try resumed.transcript.appendAssistantTurn(.{
+            .content = "extra-a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+
+        _ = try agent2.reply(&resumed, "compact-2");
+        try std.testing.expectEqual(gen_after_first + 1, resumed.compaction_gen);
+        try std.testing.expect(resumed.compaction_summary != null);
+        const sum2 = resumed.compaction_summary.?;
+        try std.testing.expect(sum2.len <= context_mod.summary_cap);
+        try std.testing.expect(std.mem.indexOf(u8, sum2, context_mod.lineage_truncated_marker) != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum2, "digest=wyhash64:") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum2, "prior_bytes=") != null);
+
+        const tr2 = if (agent2.trace) |*t| t else return error.TestUnexpectedResult;
+        const p2 = try parseCompactionFromTrace(gpa, tr2.buf.items);
+        defer gpa.free(p2.summary);
+        try std.testing.expectEqualStrings(sum2, p2.summary);
+
+        try resumed.save();
+        const gen2 = resumed.compaction_gen;
+        const sum2_owned = try gpa.dupe(u8, sum2);
+        // Release writer lock before a second resume on the same path.
+        resumed.deinit();
+
+        // Second resume still durable.
+        var resumed2 = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = false,
+        });
+        defer resumed2.deinit();
+        try std.testing.expectEqual(gen2, resumed2.compaction_gen);
+        try std.testing.expectEqualStrings(sum2_owned, resumed2.compaction_summary.?);
+        gpa.free(sum2_owned);
+    }
+}
