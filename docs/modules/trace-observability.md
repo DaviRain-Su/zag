@@ -81,16 +81,25 @@ Serialize a complete JSON line first, then `ensureUnusedCapacity`, then append a
 - Terminal appends use only pre-reserved free capacity; `stop_reason` truncated to 48 bytes.
 - **Contract-tested:** max control-byte fields parse strictly under stack bound; post-start nonterminal OOM still commits `out_of_memory` terminal; intentional uncapped oversize → `TraceSerializationFailed` then `trace_error` terminal.
 
-### Persist error categories (`emitRunEnd`)
+### Persist / terminal error categories (`emitRunEnd`)
 
-| `persistAtomic` error | In-memory terminal after rollback | Returned error |
-|----------------------|-----------------------------------|----------------|
-| `TraceIoFailed` | `ok=false, stop_reason=trace_error` if intended was ok; else keep failure reason | `TraceIoFailed` |
-| `OutOfMemory` (Guard) | `ok=false, out_of_memory` | `OutOfMemory` |
-| `InvalidPath` (final recheck) | `ok=false, trace_error` if intended was ok | `InvalidPath` |
-| `TraceSerializationFailed` | as above / keep category | `TraceSerializationFailed` |
+`emitRunEnd` is transactional across **both** terminal serialization and persistence. Snapshot is restored on any intended-terminal failure.
+
+| Failure | In-memory result | Returned |
+|---------|------------------|----------|
+| Intended terminal `TraceSerializationFailed` | minimal ASCII `ok=false, stop_reason=trace_error`; persist when path set | `TraceSerializationFailed` |
+| `TraceIoFailed` after intended ser | minimal `trace_error` terminal | `TraceIoFailed` |
+| Guard `OutOfMemory` | minimal `out_of_memory` terminal | `OutOfMemory` |
+| `InvalidPath` final recheck | minimal `trace_error` terminal | `InvalidPath` |
+
+Minimal failure terminals use only ASCII literals (no user strings / no USD) so they always fit `terminal_reserve`.
 
 Guard is re-checked at persist entry **and** immediately before `atomic.replace`. Residual TOCTOU after the last check remains (trusted-host).
+
+### String / number policy
+
+- **UTF-8:** every traced string must be valid UTF-8 before write; invalid bytes → `TraceSerializationFailed` (transactional; not OOM). Truncation respects codepoint boundaries. (Zig default stringify would emit invalid UTF-8 as a number array — we fail closed so fields stay JSON strings.)
+- **`estimated_usd`:** NaN / ±Inf are **omitted** (never written). Finite values only. Prevents invalid JSON (`inf`) from Zig's f64 stringify.
 
 ## Schema (L2)
 

@@ -107,6 +107,8 @@ pub const Trace = struct {
     /// Last successfully emitted turn number (0 if none); used by facade failRun.
     last_emitted_turn: u32 = 0,
     fail_before_replace: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
+    /// Test-only: next terminal writeObj returns TraceSerializationFailed once.
+    fail_next_terminal_serialize: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
 
     pub fn init(gpa: std.mem.Allocator, io: Io, path: ?[]const u8, cwd: Io.Dir) Trace {
         return .{ .gpa = gpa, .io = io, .path = path, .cwd = cwd };
@@ -174,10 +176,10 @@ pub const Trace = struct {
         try self.writeObj(.{
             .kind = .run_start,
             .schema_version = current_schema_version,
-            .version = truncate(meta.version, cap_version),
-            .permission = truncate(meta.permission, 16),
-            .shell_policy = truncate(meta.shell_policy, 16),
-            .session = if (meta.session) |s| truncate(s, cap_session) else null,
+            .version = try prepareTracedString(meta.version, cap_version),
+            .permission = try prepareTracedString(meta.permission, 16),
+            .shell_policy = try prepareTracedString(meta.shell_policy, 16),
+            .session = if (meta.session) |s| try prepareTracedString(s, cap_session) else null,
         }, .normal);
         self.run_open = true;
         self.finished = false;
@@ -189,7 +191,7 @@ pub const Trace = struct {
     }
 
     pub fn emitAssistant(self: *Trace, text: []const u8) Error!void {
-        try self.writeObj(.{ .kind = .assistant, .text = truncate(text, cap_assistant_text) }, .normal);
+        try self.writeObj(.{ .kind = .assistant, .text = try prepareTracedString(text, cap_assistant_text) }, .normal);
     }
 
     pub fn emitUsage(self: *Trace, usage: message.AssistantTurn) Error!void {
@@ -207,16 +209,16 @@ pub const Trace = struct {
         try self.writeObj(.{
             .kind = .provider_retry,
             .attempt = attempt,
-            .error_name = truncate(err_name, 64),
+            .error_name = try prepareTracedString(err_name, 64),
         }, .normal);
     }
 
     pub fn emitToolCall(self: *Trace, call: message.ToolCall) Error!void {
         try self.writeObj(.{
             .kind = .tool_call,
-            .id = truncate(call.id, cap_tool_id_name),
-            .name = truncate(call.name, cap_tool_id_name),
-            .arguments = truncate(call.arguments, cap_tool_arguments),
+            .id = try prepareTracedString(call.id, cap_tool_id_name),
+            .name = try prepareTracedString(call.name, cap_tool_id_name),
+            .arguments = try prepareTracedString(call.arguments, cap_tool_arguments),
         }, .normal);
     }
 
@@ -229,8 +231,8 @@ pub const Trace = struct {
     ) Error!void {
         try self.writeObj(.{
             .kind = .permission,
-            .name = truncate(tool_name, cap_tool_id_name),
-            .risk = truncate(risk, 16),
+            .name = try prepareTracedString(tool_name, cap_tool_id_name),
+            .risk = try prepareTracedString(risk, 16),
             .allowed = allowed,
             .remembered = remembered,
         }, .normal);
@@ -239,23 +241,23 @@ pub const Trace = struct {
     pub fn emitJailDeny(self: *Trace, tool_name: []const u8, path: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .jail_deny,
-            .name = truncate(tool_name, cap_tool_id_name),
-            .path = truncate(path, cap_jail_path),
+            .name = try prepareTracedString(tool_name, cap_tool_id_name),
+            .path = try prepareTracedString(path, cap_jail_path),
         }, .normal);
     }
 
     pub fn emitShellDeny(self: *Trace, command: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .shell_deny,
-            .command = truncate(command, cap_shell_command),
+            .command = try prepareTracedString(command, cap_shell_command),
         }, .normal);
     }
 
     pub fn emitToolResult(self: *Trace, name: []const u8, body: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .tool_result,
-            .name = truncate(name, cap_tool_id_name),
-            .body = truncate(body, cap_tool_result_body),
+            .name = try prepareTracedString(name, cap_tool_id_name),
+            .body = try prepareTracedString(body, cap_tool_result_body),
         }, .normal);
     }
 
@@ -263,7 +265,7 @@ pub const Trace = struct {
         try self.writeObj(.{
             .kind = .compaction,
             .dropped = dropped,
-            .summary = truncate(summary, cap_compaction_summary),
+            .summary = try prepareTracedString(summary, cap_compaction_summary),
         }, .normal);
     }
 
@@ -282,37 +284,45 @@ pub const Trace = struct {
 
         const snap_len = self.buf.items.len;
         const snap_seq = self.event_count;
+        const safe = sanitizeRunEndInfo(info);
 
-        try self.appendRunEndLine(info);
+        // Intended terminal serialization — on failure, stay at snapshot and
+        // commit a minimal allocation-free `trace_error` terminal (never recurse into unsafe info).
+        self.appendRunEndLine(safe) catch |ser_err| {
+            self.buf.shrinkRetainingCapacity(snap_len);
+            self.event_count = snap_seq;
+            try self.appendMinimalTraceErrorTerminal(safe.turns);
+            self.persistAtomic() catch |perr| {
+                // Minimal terminal remains in memory; prior durable bytes unchanged.
+                self.markTerminalCommitted();
+                return perr;
+            };
+            self.markTerminalCommitted();
+            return ser_err;
+        };
 
         self.persistAtomic() catch |err| {
             // Roll back intended terminal; prior durable bytes unchanged.
             self.buf.shrinkRetainingCapacity(snap_len);
             self.event_count = snap_seq;
 
-            // Preserve error category: never collapse Guard OOM / InvalidPath / serialization into I/O.
-            const mem_info: RunEndInfo = switch (err) {
-                error.OutOfMemory => .{
-                    .turns = info.turns,
-                    .ok = false,
-                    .prompt_tokens = info.prompt_tokens,
-                    .completion_tokens = info.completion_tokens,
-                    .total_tokens = info.total_tokens,
-                    .estimated_usd = info.estimated_usd,
-                    .stop_reason = "out_of_memory",
+            // Preserve returned error category; in-memory terminal prefers the intended
+            // failure stop_reason when it was already a failure, else minimal trace_error.
+            switch (err) {
+                error.OutOfMemory => {
+                    self.appendMinimalFailureTerminal(safe.turns, "out_of_memory") catch |werr| return werr;
                 },
-                error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => if (info.ok) .{
-                    .turns = info.turns,
-                    .ok = false,
-                    .prompt_tokens = info.prompt_tokens,
-                    .completion_tokens = info.completion_tokens,
-                    .total_tokens = info.total_tokens,
-                    .estimated_usd = info.estimated_usd,
-                    .stop_reason = "trace_error",
-                } else info,
-            };
-
-            self.appendRunEndLine(mem_info) catch |werr| return werr;
+                error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => {
+                    if (safe.ok) {
+                        self.appendMinimalTraceErrorTerminal(safe.turns) catch |werr| return werr;
+                    } else {
+                        // Keep primary failure category (e.g. provider_error) when serializable.
+                        self.appendRunEndLine(safe) catch {
+                            self.appendMinimalTraceErrorTerminal(safe.turns) catch |werr| return werr;
+                        };
+                    }
+                },
+            }
             self.markTerminalCommitted();
             return err;
         };
@@ -326,8 +336,25 @@ pub const Trace = struct {
         self.terminal_count = 1;
     }
 
+    /// Minimal terminal: ASCII-only literals, no optional tokens/usd — always ≤ reserve.
+    fn appendMinimalTraceErrorTerminal(self: *Trace, turns: u32) Error!void {
+        try self.appendMinimalFailureTerminal(turns, "trace_error");
+    }
+
+    fn appendMinimalFailureTerminal(self: *Trace, turns: u32, stop: []const u8) Error!void {
+        try self.writeObj(.{
+            .kind = .run_end,
+            .turns = turns,
+            .ok = false,
+            .stop_reason = stop,
+        }, .terminal);
+    }
+
     fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
-        const reason: ?[]const u8 = if (info.stop_reason) |r| truncate(r, max_stop_reason_len) else null;
+        const reason: ?[]const u8 = if (info.stop_reason) |r|
+            try prepareTracedString(r, max_stop_reason_len)
+        else
+            null;
         try self.writeObj(.{
             .kind = .run_end,
             .turns = info.turns,
@@ -335,7 +362,7 @@ pub const Trace = struct {
             .prompt_tokens = if (info.prompt_tokens != 0) info.prompt_tokens else null,
             .completion_tokens = if (info.completion_tokens != 0) info.completion_tokens else null,
             .total_tokens = if (info.total_tokens != 0) info.total_tokens else null,
-            .estimated_usd = info.estimated_usd,
+            .estimated_usd = finiteUsd(info.estimated_usd),
             .stop_reason = reason,
         }, .terminal);
     }
@@ -431,6 +458,10 @@ pub const Trace = struct {
                 self.buf.appendSliceAssumeCapacity(line);
             },
             .terminal => {
+                if (builtin.is_test and self.fail_next_terminal_serialize) {
+                    self.fail_next_terminal_serialize = false;
+                    return error.TraceSerializationFailed;
+                }
                 // No allocation: only use capacity already reserved.
                 // Invariant failure is serialization/event-size, not OOM.
                 if (line.len > terminal_reserve) return error.TraceSerializationFailed;
@@ -451,9 +482,42 @@ fn mapContain(err: workspace.ContainError) Error {
     };
 }
 
-fn truncate(s: []const u8, max: usize) []const u8 {
+/// Omit NaN / ±Inf so JSON never receives non-finite numbers (Zig would emit invalid JSON for Inf).
+fn finiteUsd(v: ?f64) ?f64 {
+    const x = v orelse return null;
+    if (std.math.isNan(x) or std.math.isInf(x)) return null;
+    return x;
+}
+
+fn sanitizeRunEndInfo(info: Trace.RunEndInfo) Trace.RunEndInfo {
+    return .{
+        .turns = info.turns,
+        .ok = info.ok,
+        .prompt_tokens = info.prompt_tokens,
+        .completion_tokens = info.completion_tokens,
+        .total_tokens = info.total_tokens,
+        .estimated_usd = finiteUsd(info.estimated_usd),
+        .stop_reason = info.stop_reason,
+    };
+}
+
+/// Truncate on a UTF-8 codepoint boundary (keeps valid UTF-8 when input is valid).
+fn truncateUtf8(s: []const u8, max: usize) []const u8 {
     if (s.len <= max) return s;
-    return s[0..max];
+    var end = max;
+    while (end > 0 and (s[end] & 0xC0) == 0x80) end -= 1;
+    return s[0..end];
+}
+
+/// Public string policy: require valid UTF-8 (fail `TraceSerializationFailed`);
+/// truncate on codepoint boundary. Never emit invalid JSONL or map this to OOM.
+/// Zig's default stringify would render invalid UTF-8 as a number array — we
+/// fail closed instead so field types stay strings for strict consumers.
+fn prepareTracedString(s: []const u8, max: usize) Error![]const u8 {
+    if (!std.unicode.utf8ValidateSlice(s)) return error.TraceSerializationFailed;
+    const t = truncateUtf8(s, max);
+    // Truncation at boundary of valid input stays valid.
+    return t;
 }
 
 pub const testing = struct {
@@ -461,8 +525,13 @@ pub const testing = struct {
         if (builtin.is_test) t.fail_before_replace = enabled;
     }
 
+    pub fn setFailNextTerminalSerialize(t: *Trace, enabled: bool) void {
+        if (builtin.is_test) t.fail_next_terminal_serialize = enabled;
+    }
+
     /// Private uncapped assistant text for intentional oversize serialization tests.
     pub fn emitUntruncatedAssistant(t: *Trace, text: []const u8) Error!void {
+        // Bypass prepareTracedString — used only for stack-overflow size tests with valid UTF-8.
         try t.writeObj(.{ .kind = .assistant, .text = text }, .normal);
     }
 };
@@ -816,6 +885,130 @@ test "resetForReply clears buffer for latest-run semantics" {
 
 test "current_schema_version is stable exported constant" {
     try std.testing.expectEqual(@as(u32, 1), current_schema_version);
+}
+
+test "non-finite estimated_usd omitted; strict JSON terminal" {
+    const gpa = std.testing.allocator;
+    const cases = [_]f64{
+        std.math.nan(f64),
+        std.math.inf(f64),
+        -std.math.inf(f64),
+    };
+    for (cases) |bad| {
+        var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+        defer t.deinit();
+        try t.beginReply();
+        try t.emitRunStart(.{
+            .version = "0.5.0",
+            .permission = "ask",
+            .shell_policy = "protect",
+        });
+        try t.emitRunEnd(.{
+            .turns = 1,
+            .ok = true,
+            .estimated_usd = bad,
+            .stop_reason = "completed",
+        });
+        try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+        try std.testing.expect(!t.run_open);
+        try std.testing.expect(t.finished);
+        try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "estimated_usd") == null);
+        try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":true") != null);
+        // Strict-parse every line (no bare nan/inf).
+        var lines = std.mem.splitScalar(u8, t.buf.items, '\n');
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            try parseStrictLine(gpa, line);
+        }
+    }
+}
+
+test "intended terminal serialize failure commits minimal trace_error terminal" {
+    const gpa = std.testing.allocator;
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    testing.setFailNextTerminalSerialize(&t, true);
+    try std.testing.expectError(
+        error.TraceSerializationFailed,
+        t.emitRunEnd(.{ .turns = 2, .ok = true, .stop_reason = "completed", .estimated_usd = 1.0 }),
+    );
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(!t.run_open);
+    try std.testing.expect(t.finished);
+    try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "trace_error") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":true") == null);
+    var lines = std.mem.splitScalar(u8, t.buf.items, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try parseStrictLine(gpa, line);
+    }
+}
+
+test "invalid UTF-8 string fields fail TraceSerializationFailed not OOM" {
+    const gpa = std.testing.allocator;
+    const bad = "x\xff\xfey"; // invalid UTF-8
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    const len0 = t.buf.items.len;
+    const seq0 = t.event_count;
+
+    try std.testing.expectError(error.TraceSerializationFailed, t.emitAssistant(bad));
+    try std.testing.expectError(error.TraceSerializationFailed, t.emitToolCall(.{
+        .id = "c1",
+        .name = "t",
+        .arguments = bad,
+    }));
+    try std.testing.expectError(error.TraceSerializationFailed, t.emitToolResult("t", bad));
+    try std.testing.expectError(error.TraceSerializationFailed, t.emitShellDeny(bad));
+    try std.testing.expectError(error.TraceSerializationFailed, t.emitJailDeny("t", bad));
+    try std.testing.expectError(error.TraceSerializationFailed, t.emitCompaction(1, bad));
+
+    try std.testing.expectEqual(len0, t.buf.items.len);
+    try std.testing.expectEqual(seq0, t.event_count);
+
+    // Facade-style recovery: commit one trace_error terminal.
+    try t.emitRunEnd(.{ .turns = 0, .ok = false, .stop_reason = "trace_error" });
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "trace_error") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "out_of_memory") == null);
+}
+
+test "finite estimated_usd is emitted" {
+    const gpa = std.testing.allocator;
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    try t.emitRunEnd(.{
+        .turns = 1,
+        .ok = true,
+        .estimated_usd = 0.0125,
+        .stop_reason = "completed",
+    });
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "estimated_usd") != null);
+    var lines = std.mem.splitScalar(u8, t.buf.items, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try parseStrictLine(gpa, line);
+    }
 }
 
 test "worst-case control-byte fields serialize under stack bound and parse strictly" {

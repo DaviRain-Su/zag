@@ -74,6 +74,9 @@ These remain useful but do not cover the assessment blockers.
 18. intentional oversize → `TraceSerializationFailed` (not OOM) then `trace_error` terminal. ✅
 19. final Guard OOM → `OutOfMemory` + in-memory `out_of_memory` (not TraceIoFailed). ✅
 20. preflight OK then parent becomes escape → `InvalidPath`, outside unchanged. ✅
+21. NaN/+Inf/-Inf estimated_usd omitted; strict-parseable terminal. ✅
+22. intended terminal serialize failure → one minimal `trace_error` terminal, run closed. ✅
+23. invalid UTF-8 string fields → `TraceSerializationFailed` (not OOM), then recoverable terminal. ✅
 
 ## P1 minimum fixtures
 

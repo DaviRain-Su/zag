@@ -10,7 +10,7 @@ depends-on: []
 
 Make trace/run lifecycle truthful: exactly one terminal event, correct failure stop reasons, versioned schema, and observable trace persistence errors when tracing is explicitly enabled.
 
-> Implementation note (local worktree): facade-owned single terminal; `schema_version=1`; Guard jail (preflight + persist entry + pre-replace); `TraceSerializationFailed` distinct from OOM; 8KiB stack / 1KiB terminal_reserve with control-byte bound tests; persist error categories preserved; per-reply latest-run; fail-closed; deinit release-only. **Keep status `in-progress`** — orchestrator marks done only after merge.
+> Implementation note (local worktree): facade-owned single terminal; schema v1; Guard jail; `TraceSerializationFailed` ≠ OOM; UTF-8 fail-closed; non-finite USD omitted; transactional emitRunEnd with minimal fallback terminal; 8KiB stack / 1KiB reserve. **Keep status `in-progress`** — orchestrator marks done only after merge.
 
 # context
 
