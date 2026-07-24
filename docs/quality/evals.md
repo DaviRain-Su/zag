@@ -53,6 +53,16 @@ These remain useful but do not cover the assessment blockers.
 5. prefix collision (`/ws` ⊄ `/ws2`) and symlink-loop walker bound. ✅
 6. macOS/Linux via `Io.Dir.symLink`; Windows skips symlink fixtures (no false pass). ✅
 
+### Edit integrity (`h-edit-integrity-001`, open)
+
+1. existing ordinary target: injected write-prefix, flush, final containment-denial, and replace faults preserve exact prior bytes;
+2. absent `write_file` target remains absent on every commit fault;
+3. contained final file symlink retains symlink kind/link text and exact target bytes on failure; success updates only the contained target;
+4. every ordinary failure cleans the commit temporary; missing-parent failure leaves only declared directory residue;
+5. stable `edit_io_failed format=edit-v1` stage/target/parent fields survive one Agent transcript/session/resume/parsed-trace recovery chain with the original Tool-call ID and one `completed` terminal;
+6. no allocation or optional diff step after commit can report a hard failure after successful mutation;
+7. lexical remember aliases re-prompt and remembered approval never bypasses Guard/jail.
+
 ### Run/trace lifecycle
 
 1. provider authentication failure ends exactly once with `ok=false`, `provider_error`. ✅
@@ -81,6 +91,16 @@ These remain useful but do not cover the assessment blockers.
 
 ## P1 Phase H module and composition fixtures
 
+### Read/search bounds (`h-read-search-bounds-001`, open)
+
+- every `list_dir`, `read_file`, `grep`, and `glob` body is `<= 64 KiB` with checked arithmetic;
+- exact N/N+1 count and byte boundaries reserve one complete `fs-v1` incomplete marker;
+- oversized read returns a bounded prefix plus `reason=body_limit`; exact boundary has no marker;
+- list entry/body/iteration cutoffs, grep hit/body/source/I/O cutoffs, glob hit/body/pattern cutoffs, and walker node/depth/per-directory cutoffs cannot look complete;
+- fixtures use small private limits/pure helpers rather than giant physical trees and retain symlink-loop/contained/escape evidence.
+
+### Existing closed P1 evidence
+
 1. two-stage compaction: final `dropped` and summary/lineage match the returned view. ✅ h-context-001 (`context.zig` fixed-point fixtures + agent session/trace integration).
 2. fake configured secrets do not appear in verbose, trace, or session bytes. ✅ h-redact-001 (longest/boundary/pattern + allocator sweeps; initial create; Session after Agent deinit; collision-safe Tool IDs across resume; mid-trace OOM terminal; outward diagnostic helpers).
 3. timeout enforced on **curl**; **std** configured timeout → `unsupported_control` before network (default null = no timeout). ✅ h-provider-001 capability-truth
@@ -107,9 +127,9 @@ These remain useful but do not cover the assessment blockers.
 ## Edit eval (H2/C4)
 
 1. unique anchor replacement succeeds;
-2. ambiguous anchor fails without mutation;
-3. stale anchor is recoverable after reread;
-4. C4 adds hunk review and post-edit validation.
+2. ambiguous/missing/stale anchors fail without mutation and are recoverable after reread;
+3. H2 adds the target-preserving `edit-v1` fault matrix above;
+4. C4 adds hashline/apply-patch sharpness, hunk review, post-edit validation, and multi-file policy.
 
 ## Maintenance
 

@@ -1,9 +1,9 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: ready
+status: blocked
 priority: P1
-depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001, h-shell-001]
+depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001, h-shell-001, h-edit-integrity-001, h-read-search-bounds-001]
 ---
 
 # objective
@@ -26,7 +26,16 @@ This evidence closes the previously missing Agent product chains. It does **not*
 
 The prior Phase H audit found a missing shell module gate, and independent shell review 01 exposed policy command leakage, invalid UTF-8 representation, and missing real-runner boundary evidence. [h-shell-001](./h-shell-001.md) fixed all three, passed independent re-review plus Oracle, and passed the ff-only merged main Gate (`384/384` default; `383/383` curl; supported macOS shell fixtures zero skip).
 
-Shell is now **done**. This task returns to **ready** for the final sentence-by-sentence Phase H audit. Ready does not mean Phase H L2, SDK-ready, or headless-ready has been declared.
+Shell is **done** and remains L2 for its scoped synchronous contract.
+
+# final-audit blockers
+
+The 2026-07-25 executable final audit passed both full backend suites but returned **FAIL** on two default file-surface counterexamples:
+
+1. `write_file` / `search_replace` publish through in-place truncate/write and lack target-preserving write/flush/replace fault evidence;
+2. `list_dir` / `read_file` / `grep` / `glob` do not yet prove the shared byte ceiling and can hide walker/source cutoffs as complete output.
+
+[h-edit-integrity-001](./h-edit-integrity-001.md) and [h-read-search-bounds-001](./h-read-search-bounds-001.md) now own those contracts. This task is **blocked** until both are done. Its retained Agent policy/containment/cancellation and shell evidence remains valid; after both dependencies merge, integration returns to `ready` for a fresh sentence-by-sentence audit. No Phase H, SDK-ready, or headless-ready claim is made before that audit.
 
 # context
 
@@ -36,6 +45,9 @@ Shell is now **done**. This task returns to **ready** for the final sentence-by-
 - `docs/quality/evals.md`
 - `docs/quality/contracts.md`
 - `docs/plan/analysis/2026-07-24-production-floor-assessment.md`
+- `docs/plan/analysis/2026-07-25-phase-h-final-audit.md`
+- `docs/plan/tasks/h-edit-integrity-001.md`
+- `docs/plan/tasks/h-read-search-bounds-001.md`
 
 # path
 

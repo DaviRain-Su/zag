@@ -95,7 +95,7 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 | Product shell | zag-cli（+ C9 zag-tui / zag-acp）+ zag (bin) | ✅ |
 | Kernel low-level composition | **zag-agent-core** | ✅；SDK-ready ❌ |
 | 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅；caller injection 待 SDK Gate |
-| Model plane（canonical + WireAdapter） | zag-ai + openai-zig | L1+；curl active deadline/cancel + std unsupported-control truth 已落地 |
+| Model plane（canonical + WireAdapter） | zag-ai + openai-zig | L2 H contract；dual-wire strict completion + curl active controls + std unsupported-control truth |
 | Runtime / 领域包 | coding-agent runtime / core workspace；未来 sandbox | Tool descriptor/file containment/synchronous shell-v1 Gates 已通过；OS sandbox 与 SDK compatibility 仍后置；非为拆而拆 |
 | 契约 | **zag-types** | canonical + runtime ToolCapabilities/Descriptor 已落地；SDK compatibility Gate 仍未达 |
 
@@ -167,7 +167,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 
 ## 5. 与路线图的关系
 
-- **Phase H**：保持当前 package layout；session、Tool descriptor、containment、trace、context、redact、provider control 与 synchronous shell-v1 已分别过 Gate；当前仅剩 h-integration 最终 audit。
+- **Phase H**：保持当前 package layout；既有 session/Tool/containment/trace/context/redact/provider/shell Gates 保持有效；final audit 新增 `h-edit-integrity-001` 与 `h-read-search-bounds-001`，integration blocked 到两者完成。
 - **SDK-ready Gate**：完成 public composition 和 external consumer；不由 Phase H 或 package count 自动获得。
 - **Headless Gate**：提供 process contract，早于 TUI/ACP polish。
 - **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。

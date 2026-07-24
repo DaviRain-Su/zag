@@ -41,11 +41,11 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | Slice | Spec | Current truth |
 |-------|------|---------------|
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | L2：soft errors/serial/goldens + facade terminal；provider active control；accepted multi-Tool between-call Agent composition 已通过独立/main Gate；mid-flight Tool preemption post-H |
-| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | synchronous shell L2 Gate passed（fixed deny/encoding/scoped limit/direct PID/trace）；write-fault claims remain conservative |
+| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 保持；final audit 证明 edit truncate/write 与 read/search silent cutoff 仍阻塞，两个 file tasks ready |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
-| H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage；deadline/cancel/partial Tool safety（h-provider-001）；log scrub helpers（h-redact-001） |
+| H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | L2：final audit confirmed dual-wire/retry/usage/strict completion + curl enforce/std fail-closed capability truth + scrubbed diagnostics |
 | H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle + h-redact-001 redaction before serialize；dashboard still open |
 
 Schema presence or existing happy-path tests do not mark H3/H4 closed.
@@ -65,9 +65,11 @@ Tool runtime + trace
   ↓
 h-shell-001（re-review + Oracle + main std/curl）✅
   ↓
-h-integration-001 ready
+final audit FAIL（existing suites green）
+  ├─ h-edit-integrity-001 ready
+  └─ h-read-search-bounds-001 ready
   ↓
-final Phase H sentence audit
+h-integration-001 blocked → 两者 done 后 fresh sentence audit
   ↓
 SDK-ready gate · headless gate · C4/C5.1/C7 by dependency
 ```
@@ -94,4 +96,4 @@ Each task adds its named failure fixture before claiming closeout. Live provider
 
 ## 5. Exit
 
-All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. Every module Gate, including h-shell-001, is done; h-integration-001 now owns the final independent sentence audit. H completion would not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, or OS sandbox, and would not automatically imply SDK-ready or headless-ready.
+All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. The first final audit failed exits 8/10/11 on two file-surface contracts, so h-integration-001 is blocked until both new tasks pass and then must repeat the independent sentence audit. H completion would not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, power-loss edit durability, or OS sandbox, and would not automatically imply SDK-ready or headless-ready.

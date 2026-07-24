@@ -1,7 +1,7 @@
 # Zag 架构
 
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
-> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）所有 module Gate 已通过，整体仍等待 ready h-integration-001 的最终 exit audit。
+> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 已返回 FAIL：单文件 commit integrity 与 read/search bounds 有两个明确 blocker，h-integration-001 暂时 blocked。
 > Grok Build / Pi / Oh My Pi 只作机制参照：借依赖纪律、生命周期与能力合同，不复制 crate 数或完整产品复杂度。
 
 ---
@@ -55,7 +55,7 @@ Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag d
 | **L4 Kernel composition** | xai-grok-shell | 单 agent Loop、session、权限、context、trace、Tool runtime | **H** correctness；其后独立 SDK-ready Gate；C6 Graph 可选 |
 | **L3 agent 定义** | xai-grok-agent | 工具 + 采样 + hooks 组合 | C6 拆出 |
 | **Memory Core（future port）** | grok-memory 抽象 | 跨 session 记忆；default-off | **C5** 按真实 use case 设计，不在 H/SDK minimum 预留 |
-| **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、WireAdapter、stream、errors | L1+；OpenAI-compatible + Anthropic；curl active deadline/cancel + std fail-closed capability truth 已落地 |
+| **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、WireAdapter、stream、errors | L2；final audit confirmed dual-wire contract、strict completion、curl active controls + std fail-closed capability truth |
 | **L2 Runtime / 领域包** | tools / workspace / sandbox | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
 | **L0 契约** | tool-types / tool-protocol | provider-facing canonical types + separate runtime ToolCapabilities；无厂商/产品 IO | H/P0 完成 descriptor；SDK Gate 后才承诺稳定发布 |
 
@@ -219,14 +219,14 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | 模块 | 现状路径 | 当前等级 / blocker |
 |------|----------|--------------------|
 | Tool runtime | `zag-agent-core/src/tool.zig` + `zag-types` | L2；stateful handler + mandatory descriptor/capabilities fail-closed |
-| permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk (D-007)；不额外声称 canonical contained-path remember identity |
+| permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk；H remember = exact lexical request-path，alias re-prompt，Guard 始终重检；canonical object policy 属 L3 |
 | workspace | `zag-agent-core/src/workspace.zig` | L2 trusted-host file boundary；realpath/ancestor Guard + Agent composition；非 OS sandbox |
 | shell policy/runtime | `shell_policy.zig` + coding `runtime/edit_tools.zig` | L2 synchronous；fixed deny、UTF-8/base64、scoped limits、30 KiB streams/checked body/direct-PID/Agent evidence 通过独立/Oracle/main Gate；denylist 非 sandbox |
 | trace | `zag-agent-core/src/trace.zig` | L2；versioned、truthful unique terminal、atomic persistence、redaction；shell projection Gate passed |
 | context | `zag-agent-core/src/context.zig` | L2；fixed-point final-view accounting + strict Tool bundles |
-| read/search | `zag-coding-agent/src/runtime/*` | L1+；descriptor + containment + budgets 已落地；row promotion 单独审计 |
-| write/edit | `zag-coding-agent/src/runtime/edit_tools.zig` | L1+；anchor + containment 已落地；不声称一般 write-fault atomic/no-partial guarantee |
-| provider | core Provider + zag-ai WireAdapter | L1+；OpenAI-compatible + Anthropic；curl active control、std `unsupported_control` fail-closed |
+| read/search | `zag-coding-agent/src/runtime/fs_tools.zig` | L1+；containment landed；final audit found byte-budget and silent-cutoff counterexamples → h-read-search-bounds-001 |
+| write/edit | `zag-coding-agent/src/runtime/edit_tools.zig` | L1+；anchor/containment landed；direct truncate/write violates target preservation → h-edit-integrity-001 |
+| provider | core Provider + zag-ai WireAdapter | L2；two wire styles + strict completion；curl active controls，std requested controls fail closed before network |
 
 ## 目标能力与阶段
 
@@ -268,10 +268,10 @@ Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 
 | Tool | Current | Remaining contract |
 |------|---------|--------------------|
-| list_dir / read_file | ✅ mandatory descriptor + lexical/real containment | bounded/read-search row promotion remains an explicit audit |
-| grep / glob | ✅ descriptor + budgets + symlink-aware walker containment | same independent row audit; shell remains separate |
-| search_replace | ✅ unique anchor + descriptor + containment | canonical permission-path identity and broader write-fault matrix are not claimed |
-| write_file | ✅ create/full write + descriptor + containment | no general atomic truncate-write/no-partial-fault claim; not default large-file edit path |
+| list_dir / read_file | ✅ mandatory descriptor + lexical/real containment | h-read-search-bounds-001: checked 64 KiB body + exact `fs-v1` incomplete reason |
+| grep / glob | ✅ descriptor + symlink-aware walker containment | same task: hit/body/walker/source/pattern cutoffs cannot look complete |
+| search_replace | ✅ unique anchor + descriptor + containment | h-edit-integrity-001: target-preserving atomic commit + contained final symlink + `edit-v1` fault |
+| write_file | ✅ create/full write + descriptor + containment | same task; no direct truncate/write; narrow parent-dir residue declared |
 | run_shell | ✅ permission + descriptor-selected policy + fixed deny + synchronous UTF-8/base64 shell-v1/scoped-budget/direct-PID/trace Gate passed | mid-flight cancel/process tree/background/PTY/OS sandbox remain post-H |
 
 ## 持久化

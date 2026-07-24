@@ -128,7 +128,7 @@ The shell module owns outcome codes, encodings, capture/body limits, and direct-
 Trace owns only truthful projection and the unique run terminal. Each package shell trace fixture is
 single-call: exact-one `tool_call`/`tool_result` counts plus name/body correlate the result, and one
 same-object recovered `run_end` closes it. Trace `tool_result` has no call ID; exact ID pairing is
-transcript/session-owned. Fixtures infer neither process-tree cleanup nor mid-flight Tool cancellation from trace presence. Independent re-review, Oracle, and main std/curl passed; the separate final Phase H product audit remains ready.
+transcript/session-owned. Fixtures infer neither process-tree cleanup nor mid-flight Tool cancellation from trace presence. Independent re-review, Oracle, and main std/curl passed. The later product audit failed only on file-tool contracts and now blocks integration without reopening trace/shell projection.
 
 ### Compaction event (h-context-001)
 

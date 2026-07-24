@@ -2,11 +2,12 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — all module Gates done; `h-integration-001` ready for final exit audit** |
+| Status | **In progress; not L2 — final audit failed on edit integrity and read/search bounds; integration blocked** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
 | Assessment | [2026-07-24 production-floor assessment](../plan/analysis/2026-07-24-production-floor-assessment.md) |
+| Latest audit | [2026-07-25 Phase H final audit](../plan/analysis/2026-07-25-phase-h-final-audit.md) — FAIL |
 
 ## Reset after assessment
 
@@ -47,8 +48,9 @@ Canonical table: [assessment § priorities](../plan/analysis/2026-07-24-producti
 | [h-tool-runtime-001](../plan/tasks/h-tool-runtime-001.md) | [D-007](../decisions/active/D-007-tool-runtime-descriptor.md) | stateful Tool; mandatory descriptor; fail-closed custom policy |
 | [h-workspace-001](../plan/tasks/h-workspace-001.md) | [workspace-sandbox](../modules/workspace-sandbox.md) | symlink-aware file containment |
 | [h-trace-001](../plan/tasks/h-trace-001.md) | [trace-observability](../modules/trace-observability.md) | exactly one truthful terminal; visible trace failure |
+| [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) | [tools-edit](../modules/tools-edit.md) | final-audit correction: preserve existing/absent single-file targets across commit faults |
 
-No P2 capability implementation is promoted while a P0 task remains open.
+The original P0 queue is complete, but final audit reopened data preservation narrowly through `h-edit-integrity-001`. No P2 capability implementation is promoted while it remains open.
 
 ## H1 — Loop / lifecycle
 
@@ -88,10 +90,14 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 - Agent transcript/session/resume/parsed single-call trace composition ending in one recovered `completed` terminal;
 - review 01 blockers fixed; independent re-review, Oracle, and main `384/384` default + `383/383` curl Gate passed with supported macOS fixtures zero skip.
 
-### Remaining boundaries
+### Reopened by final audit
 
-- h-shell-001 does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline;
-- canonical permission-path identity and general write-fault atomic/no-partial-mutation guarantees remain unclaimed; C4 edit sharpness/change review remains post-H capability.
+- [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) must replace direct truncate/write with a target-preserving single-file commit, retain contained final-symlink behavior, expose stable `edit-v1` faults, and prove one Agent/session/trace recovery chain.
+- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) must keep every read/list/grep/glob body within 64 KiB and mark every runtime cutoff with complete `fs-v1` incomplete metadata.
+- Permission remember is exact lexical request-path scoped for H; aliases re-prompt and Guard remains mandatory. Canonical object/path-domain authorization is post-H.
+- h-shell-001 remains closed and does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline.
+
+C4 still owns edit sharpness/change review and multi-file policy; it does not own these basic failure-path contracts.
 
 ## H3 — Tool runtime / permissions
 
@@ -112,7 +118,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 ### Remaining (not H3 L2 blockers)
 
 - mid-flight preemption for `.cooperative` handlers (post-H shell/process ownership; not h-provider-001 and not an H3 L2 blocker);
-- full Plan UX / path-domain policies (L3 / capability);
+- canonical filesystem-object remember identity, full Plan UX, and path-domain policies (L3); H uses exact lexical request-path keys and never bypasses Guard;
 - opaque/C ABI plugins (non-goal for H).
 
 H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, doctor/readiness, default Agent policy/containment composition, and synchronous shell runtime are complete under their documented trusted-host boundaries. None implies an OS sandbox or higher-autonomy safety.
@@ -176,9 +182,9 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 - incomplete Tool-call fragment discard; retry ownership;
 - HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001).
 
-### Remaining
+### Closed for H6 L2
 
-- broader contract matrix / multi-key fallback (capability).
+The final audit confirmed backend-capability truth: std ordinary requests work and requested active controls fail closed before network; curl enforces deadline/active cancel. Both wire styles, canonical retry/error/usage, strict protocol completion/Tool atomicity, and redacted diagnostics have deterministic default/curl evidence. Multi-key fallback and additional native protocols remain capability work.
 
 ## H7 — Trace / quality
 
@@ -213,17 +219,19 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 ## Dependency order
 
 ```text
-P0 session + Tool + workspace + trace ✅
-  ├─► P1 context ✅
-  ├─► P1 provider deadline/cancel ✅
-  ├─► P1 redaction ✅ ─► h-doctor-001 ✅
-  └─► h-shell-001 ✅（re-review + Oracle + main std/curl）
-                         │
-                         ▼
-                 h-integration-001 ready
-                 final Phase H sentence audit
-                         │
-                         ▼
+original P0/P1 + doctor + shell ✅
+                 │
+        final audit: FAIL
+                 │
+       ┌─────────┴─────────┐
+       ▼                   ▼
+h-edit-integrity-001   h-read-search-bounds-001
+       └─────────┬─────────┘
+                 ▼
+       h-integration-001 blocked
+       retained evidence + fresh audit
+                 │
+                 ▼
   ├─► Zig SDK-ready gate
   ├─► headless/process gate
   ├─► C4 edit sharpness
@@ -231,8 +239,8 @@ P0 session + Tool + workspace + trace ✅
   └─► C7 sandbox/process supervisor
 ```
 
-This is a DAG. Every module dependency is done. Integration retains its verified Agent chains and now owns the final product-level audit; green module tests do not predetermine that verdict.
+This is a DAG. Original module evidence remains valid, but the final audit discovered two previously unowned file-surface contracts. Integration resumes only after both pass independently; green existing suites do not waive either counterexample.
 
 ## Exit
 
-Phase H exits only after ready h-integration-001 independently audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.
+Phase H exits only after both file-surface tasks are done and a newly ready h-integration-001 independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.

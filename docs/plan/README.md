@@ -13,13 +13,14 @@ docs/plan/
 
 ## Current baseline
 
-The accepted planning baseline is [the 2026-07-24 production-floor assessment](./analysis/2026-07-24-production-floor-assessment.md), including its dated planning corrections.
+The accepted planning baseline is [the 2026-07-24 production-floor assessment](./analysis/2026-07-24-production-floor-assessment.md), including its dated corrections. The latest gate record is the [2026-07-25 Phase H final audit](./analysis/2026-07-25-phase-h-final-audit.md).
 
 | Area | Status |
 |------|--------|
-| Phase H | **Not complete.** Every module delivery Gate, including synchronous shell, has passed; `h-integration-001` is ready for the final sentence-by-sentence exit audit. |
-| P0 | **Complete:** session durability, Tool descriptor, file symlink containment, and truthful trace lifecycle. |
-| P1 | Context/provider/redaction/doctor/shell are done; original integration evidence is retained and final integration closeout is ready. |
+| Phase H | **Blocked.** The final audit passed existing suites but found two unowned default file-surface L2 counterexamples. |
+| P0 | Original queue is done; data preservation reopened narrowly as `h-edit-integrity-001` (ready). |
+| P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is ready; retained integration evidence remains valid. |
+| Integration | `h-integration-001` is blocked on both file-surface tasks, then must repeat the sentence-by-sentence audit. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
@@ -27,28 +28,25 @@ Priority definitions live only in the assessment. Module contracts live under `d
 ## Task DAG
 
 ```text
-done: h-tool-runtime-001 + h-workspace-001 + h-redact-001
-                              │
-                              ▼
-                           done: h-doctor-001
-
- done: h-tool-runtime-001 + h-trace-001
-                              │
-                              ▼
-                           done: h-shell-001
-                           (re-review + Oracle + main std/curl passed)
-                              │
-                              ▼
-all completed P0/P1 modules + doctor + shell
-                              │
-                              ▼
-                         ready: h-integration-001
-                         (retained Agent evidence + final Phase H audit)
-                              ├───────────────────► sdk-contract-001
-                              └───────────────────► headless-001
+original P0/P1 modules + doctor + shell ✅
+                    │
+      final audit found two file blockers
+                    │
+         ┌──────────┴──────────┐
+         ▼                     ▼
+ready: h-edit-integrity-001   ready: h-read-search-bounds-001
+single-file atomic preserve   bounded + explicit incomplete results
+         └──────────┬──────────┘
+                    ▼
+          blocked: h-integration-001
+          retained evidence + fresh final audit
+                    ├───────────────────► sdk-contract-001
+                    └───────────────────► headless-001
 ```
 
-Doctor has only the three dependencies shown above. Shell has only Tool runtime and trace dependencies. Integration is the convergence point: its original Agent chains are already verified, and it now owns the final audit rather than another module implementation.
+The two file tasks have independent code contracts but overlap global truth/teaching docs, so docs-sprint delivery serializes their develop→verify→merge cycles. Integration becomes `ready` only after both are `done`.
+
+Doctor and shell keep their completed dependency contracts. Integration remains the convergence point: its original Agent chains are already verified, but it cannot resume the final audit until both newly owned file-surface contracts pass.
 
 `ready` means dependencies are satisfied, not that tasks may safely edit one shared checkout in parallel. Use task `path` overlap rules.
 
@@ -65,7 +63,9 @@ Doctor has only the three dependencies shown above. Shell has only Tool runtime 
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | done | Secret redaction |
 | [h-doctor-001](./tasks/h-doctor-001.md) | P1 | done | Provider-independent readiness/control report |
 | [h-shell-001](./tasks/h-shell-001.md) | P1 | done | Synchronous shell-v1/budget/direct-child/Agent evidence |
-| [h-integration-001](./tasks/h-integration-001.md) | P1 | ready | Final Phase H sentence audit and production-floor truth closeout |
+| [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | ready | Target-preserving single-file write/edit commit |
+| [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | ready | Bounded read/search bodies and explicit incomplete results |
+| [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Fresh Phase H sentence audit after both file tasks |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
 

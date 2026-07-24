@@ -113,7 +113,7 @@ Independent review 01 blocked the first package evidence on command leakage in t
 
 Independent re-review 02 and Oracle passed the fixed range. After ff-only merge, main passed `384/384` default and `383/383` curl tests; focused coding-agent passed `104/104`, with every supported macOS shell/signal/PID/N/N+1/invalid-UTF8 fixture executed and zero skips.
 
-Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**done**). `h-integration-001` is ready for the final Phase H audit. Shell L2 does not imply process-tree ownership, OS sandbox, mid-flight cancellation, SDK-ready, or overall Phase H completion.
+Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**done**). The later final audit failed only on file-tool contracts; `h-integration-001` is now blocked on those tasks and shell remains closed. Shell L2 does not imply process-tree ownership, OS sandbox, mid-flight cancellation, SDK-ready, or overall Phase H completion.
 
 ## L2 acceptance
 

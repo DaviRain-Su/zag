@@ -49,10 +49,11 @@ A missing ask callback in ask mode denies dangerous operations. A caller-supplie
 
 ## Remember
 
-- After approval of a write to a validated path, the same Agent lifetime may skip a second prompt for that path.
-- Default on; `--no-remember` disables it.
-- Maximum 64 paths.
-- Remember keys currently use the path string extracted for the gate (same field as workspace metadata). Canonical/contained identity improvements track workspace containment work.
+- After approval of a write to a validated path, the same Agent lifetime may skip a second prompt for that exact lexical request-path string.
+- Default on; `--no-remember` disables it. Maximum 64 paths.
+- H intentionally treats the key as request spelling, not canonical filesystem-object identity: aliases such as `a.txt` and `./a.txt` re-prompt.
+- Remembered approval never bypasses the execution-time workspace Guard. An escaping/dangling alias is still denied, and a denied alias does not create an executable authorization.
+- Same-string filesystem retargeting remains inside the documented trusted-host/check-time TOCTOU boundary. Canonical object/path-domain authorization is L3 work.
 - Trace permission events include `risk`, `allowed`, and `remembered=true|false`.
 
 ## Plan mode
@@ -66,7 +67,8 @@ Plan mode permits read and reserved plan-file writes (`plan.md`, `.zag/plan.md`,
 - [x] all Tool risk comes from a validated descriptor.
 - [x] custom write/execute Tools are confirmed/denied like built-ins.
 - [x] missing descriptor/risk fails registration rather than defaulting to read.
-- [ ] remember keys use contained canonical path identity (workspace-001 / follow-up).
+- [ ] exact lexical remember keys re-prompt for aliases and never bypass Guard/jail (`h-edit-integrity-001`).
+- [x] canonical filesystem-object/path-domain authorization is explicitly L3 rather than an H claim.
 - [x] trace records descriptor-derived risk and decision.
 
 ## L3

@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `openai-zig`（OpenAI）/ `std.http`（Anthropic） |
-| 成熟度 | **L1+**；deadline/cancel/partial Tool safety（h-provider-001）+ HTTP diagnostics status/length only（h-redact-001）；L2 仍欠更多 contract matrix |
+| 成熟度 | **L2**；final audit confirmed backend-capability deadline/cancel truth, strict stream/Tool completion, canonical errors/retry/usage, and redacted diagnostics |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
 ## 包内分层
@@ -160,22 +160,25 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 见 [quality/contracts.md](../quality/contracts.md)。
 
-- ✅ 包内 `contract_tests.zig`（含 loopback 慢服务器 timeout/cancel；双后端）
-- ❌ 独立 fixture 目录命名仍待收口（行为已在包内 CI）
+- ✅ 包内 `contract_tests.zig` 覆盖双 wire style、request/turn、错误/retry/usage、strict SSE terminal、Tool-call atomicity，以及 std/curl loopback lifecycle controls。
+- ✅ std ordinary no-control success 与 requested-control pre-network `UnsupportedControl` 分开证明；curl timeout/active cancel 真正执行。
+- ✅ HTTP diagnostics 只含 status/body length；产品 verbose/trace/session secret fixtures 通过。
+
+Fixture 目录命名不影响行为合同，可在以后整理；它不再作为 L2 blocker。
 
 ## L2 验收（H6 出门）
 
 - [x] WireAdapter + 至少两家 style。
-- [x] retry/error/usage 的基础 contract fixtures 无网络运行。
+- [x] retry/error/usage/cost contract fixtures 确定性运行。
 - [x] usage 出现在 trace，并可聚合 cost ledger。
-- [x] 每个公开 timeout 配置都被执行（std+curl）；默认 null 不意外超时。
-- [x] cancel/deadline 贯穿 Provider、adapter、std/curl stream。
-- [x] 取消/超时后的不完整 Tool call 不进入执行，并有 CI fixture。
-- [x] Timeout/Cancelled 不重试；deadline 跨 attempt 共享。
-- [ ] contract fixture 目录与 CI 门禁命名仍可再收口。
-- [ ] 与 H5：密钥不出现在 verbose/trace/session。
+- [x] configured lifecycle control 要么由 curl enforce，要么由 std 在 network 前显式 `UnsupportedControl`；默认 null 不意外超时。
+- [x] cancel/deadline 贯穿 Provider/adapter；backend capability truth 不静默降级。
+- [x] strict protocol completion；取消/超时/EOF 后的不完整 Tool call 不进入执行。
+- [x] Timeout/Cancelled/UnsupportedControl 不按 generic provider failure 重试；deadline 跨 attempt 共享。
+- [x] 密钥不出现在 HTTP diagnostics、verbose、trace、session fixtures。
+- [x] final Phase H audit 未发现 H6 行为 blocker；default/curl package and root suites passed。
 
-Session usage metadata是后续可加字段，不优先于 persistence correctness。勾满本表后才升 L2。
+Session usage metadata与 fallback/multi-key 是后续能力，不阻塞 L2。
 
 ## L3
 

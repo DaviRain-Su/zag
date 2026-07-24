@@ -8,7 +8,7 @@ depends-on: [h-trace-001]
 
 # objective
 
-Define and implement enforced provider deadlines and in-flight cancellation across std/curl streaming paths, with incomplete tool-call fragments discarded rather than executed.
+Define and implement truthful provider lifecycle controls across std/curl streaming paths: curl enforces deadline and active cancellation, while std rejects requested unsupported controls before network; incomplete tool-call fragments are discarded rather than executed.
 
 # context
 

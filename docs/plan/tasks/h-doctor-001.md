@@ -65,4 +65,4 @@ Add a reusable typed readiness report and `zag --doctor` text command that expos
 - `zig build test --summary all`;
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
-- doctor, retained policy/containment evidence, and h-shell-001 have passed independent/main verification; Phase H remains open until ready `h-integration-001` completes its final audit.
+- doctor, retained policy/containment evidence, and h-shell-001 have passed independent/main verification; the later final audit blocked integration only on the two new file-surface tasks.

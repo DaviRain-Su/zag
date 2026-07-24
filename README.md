@@ -23,6 +23,7 @@
 | [docs/maturity.md](./docs/maturity.md) | L0–L3 成熟度真理源 |
 | [docs/roadmap.md](./docs/roadmap.md) | Phase H P0/P1、SDK/headless Gate、Capability DAG |
 | [production-floor assessment](./docs/plan/analysis/2026-07-24-production-floor-assessment.md) | 2026-07-24 评估、P0/P1/P2 与实施任务 |
+| [latest Phase H audit](./docs/plan/analysis/2026-07-25-phase-h-final-audit.md) | 2026-07-25 FAIL verdict、两个 file-surface blockers 与 exit disposition |
 | [docs/architecture.md](./docs/architecture.md) | 分层：Loop⊂Graph · Tool runtime · WireAdapter · 产品壳 |
 | [chapters/00-loop](./chapters/00-loop/README.md) | Teaching 0：loop |
 | [chapters/01-edit-permissions](./chapters/01-edit-permissions/README.md) | Teaching 1：编辑 + 权限 |
@@ -39,7 +40,7 @@ Teaching 0  loop + 只读                 ✅ tutorial
 Teaching 1  write/shell + ask|yolo      ✅ tutorial
 Teaching 2  会话 / AGENTS.md / context  ✅ tutorial
 Teaching 3  jail / shell policy / trace ✅ tutorial（≠ 生产完成）
-Phase H     硬化到 maturity L2          ❌ all module Gates ✅ → h-integration-001 ready（final exit audit）
+Phase H     硬化到 maturity L2          ❌ final audit FAIL → 两个 file-surface tasks ready；integration blocked
 C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
 ```
 

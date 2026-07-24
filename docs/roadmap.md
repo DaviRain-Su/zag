@@ -1,13 +1,13 @@
 # Zag 路线图
 
-> Zig 是载体；harness 是主角。成熟度真理源：[maturity](./maturity.md)。当前实施基线：[production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
+> Zig 是载体；harness 是主角。成熟度真理源：[maturity](./maturity.md)。实施基线：[production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)；最新 Gate：[Phase H final audit](./plan/analysis/2026-07-25-phase-h-final-audit.md)。
 
 ## 诚实状态
 
 | Track | Status | Meaning |
 |-------|--------|---------|
 | Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
-| Production Floor Phase H | ❌ **final audit ready** | P0/P1 module Gates done；`h-integration-001` ready 决定 single-user trusted-host L2 |
+| Production Floor Phase H | ❌ **file blockers active** | final audit FAIL；edit integrity + read/search bounds ready；integration blocked |
 | Zig SDK-ready gate | ❌ 未达 | low-level composition 已证明；支持契约未闭合 |
 | Headless/process gate | ❌ 未达 | one-shot 存在；结构化协议/exit matrix 未闭合 |
 | Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
@@ -22,7 +22,7 @@ Teaching 0 → 1 → 2 → 3  ✅
                 ▼
 Phase H correctness
   P0: session · Tool policy · containment · truthful trace
-  P1: context · redact · provider deadline/cancel · doctor · synchronous shell · real composition
+  P1: context · redact · provider control · doctor · shell · file-surface bounds/integrity · real composition
                 │
                 ├────► Zig SDK-ready gate ───► package publication decision
                 ├────► headless/process gate ─► ACP/editor integration later
@@ -61,19 +61,21 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-tool-runtime-001](./plan/tasks/h-tool-runtime-001.md) | stateful Tool, mandatory descriptor, fail-closed custom policy |
 | [h-workspace-001](./plan/tasks/h-workspace-001.md) | symlink-aware containment for all file Tools |
 | [h-trace-001](./plan/tasks/h-trace-001.md) | one truthful terminal state and visible trace I/O failure |
+| [h-edit-integrity-001](./plan/tasks/h-edit-integrity-001.md) | **ready final-audit correction:** preserve existing/absent targets across single-file edit faults |
 
 ### P1
 
 | Task | Depends on | Exit |
 |------|------------|------|
 | [h-context-001](./plan/tasks/h-context-001.md) | session + trace | final-view compaction accounting |
-| [h-provider-001](./plan/tasks/h-provider-001.md) | trace | enforced deadline/in-flight cancel/partial Tool safety |
+| [h-provider-001](./plan/tasks/h-provider-001.md) | trace | backend-capability deadline/cancel truth + partial Tool safety |
 | [h-redact-001](./plan/tasks/h-redact-001.md) | session + trace | shared pre-persistence redaction |
 | [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | **done:** no-key readiness/control truth; no policy mutation or OS-sandbox claim |
 | [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **done:** fixed-deny/encoding/scoped-limit/direct-PID/Agent matrix passed re-review, Oracle, and main std/curl |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 + doctor + shell | **ready:** retained Agent evidence plus final Phase H sentence audit/truth closeout |
+| [h-read-search-bounds-001](./plan/tasks/h-read-search-bounds-001.md) | Tool runtime + workspace | **ready:** shared 64 KiB body budget + explicit `fs-v1` incomplete outcomes |
+| [h-integration-001](./plan/tasks/h-integration-001.md) | all prior modules + both file tasks | **blocked:** retained Agent evidence; repeat final audit after both file tasks |
 
-Phase H exits only after integration independently completes the sentence-by-sentence closeout and [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit) remains true. Shell completion alone is not the overall verdict.
+Phase H exits only after both file tasks pass and integration independently repeats the sentence-by-sentence closeout against [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit). Shell/provider completion alone is not the overall verdict.
 
 ## Post-H gates
 
