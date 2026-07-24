@@ -101,10 +101,12 @@ zig build run -- --yolo --stream -v "hello"
 
 | 变量 / 文件 | 作用 |
 |-------------|------|
-| `DEEPSEEK_API_KEY` 等 | 自动探测 |
+| `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` 等 | 自动探测（见 `packages/zag-ai` presets） |
 | `ZAG_PROVIDER` / `ZAG_MODEL` | 显式选择 |
 | `.zag/config.json` | 非密钥配置 |
 | `--stream` | SSE 流式 |
+
+厂商表与 wire 矩阵见 [packages/zag-ai/README.md](./packages/zag-ai/README.md)。
 
 ## 许可
 

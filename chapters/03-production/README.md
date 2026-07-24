@@ -130,7 +130,7 @@ execute → tool result → transcript + trace
 
 ## 7. 扩展 OpenAI 兼容厂商
 
-见 `src/provider/presets.zig`：加一行 `ProviderSpec`（id / base_url / env_keys / default_model）。  
+见 `packages/zag-ai/src/presets.zig`：加一行 `ProviderSpec`（id / base_url / env_keys / default_model / api_style）。  
 不要改 `openai_compat.zig` 除非线协议本身变了。OAuth 登录暂不支持（仅 env key）。
 
 ## 8. 生产缺口

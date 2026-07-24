@@ -56,7 +56,17 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | 共享 `Config` + `http.Client` | ✅ `http` 仅 `std.http` |
 | 共享 `wire.Error` | ✅；`mapSdkError` 仅 OpenAI 适配器 |
 | `WireAdapter.embed` | ✅ OpenAI 实现；Anthropic → `NotSupported` |
+| presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning） |
 | Agent `if` 厂商 | 禁止（保持） |
+
+### Wire 边界（故意收窄）
+
+| 做 | 不做（近中期） |
+|----|----------------|
+| `openai_compat` + `anthropic_messages` | Google / Mistral-native / Bedrock / Vertex |
+| env key 预设（OpenAI/Anthropic 系 + 兼容网关） | OAuth（Codex / Copilot） |
+| curated model 表 + 预算 | 全量镜像 Pi `generate-models` + $/token 账本 |
+| （规划）OpenAI Responses、图像生成 | 绑死单一云 |
 
 ### 不变式（适配层）
 
@@ -84,6 +94,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | ChatOptions | temperature / max_tokens / tool_choice…；config + env |
 | Usage | `AssistantTurn.usage`；trace `usage` 事件；verbose 日志 |
 | Catalog 预算 | `catalog.contextBudgetChars` → `context.optionsForModel` |
+| 多厂商 preset | `presets.builtin`（openai_compat + anthropic_messages only） |
 | Contract 雏形 | `packages/zag-ai/src/contract_tests.zig`（无网络） |
 | Multimodal / embed | `ContentPart`；`WireAdapter.embed` |
 
@@ -136,7 +147,8 @@ canonical: types.Message / ToolDefinition / ChatOptions
 ## L3
 
 - provider fallback 链、multi-key  
-- 第三 WireAdapter / Responses 等按需  
+- **OpenAI Responses** WireAdapter（与 Completions 并存）  
+- **图像生成**独立面（不进 chat loop）  
 - Memory / RAG 用 embed 仅作可选后端，见 [memory.md](./memory.md)  
 
 ## 非目标（H）
