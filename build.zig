@@ -303,6 +303,29 @@ pub fn build(b: *std.Build) void {
     );
     bakeoff_step.dependOn(&run_bakeoff.step);
 
+    // h-doctor-001: process-level `--doctor` fixture (real zag binary, empty env).
+    // Proves no provider/API-key work, no session/trace file creation; invalid
+    // session paths fail closed without path leak. Runs under both std and curl
+    // backends because the product exe is rebuilt with the selected backend.
+    const doctor_fixture_opts = b.addOptions();
+    doctor_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
+    const doctor_process_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/doctor_process_fixture.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "doctor_fixture_options", .module = doctor_fixture_opts.createModule() },
+            },
+        }),
+    });
+    const run_doctor_process_tests = b.addRunArtifact(doctor_process_tests);
+    const doctor_fixture_step = b.step(
+        "doctor-process-fixture",
+        "Process-level zag --doctor no-key / session-validation fixture",
+    );
+    doctor_fixture_step.dependOn(&run_doctor_process_tests.step);
+
     const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
@@ -311,6 +334,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_coding_tests.step);
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&run_doctor_process_tests.step);
     test_step.dependOn(openai_coverage_step);
     test_step.dependOn(catalog_check_step);
     test_step.dependOn(docs_lint_step);

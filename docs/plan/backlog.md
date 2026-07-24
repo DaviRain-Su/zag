@@ -14,3 +14,4 @@ Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/
 | 2026-07-24 | Assessment | P2 | Memory Repo, Graph, TUI, full LSP/AST remain later capability work. |
 | 2026-07-24 | Assessment | P2 | Measure startup/size/cross-build before making Zig performance claims. |
 | 2026-07-24 | Packaging | P2 | Repo split/C ABI/dynamic plugin ABI deferred until SDK gate plus a second consumer/release channel. |
+| 2026-07-25 | h-doctor-001 N1 | P2 | `--doctor` silently ignores other legal product flags/prompt (`--stream`, `--config`, `--plan`, `-v`, free-text). Report-only surface still correct; optional reject-or-document UX later. |

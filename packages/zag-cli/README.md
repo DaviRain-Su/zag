@@ -13,7 +13,9 @@ Public API: `run(std.process.Init)`.
 
 ## Doctor (h-doctor-001)
 
-`zag --doctor` prints a fixed, path-free human-readable control report after flag parse and **before** `ai.resolve`, wire, Agent/session/trace, or network. No API key required. Reports selected permission/shell/project flags without mutating them. Not a stable JSON/exit protocol (see headless-001).
+`zag --doctor` prints a fixed, path-free human-readable control report after **argument validation** (including session-path semantics when `-s`/`-c` selected) and **before** `ai.resolve`, wire, Agent/session/trace open, or network. No API key required. Reports selected permission/shell/project flags without mutating them. Format overflow fails closed (non-zero). Not a stable JSON/exit protocol (see headless-001).
+
+Process fixture: `packages/zag-cli/src/doctor_process_fixture.zig` (wired into root `zig build test`). Other legal flags/prompt with `--doctor` are currently ignored (P2 UX backlog).
 
 ## Logging boundary (h-redact-001)
 

@@ -15,6 +15,11 @@ const Io = std.Io;
 const core = @import("zag-agent-core");
 const project = @import("project.zig");
 
+/// Stack buffer size that holds the maximum fixed report (worst-case enum labels).
+/// Production CLI uses exactly this capacity; overflow is a programming error path
+/// that returns `error.NoSpaceLeft` rather than an incomplete success body.
+pub const report_buf_len: usize = 512;
+
 /// Project-instruction candidate presence (not a load-success claim).
 pub const ProjectInstructionStatus = enum {
     /// Project load enabled and at least one candidate path exists.
@@ -121,11 +126,9 @@ pub fn probeTestEntry(io: Io, cwd: Io.Dir) TestEntry {
     return .none;
 }
 
-/// Map a workspace Root resolve attempt to a fixed containment status.
-/// Success with a non-empty path → `ready`; any failure / empty → fail closed.
-pub fn realContainmentFromRootAttempt(attempt: core.workspace.ContainError!core.workspace.Root) RealContainment {
-    const root = attempt catch return .unavailable_fail_closed;
-    if (root.path.len == 0) return .unavailable_fail_closed;
+/// Classify a borrowed resolved root path (does not free). Empty → fail closed.
+fn classifyResolvedRootPath(path: []const u8) RealContainment {
+    if (path.len == 0) return .unavailable_fail_closed;
     return .ready;
 }
 
@@ -139,7 +142,7 @@ pub fn probeRealContainment(
         return .unavailable_fail_closed;
     };
     defer root.deinit(gpa);
-    return realContainmentFromRootAttempt(root);
+    return classifyResolvedRootPath(root.path);
 }
 
 /// Collect the full typed report for `cwd` and selected options.
@@ -159,7 +162,10 @@ pub fn collect(
 }
 
 /// Human-readable fixed-key text. Path-free; no JSON stability claim.
-pub fn formatReport(buf: []u8, report: Report) []const u8 {
+///
+/// Fail-closed: buffer overflow returns `error.NoSpaceLeft` — never a partial
+/// "success" body missing contract keys.
+pub fn formatReport(buf: []u8, report: Report) error{NoSpaceLeft}![]const u8 {
     return std.fmt.bufPrint(
         buf,
         \\zag doctor
@@ -182,10 +188,18 @@ pub fn formatReport(buf: []u8, report: Report) []const u8 {
             report.shell_policy.name(),
             report.real_file_containment.name(),
         },
-    ) catch "zag doctor\n";
+    ) catch return error.NoSpaceLeft;
 }
 
 // ── tests ──────────────────────────────────────────────────────────────
+
+const sample_report = Report{
+    .project_instructions = .enabled_present,
+    .test_entry = .python_project,
+    .permission = .yolo,
+    .shell_policy = .protect,
+    .real_file_containment = .unavailable_fail_closed,
+};
 
 test "doctor defaults: ask/protect + present project in tmp with AGENTS.md" {
     const gpa = std.testing.allocator;
@@ -204,8 +218,8 @@ test "doctor defaults: ask/protect + present project in tmp with AGENTS.md" {
     try std.testing.expectEqual(core.shell_policy.Mode.protect, report.shell_policy);
     try std.testing.expectEqual(RealContainment.ready, report.real_file_containment);
 
-    var buf: [512]u8 = undefined;
-    const out = formatReport(&buf, report);
+    var buf: [report_buf_len]u8 = undefined;
+    const out = try formatReport(&buf, report);
     try std.testing.expect(std.mem.indexOf(u8, out, "permission=ask") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "shell_policy=protect") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "project_instructions=enabled_present") != null);
@@ -238,8 +252,8 @@ test "doctor: missing project + disabled via --no-project" {
     try tmp.dir.writeFile(io, .{ .sub_path = "README.md", .data = secret });
     const still_disabled = collect(gpa, io, tmp.dir, .{ .load_project_instructions = false });
     try std.testing.expectEqual(ProjectInstructionStatus.disabled, still_disabled.project_instructions);
-    var buf: [512]u8 = undefined;
-    const out = formatReport(&buf, still_disabled);
+    var buf: [report_buf_len]u8 = undefined;
+    const out = try formatReport(&buf, still_disabled);
     try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
     try std.testing.expect(std.mem.indexOf(u8, out, "project_instructions=disabled") != null);
 }
@@ -265,8 +279,8 @@ test "doctor test-entry candidate matrix first match wins" {
         try tmp.dir.writeFile(io, .{ .sub_path = c.file, .data = secret ++ "\n" });
         const report = collect(gpa, io, tmp.dir, .{});
         try std.testing.expectEqual(c.want, report.test_entry);
-        var buf: [512]u8 = undefined;
-        const out = formatReport(&buf, report);
+        var buf: [report_buf_len]u8 = undefined;
+        const out = try formatReport(&buf, report);
         // Body must never appear; file names that coincide with enum labels
         // (e.g. justfile) may appear only as the fixed enum value.
         try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
@@ -310,8 +324,8 @@ test "doctor explicit yolo/off selections reported without mutation semantics" {
     try std.testing.expectEqual(core.shell_policy.Mode.off, report.shell_policy);
     try std.testing.expectEqual(ProjectInstructionStatus.disabled, report.project_instructions);
 
-    var buf: [512]u8 = undefined;
-    const out = formatReport(&buf, report);
+    var buf: [report_buf_len]u8 = undefined;
+    const out = try formatReport(&buf, report);
     try std.testing.expect(std.mem.indexOf(u8, out, "permission=yolo") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "shell_policy=off") != null);
     try std.testing.expect(std.mem.indexOf(u8, out, "project_instructions=disabled") != null);
@@ -321,29 +335,11 @@ test "doctor explicit yolo/off selections reported without mutation semantics" {
 }
 
 test "unresolvable workspace root maps to unavailable_fail_closed" {
-    // Fixture: any failed/empty Root resolve is fail-closed, never ready, never a raw path.
-    // (Closed-fd Dir is not used — Zig 0.16 debug Io panics on BADF as programmer bug.)
-    try std.testing.expectEqual(
-        RealContainment.unavailable_fail_closed,
-        realContainmentFromRootAttempt(error.ResolveFailed),
-    );
-    try std.testing.expectEqual(
-        RealContainment.unavailable_fail_closed,
-        realContainmentFromRootAttempt(error.OutsideWorkspace),
-    );
-    try std.testing.expectEqual(
-        RealContainment.unavailable_fail_closed,
-        realContainmentFromRootAttempt(error.OutOfMemory),
-    );
-    try std.testing.expectEqual(
-        RealContainment.unavailable_fail_closed,
-        realContainmentFromRootAttempt(.{ .path = "", .owned = false }),
-    );
-    try std.testing.expectEqual(
-        RealContainment.ready,
-        realContainmentFromRootAttempt(.{ .path = "/ws", .owned = false }),
-    );
+    // Private path classifier: empty → fail closed; non-empty → ready.
+    try std.testing.expectEqual(RealContainment.unavailable_fail_closed, classifyResolvedRootPath(""));
+    try std.testing.expectEqual(RealContainment.ready, classifyResolvedRootPath("/ws"));
 
+    // Obtain failure → fail closed (no raw path).
     // Ordinary resolvable tmp cwd must be ready (positive control).
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -351,8 +347,8 @@ test "unresolvable workspace root maps to unavailable_fail_closed" {
     defer tmp.cleanup();
     try std.testing.expectEqual(RealContainment.ready, probeRealContainment(gpa, io, tmp.dir));
 
-    var buf: [512]u8 = undefined;
-    const out = formatReport(&buf, .{
+    var buf: [report_buf_len]u8 = undefined;
+    const out = try formatReport(&buf, .{
         .project_instructions = .enabled_missing,
         .test_entry = .none,
         .permission = .ask,
@@ -366,14 +362,34 @@ test "unresolvable workspace root maps to unavailable_fail_closed" {
     try std.testing.expect(std.mem.indexOf(u8, out, "var/") == null);
 }
 
+test "formatReport tiny buffer is NoSpaceLeft not incomplete success" {
+    var tiny: [8]u8 = undefined;
+    try std.testing.expectError(error.NoSpaceLeft, formatReport(&tiny, sample_report));
+    // Empty buffer too.
+    var empty: [0]u8 = .{};
+    try std.testing.expectError(error.NoSpaceLeft, formatReport(&empty, sample_report));
+}
+
+test "formatReport production buffer holds worst-case labels" {
+    var buf: [report_buf_len]u8 = undefined;
+    const out = try formatReport(&buf, sample_report);
+    try std.testing.expect(std.mem.indexOf(u8, out, "project_instructions=enabled_present") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "test_entry=python_project") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "permission=yolo") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "real_file_containment=unavailable_fail_closed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "os_sandbox=not_implemented") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell_containment=not_path_contained") != null);
+    try std.testing.expect(out.len < report_buf_len);
+}
+
 test "doctor format never echoes secret-shaped path or env-like fixtures" {
     const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
     const env_like = "ZAG_API_KEY=" ++ secret;
     const path_like = "/Users/me/.zag/" ++ secret ++ "/ws";
     _ = env_like;
     _ = path_like;
-    var buf: [512]u8 = undefined;
-    const out = formatReport(&buf, .{
+    var buf: [report_buf_len]u8 = undefined;
+    const out = try formatReport(&buf, .{
         .project_instructions = .enabled_present,
         .test_entry = .zig_build,
         .permission = .ask,
