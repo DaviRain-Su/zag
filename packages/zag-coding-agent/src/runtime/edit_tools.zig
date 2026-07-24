@@ -302,11 +302,6 @@ fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) 
     };
 }
 
-/// Test-only: after this many successful `replaceOwnedSlice` installs, the next
-/// call returns `error.OutOfMemory` before allocating (exercises ownership).
-var test_replace_fail_after: ?usize = null;
-var test_replace_success_count: usize = 0;
-
 /// Replace `slot` with a freshly owned copy of `bytes`.
 ///
 /// Allocates **before** freeing the previous value so OOM leaves the old
@@ -316,13 +311,9 @@ fn replaceOwnedSlice(
     slot: *?[]u8,
     bytes: []const u8,
 ) error{OutOfMemory}!void {
-    if (test_replace_fail_after) |limit| {
-        if (test_replace_success_count >= limit) return error.OutOfMemory;
-    }
     const fresh = try allocator.dupe(u8, bytes);
     if (slot.*) |old| allocator.free(old);
     slot.* = fresh;
-    if (test_replace_fail_after != null) test_replace_success_count += 1;
 }
 
 /// Ensure parent directories exist without recreating existing symlink/dir parents.
@@ -575,46 +566,37 @@ test "applyUniqueReplace not found and ambiguous" {
 }
 
 test "replaceOwnedSlice OOM leaves previous value (no double-free)" {
-    // Regression for ensureParentDirs openable update: free-then-dupe double-freed
-    // on OOM via outer defer. Ownership must be allocate → swap → free old.
+    // Ownership must be allocate → swap → free old so FailingAllocator dupe OOM
+    // cannot leave a freed pointer for an outer defer.
     const gpa = std.testing.allocator;
 
-    // --- real allocator OOM on first attempt (slot already set) ---
     var slot: ?[]u8 = try gpa.dupe(u8, "first-prefix");
     defer if (slot) |p| gpa.free(p);
 
     var failing_state = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expect(failing_state.has_induced_failure == false);
     try std.testing.expectError(
         error.OutOfMemory,
         replaceOwnedSlice(failing_state.allocator(), &slot, "second-prefix"),
     );
+    try std.testing.expect(failing_state.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 0), failing_state.alloc_index);
+    // Previous value still installed and owned exactly once (gpa leak check).
     try std.testing.expect(slot != null);
     try std.testing.expectEqualStrings("first-prefix", slot.?);
 
-    // --- success path swaps cleanly ---
     try replaceOwnedSlice(gpa, &slot, "second-prefix");
     try std.testing.expectEqualStrings("second-prefix", slot.?);
-
-    // --- hook: fail after one successful install (mirrors openable walk) ---
-    test_replace_fail_after = 1;
-    test_replace_success_count = 0;
-    defer {
-        test_replace_fail_after = null;
-        test_replace_success_count = 0;
-    }
-
-    var slot2: ?[]u8 = null;
-    defer if (slot2) |p| gpa.free(p);
-    try replaceOwnedSlice(gpa, &slot2, "a");
-    try std.testing.expectEqualStrings("a", slot2.?);
-    try std.testing.expectError(error.OutOfMemory, replaceOwnedSlice(gpa, &slot2, "a/b"));
-    // Still owns "a" exactly once — gpa leak check + equal proves no double-free.
-    try std.testing.expectEqualStrings("a", slot2.?);
 }
 
 test "ensureParentDirs OOM after openable prefix: no leak, no create, no outside write" {
-    // Path a/b/c/file.txt with a and a/b existing: first openable install succeeds,
-    // second (a/b) hits test_replace_fail_after → OOM with first prefix still deferred.
+    // Short path a/b/c/file.txt with a and a/b already present.
+    // Zig 0.16 allocation sequence under FailingAllocator (measured):
+    //   #0 acc first growth (appendSlice "a")
+    //   #1 replaceOwnedSlice dupe "a"   ← first openable install
+    //   #2 replaceOwnedSlice dupe "a/b" ← fail_index=2 fails this real dupe
+    // So the second openable update hits allocator.dupe OOM while openable_owned
+    // still holds "a"; defer must free it once (no double-free / leak via gpa).
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -627,15 +609,21 @@ test "ensureParentDirs OOM after openable prefix: no leak, no create, no outside
     var ws = try parent.dir.openDir(io, "ws", .{ .access_sub_paths = true });
     defer ws.close(io);
 
-    test_replace_fail_after = 1; // succeed once ("a"), fail on "a/b"
-    test_replace_success_count = 0;
-    defer {
-        test_replace_fail_after = null;
-        test_replace_success_count = 0;
-    }
-
-    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+    var failing_state = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 2 });
+    const ctx: tool.Context = .{
+        .allocator = failing_state.allocator(),
+        .io = io,
+        .cwd = ws,
+    };
     try std.testing.expectError(error.OutOfMemory, ensureParentDirs(ctx, "a/b/c/file.txt"));
+
+    // Real allocator failure on the third allocation attempt (second prefix dupe).
+    try std.testing.expect(failing_state.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 2), failing_state.alloc_index);
+    // Two successful allocs (#0 acc, #1 dupe "a") then free of openable "a" on error path.
+    try std.testing.expectEqual(@as(usize, 2), failing_state.allocations);
+    try std.testing.expect(failing_state.deallocations >= 1);
+    try std.testing.expectEqual(failing_state.allocated_bytes, failing_state.freed_bytes);
 
     // No partial create of missing suffix.
     try std.testing.expectError(error.FileNotFound, ws.statFile(io, "a/b/c", .{}));
