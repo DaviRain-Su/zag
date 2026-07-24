@@ -1,7 +1,7 @@
 ---
 id: h-context-001
 scope: phase-h/context-compaction
-status: in-progress
+status: done
 priority: P1
 depends-on: [h-session-001, h-trace-001]
 ---
@@ -27,7 +27,7 @@ Make compaction accounting describe the final model view after every trimming st
 - `docs/maturity.md`
 - `chapters/02-session-context/`
 
-# implementation note (local)
+# completion
 
 - Fixed-point `viewForModel`: validate tool bundles → count trim → legal align → char trim by atomic units → build summary (+ lineage) → re-cost → rebuild until stable; bound `body.len+1`; worst-case **O(n²)** documented.
 - Tool bundles: nonempty unique IDs; contiguous results in call order; orphan/unknown/duplicate/missing/ooo/incomplete → `InvalidContext` → terminal `invalid_context` (provider not called).
@@ -37,7 +37,7 @@ Make compaction accounting describe the final model view after every trimming st
 - Invalid UTF-8 → U+FFFD sanitize (not OOM).
 - Soft budget / `min_tail`: honest stop; two-stage fixture requires final > intermediate.
 - Loop: sink before trace; Agent `fail_next_note_compaction` fixture for OOM terminal.
-- Status left **in-progress** for orchestrator close-out.
+- Merged to `main`; production and ReleaseFast builds plus both HTTP-backend suites pass.
 
 # verification
 

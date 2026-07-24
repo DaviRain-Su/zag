@@ -19,7 +19,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 |------|--------|
 | Phase H | **Not complete.** Functional foundations exist; P0/P1 correctness gates remain. |
 | P0 | **Complete:** session durability, Tool descriptor, file symlink containment, and truthful trace lifecycle |
-| P1 | Compaction accounting is in progress; provider deadline/cancel and redaction are ready; integration, Zig SDK, and headless gates follow |
+| P1 | Compaction accounting is complete; provider deadline/cancel is in progress; redaction is ready; integration, Zig SDK, and headless gates follow |
 | P2 | Sandbox/process supervisor and capability work after their dependencies |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
@@ -33,8 +33,8 @@ done P0
   h-workspace-001
   h-trace-001
         │
-        ├─ in-progress P1: h-context-001
-        ├─ ready P1: h-provider-001
+        ├─ done P1: h-context-001
+        ├─ in-progress P1: h-provider-001
         └─ ready P1: h-redact-001
                          │
 all module P0/P1 tasks ─► h-integration-001
@@ -52,8 +52,8 @@ all module P0/P1 tasks ─► h-integration-001
 | [h-tool-runtime-001](./tasks/h-tool-runtime-001.md) | P0 | done | Tool descriptor + permission |
 | [h-workspace-001](./tasks/h-workspace-001.md) | P0 | done | Filesystem containment after Tool descriptor |
 | [h-trace-001](./tasks/h-trace-001.md) | P0 | done | Trace/run terminal lifecycle |
-| [h-context-001](./tasks/h-context-001.md) | P1 | in-progress | Compaction accounting |
-| [h-provider-001](./tasks/h-provider-001.md) | P1 | ready | Deadline/in-flight cancellation |
+| [h-context-001](./tasks/h-context-001.md) | P1 | done | Compaction accounting |
+| [h-provider-001](./tasks/h-provider-001.md) | P1 | in-progress | Deadline/in-flight cancellation |
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | ready | Secret redaction |
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | pending | Phase H real-composition/E2E closeout |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |

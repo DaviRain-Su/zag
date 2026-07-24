@@ -1,7 +1,7 @@
 ---
 id: h-provider-001
 scope: phase-h/provider-deadline-cancel
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-trace-001]
 ---
