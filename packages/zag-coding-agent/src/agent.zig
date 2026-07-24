@@ -1,7 +1,7 @@
 //! Coding Agent facade — product layer over Agent Core.
 //!
 //! ```
-//! var agent = Agent.init(gpa, io, provider, .{ .permission_mode = .ask });
+//! var agent = try Agent.init(gpa, io, provider, .{ .permission_mode = .ask });
 //! var session = try Session.start(gpa, io, .{ .base_system = sys, .path = "..." });
 //! defer session.deinit();
 //! const result = try agent.reply(&session, user_text);
@@ -59,7 +59,7 @@ pub const Options = struct {
     secrets: []const []const u8 = &.{},
     /// Apply documented common API-key/token patterns (default true).
     pattern_redaction: bool = true,
-    /// Optional pre-built redactor borrowed for Agent lifetime (caller owns).
+    /// Optional source redactor to **clone** into Agent-owned policy.
     /// When set, `secrets` / `pattern_redaction` are ignored for construction.
     redactor: ?*const redact_mod.Redactor = null,
 };
@@ -82,6 +82,12 @@ pub const SessionStartOptions = struct {
     open_mode: OpenMode = .create_new,
     /// Inject AGENTS.md / README into system (default true).
     load_project_instructions: bool = true,
+    /// Exact secrets to copy into Session-owned Redactor (product path).
+    secrets: []const []const u8 = &.{},
+    /// Apply common API-key patterns (default true).
+    pattern_redaction: bool = true,
+    /// Optional source redactor to **clone** (takes precedence over secrets list).
+    redactor: ?*const redact_mod.Redactor = null,
 };
 
 pub const StartError = loop.RunError || session_store.Error;
@@ -109,8 +115,8 @@ pub const Session = struct {
     /// Latest compaction summary for the session layer / header (arena-owned).
     compaction_summary: ?[]const u8 = null,
     zag_version: []const u8 = "0.5.0",
-    /// Borrowed redactor for persistence (product Agent attaches before save).
-    redactor: ?*const redact_mod.Redactor = null,
+    /// Session-owned redaction policy (cloned at start; survives Agent deinit).
+    owned_redactor: ?redact_mod.Redactor = null,
     /// Test-only: next `noteCompaction` returns OOM without mutating gen/summary.
     fail_next_note_compaction: if (builtin.is_test) bool else void =
         if (builtin.is_test) false else {},
@@ -146,16 +152,29 @@ pub const Session = struct {
         errdefer if (writer) |*w| w.deinit();
         var resumed = false;
 
+        // Product path: own a redactor BEFORE any create write (fail closed on OOM).
+        var owned_redactor: ?redact_mod.Redactor = null;
+        errdefer if (owned_redactor) |*r| r.deinit();
+        if (opts.redactor) |src| {
+            owned_redactor = try src.clone(gpa);
+        } else {
+            owned_redactor = try redact_mod.Redactor.init(gpa, .{
+                .secrets = opts.secrets,
+                .patterns = opts.pattern_redaction,
+            });
+        }
+        const redactor_ptr: ?*const redact_mod.Redactor = if (owned_redactor) |*r| r else null;
+
         if (opts.path) |p| {
             switch (opts.open_mode) {
                 .create_new => {
                     try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
-                    writer = try session_store.createNew(gpa, io, Io.Dir.cwd(), p, transcript.items(), .{
+                    writer = try session_store.createNewWithRedactor(gpa, io, Io.Dir.cwd(), p, transcript.items(), .{
                         .schema_version = session_store.current_schema_version,
                         .zag_version = "0.5.0",
                         .compaction_gen = compaction_gen,
                         .compaction_summary = compaction_summary,
-                    });
+                    }, redactor_ptr);
                 },
                 .resume_existing => {
                     var meta: session_store.SessionMeta = .{};
@@ -175,12 +194,12 @@ pub const Session = struct {
                     } else |err| switch (err) {
                         error.SessionNotFound => {
                             try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
-                            writer = try session_store.createNew(gpa, io, Io.Dir.cwd(), p, transcript.items(), .{
+                            writer = try session_store.createNewWithRedactor(gpa, io, Io.Dir.cwd(), p, transcript.items(), .{
                                 .schema_version = session_store.current_schema_version,
                                 .zag_version = "0.5.0",
                                 .compaction_gen = compaction_gen,
                                 .compaction_summary = compaction_summary,
-                            });
+                            }, redactor_ptr);
                             // created path: project already seeded; not a resume.
                         },
                         else => |e| return e,
@@ -199,6 +218,9 @@ pub const Session = struct {
             try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
         }
 
+        // Move owned_redactor into Session (disable errdefer free).
+        const moved_redactor = owned_redactor;
+        owned_redactor = null;
         return finishSession(
             gpa,
             io,
@@ -211,6 +233,7 @@ pub const Session = struct {
             project_source,
             compaction_gen,
             compaction_summary,
+            moved_redactor,
         );
     }
 
@@ -226,6 +249,7 @@ pub const Session = struct {
         project_source: ?[]const u8,
         compaction_gen: u32,
         compaction_summary: ?[]const u8,
+        owned_redactor: ?redact_mod.Redactor,
     ) Session {
         return .{
             .gpa = gpa,
@@ -239,6 +263,7 @@ pub const Session = struct {
             .project_source = project_source,
             .compaction_gen = compaction_gen,
             .compaction_summary = compaction_summary,
+            .owned_redactor = owned_redactor,
         };
     }
 
@@ -297,29 +322,36 @@ pub const Session = struct {
     pub fn deinit(self: *Session) void {
         if (self.writer) |*w| w.deinit();
         if (self.path) |p| self.gpa.free(p);
+        if (self.owned_redactor) |*r| r.deinit();
         self.arena_impl.deinit();
         self.gpa.destroy(self.arena_impl);
         self.* = undefined;
     }
 
-    /// Attach redaction policy for subsequent saves (borrowed; must outlive Session).
-    pub fn setRedactor(self: *Session, r: ?*const redact_mod.Redactor) void {
-        self.redactor = r;
-        if (self.writer) |*w| w.setRedactor(r);
+    /// Active session redactor (owned); null only if construction failed (should not happen).
+    pub fn activeRedactor(self: *Session) ?*const redact_mod.Redactor {
+        if (self.owned_redactor != null) return &self.owned_redactor.?;
+        return null;
+    }
+
+    /// Clone `src` into this session (replaces any prior owned policy).
+    pub fn adoptRedactorClone(self: *Session, src: *const redact_mod.Redactor) error{OutOfMemory}!void {
+        const cloned = try src.clone(self.gpa);
+        if (self.owned_redactor) |*old| old.deinit();
+        self.owned_redactor = cloned;
     }
 
     /// Persist transcript if a path is configured.
     /// Redacts arbitrary fields into temporary buffers; does not mutate in-memory transcript.
+    /// Safe after Agent deinit (session owns its policy).
     pub fn save(self: *Session) session_store.Error!void {
         if (self.writer) |*w| {
-            // Keep writer policy aligned with session (Agent may attach late).
-            if (self.redactor) |r| w.setRedactor(r);
             try w.save(self.transcript.items(), .{
                 .schema_version = session_store.current_schema_version,
                 .zag_version = self.zag_version,
                 .compaction_gen = self.compaction_gen,
                 .compaction_summary = self.compaction_summary,
-            });
+            }, self.activeRedactor());
         }
     }
 };
@@ -339,22 +371,28 @@ pub const Agent = struct {
     ledger: ai.cost.Ledger = .{},
     /// Cooperative cancel; CLI installs SIGINT against this flag.
     cancel: cancel_mod.Flag = .{},
-    /// Owned redactor when `options.redactor` is null; otherwise unused.
-    /// Do not take a long-lived pointer to this field across Agent moves —
-    /// use `activeRedactor()` after Agent is in its final storage.
-    owned_redactor: ?redact_mod.Redactor = null,
-    /// Borrowed redactor from options (caller owns; must outlive Agent).
-    borrowed_redactor: ?*const redact_mod.Redactor = null,
+    /// Always owned after successful init (clone of options.redactor or built from secrets).
+    owned_redactor: redact_mod.Redactor,
     /// Test-only toolset override for InvalidToolset fixtures (production always null).
     test_tools: if (builtin.is_test) ?[]const tool.Tool else void =
         if (builtin.is_test) null else {},
 
+    /// Fail-closed: redactor construction OOM returns before any network/disk use.
     pub fn init(
         gpa: std.mem.Allocator,
         io: Io,
         provider: provider_mod.Provider,
         options: Options,
-    ) Agent {
+    ) error{OutOfMemory}!Agent {
+        // Build owned redactor first (never swallow OOM). No later fallible work.
+        const owned_redactor: redact_mod.Redactor = if (options.redactor) |src|
+            try src.clone(gpa)
+        else
+            try redact_mod.Redactor.init(gpa, .{
+                .secrets = options.secrets,
+                .patterns = options.pattern_redaction,
+            });
+
         var self: Agent = .{
             .gpa = gpa,
             .io = io,
@@ -367,26 +405,12 @@ pub const Agent = struct {
             .trace = null,
             .ledger = .{},
             .cancel = .{},
-            .owned_redactor = null,
-            .borrowed_redactor = options.redactor,
+            .owned_redactor = owned_redactor,
         };
         self.permission_gate = self.resolveGate();
 
-        // Own a redactor when the caller did not supply one.
-        if (options.redactor == null) {
-            if (redact_mod.Redactor.init(gpa, .{
-                .secrets = options.secrets,
-                .patterns = options.pattern_redaction,
-            })) |owned| {
-                self.owned_redactor = owned;
-            } else |_| {
-                self.owned_redactor = null;
-            }
-        }
-
         if (options.trace_path) |tp| {
             self.trace = trace_mod.Trace.init(gpa, io, tp, Io.Dir.cwd());
-            // Pointer rebound after Agent is stored by callers via attachRedactor/beginRun.
         }
         return self;
     }
@@ -395,26 +419,20 @@ pub const Agent = struct {
     pub fn deinit(self: *Agent) void {
         self.remember_store.deinit();
         if (self.trace) |*tr| {
+            tr.setRedactor(null);
             tr.deinit();
         }
-        if (self.owned_redactor) |*r| r.deinit();
+        self.owned_redactor.deinit();
         self.* = undefined;
     }
 
-    /// Active redactor after Agent lives in stable storage (not during init return).
-    pub fn activeRedactor(self: *Agent) ?*const redact_mod.Redactor {
-        if (self.borrowed_redactor) |r| return r;
-        if (self.owned_redactor != null) return &self.owned_redactor.?;
-        return null;
+    /// Active redactor (Agent-owned; stable for Agent lifetime).
+    pub fn activeRedactor(self: *Agent) *const redact_mod.Redactor {
+        return &self.owned_redactor;
     }
 
-    /// Active redactor (const). Prefer `activeRedactor` when mutable Agent is available.
-    pub fn getRedactor(self: *const Agent) ?*const redact_mod.Redactor {
-        if (self.borrowed_redactor) |r| return r;
-        // Cannot rebind owned optional through const self safely for mutation-free;
-        // return pointer into owned payload when present.
-        if (self.owned_redactor) |*r| return r;
-        return null;
+    pub fn getRedactor(self: *const Agent) *const redact_mod.Redactor {
+        return &self.owned_redactor;
     }
 
     pub fn initPhase0(
@@ -422,7 +440,7 @@ pub const Agent = struct {
         io: Io,
         provider: provider_mod.Provider,
         options: Options,
-    ) Agent {
+    ) error{OutOfMemory}!Agent {
         return init(gpa, io, provider, options);
     }
 
@@ -512,11 +530,11 @@ pub const Agent = struct {
         }
     }
 
-    /// Attach this agent's redactor to a session (and its writer/trace).
-    pub fn attachRedactor(self: *Agent, session: *Session) void {
-        const r = self.activeRedactor();
-        session.setRedactor(r);
-        if (self.trace) |*tr| tr.setRedactor(r);
+    /// Ensure session owns a redactor (clone from Agent if missing); bind trace for this reply only.
+    fn ensureSessionRedactor(self: *Agent, session: *Session) error{OutOfMemory}!void {
+        if (session.owned_redactor == null) {
+            try session.adoptRedactorClone(self.activeRedactor());
+        }
     }
 
     /// Per-reply prep: reset ledger + trace buffer, non-destructive preflight,
@@ -524,8 +542,9 @@ pub const Agent = struct {
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
         // Fresh run-local cost ledger each reply.
         self.ledger = .{};
-        // Product path: session/trace always see current redaction policy.
-        self.attachRedactor(session);
+        try self.ensureSessionRedactor(session);
+        // Trace borrows session policy only for this synchronous reply.
+        if (self.trace) |*tr| tr.setRedactor(session.activeRedactor());
         const tr = if (self.trace) |*t| t else return;
         try tr.beginReply();
         try tr.emitRunStart(.{
@@ -576,6 +595,7 @@ pub const Agent = struct {
             @max(turns_hint, tr.last_emitted_turn)
         else
             turns_hint;
+        defer if (self.trace) |*tr| tr.setRedactor(null);
         self.commitTerminal(turns, false, stop_reason) catch |terr| return terr;
         return primary;
     }
@@ -661,6 +681,7 @@ pub const Agent = struct {
 
         // Final persist on success path: TraceIoFailed (no audited success).
         try self.commitTerminal(result.turns, resultOk(result.stop_reason), result.stop_reason);
+        if (self.trace) |*tr| tr.setRedactor(null);
         return result;
     }
 
@@ -688,6 +709,7 @@ pub const Agent = struct {
             .path = session_opts.path,
             .open_mode = session_opts.open_mode,
             .load_project_instructions = session_opts.load_project_instructions,
+            .redactor = self.activeRedactor(),
         });
         defer session.deinit();
 
@@ -868,7 +890,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
         .vtable = &.{ .chat = Mock.chat },
     };
 
-    var agent = Agent.init(gpa, io, provider, .{
+    var agent = try Agent.init(gpa, io, provider, .{
         .permission_mode = .yolo,
         .verbose = false,
     });
@@ -993,7 +1015,7 @@ test "h-trace: schema_version on run_start and completed terminal" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .trace_path = null, // memory-only via manual trace install below
         .verbose = false,
@@ -1026,7 +1048,7 @@ test "h-trace: provider failure ok=false provider_error exactly once" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .chat_retries = 0,
@@ -1053,7 +1075,7 @@ test "h-trace: max_turns terminal ok=true stop_reason=max_turns" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .max_turns_then_text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .max_turns = 2,
@@ -1093,7 +1115,7 @@ test "h-provider: unsupported_control exact run_end once" {
     };
     var calls: u32 = 0;
     var mock: Mock = .{ .calls = &calls };
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = Mock.chat },
     }, .{ .permission_mode = .yolo, .chat_retries = 3, .verbose = false });
@@ -1134,7 +1156,7 @@ test "h-provider: timeout exact run_end once" {
     };
     var calls: u32 = 0;
     var mock: Mock = .{ .calls = &calls };
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = Mock.chat },
     }, .{ .permission_mode = .yolo, .chat_retries = 5, .verbose = false });
@@ -1175,7 +1197,7 @@ test "h-provider: retryable error exact chat_retries+1 attempts" {
     var calls: u32 = 0;
     var mock: Mock = .{ .calls = &calls };
     const retries: u8 = 2;
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = Mock.chat },
     }, .{
@@ -1203,7 +1225,7 @@ test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .max_turns = 4,
@@ -1249,7 +1271,7 @@ test "h-trace: session save failure ok=false session_error not completed" {
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
     });
@@ -1269,7 +1291,7 @@ test "h-trace: Agent.deinit does not invent success terminal" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .chat_retries = 0,
@@ -1307,7 +1329,7 @@ test "h-trace: unwritable explicit path fails before provider" {
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .trace_path = bad_path,
@@ -1331,7 +1353,7 @@ test "h-trace: absolute trace path is InvalidPath before provider" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .trace_path = "/tmp/zag-trace-absolute.jsonl",
@@ -1354,7 +1376,7 @@ test "h-trace: completeWithSession does not double-terminal" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
     });
@@ -1385,7 +1407,7 @@ test "h-trace: two consecutive replies reset buffer seq and ledger" {
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text_with_usage, .usage_prompt = 10 };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .trace_path = path,
@@ -1438,7 +1460,7 @@ test "h-trace: fail-before-replace returns TraceIoFailed single false terminal" 
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .trace_path = path,
@@ -1482,7 +1504,7 @@ test "h-trace: recovery A success, B persist fault, C success latest-run only" {
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text_with_usage, .usage_prompt = 7 };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .trace_path = path,
@@ -1537,7 +1559,7 @@ test "h-trace: provider fail with persist fault returns TraceIoFailed (fail-clos
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .chat_retries = 0,
@@ -1586,7 +1608,7 @@ test "h-trace: Agent.reply invalid toolset provider=0 and invalid_toolset termin
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .chat_retries = 0,
@@ -1629,7 +1651,7 @@ test "h-trace: parent symlink escape fails before provider" {
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         // Path relative to agent cwd (process cwd); for unit isolation we install
@@ -1658,7 +1680,7 @@ test "h-trace: provider failure after prior turn reports last_emitted_turn" {
     const io = std.testing.io;
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .tool_then_fail };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .chat_retries = 0,
@@ -1773,7 +1795,7 @@ test "h-context: session+trace same final dropped/summary; provider gets final v
         var capture: CaptureViewChat = .{ .calls = &calls, .gpa = gpa };
         defer capture.deinit();
 
-        var agent = Agent.init(gpa, io, .{
+        var agent = try Agent.init(gpa, io, .{
             .ptr = &capture,
             .vtable = &.{ .chat = CaptureViewChat.chat },
         }, .{
@@ -1904,7 +1926,7 @@ test "h-context: session+trace same final dropped/summary; provider gets final v
         var calls2: u32 = 0;
         var capture2: CaptureViewChat = .{ .calls = &calls2, .gpa = gpa };
         defer capture2.deinit();
-        var agent2 = Agent.init(gpa, io, .{
+        var agent2 = try Agent.init(gpa, io, .{
             .ptr = &capture2,
             .vtable = &.{ .chat = CaptureViewChat.chat },
         }, .{
@@ -2062,7 +2084,7 @@ test "h-context: Agent.reply malformed tools invalid_context provider=0" {
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .max_turns = 4,
@@ -2113,7 +2135,7 @@ test "h-context: Agent.reply noteCompaction OOM provider=0 one out_of_memory ter
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .max_turns = 4,
@@ -2172,7 +2194,7 @@ test "h-context: session layer summary and trace byte-equal under shared cap" {
     var capture: CaptureViewChat = .{ .calls = &calls, .gpa = gpa };
     defer capture.deinit();
 
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &capture,
         .vtable = &.{ .chat = CaptureViewChat.chat },
     }, .{
@@ -2256,7 +2278,7 @@ test "h-context: large prior lineage survives save/resume with marker or exact" 
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
         .max_turns = 4,
@@ -2341,7 +2363,7 @@ test "h-context: tiny-budget prior lineage survives save/resume/recompact chain"
     {
         var calls: u32 = 0;
         var mock: MockChat = .{ .calls = &calls, .mode = .text };
-        var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
             .permission_mode = .yolo,
             .verbose = false,
             .max_turns = 4,
@@ -2412,7 +2434,7 @@ test "h-context: tiny-budget prior lineage survives save/resume/recompact chain"
 
         var calls2: u32 = 0;
         var mock2: MockChat = .{ .calls = &calls2, .mode = .text };
-        var agent2 = Agent.init(gpa, io, mockProvider(&mock2), .{
+        var agent2 = try Agent.init(gpa, io, mockProvider(&mock2), .{
             .permission_mode = .yolo,
             .verbose = false,
             .max_turns = 4,
@@ -2540,7 +2562,7 @@ test "h-redact: secret absent from session bytes, trace, while in-memory raw" {
 
     var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
     const secret_slots = [_][]const u8{secret};
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = EchoSecretChat.chat },
     }, .{
@@ -2616,7 +2638,7 @@ test "h-redact: tool args/result and pattern shapes redacted in trace+session" {
 
     var mock: EchoSecretChat = .{ .secret = secret, .mode = .tool_then_text };
     const secret_slots = [_][]const u8{secret};
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = EchoSecretChat.chat },
     }, .{
@@ -2671,7 +2693,7 @@ test "h-redact: redaction OOM on session save preserves prior bytes" {
 
     var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
     const secret_slots = [_][]const u8{secret};
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = EchoSecretChat.chat },
     }, .{
@@ -2749,7 +2771,7 @@ test "h-redact: near-miss strings survive session roundtrip" {
     defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
 
     var mock: EchoSecretChat = .{ .secret = "unused-secret-value-xxxx", .mode = .text };
-    var agent = Agent.init(gpa, io, .{
+    var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = EchoSecretChat.chat },
     }, .{
@@ -2774,4 +2796,248 @@ test "h-redact: near-miss strings survive session roundtrip" {
     try std.testing.expect(std.mem.indexOf(u8, sess_bytes, "my_api_key") != null);
     try std.testing.expect(std.mem.indexOf(u8, sess_bytes, "sk-short") != null);
     try std.testing.expect(std.mem.indexOf(u8, sess_bytes, "OPENAI_API_KEY") != null);
+}
+
+// ── h-redact-001 follow-up permanent gates ──────────────────────────────────
+
+const FailAlwaysChat = struct {
+    fn chat(
+        _: *anyopaque,
+        _: std.mem.Allocator,
+        _: []const message.Message,
+        _: []const tool.Definition,
+        _: provider_mod.RequestControl,
+    ) provider_mod.ChatError!message.AssistantTurn {
+        return error.AuthenticationFailed;
+    }
+};
+
+test "h-redact: initial create redacts system secret before provider failure" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    const dir_name = ".zag-test-h-redact-initcreate";
+    const sess_path = ".zag-test-h-redact-initcreate/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const sys = try std.fmt.allocPrint(gpa, "system with {s}", .{secret});
+    defer gpa.free(sys);
+
+    const secret_slots = [_][]const u8{secret};
+    var mock: FailAlwaysChat = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = FailAlwaysChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .secrets = &secret_slots,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = sys,
+        .path = sess_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    // Initial create already on disk — must not contain raw secret.
+    const initial = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(initial);
+    try std.testing.expect(std.mem.indexOf(u8, initial, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, initial, redact_mod.marker) != null);
+
+    // Provider failure path must not write raw.
+    try std.testing.expectError(error.ProviderFailed, agent.reply(&session, "hi"));
+    const after = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(after);
+    try std.testing.expect(std.mem.indexOf(u8, after, secret) == null);
+}
+
+test "h-redact: Agent.init Redactor OOM before disk/network" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var mock: FailAlwaysChat = .{};
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const err = Agent.init(failing.allocator(), io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = FailAlwaysChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .secrets = &.{redact_mod.testing.fake_api_key},
+    });
+    try std.testing.expectError(error.OutOfMemory, err);
+}
+
+test "h-redact: Session save safe after Agent deinit (owned policy)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    const dir_name = ".zag-test-h-redact-after-agent";
+    const sess_path = ".zag-test-h-redact-after-agent/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const secret_slots = [_][]const u8{secret};
+    var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{ .permission_mode = .yolo, .secrets = &secret_slots });
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    // Session owns its policy — safe after Agent deinit (no UAF).
+    agent.deinit();
+
+    try session.transcript.appendUser(try std.fmt.allocPrint(session.arena_impl.allocator(), "k={s}", .{secret}));
+    try session.save();
+    const bytes = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(bytes);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, secret) == null);
+}
+
+test "h-redact: multi-tool secret IDs get unique pseudonyms on save/resume" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const s1 = redact_mod.testing.fake_api_key;
+    const s2 = redact_mod.testing.fake_anthropic;
+
+    const dir_name = ".zag-test-h-redact-toolids";
+    const sess_path = ".zag-test-h-redact-toolids/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const secret_slots = [_][]const u8{ s1, s2 };
+    {
+        var mock: EchoSecretChat = .{ .secret = s1, .mode = .text };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = EchoSecretChat.chat },
+        }, .{ .permission_mode = .yolo, .secrets = &secret_slots });
+        defer agent.deinit();
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+            .redactor = agent.activeRedactor(),
+        });
+        defer session.deinit();
+
+        const id_a = try std.fmt.allocPrint(session.arena_impl.allocator(), "call-{s}", .{s1});
+        const id_b = try std.fmt.allocPrint(session.arena_impl.allocator(), "call-{s}", .{s2});
+        const calls = try session.arena_impl.allocator().alloc(message.ToolCall, 2);
+        calls[0] = .{ .id = id_a, .name = "list_dir", .arguments = "{}" };
+        calls[1] = .{ .id = id_b, .name = "list_dir", .arguments = "{}" };
+        try session.transcript.appendAssistantTurn(.{
+            .content = "tools",
+            .tool_calls = calls,
+            .finish_reason = "tool_calls",
+        });
+        try session.transcript.appendToolResult(id_a, "ra");
+        try session.transcript.appendToolResult(id_b, "rb");
+        try session.save();
+
+        const bytes = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+        defer gpa.free(bytes);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, s1) == null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, s2) == null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "redacted-tool-call-0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "redacted-tool-call-1") != null);
+        // Distinct pseudonyms.
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "redacted-tool-call-0") !=
+            std.mem.indexOf(u8, bytes, "redacted-tool-call-1"));
+    }
+
+    // Resume: tool pairs still coherent under pseudonyms.
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+        .pattern_redaction = true,
+    });
+    defer resumed.deinit();
+    var saw0 = false;
+    var saw1 = false;
+    for (resumed.transcript.items()) |m| {
+        if (m.tool_calls) |calls| {
+            for (calls) |c| {
+                if (std.mem.eql(u8, c.id, "redacted-tool-call-0")) saw0 = true;
+                if (std.mem.eql(u8, c.id, "redacted-tool-call-1")) saw1 = true;
+            }
+        }
+        if (m.tool_call_id) |tid| {
+            if (std.mem.eql(u8, tid, "redacted-tool-call-0")) saw0 = true;
+            if (std.mem.eql(u8, tid, "redacted-tool-call-1")) saw1 = true;
+        }
+    }
+    try std.testing.expect(saw0 and saw1);
+}
+
+test "h-redact: mid-trace redaction OOM still one out_of_memory terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    // Arm fail_next only after run_start, on the first provider turn.
+    const LeakChat = struct {
+        secret: []const u8,
+        agent: *Agent,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            if (self.agent.trace) |*tr| {
+                trace_mod.testing.setFailNextRedact(tr, true);
+            }
+            const body = try std.fmt.allocPrint(arena, "secret={s}", .{self.secret});
+            return .{ .content = body, .tool_calls = &.{}, .finish_reason = "stop" };
+        }
+    };
+    const secret_slots = [_][]const u8{secret};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = undefined, // filled after agent exists
+        .vtable = &.{ .chat = LeakChat.chat },
+    }, .{ .permission_mode = .yolo, .secrets = &secret_slots });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var mock: LeakChat = .{ .secret = secret, .agent = &agent };
+    agent.provider.ptr = &mock;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.OutOfMemory, err);
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "out_of_memory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, secret) == null);
 }

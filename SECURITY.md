@@ -50,8 +50,11 @@ Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/termi
 - Prefer environment variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ZAG_API_KEY`, …).
 - Never paste keys into prompts, source files, Tool arguments, or shell commands deliberately.
 - **Redaction (h-redact-001):** the shared `redact.Redactor` in `zag-agent-core` scrubs exact configured secrets (CLI wires the resolved provider API key without logging it) and a conservative set of common API-key/token shapes before **verbose observer logs**, **trace JSONL serialize**, and **session atomic persist**. In-memory transcript and provider request bytes may remain raw; only outward copies are redacted.
-- Marker is deterministic (`[REDACTED]`). Empty/too-short configured secrets are ignored. Redaction OOM is fail-closed (no raw fallback; prior session/trace bytes preserved).
-- Model-plane HTTP does not log `Authorization` / API keys; optional `zag-ai` `redact_log` scrubs exact secrets and URL userinfo for diagnostics.
+- Marker is deterministic (`[REDACTED]`). Empty/too-short configured secrets are ignored. Redaction OOM is fail-closed (no raw fallback; prior session/trace bytes preserved). Mid-trace redaction OOM still yields one allocation-free `out_of_memory` terminal.
+- Matching: global longest among exact+patterns; pattern token boundaries; AWS fixed 20-byte form; complexity O(input × secret material + pattern scan).
+- Session owns a cloned redactor at `Session.start` (create writes redacted); safe to `save` after Agent deinit. Tool-call IDs that contain secrets map to per-file pseudonyms (`redacted-tool-call-<n>`), not a collapsed marker.
+- Model-plane / openai-zig HTTP diagnostics print **status + body length only** — never Authorization, body text, or hex dumps.
+- Shell/jail loop warnings are generic (no raw command/path).
 - **Not claimed:** zeroization of freed secret buffers, DLP over arbitrary tool/file content, or proof that `.zag/` is secret-free.
 - Treat all `.zag/` files as sensitive local state and keep them out of version control.
 

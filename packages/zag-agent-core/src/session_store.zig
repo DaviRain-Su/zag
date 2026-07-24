@@ -77,8 +77,6 @@ pub const Writer = struct {
     lock_path: []const u8,
     /// Held open for the lifetime of the writer.
     lock_file: Io.File,
-    /// Borrowed redaction policy (product path sets; null = low-level bypass).
-    redactor: ?*const redact_mod.Redactor = null,
     /// Test builds only: fail after temp write, before atomic replace/link.
     fail_before_replace: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
     /// Test-only: next save redaction returns OOM once.
@@ -91,17 +89,19 @@ pub const Writer = struct {
         self.* = undefined;
     }
 
-    pub fn setRedactor(self: *Writer, r: ?*const redact_mod.Redactor) void {
-        self.redactor = r;
-    }
-
     /// Persist transcript atomically, preserving the prior file on failure.
+    /// `redactor` is borrowed **only for this call** (not retained). Null = low-level bypass.
     /// Redacts into temporary buffers only; does not mutate `messages`.
-    pub fn save(self: *Writer, messages: []const message.Message, meta: SessionMeta) Error!void {
+    pub fn save(
+        self: *Writer,
+        messages: []const message.Message,
+        meta: SessionMeta,
+        redactor: ?*const redact_mod.Redactor,
+    ) Error!void {
         const fault = if (builtin.is_test) self.fail_before_replace else false;
         const redact_fault = if (builtin.is_test) self.fail_next_redact else false;
         if (builtin.is_test and self.fail_next_redact) self.fail_next_redact = false;
-        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault, self.redactor, redact_fault);
+        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault, redactor, redact_fault);
     }
 
     /// Load the current session file into `transcript` and return header meta.
@@ -247,7 +247,6 @@ pub fn createNewWithRedactor(
         .path = lease.path_owned,
         .lock_path = lease.lock_path,
         .lock_file = lease.lock_file,
-        .redactor = redactor,
     };
 }
 
@@ -354,9 +353,13 @@ fn saveWithMetaAtomic(
     var body: Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
 
+    // Per-save tool-call ID map: secret-bearing IDs → stable pseudonyms.
+    var id_map = try buildToolIdMap(gpa, messages, redactor);
+    defer freeToolIdMap(gpa, &id_map);
+
     try writeHeaderRedacted(gpa, &body.writer, meta, redactor);
     for (messages) |msg| {
-        try writeMessageRedacted(gpa, &body.writer, msg, redactor);
+        try writeMessageRedacted(gpa, &body.writer, msg, redactor, &id_map);
     }
 
     var atomic = cwd.createFileAtomic(io, path, .{
@@ -393,9 +396,12 @@ fn saveWithMetaAtomicCreate(
     var body: Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
 
+    var id_map = try buildToolIdMap(gpa, messages, redactor);
+    defer freeToolIdMap(gpa, &id_map);
+
     try writeHeaderRedacted(gpa, &body.writer, meta, redactor);
     for (messages) |msg| {
-        try writeMessageRedacted(gpa, &body.writer, msg, redactor);
+        try writeMessageRedacted(gpa, &body.writer, msg, redactor, &id_map);
     }
 
     var atomic = cwd.createFileAtomic(io, path, .{
@@ -438,7 +444,7 @@ pub fn save(
 }
 
 /// Public save with meta: acquires the writer lock for the call so it cannot bypass single-writer.
-/// Low-level: no redactor. Prefer `Writer.save` after `setRedactor` on the product path.
+/// Low-level: no redactor. Prefer `Writer.save` with an explicit redactor on the product path.
 pub fn saveWithMeta(
     gpa: std.mem.Allocator,
     io: Io,
@@ -614,6 +620,74 @@ fn redactField(
     return redact_mod.redactOptional(redactor, gpa, value);
 }
 
+/// Per-save map: original tool-call id → pseudonym (only when id contains secrets).
+/// Unchanged IDs are not entered. Order of first appearance assigns ordinals.
+const ToolIdMap = struct {
+    /// Parallel arrays: raw ids that need remapping → owned pseudonym strings.
+    raw: std.ArrayList([]const u8) = .empty,
+    pseudo: std.ArrayList([]u8) = .empty,
+
+    fn lookup(self: *const ToolIdMap, id: []const u8) ?[]const u8 {
+        for (self.raw.items, 0..) |r, i| {
+            if (std.mem.eql(u8, r, id)) return self.pseudo.items[i];
+        }
+        return null;
+    }
+};
+
+fn freeToolIdMap(gpa: std.mem.Allocator, map: *ToolIdMap) void {
+    for (map.pseudo.items) |p| gpa.free(p);
+    map.pseudo.deinit(gpa);
+    map.raw.deinit(gpa);
+    map.* = .{};
+}
+
+fn idNeedsPseudonym(redactor: ?*const redact_mod.Redactor, id: []const u8) bool {
+    const r = redactor orelse return false;
+    return r.containsSecret(id);
+}
+
+fn buildToolIdMap(
+    gpa: std.mem.Allocator,
+    messages: []const message.Message,
+    redactor: ?*const redact_mod.Redactor,
+) Error!ToolIdMap {
+    var map: ToolIdMap = .{};
+    errdefer freeToolIdMap(gpa, &map);
+    if (redactor == null) return map;
+
+    var ordinal: usize = 0;
+    for (messages) |msg| {
+        if (msg.tool_calls) |calls| {
+            for (calls) |c| {
+                if (!idNeedsPseudonym(redactor, c.id)) continue;
+                if (map.lookup(c.id) != null) continue;
+                const pseudo = std.fmt.allocPrint(gpa, "redacted-tool-call-{d}", .{ordinal}) catch
+                    return error.OutOfMemory;
+                errdefer gpa.free(pseudo);
+                try map.raw.append(gpa, c.id);
+                try map.pseudo.append(gpa, pseudo);
+                ordinal += 1;
+            }
+        }
+        if (msg.tool_call_id) |tid| {
+            if (!idNeedsPseudonym(redactor, tid)) continue;
+            if (map.lookup(tid) != null) continue;
+            const pseudo = std.fmt.allocPrint(gpa, "redacted-tool-call-{d}", .{ordinal}) catch
+                return error.OutOfMemory;
+            errdefer gpa.free(pseudo);
+            try map.raw.append(gpa, tid);
+            try map.pseudo.append(gpa, pseudo);
+            ordinal += 1;
+        }
+    }
+    return map;
+}
+
+fn mapToolId(map: *const ToolIdMap, id: []const u8) []const u8 {
+    return map.lookup(id) orelse id;
+}
+
 fn writeHeaderRedacted(
     gpa: std.mem.Allocator,
     w: *Io.Writer,
@@ -675,6 +749,7 @@ fn writeMessageRedacted(
     w: *Io.Writer,
     msg: message.Message,
     redactor: ?*const redact_mod.Redactor,
+    id_map: *const ToolIdMap,
 ) Error!void {
     // Collect owned redacted strings; free after write.
     var owned: std.ArrayList([]u8) = .empty;
@@ -700,8 +775,9 @@ fn writeMessageRedacted(
     }.call;
 
     const content = try take(gpa, &owned, redactor, msg.content);
+    // Tool IDs: structural pseudonym map (never collapse multiple IDs to one marker).
     const tool_call_id: ?[]const u8 = if (msg.tool_call_id) |id|
-        try take(gpa, &owned, redactor, id)
+        mapToolId(id_map, id)
     else
         null;
 
@@ -734,7 +810,7 @@ fn writeMessageRedacted(
         calls_owned = arr;
         for (calls, 0..) |c, i| {
             arr[i] = .{
-                .id = try take(gpa, &owned, redactor, c.id),
+                .id = mapToolId(id_map, c.id),
                 .name = try take(gpa, &owned, redactor, c.name),
                 .arguments = try take(gpa, &owned, redactor, c.arguments),
             };
@@ -1010,7 +1086,7 @@ test "Writer save failpoint preserves prior bytes and reloads" {
     testing.setFailBeforeReplace(&writer, true);
     defer testing.setFailBeforeReplace(&writer, false);
 
-    const err = writer.save(t.items(), .{});
+    const err = writer.save(t.items(), .{}, null);
     try std.testing.expectError(error.IoFailed, err);
 
     const raw = try tmp.dir.readFileAlloc(io, "s.jsonl", gpa, .limited(1024));
@@ -1166,7 +1242,7 @@ test "Writer create/resume/save roundtrip" {
     try writer.save(t1.items(), .{
         .zag_version = "0.5.0",
         .compaction_gen = 1,
-    });
+    }, null);
     writer.deinit();
 
     var arena2: std.heap.ArenaAllocator = .init(gpa);

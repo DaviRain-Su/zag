@@ -10,7 +10,10 @@ depends-on: [h-session-001, h-trace-001]
 
 Introduce one shared redaction boundary for configured secrets and common API-key patterns before verbose logs, traces, and session persistence.
 
-> Implementation landed in worktree (shared `redact.Redactor`, wired through Agent/CLI/trace/session/observer + zag-ai `redact_log`). Task status stays **in-progress** for orchestrator closeout; do not mark done here.
+> Implementation + follow-up correctness (global longest match, boundaries, fallible Agent.init,
+> Session-owned redactor + createNewWithRedactor, tool-id pseudonyms, fail-closed logs/HTTP,
+> mid-trace OOM terminal) in worktree. Task status stays **in-progress** for orchestrator
+> closeout; do not mark done here.
 
 # context
 

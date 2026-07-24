@@ -25,9 +25,6 @@ pub const config = @import("config.zig");
 pub const http = @import("http.zig");
 pub const request_control = @import("request_control.zig");
 pub const factory = @import("factory.zig");
-/// Shared redaction helpers for model-plane diagnostics (h-redact-001).
-/// Never log Authorization / API keys; scrub bodies/URLs before stderr.
-pub const redact_log = @import("redact_log.zig");
 
 pub const Message = types.Message;
 pub const ContentPart = types.ContentPart;

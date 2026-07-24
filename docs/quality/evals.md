@@ -81,7 +81,7 @@ These remain useful but do not cover the assessment blockers.
 ## P1 minimum fixtures
 
 1. two-stage compaction: final `dropped` and summary/lineage match the returned view. ✅ h-context-001 (`context.zig` fixed-point fixtures + agent session/trace integration).
-2. fake configured secrets do not appear in verbose, trace, or session bytes. ✅ h-redact-001 (`redact.zig` unit + agent session/trace/resume/OOM fixtures; pattern near-miss intact; in-memory raw vs persisted redacted).
+2. fake configured secrets do not appear in verbose, trace, or session bytes. ✅ h-redact-001 (unit longest/boundary/xai/AWS/OOM; initial create; Session after Agent deinit; multi-tool ID pseudonyms; mid-trace OOM terminal; in-memory raw vs redacted resume).
 3. timeout enforced on **curl**; **std** configured timeout → `unsupported_control` before network (default null = no timeout). ✅ h-provider-001 capability-truth
 4. stream requires protocol completion; incomplete tool args reject whole turn. ✅ h-provider-001
 5. external stateful Tool/Provider/Observer/policy/session consumer passes.

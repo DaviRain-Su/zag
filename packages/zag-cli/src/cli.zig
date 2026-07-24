@@ -126,7 +126,7 @@ pub fn run(init: std.process.Init) !void {
             }
             break;
         } else if (std.mem.startsWith(u8, a, "-")) {
-            std.log.err("unknown flag: {s}", .{a});
+            std.log.err("unknown flag", .{});
             try printUsage();
             std.process.exit(2);
         } else {
@@ -143,7 +143,7 @@ pub fn run(init: std.process.Init) !void {
     // open_or_create is SDK-only and is not selected by CLI flags.
     if (session_path) |sp| {
         core.session_store.validateSessionPath(sp) catch {
-            std.log.err("session path must be a relative workspace path (no absolute/'..'): {s}", .{sp});
+            std.log.err("session path must be a relative workspace path (no absolute/'..')", .{});
             std.process.exit(2);
         };
     }
@@ -271,7 +271,10 @@ pub fn run(init: std.process.Init) !void {
         agent_opts.max_turns = mt;
     }
 
-    var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts);
+    var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
+        std.log.err("agent init failed (out of memory)", .{});
+        std.process.exit(1);
+    };
     defer agent.deinit();
     core.cancel.installSigInt(&agent.cancel);
 
@@ -360,6 +363,7 @@ fn runRepl(
         .path = session_path,
         .open_mode = open_mode,
         .load_project_instructions = load_project,
+        .redactor = agent.activeRedactor(),
     }) catch |err| {
         std.log.err("session failed: {s}", .{@errorName(err)});
         std.process.exit(1);

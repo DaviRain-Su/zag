@@ -410,12 +410,16 @@ pub const Trace = struct {
     }
 
     fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
-        var reason_prep: PreparedString = .borrowed("");
-        defer freePrepared(self, reason_prep);
-        const reason: ?[]const u8 = if (info.stop_reason) |r| blk: {
-            reason_prep = try prepareTracedString(self, r, max_stop_reason_len);
-            break :blk reason_prep.bytes;
-        } else null;
+        // stop_reason is a controlled vocabulary (completed/out_of_memory/…).
+        // Never allocate or redact it — preserves terminal_reserve no-alloc guarantee
+        // after mid-event redaction OOM (failRun still commits one truthful terminal).
+        const reason: ?[]const u8 = if (info.stop_reason) |r|
+            truncateUtf8(r, max_stop_reason_len)
+        else
+            null;
+        if (reason) |rr| {
+            if (!std.unicode.utf8ValidateSlice(rr)) return error.TraceSerializationFailed;
+        }
         try self.writeObj(.{
             .kind = .run_end,
             .turns = info.turns,

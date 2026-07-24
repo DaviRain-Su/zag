@@ -63,12 +63,13 @@ A denylist reduces accidents; it is not an adversarial sandbox.
 
 | Item | Content |
 |------|---------|
-| Code | `packages/zag-agent-core/src/redact.zig`; wired via Trace / session Writer / observer / Agent / CLI; model-plane `zag-ai/src/redact_log.zig` for HTTP diagnostics |
+| Code | `packages/zag-agent-core/src/redact.zig`; wired via Trace / Session-owned redactor / observer / Agent / CLI |
 | Marker | deterministic `[REDACTED]` |
-| Exact secrets | configured values (CLI wires resolved provider API key without logging it); min length guard; owned copies inside `Redactor` |
-| Patterns | conservative shapes: `sk-…`, `sk-ant-…`, GitHub PATs, AWS `AKIA…`, `Bearer …` (min lengths + alphabets) |
-| Boundaries | verbose observer logs; every arbitrary trace string before JSON; session header/messages before atomic write |
-| Failure | typed OOM fail-closed; verbose may drop line; session/trace preserve prior durable bytes |
+| Exact secrets | configured values (CLI wires resolved provider API key without logging it); min length guard; owned copies; `clone` for Session |
+| Patterns | `sk-…`, `sk-ant-…`, `xai-…`, GitHub PATs, AWS `AKIA`+16 `[A-Z0-9]` (reject overlong), `Bearer …`; left token boundary |
+| Matching | global longest exact+pattern; tie: exact > pattern; complexity O(input × secret material + pattern scan) |
+| Boundaries | verbose logs; every arbitrary trace string before JSON; session header/messages before atomic write; tool IDs → pseudonyms |
+| Failure | typed OOM fail-closed; verbose may drop line; session/trace preserve prior durable bytes; mid-trace OOM → one `out_of_memory` terminal |
 | Limits | no zeroization claim; not DLP; `.zag/` remains sensitive |
 
 ## Doctor/readiness

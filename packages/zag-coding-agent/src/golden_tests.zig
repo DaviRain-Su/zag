@@ -64,7 +64,7 @@ test "golden readonly-list-build" {
         .vtable = &.{ .chat = Mock.chat },
     };
 
-    var agent = agent_mod.Agent.init(gpa, io, provider, .{
+    var agent = try agent_mod.Agent.init(gpa, io, provider, .{
         .permission_mode = .yolo,
         .verbose = false,
     });

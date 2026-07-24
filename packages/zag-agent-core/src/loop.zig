@@ -417,7 +417,8 @@ fn executeOneTool(
                 tr.emitShellDeny(command) catch |err| return mapTraceEmit(err);
             }
             if (deps.options.observer.on_event != null) {
-                std.log.warn("shell policy deny: {s}", .{command});
+                // Generic only — never log raw command (may contain secrets).
+                std.log.warn("shell policy deny", .{});
             }
             const deny_body = shell_policy.deniedMessage(deps.tool_ctx.allocator, command) catch
                 return error.OutOfMemory;
@@ -623,7 +624,8 @@ fn emitJailDeny(deps: Deps, tool_name: []const u8, path: []const u8) RunError![]
         tr.emitJailDeny(tool_name, path) catch |err| return mapTraceEmit(err);
     }
     if (deps.options.observer.on_event != null) {
-        std.log.warn("jail deny {s} path={s}", .{ tool_name, path });
+        // Generic only — never log raw path (may contain secrets).
+        std.log.warn("jail deny", .{});
     }
     return workspace.deniedMessage(deps.tool_ctx.allocator, path) catch return error.OutOfMemory;
 }

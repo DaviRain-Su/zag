@@ -16,7 +16,7 @@
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | core `context`；coding `project` | 保持 |
 | [session-store.md](./session-store.md) | H4 → C5 | core `session_store.zig` | 保持 |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | core `workspace` + `shell_policy` + `redact.zig` | C7 sandbox |
-| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` + `redact_log` | core 仅纯 Provider |
+| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
 | [trace-observability.md](./trace-observability.md) | H7 | core `trace.zig` + redaction | 保持 |
 | [memory.md](./memory.md) | **C5**（前置 H4） | —（未实现） | `.zag/memory/` + agent 挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
