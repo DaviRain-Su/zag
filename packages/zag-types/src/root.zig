@@ -4,6 +4,8 @@
 //! Wire adapters map vendor failures onto `ChatError`.
 
 const std = @import("std");
+const builtin = @import("builtin");
+const posix = std.posix;
 
 /// Neutral chat / provider failures (Agent Core + all WireAdapters).
 pub const ChatError = error{
@@ -17,11 +19,145 @@ pub const ChatError = error{
     AuthenticationFailed,
     PermissionDenied,
     RateLimited,
+    /// End-to-end or transport deadline fired (not retried at loop layer).
     Timeout,
+    /// Cooperative cancel observed mid-request (not retried).
+    Cancelled,
     ServerError,
     BadRequest,
     /// Capability not available on this wire (e.g. embeddings on Anthropic).
     NotSupported,
+};
+
+/// Cooperative cancel flag. Thread- and signal-safe via seq_cst atomics.
+///
+/// Ownership: the host (Agent / test) owns the flag for the run lifetime.
+/// In-flight requests borrow `*CancelFlag` via `RequestControl` and must not
+/// outlive the flag. Signal handlers may only call `request`.
+pub const CancelFlag = struct {
+    cancelled: std.atomic.Value(bool) = .init(false),
+
+    pub fn request(self: *CancelFlag) void {
+        self.cancelled.store(true, .seq_cst);
+    }
+
+    pub fn isSet(self: *const CancelFlag) bool {
+        return self.cancelled.load(.seq_cst);
+    }
+
+    pub fn clear(self: *CancelFlag) void {
+        self.cancelled.store(false, .seq_cst);
+    }
+};
+
+/// Monotonic nanoseconds for deadline math (process-local).
+///
+/// Uses OS monotonic clocks when available; never wall-clock. Values are only
+/// comparable within the same process (and preferably the same clock domain).
+/// Aligns with `Io.Clock.awake` (macOS `UPTIME_RAW`, Linux `MONOTONIC`).
+pub fn monoNowNs() u64 {
+    switch (builtin.os.tag) {
+        .linux, .macos, .ios, .tvos, .watchos, .visionos, .freebsd, .netbsd, .dragonfly, .openbsd => {
+            const clock_id: posix.clockid_t = switch (builtin.os.tag) {
+                .macos, .ios, .tvos, .watchos, .visionos => posix.CLOCK.UPTIME_RAW,
+                else => posix.CLOCK.MONOTONIC,
+            };
+            var ts: posix.timespec = undefined;
+            switch (posix.errno(posix.system.clock_gettime(clock_id, &ts))) {
+                .SUCCESS => {
+                    const sec_ns = std.math.mul(u64, @intCast(ts.sec), std.time.ns_per_s) catch
+                        return std.math.maxInt(u64);
+                    return sec_ns +| @as(u64, @intCast(ts.nsec));
+                },
+                else => return 0,
+            }
+        },
+        else => {
+            // Fallback: Timer is monotonic on supported targets.
+            const Static = struct {
+                var timer: ?std.time.Timer = null;
+                var mu: std.Thread.Mutex = .{};
+            };
+            Static.mu.lock();
+            defer Static.mu.unlock();
+            if (Static.timer == null) {
+                Static.timer = std.time.Timer.start() catch return 0;
+            }
+            return Static.timer.?.read();
+        },
+    }
+}
+
+/// Request lifecycle control: monotonic deadline + cooperative cancel.
+///
+/// - `deadline_mono_ns`: absolute mono ns; null = no deadline.
+/// - `cancel`: borrowed flag; null = no mid-request cancel signal.
+/// - Thread safety: cancel is atomic; deadline is a plain value (immutable after build).
+/// - L0 has no IO: transports supply the same mono clock via `monoNowNs` / checks.
+pub const RequestControl = struct {
+    deadline_mono_ns: ?u64 = null,
+    cancel: ?*CancelFlag = null,
+
+    pub fn none() RequestControl {
+        return .{};
+    }
+
+    /// Build a deadline from relative `timeout_ms` and current mono time.
+    /// - `null` timeout → no deadline
+    /// - `0` → already expired (immediate Timeout on check)
+    /// - overflow saturates at maxInt(u64)
+    pub fn withTimeoutMs(now_mono_ns: u64, timeout_ms: ?u64) RequestControl {
+        const dl: ?u64 = if (timeout_ms) |ms| blk: {
+            const add_ns = std.math.mul(u64, ms, std.time.ns_per_ms) catch
+                break :blk std.math.maxInt(u64);
+            break :blk now_mono_ns +| add_ns;
+        } else null;
+        return .{ .deadline_mono_ns = dl };
+    }
+
+    pub fn withCancel(self: RequestControl, flag: *CancelFlag) RequestControl {
+        var c = self;
+        c.cancel = flag;
+        return c;
+    }
+
+    pub fn isCancelled(self: RequestControl) bool {
+        return if (self.cancel) |f| f.isSet() else false;
+    }
+
+    pub fn isExpired(self: RequestControl, now_mono_ns: u64) bool {
+        return if (self.deadline_mono_ns) |d| now_mono_ns >= d else false;
+    }
+
+    /// Prefer cancel over timeout when both trip (stable precedence).
+    pub fn check(self: RequestControl, now_mono_ns: u64) error{ Cancelled, Timeout }!void {
+        if (self.isCancelled()) return error.Cancelled;
+        if (self.isExpired(now_mono_ns)) return error.Timeout;
+    }
+
+    pub fn checkNow(self: RequestControl) error{ Cancelled, Timeout }!void {
+        return self.check(monoNowNs());
+    }
+
+    /// Remaining whole milliseconds until deadline; null if none; 0 if expired.
+    pub fn remainingMs(self: RequestControl, now_mono_ns: u64) ?u64 {
+        const d = self.deadline_mono_ns orelse return null;
+        if (now_mono_ns >= d) return 0;
+        return (d - now_mono_ns) / std.time.ns_per_ms;
+    }
+
+    /// libcurl-compatible timeout: 0 = no timeout (infinite). When a deadline
+    /// is set, returns at least 1 ms while budget remains so curl does not
+    /// treat 0 as infinite after partial spend.
+    pub fn curlTimeoutMs(self: RequestControl, now_mono_ns: u64, configured_ms: ?u64) u64 {
+        const from_deadline = self.remainingMs(now_mono_ns);
+        if (from_deadline) |rem| {
+            if (rem == 0) return 1; // force immediate fire
+            if (configured_ms) |cfg| return @min(cfg, rem);
+            return rem;
+        }
+        return configured_ms orelse 0;
+    }
 };
 
 pub const Role = enum {
@@ -264,6 +400,9 @@ pub const ChatOptions = struct {
     user: ?[]const u8 = null,
     seed: ?u64 = null,
     extra_body: ?std.json.Value = null,
+    /// Lifecycle control (borrowed cancel + monotonic deadline). Not a sampling knob.
+    /// Transports must enforce or reject; never accept and ignore.
+    control: RequestControl = .{},
 };
 
 pub const StreamEvent = union(enum) {
@@ -280,9 +419,13 @@ pub const StreamEvent = union(enum) {
 
 pub const StreamHandler = *const fn (ctx: ?*anyopaque, event: StreamEvent) anyerror!void;
 
+/// Loop-layer retry policy. End-to-end **Timeout** and **Cancelled** are never
+/// retried (deadline budget is shared across attempts; cancel is terminal).
+/// Transient transport/server failures may still retry while budget remains.
 pub fn isRetryableError(err: anyerror) bool {
     return switch (err) {
-        error.RateLimited, error.Timeout, error.ServerError, error.HttpFailed => true,
+        error.RateLimited, error.ServerError, error.HttpFailed => true,
+        error.Timeout, error.Cancelled, error.NotSupported => false,
         else => false,
     };
 }
@@ -315,4 +458,45 @@ test "isRetryableError" {
 
 test "isRetryableError does not treat NotSupported as retryable" {
     try std.testing.expect(!isRetryableError(error.NotSupported));
+}
+
+test "isRetryableError does not treat Timeout or Cancelled as retryable" {
+    try std.testing.expect(!isRetryableError(error.Timeout));
+    try std.testing.expect(!isRetryableError(error.Cancelled));
+}
+
+test "RequestControl timeout and cancel precedence" {
+    var flag: CancelFlag = .{};
+    const now: u64 = 1_000_000;
+    var ctrl = RequestControl.withTimeoutMs(now, 100);
+    ctrl = ctrl.withCancel(&flag);
+    try ctrl.check(now);
+    try std.testing.expectEqual(@as(?u64, 100), ctrl.remainingMs(now));
+    try std.testing.expectError(error.Timeout, ctrl.check(now + 200 * std.time.ns_per_ms));
+    flag.request();
+    // Cancel wins when both would trip.
+    try std.testing.expectError(error.Cancelled, ctrl.check(now + 200 * std.time.ns_per_ms));
+}
+
+test "RequestControl zero timeout is already expired" {
+    const now: u64 = 50;
+    const ctrl = RequestControl.withTimeoutMs(now, 0);
+    try std.testing.expectError(error.Timeout, ctrl.check(now));
+    try std.testing.expectEqual(@as(?u64, 0), ctrl.remainingMs(now));
+}
+
+test "RequestControl curlTimeoutMs no unexpected default" {
+    const now: u64 = 0;
+    const none = RequestControl.none();
+    try std.testing.expectEqual(@as(u64, 0), none.curlTimeoutMs(now, null));
+    try std.testing.expectEqual(@as(u64, 5000), none.curlTimeoutMs(now, 5000));
+    const with_dl = RequestControl.withTimeoutMs(now, 100);
+    try std.testing.expectEqual(@as(u64, 50), with_dl.curlTimeoutMs(now, 50));
+    try std.testing.expectEqual(@as(u64, 100), with_dl.curlTimeoutMs(now, null));
+}
+
+test "monoNowNs is nondecreasing" {
+    const a = monoNowNs();
+    const b = monoNowNs();
+    try std.testing.expect(b >= a);
 }

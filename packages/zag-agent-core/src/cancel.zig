@@ -1,28 +1,16 @@
-//! Cooperative cancel for the harness loop (H1).
+//! Cooperative cancel for the harness loop (H1 + h-provider-001).
 //!
-//! SIGINT (or tests) flip a flag; the loop checks between turns / tool calls and
-//! finishes any open tool_call pair with `code=cancelled` so transcript stays
-//! resume-safe. Chat/provider calls already in flight are not preempted.
+//! SIGINT (or tests) flip a flag. The loop checks between turns / tool calls and
+//! passes the same flag into provider request control so in-flight HTTP can abort.
+//! Open tool_call pairs finish with `code=cancelled` so transcript stays resume-safe.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
+const zt = @import("zag-types");
 
-pub const Flag = struct {
-    cancelled: std.atomic.Value(bool) = .init(false),
-
-    pub fn request(self: *Flag) void {
-        self.cancelled.store(true, .seq_cst);
-    }
-
-    pub fn isSet(self: *const Flag) bool {
-        return self.cancelled.load(.seq_cst);
-    }
-
-    pub fn clear(self: *Flag) void {
-        self.cancelled.store(false, .seq_cst);
-    }
-};
+/// L0 cancel flag (thread-/signal-safe). Re-exported for Agent/loop/CLI.
+pub const Flag = zt.CancelFlag;
 
 var sigint_target: ?*Flag = null;
 

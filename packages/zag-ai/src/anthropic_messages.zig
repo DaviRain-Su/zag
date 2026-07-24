@@ -72,7 +72,7 @@ pub const Client = struct {
     ) Error!types.AssistantTurn {
         const body = try buildRequestBody(arena, self.config.model, messages, tools, opts, false);
 
-        const resp = try self.http.postJson("/v1/messages", body);
+        const resp = try self.http.postJsonControl("/v1/messages", body, opts.control);
         defer self.http.freeBody(resp.body);
 
         if (resp.status < 200 or resp.status >= 300) {
@@ -105,8 +105,10 @@ pub const Client = struct {
             .handler_ctx = handler_ctx,
         };
 
-        self.http.postJsonStream("/v1/messages", body, onHttpChunk, &state) catch |err| {
+        // On cancel/timeout, partial StreamState is discarded (never finish()).
+        self.http.postJsonStreamControl("/v1/messages", body, onHttpChunk, &state, opts.control) catch |err| {
             if (state.err) |e| return e;
+            // Incomplete tool-call fragments never cross this boundary.
             return err;
         };
 

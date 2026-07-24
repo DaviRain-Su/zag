@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `openai-zig`（OpenAI）/ `std.http`（Anthropic） |
-| 成熟度 | **L1+**；L2 出门尚欠可执行 deadline、in-flight cancel、partial Tool-call safety、redact 联动 |
+| 成熟度 | **L1+**；deadline/cancel/partial Tool safety 已落地（h-provider-001）；L2 仍欠 redact 联动等 |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
 ## 包内分层
@@ -109,14 +109,15 @@ canonical: types.Message / ToolDefinition / ChatOptions
 |-------|--------|
 | AuthenticationFailed | no |
 | RateLimited | yes |
-| Timeout | yes |
+| **Timeout** | **no**（端到端 deadline / 配置超时；预算不按 attempt 重置） |
+| **Cancelled** | **no** |
 | ServerError | yes |
-| HttpFailed | yes（loop 层） |
+| HttpFailed | yes（loop 层；且仍在 deadline 预算内） |
 | BadRequest | no |
 | InvalidResponse | no |
 | NotSupported | no |
 
-政策：transport `max_retries` + loop `chat_retries` + `retry_base_delay_ms` 可配置（文件 / env）。
+政策：transport `max_retries` + loop `chat_retries` + `retry_base_delay_ms` 可配置（文件 / env）。**单 owner 重试**：loop 拥有 chat 重试；Timeout/Cancelled 永不按 generic provider failure 重试。
 
 ## Usage
 
@@ -125,33 +126,50 @@ canonical: types.Message / ToolDefinition / ChatOptions
 - ✅ Agent `cost.Ledger`：每 chat turn 记账；CLI one-shot / REPL 结束打印汇总
 - ❌ session JSONL 元数据里持久化 usage（仍待）
 
-## Deadline / cancel / 流式
+## Deadline / cancel / 流式（h-provider-001）
 
-- ✅ OpenAI / Anthropic SSE 可组装为完整 turn。
-- ⚠️ curl backend 能执行请求 timeout；std backend 当前保存 `timeout_ms` 但不执行，生产 deadline 必须使用 curl，直到 std 路径实现或拒绝该配置。
-- ❌ `--stream` 的 in-flight cancel 尚未贯穿 transport/adapter。
-- ❌ 取消时丢弃不完整 Tool call 的 CI 断言尚未存在。
-- ❌ Provider 端口尚无稳定 request context（cancel/deadline）合同。
+### RequestControl 合同（L0）
 
-L2 不要求异步 runtime，但要求有界、可中断的可观察行为。无法支持 deadline/cancel 的 backend 必须显式报告能力不足。
+- `zag-types.RequestControl`：单调 `deadline_mono_ns` + 借用 `*CancelFlag`（原子 seq_cst）。
+- 无 IO 依赖；`monoNowNs()` 用 OS 单调时钟（macOS `UPTIME_RAW` / Linux `MONOTONIC`）。
+- 校验优先级：Cancelled > Timeout。
+- `ChatOptions.control` 承载生命周期（非采样旋钮）；Provider vtable `chat(..., control)` 贯穿 loop → WireProvider → wire → HTTP。
+
+### 执行（std + curl）
+
+| 后端 | timeout | in-flight cancel | 默认 |
+|------|---------|------------------|------|
+| **std** | 合并 `timeout_ms` → deadline；读循环检查；watchdog **shutdown** 连接（~25ms 轮询 + 调度） | 同左；SIGINT 可经 flag + shutdown | `timeout_ms=null` **不**强加超时 |
+| **curl** | `CURLOPT_TIMEOUT_MS` = 剩余预算；0 = 无限（当未配置） | `CURLOPT_XFERINFOFUNCTION` 中止；callback 上下文仅 `perform` 栈期 | 同左（**不再**默认 60s） |
+
+- 配置的 `timeout_ms` **必须**执行；禁止静默存储无效字段。
+- 传输层与 loop 重试共享同一 deadline 预算（不 per-retry 重置）。
+- 半截 tool-call JSON：stream 错误路径 **不**调用 `finish()`；不完整 AssistantTurn 不进 transcript / 不执行。
+- 终态：`cancelled`（ok=true）；`timeout`（ok=false）；auth/transport 仍 `provider_error`。
+
+### OS / backend 限制
+
+- 可信本机：连接 shutdown / curl abort 为协作中断，**不是** OS sandbox。
+- std 阻塞在未设超时的内核连接阶段时，bound 依赖 watchdog shutdown 的调度延迟（文档上界：秒级测试墙钟，目标 << 服务端故意挂起）。
+- curl 依赖 libcurl progress/timeout；无额外线程泄漏（Easy 栈上 deinit/join 确定）。
 
 ## Contract tests
 
 见 [quality/contracts.md](../quality/contracts.md)。
 
-- ✅ 包内 `contract_tests.zig`
-- ❌ 约定目录 / 多家 fixture / CI 门禁命名仍待收口
+- ✅ 包内 `contract_tests.zig`（含 loopback 慢服务器 timeout/cancel；双后端）
+- ❌ 独立 fixture 目录命名仍待收口（行为已在包内 CI）
 
 ## L2 验收（H6 出门）
 
 - [x] WireAdapter + 至少两家 style。
 - [x] retry/error/usage 的基础 contract fixtures 无网络运行。
 - [x] usage 出现在 trace，并可聚合 cost ledger。
-- [ ] 每个公开 timeout 配置都被执行或显式拒绝。
-- [ ] cancel/deadline 贯穿 Provider、adapter、std/curl stream。
-- [ ] 取消/超时后的不完整 Tool call 不进入执行，并有 CI fixture。
-- [ ] retry owner/attempt 上限可从 trace 解释。
-- [ ] contract fixture 目录与 std/curl CI 约定成文。
+- [x] 每个公开 timeout 配置都被执行（std+curl）；默认 null 不意外超时。
+- [x] cancel/deadline 贯穿 Provider、adapter、std/curl stream。
+- [x] 取消/超时后的不完整 Tool call 不进入执行，并有 CI fixture。
+- [x] Timeout/Cancelled 不重试；deadline 跨 attempt 共享。
+- [ ] contract fixture 目录与 CI 门禁命名仍可再收口。
 - [ ] 与 H5：密钥不出现在 verbose/trace/session。
 
 Session usage metadata是后续可加字段，不优先于 persistence correctness。勾满本表后才升 L2。

@@ -15,6 +15,8 @@ pub const Error = error{
     DeserializeError,
     SerializeError,
     Timeout,
+    /// Cooperative cancel observed mid-request (h-provider-001).
+    Cancelled,
     Unimplemented,
 };
 

@@ -239,6 +239,8 @@ pub fn run(init: std.process.Init) !void {
     };
     var wire_prov = coding.WireProvider.init(wire, use_stream, true);
     wire_prov.chat_options = resolve_result.chat_options;
+    // timeout_ms is enforced by std/curl transports (or rejected); no silent store.
+    wire_prov.timeout_ms = resolved.config.timeout_ms;
     if (use_stream and verbose) {
         wire_prov.on_event = streamLogHandler;
         wire_prov.on_event_ctx = null;
@@ -256,6 +258,8 @@ pub fn run(init: std.process.Init) !void {
         .context = context_opts,
         .chat_retries = resolve_result.chat_retries,
         .retry_base_delay_ms = resolve_result.retry_base_delay_ms,
+        // End-to-end deadline shared across loop retries (not reset per attempt).
+        .provider_timeout_ms = resolved.config.timeout_ms,
         .model_info = resolve_result.model_info,
     };
     if (resolve_result.max_turns) |mt| {

@@ -1,14 +1,28 @@
 //! HTTP client backend: Zig `std.http.Client` (default).
 //!
 //! Selected when `-Dhttp_backend=std` (or unset). See `http.zig` facade.
+//!
+//! ## Deadline / cancel (h-provider-001)
+//!
+//! - `timeout_ms` and `RequestControl` are **enforced**, not stored silently.
+//! - Monotonic deadline checks before each attempt and between body reads.
+//! - A watchdog thread shuts down the connection socket when cancel/deadline
+//!   trips mid-request so blocked `receiveHead`/body IO unblocks within ~25–50ms
+//!   poll granularity plus OS scheduling (documented bound).
+//! - Default `timeout_ms=null` imposes **no** timeout (unlike older curl path).
+//! - `error.Timeout` vs `error.Cancelled` vs auth/transport remain distinct.
+//!
+//! Trusted-host only: socket shutdown is cooperative interrupt, not an OS sandbox.
 
 const std = @import("std");
 const Io = std.Io;
 const wire = @import("wire.zig");
 const config_mod = @import("config.zig");
+const rc = @import("request_control.zig");
 
 pub const Error = wire.Error;
 pub const Config = config_mod.Config;
+pub const RequestControl = rc.RequestControl;
 
 pub const Response = struct {
     status: u16,
@@ -17,6 +31,39 @@ pub const Response = struct {
 
 /// Streaming body callback — uses **wire.Error**, not any vendor SDK error set.
 pub const StreamChunk = *const fn (ctx: ?*anyopaque, chunk: []const u8) Error!void;
+
+/// Watchdog: polls control and shuts down the live stream to abort in-flight IO.
+const AbortWatch = struct {
+    control: RequestControl,
+    io: Io,
+    /// Pointer to `Connection.stream_reader.stream` for the active request.
+    stream_ptr: std.atomic.Value(?*Io.net.Stream) = .init(null),
+    stop: std.atomic.Value(bool) = .init(false),
+
+    fn start(self: *AbortWatch) !std.Thread {
+        return std.Thread.spawn(.{}, threadMain, .{self});
+    }
+
+    fn finish(self: *AbortWatch, thread: ?std.Thread) void {
+        self.stop.store(true, .seq_cst);
+        if (thread) |t| t.join();
+        self.stream_ptr.store(null, .seq_cst);
+    }
+
+    fn threadMain(self: *AbortWatch) void {
+        while (!self.stop.load(.seq_cst)) {
+            const now = rc.monoNowNs();
+            if (self.control.isCancelled() or self.control.isExpired(now)) {
+                if (self.stream_ptr.load(.seq_cst)) |s| {
+                    s.shutdown(self.io, .both) catch {};
+                }
+                return;
+            }
+            const duration: Io.Duration = .{ .nanoseconds = 25 * std.time.ns_per_ms };
+            Io.sleep(self.io, duration, .awake) catch {};
+        }
+    }
+};
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
@@ -105,10 +152,14 @@ pub const Client = struct {
     }
 
     pub fn postJson(self: *Client, path: []const u8, body: []const u8) Error!Response {
+        return self.postJsonControl(path, body, .{});
+    }
+
+    pub fn postJsonControl(self: *Client, path: []const u8, body: []const u8, control: RequestControl) Error!Response {
         return self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "application/json" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, false, null, null);
+        }, body, false, null, null, control);
     }
 
     pub fn freeBody(self: *Client, body: []u8) void {
@@ -122,10 +173,21 @@ pub const Client = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
     ) Error!void {
+        return self.postJsonStreamControl(path, body, on_chunk, chunk_ctx, .{});
+    }
+
+    pub fn postJsonStreamControl(
+        self: *Client,
+        path: []const u8,
+        body: []const u8,
+        on_chunk: StreamChunk,
+        chunk_ctx: ?*anyopaque,
+        control: RequestControl,
+    ) Error!void {
         _ = try self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "text/event-stream" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, true, on_chunk, chunk_ctx);
+        }, body, true, on_chunk, chunk_ctx, control);
     }
 
     pub fn mapHttpStatus(status: u16) Error {
@@ -149,62 +211,97 @@ pub const Client = struct {
         stream: bool,
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
+        control_in: RequestControl,
     ) Error!Response {
+        const control = rc.mergeConfiguredTimeout(control_in, self.timeout_ms);
+        try rc.preflight(control);
+
         const url = try buildUrl(self.allocator, self.base_url, path);
         defer self.allocator.free(url);
         const uri = std.Uri.parse(url) catch return error.HttpFailed;
 
         var attempt: u8 = 0;
         while (attempt <= self.max_retries) : (attempt += 1) {
+            try rc.preflight(control);
+
             var headers: std.ArrayList(std.http.Header) = .empty;
             defer headers.deinit(self.allocator);
             try headers.appendSlice(self.allocator, self.default_headers);
             try headers.appendSlice(self.allocator, extra);
 
+            var watch: AbortWatch = .{
+                .control = control,
+                .io = self.io,
+            };
+            const watch_thread = if (control.cancel != null or control.deadline_mono_ns != null)
+                watch.start() catch null
+            else
+                null;
+            defer watch.finish(watch_thread);
+
             var req = self.http.request(method, uri, .{
                 .extra_headers = headers.items,
                 .keep_alive = false,
-            }) catch {
+            }) catch |err| {
+                if (control.isCancelled()) return error.Cancelled;
+                if (control.isExpired(rc.monoNowNs())) return error.Timeout;
+                if (err == error.Canceled) return error.Cancelled;
                 if (attempt == self.max_retries) return error.HttpFailed;
-                sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                 continue;
             };
             defer req.deinit();
 
+            if (req.connection) |conn| {
+                watch.stream_ptr.store(&conn.stream_reader.stream, .seq_cst);
+            }
+
             if (body) |payload| {
                 req.transfer_encoding = .{ .content_length = payload.len };
                 var body_writer = req.sendBodyUnflushed(&.{}) catch {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(rc.monoNowNs())) return error.Timeout;
                     if (attempt == self.max_retries) return error.HttpFailed;
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 };
                 body_writer.writer.writeAll(payload) catch {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(rc.monoNowNs())) return error.Timeout;
                     if (attempt == self.max_retries) return error.HttpFailed;
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 };
                 body_writer.end() catch {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(rc.monoNowNs())) return error.Timeout;
                     if (attempt == self.max_retries) return error.HttpFailed;
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 };
                 req.connection.?.flush() catch {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(rc.monoNowNs())) return error.Timeout;
                     if (attempt == self.max_retries) return error.HttpFailed;
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 };
             } else {
                 req.sendBodiless() catch {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(rc.monoNowNs())) return error.Timeout;
                     if (attempt == self.max_retries) return error.HttpFailed;
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 };
             }
 
             var redirect_buffer: [8 * 1024]u8 = undefined;
             var response = req.receiveHead(&redirect_buffer) catch {
+                if (control.isCancelled()) return error.Cancelled;
+                if (control.isExpired(rc.monoNowNs())) return error.Timeout;
                 if (attempt == self.max_retries) return error.HttpFailed;
-                sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                 continue;
             };
 
@@ -213,33 +310,37 @@ pub const Client = struct {
             if (stream) {
                 if (status < 200 or status >= 300) {
                     // drain error body
-                    const err_body = readAllBody(self.allocator, &response) catch &.{};
+                    const err_body = readAllBody(self.allocator, &response, control) catch &.{};
                     defer if (err_body.len > 0) self.allocator.free(err_body);
                     if (isRetryableStatus(status) and attempt < self.max_retries) {
-                        sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                        try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                         continue;
                     }
                     return mapHttpStatus(status);
                 }
                 const cb = on_chunk orelse return error.Unexpected;
-                streamBody(&response, self.allocator, cb, chunk_ctx) catch |err| {
+                streamBody(&response, self.allocator, cb, chunk_ctx, control) catch |err| {
                     if (err == error.OutOfMemory) return error.OutOfMemory;
                     if (err == error.StreamFailed) return error.StreamFailed;
+                    if (err == error.Cancelled) return error.Cancelled;
+                    if (err == error.Timeout) return error.Timeout;
                     return error.HttpFailed;
                 };
                 return .{ .status = status, .body = &.{} };
             }
 
-            const response_bytes = readAllBody(self.allocator, &response) catch {
+            const response_bytes = readAllBody(self.allocator, &response, control) catch |err| {
+                if (err == error.Cancelled) return error.Cancelled;
+                if (err == error.Timeout) return error.Timeout;
                 if (attempt == self.max_retries) return error.HttpFailed;
-                sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                 continue;
             };
 
             if (status < 200 or status >= 300) {
                 if (isRetryableStatus(status) and attempt < self.max_retries) {
                     self.allocator.free(response_bytes);
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 }
                 self.allocator.free(response_bytes);
@@ -256,13 +357,6 @@ fn isRetryableStatus(status: u16) bool {
     return status == 408 or status == 429 or status >= 500;
 }
 
-fn sleepRetry(io: Io, base_ms: u64, attempt: u8) void {
-    const shift: u6 = @intCast(@min(attempt, 4));
-    const delay_ms = base_ms * (@as(u64, 1) << shift);
-    const duration: Io.Duration = .{ .nanoseconds = @intCast(delay_ms * std.time.ns_per_ms) };
-    Io.sleep(io, duration, .real) catch {};
-}
-
 fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8) Error![]u8 {
     const base = std.mem.trimEnd(u8, base_url, "/");
     if (path.len == 0) return allocator.dupe(u8, base) catch return error.OutOfMemory;
@@ -272,10 +366,42 @@ fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8
     return std.fmt.allocPrint(allocator, "{s}/{s}", .{ base, path }) catch return error.OutOfMemory;
 }
 
-fn readAllBody(allocator: std.mem.Allocator, response: *std.http.Client.Response) Error![]u8 {
+fn readAllBody(allocator: std.mem.Allocator, response: *std.http.Client.Response, control: RequestControl) Error![]u8 {
     var body_writer: Io.Writer.Allocating = .init(allocator);
     errdefer body_writer.deinit();
-    readBodyToWriter(response, allocator, &body_writer.writer) catch return error.HttpFailed;
+    // Stream into allocating writer with control checks via streamBody-style loop.
+    const content_encoding = response.head.content_encoding;
+    var decompression_buffer: []u8 = &.{};
+    var owns_decomp = false;
+    if (content_encoding == .zstd) {
+        decompression_buffer = allocator.alloc(u8, std.compress.zstd.default_window_len) catch return error.OutOfMemory;
+        owns_decomp = true;
+    } else if (content_encoding == .deflate or content_encoding == .gzip) {
+        decompression_buffer = allocator.alloc(u8, std.compress.flate.max_window_len) catch return error.OutOfMemory;
+        owns_decomp = true;
+    } else if (content_encoding == .compress) {
+        return error.HttpFailed;
+    }
+    defer if (owns_decomp) allocator.free(decompression_buffer);
+
+    var transfer_buffer: [8192]u8 = undefined;
+    var decompressor: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompressor, decompression_buffer);
+
+    while (true) {
+        try rc.preflight(control);
+        var tmp: [4096]u8 = undefined;
+        const n = reader.readSliceShort(&tmp) catch |err| {
+            if (control.isCancelled()) return error.Cancelled;
+            if (control.isExpired(rc.monoNowNs())) return error.Timeout;
+            if (err == error.ReadFailed) {
+                if (response.bodyErr()) |_| return error.HttpFailed;
+            }
+            return error.HttpFailed;
+        };
+        if (n == 0) break;
+        body_writer.writer.writeAll(tmp[0..n]) catch return error.HttpFailed;
+    }
     return body_writer.toOwnedSlice() catch return error.OutOfMemory;
 }
 
@@ -284,6 +410,7 @@ fn streamBody(
     allocator: std.mem.Allocator,
     on_chunk: StreamChunk,
     chunk_ctx: ?*anyopaque,
+    control: RequestControl,
 ) Error!void {
     const content_encoding = response.head.content_encoding;
     var decompression_buffer: []u8 = &.{};
@@ -304,8 +431,11 @@ fn streamBody(
     const reader = response.readerDecompressing(&transfer_buffer, &decompressor, decompression_buffer);
 
     while (true) {
+        try rc.preflight(control);
         var tmp: [4096]u8 = undefined;
         const n = reader.readSliceShort(&tmp) catch |err| {
+            if (control.isCancelled()) return error.Cancelled;
+            if (control.isExpired(rc.monoNowNs())) return error.Timeout;
             if (err == error.ReadFailed) {
                 if (response.bodyErr()) |_| return error.HttpFailed;
             }
@@ -316,36 +446,6 @@ fn streamBody(
     }
 }
 
-fn readBodyToWriter(
-    response: *std.http.Client.Response,
-    allocator: std.mem.Allocator,
-    writer: anytype,
-) !void {
-    const content_encoding = response.head.content_encoding;
-    var decompression_buffer: []u8 = &.{};
-    var owns_decomp = false;
-    if (content_encoding == .zstd) {
-        decompression_buffer = try allocator.alloc(u8, std.compress.zstd.default_window_len);
-        owns_decomp = true;
-    } else if (content_encoding == .deflate or content_encoding == .gzip) {
-        decompression_buffer = try allocator.alloc(u8, std.compress.flate.max_window_len);
-        owns_decomp = true;
-    } else if (content_encoding == .compress) {
-        return error.UnsupportedCompressionMethod;
-    }
-    defer if (owns_decomp) allocator.free(decompression_buffer);
-
-    var transfer_buffer: [64]u8 = undefined;
-    var decompressor: std.http.Decompress = undefined;
-    const reader = response.readerDecompressing(&transfer_buffer, &decompressor, decompression_buffer);
-    _ = reader.streamRemaining(writer) catch |err| {
-        if (err == error.ReadFailed) {
-            if (response.bodyErr()) |body_err| return body_err;
-        }
-        return err;
-    };
-}
-
 test "buildUrl joins base and path" {
     const gpa = std.testing.allocator;
     const url_a = try buildUrl(gpa, "https://api.anthropic.com/", "/v1/messages");
@@ -354,4 +454,16 @@ test "buildUrl joins base and path" {
     const url_b = try buildUrl(gpa, "https://api.example.com/v1", "chat/completions");
     defer gpa.free(url_b);
     try std.testing.expectEqualStrings("https://api.example.com/v1/chat/completions", url_b);
+}
+
+test "std preflight cancel before network" {
+    var flag: rc.CancelFlag = .{};
+    flag.request();
+    const control = RequestControl.none().withCancel(&flag);
+    try std.testing.expectError(error.Cancelled, rc.preflight(control));
+}
+
+test "std preflight timeout before network" {
+    const control = RequestControl.withTimeoutMs(rc.monoNowNs(), 0);
+    try std.testing.expectError(error.Timeout, rc.preflight(control));
 }

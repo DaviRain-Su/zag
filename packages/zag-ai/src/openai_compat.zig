@@ -104,6 +104,10 @@ pub const Client = struct {
         const chat_tools = try toChatTools(arena, tools);
         const req = try buildChatRequest(self.config.model, chat_messages, chat_tools, opts, false);
 
+        // Thread request control into openai-zig transport for deadline/cancel.
+        self.sdk.transport.setRequestControl(toSdkControl(opts.control));
+        defer self.sdk.transport.clearRequestControl();
+
         var parsed = self.sdk.chat().create_chat_completion(arena, req) catch |err| {
             return mapSdkError(err);
         };
@@ -133,6 +137,11 @@ pub const Client = struct {
             .handler_ctx = handler_ctx,
         };
 
+        // Thread request control into openai-zig transport for deadline/cancel.
+        self.sdk.transport.setRequestControl(toSdkControl(opts.control));
+        defer self.sdk.transport.clearRequestControl();
+
+        // On cancel/timeout, partial OpenAiStreamState is discarded (never finish()).
         self.sdk.chat().create_chat_completion_stream_with_done(
             arena,
             req,
@@ -490,6 +499,15 @@ fn toolChoiceToChat(tc: ToolChoice) Error!chat_res.ChatToolChoice {
     };
 }
 
+/// Map L0 RequestControl onto openai-zig transport lifecycle (no zag-types dep in SDK).
+fn toSdkControl(control: types.RequestControl) openai.transport.lifecycle.Control {
+    return .{
+        .cancel_atomic = if (control.cancel) |f| &f.cancelled else null,
+        .deadline_mono_ns = control.deadline_mono_ns,
+    };
+}
+// openai = openai_zig package (import alias at top of file)
+
 /// Map **openai-zig SDK** errors into shared `wire.Error`.
 /// Only used by this OpenAI adapter — Anthropic uses `http` + `wire.Error` directly.
 pub fn mapSdkError(err: anyerror) Error {
@@ -500,6 +518,7 @@ pub fn mapSdkError(err: anyerror) Error {
     if (std.mem.eql(u8, name, "PermissionDeniedError")) return error.PermissionDenied;
     if (std.mem.eql(u8, name, "RateLimitError")) return error.RateLimited;
     if (std.mem.eql(u8, name, "Timeout") or std.mem.eql(u8, name, "TimeoutError")) return error.Timeout;
+    if (std.mem.eql(u8, name, "Cancelled") or std.mem.eql(u8, name, "Canceled")) return error.Cancelled;
     if (std.mem.eql(u8, name, "InternalServerError")) return error.ServerError;
     if (std.mem.eql(u8, name, "BadRequestError") or
         std.mem.eql(u8, name, "UnprocessableEntityError") or
@@ -558,7 +577,7 @@ fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.Ch
                 for (calls, 0..) |call, i| {
                     tc[i] = .{
                         .id = call.id,
-                        .@"type" = "function",
+                        .type = "function",
                         .function = .{
                             .name = call.name,
                             .arguments = call.arguments,
@@ -611,7 +630,7 @@ pub fn toChatTools(arena: std.mem.Allocator, tools: []const types.ToolDefinition
         const parsed = std.json.parseFromSlice(std.json.Value, arena, t.parameters_json, .{}) catch
             return error.WriteFailed;
         out[i] = .{
-            .@"type" = "function",
+            .type = "function",
             .function = .{
                 .name = t.name,
                 .description = t.description,
@@ -926,7 +945,7 @@ test "turnFromResponse tool_calls and usage" {
                     .tool_calls = &.{
                         .{
                             .id = "call_1",
-                            .@"type" = "function",
+                            .type = "function",
                             .function = .{
                                 .name = "list_dir",
                                 .arguments = "{\"path\":\".\"}",

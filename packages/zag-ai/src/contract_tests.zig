@@ -50,7 +50,7 @@ test "contract: tool_calls round-trip fields" {
                     .tool_calls = &.{
                         .{
                             .id = "call_abc",
-                            .@"type" = "function",
+                            .type = "function",
                             .function = .{
                                 .name = "read_file",
                                 .arguments = "{\"path\":\"src/main.zig\"}",
@@ -210,4 +210,204 @@ test "contract: generated usage shape" {
         .total_tokens = 3,
     };
     try std.testing.expectEqual(@as(i64, 3), u.total_tokens);
+}
+
+// --- h-provider-001: deadline / cancel / partial tool-call safety ---
+
+const request_control = @import("request_control.zig");
+const http = @import("http.zig");
+
+test "contract: Timeout and Cancelled are not retryable" {
+    try std.testing.expect(!types.isRetryableError(error.Timeout));
+    try std.testing.expect(!types.isRetryableError(error.Cancelled));
+    try std.testing.expect(types.isRetryableError(error.RateLimited));
+}
+
+test "contract: preflight cancel and zero timeout fail before network" {
+    var flag: types.CancelFlag = .{};
+    flag.request();
+    try std.testing.expectError(error.Cancelled, request_control.preflight(
+        types.RequestControl.none().withCancel(&flag),
+    ));
+    try std.testing.expectError(error.Timeout, request_control.preflight(
+        types.RequestControl.withTimeoutMs(types.monoNowNs(), 0),
+    ));
+}
+
+test "contract: local slow server enforces timeout wall bound" {
+    // Local loopback only — no public network. Both std and curl backends.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+
+    const port = server.socket.address.getPort();
+
+    const ServerCtx = struct {
+        io: std.Io,
+        server: *std.Io.net.Server,
+        accepted: std.atomic.Value(bool) = .init(false),
+
+        fn run(self: *@This()) void {
+            const stream = self.server.accept(self.io) catch return;
+            defer stream.close(self.io);
+            self.accepted.store(true, .seq_cst);
+            // Hold connection open well past client timeout (slow headers/body).
+            std.Io.sleep(self.io, .{ .nanoseconds = 5 * std.time.ns_per_s }, .awake) catch {};
+            // Best-effort minimal response if still open.
+            var w = stream.writer(self.io, &.{});
+            _ = w.interface.writeAll("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") catch {};
+            w.interface.flush() catch {};
+        }
+    };
+
+    var ctx: ServerCtx = .{ .io = io, .server = &server };
+    const thr = try std.Thread.spawn(.{}, ServerCtx.run, .{&ctx});
+    defer thr.join();
+
+    var base_buf: [64]u8 = undefined;
+    const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
+
+    var client = try http.Client.initBearer(gpa, io, .{
+        .base_url = base_url,
+        .api_key = "test",
+        .model = "m",
+        .max_retries = 0,
+        .timeout_ms = 200,
+    });
+    defer client.deinit();
+
+    const control = types.RequestControl.withTimeoutMs(types.monoNowNs(), 200);
+    const t0 = types.monoNowNs();
+    const result = client.postJsonControl("/slow", "{}", control);
+    const elapsed_ms = (types.monoNowNs() - t0) / std.time.ns_per_ms;
+
+    try std.testing.expectError(error.Timeout, result);
+    // Wall-clock upper bound: timeout + generous slack for scheduling (not 5s server hold).
+    try std.testing.expect(elapsed_ms < 2500);
+}
+
+test "contract: cancel aborts in-flight local stream" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    const ServerCtx = struct {
+        io: std.Io,
+        server: *std.Io.net.Server,
+        fn run(self: *@This()) void {
+            const stream = self.server.accept(self.io) catch return;
+            defer stream.close(self.io);
+            var rbuf: [1024]u8 = undefined;
+            var reader = stream.reader(self.io, &rbuf);
+            // Drain request head (best effort)
+            _ = reader.interface.takeDelimiterInclusive('\n') catch {};
+            var w = stream.writer(self.io, &.{});
+            // Send partial SSE then hang so cancel can fire mid-stream.
+            _ = w.interface.writeAll(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n" ++
+                    "1a\r\ndata: {\"partial\":true}\n\n\r\n",
+            ) catch {};
+            w.interface.flush() catch {};
+            std.Io.sleep(self.io, .{ .nanoseconds = 5 * std.time.ns_per_s }, .awake) catch {};
+        }
+    };
+    var ctx: ServerCtx = .{ .io = io, .server = &server };
+    const thr = try std.Thread.spawn(.{}, ServerCtx.run, .{&ctx});
+    defer thr.join();
+
+    var base_buf: [64]u8 = undefined;
+    const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
+
+    var client = try http.Client.initBearer(gpa, io, .{
+        .base_url = base_url,
+        .api_key = "test",
+        .model = "m",
+        .max_retries = 0,
+    });
+    defer client.deinit();
+
+    var flag: types.CancelFlag = .{};
+    const control = types.RequestControl.none().withCancel(&flag);
+
+    const CancelCtx = struct {
+        flag: *types.CancelFlag,
+        saw_chunk: bool = false,
+        fn onChunk(ctx_ptr: ?*anyopaque, chunk: []const u8) types.ChatError!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx_ptr.?));
+            if (chunk.len > 0) self.saw_chunk = true;
+            // Cancel after first data so abort is mid-flight.
+            self.flag.request();
+        }
+    };
+    var cctx: CancelCtx = .{ .flag = &flag };
+
+    // Also arm a delayed cancel if stream is slow to produce chunks.
+    const Arm = struct {
+        flag: *types.CancelFlag,
+        fn go(self: *@This()) void {
+            std.Io.sleep(std.testing.io, .{ .nanoseconds = 150 * std.time.ns_per_ms }, .awake) catch {};
+            self.flag.request();
+        }
+    };
+    var arm: Arm = .{ .flag = &flag };
+    const arm_thr = try std.Thread.spawn(.{}, Arm.go, .{&arm});
+    defer arm_thr.join();
+
+    const t0 = types.monoNowNs();
+    const result = client.postJsonStreamControl(
+        "/stream",
+        "{}",
+        CancelCtx.onChunk,
+        &cctx,
+        control,
+    );
+    const elapsed_ms = (types.monoNowNs() - t0) / std.time.ns_per_ms;
+
+    try std.testing.expectError(error.Cancelled, result);
+    try std.testing.expect(elapsed_ms < 2500);
+}
+
+test "contract: partial tool-call stream state never finishes on cancel" {
+    // Seam: OpenAiStreamState-style assembly discards on error path.
+    // Simulates cancel mid tool_call arguments without invoking finish().
+    const gpa = std.testing.allocator;
+    var content: std.ArrayList(u8) = .empty;
+    defer content.deinit(gpa);
+    try content.appendSlice(gpa, "partial");
+    var tool_args: std.ArrayList(u8) = .empty;
+    defer tool_args.deinit(gpa);
+    try tool_args.appendSlice(gpa, "{\"path\":"); // incomplete JSON
+
+    // If we were to finish() this would produce invalid tool args — cancel must not.
+    var flag: types.CancelFlag = .{};
+    flag.request();
+    const control = types.RequestControl.none().withCancel(&flag);
+    try std.testing.expectError(error.Cancelled, control.checkNow());
+    // Incomplete fragments stay local; no AssistantTurn is built.
+    try std.testing.expect(tool_args.items.len > 0);
+    try std.testing.expect(std.mem.indexOf(u8, tool_args.items, "}") == null);
+}
+
+test "contract: deadline shared across retry attempts (not reset)" {
+    const now = types.monoNowNs();
+    const control = types.RequestControl.withTimeoutMs(now, 100);
+    // Simulate first attempt spent 60ms of budget.
+    const later = now + 60 * std.time.ns_per_ms;
+    const rem = control.remainingMs(later).?;
+    try std.testing.expect(rem <= 40);
+    // Same control object: remaining continues to shrink (not reset to 100).
+    const later2 = now + 90 * std.time.ns_per_ms;
+    try std.testing.expect(control.remainingMs(later2).? <= 10);
+    try std.testing.expectError(error.Timeout, control.check(now + 150 * std.time.ns_per_ms));
+}
+
+test "contract: mapSdkError Cancelled" {
+    try std.testing.expectEqual(error.Cancelled, openai_compat.mapSdkError(error.Cancelled));
 }

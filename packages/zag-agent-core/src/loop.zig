@@ -50,10 +50,15 @@ pub const Options = struct {
     /// Optional structured audit log (not freed by loop).
     trace: ?*trace_mod.Trace = null,
     /// Extra chat attempts on retryable provider errors (0 = no loop-level retry).
+    /// Timeout and Cancelled are never retried; deadline budget is end-to-end.
     chat_retries: u8 = 2,
     retry_base_delay_ms: u64 = 500,
-    /// Cooperative cancel (SIGINT / tests). Checked between turns and tools.
+    /// Cooperative cancel (SIGINT / tests). Checked between turns/tools and
+    /// threaded into provider request control for in-flight abort.
     cancel: ?*cancel_mod.Flag = null,
+    /// End-to-end provider deadline (ms) for one chatWithRetry cycle; null = none.
+    /// Shared across attempts (not reset per retry). 0 = immediate Timeout.
+    provider_timeout_ms: ?u64 = null,
     /// Optional sink when view compaction fires (summary is turn-arena owned — sink must dupe).
     /// Must return `error.OutOfMemory` on failure so the loop does not emit a
     /// compaction event to trace without a matching session update (h-context-001).
@@ -80,6 +85,8 @@ pub const StopReason = enum {
     completed,
     max_turns,
     cancelled,
+    /// End-to-end provider deadline fired (ok=false).
+    timeout,
     provider_error,
     /// Session save failed after loop Result; terminal ok=false (facade).
     session_error,
@@ -97,6 +104,7 @@ pub const StopReason = enum {
             .completed => "completed",
             .max_turns => "max_turns",
             .cancelled => "cancelled",
+            .timeout => "timeout",
             .provider_error => "provider_error",
             .session_error => "session_error",
             .trace_error => "trace_error",
@@ -206,8 +214,24 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             }
         }
 
-        const turn = try chatWithRetry(deps_run, scratch, view.messages);
+        const outcome = try chatWithRetry(deps_run, scratch, view.messages);
+        const turn = switch (outcome) {
+            .turn => |t| t,
+            .cancelled => return .{
+                .final_text = last_text,
+                .turns = turns,
+                .usage = usage_total,
+                .stop_reason = .cancelled,
+            },
+            .timeout => return .{
+                .final_text = last_text,
+                .turns = turns,
+                .usage = usage_total,
+                .stop_reason = .timeout,
+            },
+        };
 
+        // Only complete validated AssistantTurn crosses the provider boundary.
         try transcript.appendAssistantTurn(turn);
         last_text = transcript.items()[transcript.items().len - 1].content;
         deps_run.options.observer.emit(.{ .assistant_text = last_text });
@@ -418,30 +442,67 @@ fn softInvalidArguments(
     try finishTool(deps, transcript, call, body);
 }
 
+fn buildRequestControl(opts: Options) zt.RequestControl {
+    var control = zt.RequestControl.withTimeoutMs(zt.monoNowNs(), opts.provider_timeout_ms);
+    if (opts.cancel) |flag| {
+        control = control.withCancel(flag);
+    }
+    return control;
+}
+
+/// Chat outcome that may be a clean cancel/timeout Result rather than ProviderFailed.
+const ChatOutcome = union(enum) {
+    turn: message.AssistantTurn,
+    cancelled: void,
+    timeout: void,
+};
+
 fn chatWithRetry(
     deps: Deps,
     scratch: std.mem.Allocator,
     messages: []const message.Message,
-) RunError!message.AssistantTurn {
+) RunError!ChatOutcome {
     const defs = tool.Registry.definitions(
         deps.toolset.registry(),
         scratch,
     ) catch return error.OutOfMemory;
 
+    // One end-to-end control for all attempts (deadline not reset per retry).
+    const control = buildRequestControl(deps.options);
+
     const max_attempts: u32 = @as(u32, deps.options.chat_retries) + 1;
     var attempt: u32 = 0;
     while (attempt < max_attempts) : (attempt += 1) {
+        // Fail fast if budget already spent or cancel requested between attempts.
+        control.checkNow() catch |e| switch (e) {
+            error.Cancelled => return .{ .cancelled = {} },
+            error.Timeout => return .{ .timeout = {} },
+        };
+
         const result = deps.provider.chat(
             scratch,
             messages,
             defs,
+            control,
         );
         if (result) |turn| {
-            return turn;
+            return .{ .turn = turn };
         } else |err| {
+            switch (err) {
+                error.Cancelled => return .{ .cancelled = {} },
+                error.Timeout => return .{ .timeout = {} },
+                else => {},
+            }
             const retryable = zt.isRetryableError(err);
             const more = attempt + 1 < max_attempts;
             if (!retryable or !more) return error.ProviderFailed;
+
+            // Do not sleep past remaining deadline budget.
+            var delay_ms = deps.options.retry_base_delay_ms * (@as(u64, 1) << @intCast(@min(attempt, 4)));
+            if (control.remainingMs(zt.monoNowNs())) |rem| {
+                if (rem == 0) return .{ .timeout = {} };
+                delay_ms = @min(delay_ms, rem);
+            }
 
             if (deps.options.trace) |tr| {
                 tr.emitProviderRetry(attempt + 1, @errorName(err)) catch |terr| return mapTraceEmit(terr);
@@ -452,7 +513,6 @@ fn chatWithRetry(
                     .{ attempt + 1, deps.options.chat_retries, @errorName(err) },
                 );
             }
-            const delay_ms = deps.options.retry_base_delay_ms * (@as(u64, 1) << @intCast(@min(attempt, 4)));
             const duration: std.Io.Duration = .{ .nanoseconds = @intCast(delay_ms * std.time.ns_per_ms) };
             std.Io.sleep(deps.tool_ctx.io, duration, .real) catch {};
         }
@@ -565,6 +625,7 @@ test "loop stops when model returns text only" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -617,6 +678,7 @@ test "permission deny yields tool error without executing" {
             arena: std.mem.Allocator,
             messages: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -694,6 +756,7 @@ test "jail deny absolute path without writing" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -759,6 +822,7 @@ test "cancel after chat completes open tool pairs" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -851,6 +915,7 @@ test "tools execute serially in call order" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 3);
             tc[0] = .{
@@ -880,10 +945,11 @@ test "tools execute serially in call order" {
             arena: std.mem.Allocator,
             msgs: []const message.Message,
             defs: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
-            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, defs);
+            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, defs, .{});
             // Verify tool results arrived as 1,2,3 in transcript order.
             var labels: [3]?[]const u8 = .{ null, null, null };
             var li: usize = 0;
@@ -969,6 +1035,7 @@ test "custom write tool denied by denyAllDangerous" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1056,6 +1123,7 @@ test "stateful tool increments instance without globals" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1146,6 +1214,7 @@ test "missing capabilities cannot enter run; invalid toolset skips provider" {
             _: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1207,6 +1276,7 @@ test "custom path tool jails without built-in name" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1287,6 +1357,7 @@ test "provider receives definitions only (no risk field)" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             defs: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.saw = true;
@@ -1351,6 +1422,7 @@ test "unknown model tool soft-fails without permission inference" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1435,6 +1507,7 @@ test "forged invalid capabilities skip provider" {
             _: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1536,6 +1609,7 @@ test "custom path tool missing path soft invalid_arguments without handler" {
                 arena: std.mem.Allocator,
                 _: []const message.Message,
                 _: []const tool.Definition,
+                _: provider_mod.RequestControl,
             ) provider_mod.ChatError!message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.calls += 1;
@@ -1639,6 +1713,7 @@ test "custom shell tool policy is descriptor driven not name" {
                 arena: std.mem.Allocator,
                 _: []const message.Message,
                 _: []const tool.Definition,
+                _: provider_mod.RequestControl,
             ) provider_mod.ChatError!message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.calls += 1;
@@ -1697,4 +1772,166 @@ test "custom shell tool policy is descriptor driven not name" {
             try std.testing.expect(found_ok);
         }
     }
+}
+
+test "h-provider-001: provider Timeout becomes stop_reason timeout" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return error.Timeout;
+        }
+    };
+    const provider = provider_mod.Provider{
+        .ptr = undefined,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .chat_retries = 2 },
+    }, &transcript);
+    try std.testing.expect(result.stop_reason == .timeout);
+    // Partial assistant never appended
+    try std.testing.expectEqual(@as(usize, 1), transcript.items().len);
+}
+
+test "h-provider-001: provider Cancelled becomes stop_reason cancelled" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return error.Cancelled;
+        }
+    };
+    const provider = provider_mod.Provider{
+        .ptr = undefined,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{},
+    }, &transcript);
+    try std.testing.expect(result.stop_reason == .cancelled);
+    try std.testing.expectEqual(@as(usize, 1), transcript.items().len);
+}
+
+test "h-provider-001: Timeout is not retried as generic provider failure" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        calls: *u32,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
+            return error.Timeout;
+        }
+    };
+    var calls: u32 = 0;
+    var mock: Mock = .{ .calls = &calls };
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .chat_retries = 5 },
+    }, &transcript);
+    try std.testing.expect(result.stop_reason == .timeout);
+    try std.testing.expectEqual(@as(u32, 1), calls);
+}
+
+test "h-provider-001: control reaches provider chat" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        saw_cancel: *bool,
+        flag: *cancel_mod.Flag,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            control: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.saw_cancel.* = control.cancel != null and control.cancel.?.isSet() == false;
+            // Flag pointer identity: same cancel flag threaded through.
+            self.saw_cancel.* = control.cancel == self.flag;
+            return .{
+                .content = try arena.dupe(u8, "ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var flag: cancel_mod.Flag = .{};
+    var saw = false;
+    var mock: Mock = .{ .saw_cancel = &saw, .flag = &flag };
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    _ = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .cancel = &flag },
+    }, &transcript);
+    try std.testing.expect(saw);
 }

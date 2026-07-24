@@ -64,10 +64,9 @@ Spec: [loop-turn](../modules/loop-turn.md).
 
 ### Remaining
 
-- in-flight provider/stream cancellation/deadline (P1 provider task);
-- partial Tool-call discard after cancellation.
+- mid-flight Tool/shell cancellation still open (provider stream cancel landed in h-provider-001).
 
-Truthful API/error/trace terminals landed via facade (h-trace-001). H1 remains **L1+** until in-flight cancel closes.
+Truthful API/error/trace terminals landed via facade (h-trace-001). Provider in-flight cancel/deadline landed (h-provider-001). H1 remains **L1+** until tool mid-flight cancel closes.
 
 ## H2 — Edit/search/shell
 

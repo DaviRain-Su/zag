@@ -59,6 +59,10 @@ Trace is versioned (`schema_version` on `run_start`, currently `1`). Each `Agent
 
 Preflight is non-destructive (atomic temp discarded without replace) and **symlink-aware** (`Guard.checkCreate` before preflight, at persist entry, and immediately before replace). Parent symlink escape and dangling links fail closed as `InvalidPath` before provider work. Fixed-writer / event-too-large / invalid UTF-8 string failures are `TraceSerializationFailed`, not OOM. Non-finite `estimated_usd` is omitted. Terminal commit is transactional: a failed intended terminal still yields exactly one minimal `trace_error` (or `out_of_memory`) terminal when capacity allows. Final write uses atomic replace; prior destination bytes are preserved on fault; persist errors keep their typed category. Residual TOCTOU after the last Guard check is trusted-host only — not an OS sandbox. Secret redaction remains P1.
 
+## Provider deadline / cancel (h-provider-001)
+
+Configured `timeout_ms` is enforced on **both** std and curl HTTP backends (monotonic deadline; no silent ignore). Default remains **no** timeout when unset. Cooperative cancel (SIGINT / `CancelFlag`) aborts in-flight provider/stream work: curl via progress callback, std via connection shutdown watchdog (~25ms poll + scheduling). Partial streamed tool-call arguments are discarded and never executed. Terminal categories: `cancelled` (ok=true), `timeout` (ok=false), auth/transport remain `provider_error`. This is trusted-host cooperative interrupt — **not** an OS sandbox or multi-tenant isolation.
+
 ## OS sandbox boundary
 
 Phase H targets one user on a trusted host and does **not** require an OS sandbox. C7 adds platform enforcement/process supervision for higher autonomy.
@@ -74,7 +78,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
 | ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 (redaction still P1) |
 | systematic secret redaction | Phase H P1 |
-| enforced deadline/in-flight cancellation | Phase H P1 |
+| ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (tool/shell mid-flight cancel still open) |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |
 

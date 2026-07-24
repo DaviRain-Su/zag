@@ -6,8 +6,10 @@
 const std = @import("std");
 const Io = std.Io;
 const curl = @import("curl");
+const libcurl = curl.libcurl;
 const errors = @import("../errors.zig");
 const shared = @import("http_std.zig");
+const lifecycle = @import("lifecycle.zig");
 
 var curl_global_ready: std.atomic.Value(bool) = .init(false);
 
@@ -47,6 +49,7 @@ pub const Transport = struct {
     extra_headers: []const std.http.Header,
     owns_extra_headers: bool,
     ca_bundle: std.ArrayList(u8),
+    request_control: lifecycle.Control = .{},
 
     pub const Options = shared.Transport.Options;
     pub const RequestOptions = shared.Transport.RequestOptions;
@@ -100,6 +103,14 @@ pub const Transport = struct {
             .owns_extra_headers = extra_config.owns,
             .ca_bundle = ca_bundle,
         };
+    }
+
+    pub fn setRequestControl(self: *Transport, control: lifecycle.Control) void {
+        self.request_control = control;
+    }
+
+    pub fn clearRequestControl(self: *Transport) void {
+        self.request_control = .{};
     }
 
     pub fn deinit(self: *Transport) void {
@@ -196,6 +207,8 @@ pub const Transport = struct {
         req_opts: ?RequestOptions,
     ) errors.Error!Response {
         const active_opts = self.resolveRequestOptions(req_opts);
+        const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
+        try control.checkNow();
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
@@ -209,6 +222,7 @@ pub const Transport = struct {
 
         var attempt: u8 = 0;
         while (attempt <= active_opts.max_retries) : (attempt += 1) {
+            try control.checkNow();
             const outcome = self.attemptOnce(
                 alloc,
                 curl_method,
@@ -219,7 +233,9 @@ pub const Transport = struct {
                 on_chunk,
                 chunk_ctx,
                 active_opts,
+                control,
             ) catch |err| {
+                if (err == error.Cancelled or err == error.Timeout) return shared.mapTransportError(err);
                 if (!shared.isRetryableMethod(method) or attempt == active_opts.max_retries) {
                     return shared.mapTransportError(err);
                 }
@@ -269,12 +285,26 @@ pub const Transport = struct {
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
         active_opts: ActiveRequestOptions,
+        control: lifecycle.Control,
     ) anyerror!AttemptOutcome {
+        // 0 = no curl default; set remaining budget explicitly below.
         var easy = try curl.Easy.init(.{
             .ca_bundle = self.ca_bundle,
-            .default_timeout_ms = active_opts.timeout_ms orelse 60_000,
+            .default_timeout_ms = 0,
         });
         defer easy.deinit();
+
+        const timeout_ms = control.curlTimeoutMs(lifecycle.monoNowNs(), active_opts.timeout_ms);
+        if (timeout_ms > 0 or control.deadline_mono_ns != null or active_opts.timeout_ms != null) {
+            const t: c_long = @intCast(@min(timeout_ms, std.math.maxInt(c_long)));
+            _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_TIMEOUT_MS, t);
+        }
+
+        // Progress callback context lives for this attempt only.
+        var life_ctx: CurlLifeCtx = .{ .control = control };
+        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_NOPROGRESS, @as(c_long, 0));
+        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFODATA, @as(?*anyopaque, @ptrCast(&life_ctx)));
+        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFOFUNCTION, curlXferInfo);
 
         if (self.proxy_url) |proxy| {
             const proxy_z = try arena.dupeZ(u8, proxy);
@@ -352,10 +382,15 @@ pub const Transport = struct {
             var stream_state: StreamState = .{
                 .on_chunk = cb,
                 .chunk_ctx = chunk_ctx,
+                .control = control,
             };
             try easy.setWritedata(@ptrCast(&stream_state));
             try easy.setWritefunction(streamWrite);
             const resp = easy.perform() catch {
+                if (life_ctx.aborted == .cancelled or stream_state.err == error.Cancelled)
+                    return error.Cancelled;
+                if (life_ctx.aborted == .timeout or stream_state.err == error.Timeout)
+                    return error.Timeout;
                 if (stream_state.failed) return stream_state.err;
                 return errors.Error.HttpError;
             };
@@ -371,7 +406,13 @@ pub const Transport = struct {
         var body_writer: Io.Writer.Allocating = .init(self.allocator);
         errdefer body_writer.deinit();
         try easy.setWriter(&body_writer.writer);
-        const resp = try easy.perform();
+        const resp = easy.perform() catch {
+            if (life_ctx.aborted == .cancelled) return error.Cancelled;
+            if (life_ctx.aborted == .timeout) return error.Timeout;
+            if (control.isCancelled()) return error.Cancelled;
+            if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
+            return errors.Error.HttpError;
+        };
         body_writer.writer.flush() catch {};
         const bytes = try body_writer.toOwnedSlice();
         return .{
@@ -383,9 +424,38 @@ pub const Transport = struct {
     }
 };
 
+const CurlLifeCtx = struct {
+    control: lifecycle.Control,
+    aborted: enum { none, cancelled, timeout } = .none,
+};
+
+fn curlXferInfo(
+    clientp: ?*anyopaque,
+    dltotal: libcurl.curl_off_t,
+    dlnow: libcurl.curl_off_t,
+    ultotal: libcurl.curl_off_t,
+    ulnow: libcurl.curl_off_t,
+) callconv(.c) c_int {
+    _ = dltotal;
+    _ = dlnow;
+    _ = ultotal;
+    _ = ulnow;
+    const state: *CurlLifeCtx = @ptrCast(@alignCast(clientp.?));
+    if (state.control.isCancelled()) {
+        state.aborted = .cancelled;
+        return 1;
+    }
+    if (state.control.isExpired(lifecycle.monoNowNs())) {
+        state.aborted = .timeout;
+        return 1;
+    }
+    return 0;
+}
+
 const StreamState = struct {
     on_chunk: Transport.StreamChunk,
     chunk_ctx: ?*anyopaque,
+    control: lifecycle.Control = .{},
     failed: bool = false,
     err: errors.Error = errors.Error.HttpError,
 };
@@ -393,6 +463,16 @@ const StreamState = struct {
 fn streamWrite(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     const real_size = size * nmemb;
     const state: *StreamState = @ptrCast(@alignCast(user_data));
+    if (state.control.isCancelled()) {
+        state.failed = true;
+        state.err = error.Cancelled;
+        return 0;
+    }
+    if (state.control.isExpired(lifecycle.monoNowNs())) {
+        state.failed = true;
+        state.err = error.Timeout;
+        return 0;
+    }
     const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
     state.on_chunk(state.chunk_ctx, data) catch |err| {
         state.failed = true;

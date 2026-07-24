@@ -21,6 +21,8 @@ pub const WireProvider = struct {
     owns_wire: bool = false,
     stream: bool = false,
     chat_options: ai.ChatOptions = .{},
+    /// Optional end-to-end timeout when loop did not set a deadline (ms).
+    timeout_ms: ?u64 = null,
     on_event: ?ai.types.StreamHandler = null,
     on_event_ctx: ?*anyopaque = null,
 
@@ -57,8 +59,22 @@ pub const WireProvider = struct {
         arena: std.mem.Allocator,
         messages: []const message.Message,
         tools: []const tool.Definition,
+        control: provider_mod.RequestControl,
     ) ChatError!message.AssistantTurn {
         const self: *WireProvider = @ptrCast(@alignCast(ptr));
+        var opts = self.chat_options;
+        // Merge loop control with optional WireProvider timeout. Loop deadline wins
+        // when already set (end-to-end budget). Cancel flag is always from loop.
+        var c = control;
+        if (c.deadline_mono_ns == null) {
+            if (self.timeout_ms) |ms| {
+                c.deadline_mono_ns = ai.types.RequestControl.withTimeoutMs(
+                    ai.types.monoNowNs(),
+                    ms,
+                ).deadline_mono_ns;
+            }
+        }
+        opts.control = c;
         // Provider plane: definitions only — never Tool/descriptor/capabilities.
         if (self.stream) {
             return self.wire.chatStream(
@@ -67,10 +83,10 @@ pub const WireProvider = struct {
                 tools,
                 self.on_event,
                 self.on_event_ctx,
-                self.chat_options,
+                opts,
             );
         }
-        return self.wire.chat(arena, messages, tools, self.chat_options);
+        return self.wire.chat(arena, messages, tools, opts);
     }
 };
 

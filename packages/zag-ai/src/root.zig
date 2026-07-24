@@ -23,6 +23,7 @@ pub const config_file = @import("config_file.zig");
 pub const wire = @import("wire.zig");
 pub const config = @import("config.zig");
 pub const http = @import("http.zig");
+pub const request_control = @import("request_control.zig");
 pub const factory = @import("factory.zig");
 
 pub const Message = types.Message;
@@ -55,6 +56,9 @@ pub const EmbedOptions = types.EmbedOptions;
 pub const EmbeddingResult = types.EmbeddingResult;
 
 pub const isRetryableError = types.isRetryableError;
+pub const RequestControl = types.RequestControl;
+pub const CancelFlag = types.CancelFlag;
+pub const monoNowNs = types.monoNowNs;
 pub const createWire = factory.createWire;
 pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 

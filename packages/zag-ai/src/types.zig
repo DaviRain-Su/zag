@@ -17,4 +17,7 @@ pub const ToolChoice = zt.ToolChoice;
 pub const ChatOptions = zt.ChatOptions;
 pub const StreamEvent = zt.StreamEvent;
 pub const StreamHandler = zt.StreamHandler;
+pub const CancelFlag = zt.CancelFlag;
+pub const RequestControl = zt.RequestControl;
+pub const monoNowNs = zt.monoNowNs;
 pub const isRetryableError = zt.isRetryableError;

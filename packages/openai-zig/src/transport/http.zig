@@ -13,6 +13,7 @@ const impl = switch (build_options.http_backend) {
 };
 
 pub const Transport = impl.Transport;
+pub const lifecycle = @import("lifecycle.zig");
 
 pub fn backendName() []const u8 {
     return @tagName(build_options.http_backend);

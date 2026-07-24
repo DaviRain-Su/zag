@@ -2,15 +2,25 @@
 //!
 //! Selected when `-Dhttp_backend=curl`. Same `Client` surface as `http_std.zig`
 //! so wire adapters never import Easy/Multi. See D-005.
+//!
+//! ## Deadline / cancel (h-provider-001)
+//!
+//! - `CURLOPT_TIMEOUT_MS` uses remaining monotonic budget (0 = no timeout when unset).
+//! - Progress/xferinfo callback aborts when cancel is requested or deadline expires.
+//! - Callback context lives on the stack for the duration of `perform` only.
+//! - Default does **not** impose a 60s timeout when `timeout_ms` is null.
 
 const std = @import("std");
 const Io = std.Io;
 const curl = @import("curl");
+const libcurl = curl.libcurl;
 const wire = @import("wire.zig");
 const config_mod = @import("config.zig");
+const rc = @import("request_control.zig");
 
 pub const Error = wire.Error;
 pub const Config = config_mod.Config;
+pub const RequestControl = rc.RequestControl;
 
 pub const Response = struct {
     status: u16,
@@ -31,6 +41,18 @@ fn ensureCurlGlobal() void {
     curl.globalInit() catch {};
     curl_global_ready.store(true, .release);
 }
+
+/// Stable stack context for curl write + progress callbacks (must outlive perform).
+const CallbackCtx = struct {
+    control: RequestControl,
+    on_chunk: ?StreamChunk = null,
+    chunk_ctx: ?*anyopaque = null,
+    body_writer: ?*Io.Writer.Allocating = null,
+    failed: bool = false,
+    err: Error = error.HttpFailed,
+    /// Abort reason when progress callback stops transfer.
+    aborted: enum { none, cancelled, timeout } = .none,
+};
 
 pub const Client = struct {
     allocator: std.mem.Allocator,
@@ -120,10 +142,14 @@ pub const Client = struct {
     }
 
     pub fn postJson(self: *Client, path: []const u8, body: []const u8) Error!Response {
+        return self.postJsonControl(path, body, .{});
+    }
+
+    pub fn postJsonControl(self: *Client, path: []const u8, body: []const u8, control: RequestControl) Error!Response {
         return self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "application/json" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, false, null, null);
+        }, body, false, null, null, control);
     }
 
     pub fn freeBody(self: *Client, body: []u8) void {
@@ -137,10 +163,21 @@ pub const Client = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
     ) Error!void {
+        return self.postJsonStreamControl(path, body, on_chunk, chunk_ctx, .{});
+    }
+
+    pub fn postJsonStreamControl(
+        self: *Client,
+        path: []const u8,
+        body: []const u8,
+        on_chunk: StreamChunk,
+        chunk_ctx: ?*anyopaque,
+        control: RequestControl,
+    ) Error!void {
         _ = try self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "text/event-stream" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, true, on_chunk, chunk_ctx);
+        }, body, true, on_chunk, chunk_ctx, control);
     }
 
     pub fn mapHttpStatus(status: u16) Error {
@@ -164,7 +201,11 @@ pub const Client = struct {
         stream: bool,
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
+        control_in: RequestControl,
     ) Error!Response {
+        const control = rc.mergeConfiguredTimeout(control_in, self.timeout_ms);
+        try rc.preflight(control);
+
         const url = try buildUrl(self.allocator, self.base_url, path);
         defer self.allocator.free(url);
         const url_z = try self.allocator.dupeZ(u8, url);
@@ -172,18 +213,21 @@ pub const Client = struct {
 
         var attempt: u8 = 0;
         while (attempt <= self.max_retries) : (attempt += 1) {
-            const result = self.attemptOnce(method, url_z, extra, body, stream, on_chunk, chunk_ctx) catch |err| {
+            try rc.preflight(control);
+            const result = self.attemptOnce(method, url_z, extra, body, stream, on_chunk, chunk_ctx, control) catch |err| {
                 if (err == error.OutOfMemory) return error.OutOfMemory;
                 if (err == error.StreamFailed) return error.StreamFailed;
+                if (err == error.Cancelled) return error.Cancelled;
+                if (err == error.Timeout) return error.Timeout;
                 if (attempt == self.max_retries) return err;
-                sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                 continue;
             };
 
             if (result.status < 200 or result.status >= 300) {
                 if (isRetryableStatus(result.status) and attempt < self.max_retries) {
                     if (result.body.len > 0) self.allocator.free(result.body);
-                    sleepRetry(self.io, self.retry_base_delay_ms, attempt);
+                    try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 }
                 if (result.body.len > 0) self.allocator.free(result.body);
@@ -205,12 +249,21 @@ pub const Client = struct {
         stream: bool,
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
+        control: RequestControl,
     ) Error!Response {
+        // default_timeout_ms=0 → no curl default; we set CURLOPT_TIMEOUT_MS below.
         var easy = curl.Easy.init(.{
             .ca_bundle = self.ca_bundle,
-            .default_timeout_ms = self.timeout_ms orelse 60_000,
+            .default_timeout_ms = 0,
         }) catch return error.HttpFailed;
         defer easy.deinit();
+
+        const timeout_ms = control.curlTimeoutMs(rc.monoNowNs(), self.timeout_ms);
+        // When deadline/config present, always set TIMEOUT_MS (including 1ms when expired).
+        if (timeout_ms > 0 or control.deadline_mono_ns != null or self.timeout_ms != null) {
+            const t: c_long = @intCast(@min(timeout_ms, std.math.maxInt(c_long)));
+            _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_TIMEOUT_MS, t);
+        }
 
         var header_list: curl.Easy.Headers = .{};
         defer header_list.deinit();
@@ -254,45 +307,73 @@ pub const Client = struct {
             easy.setPostFields(payload) catch return error.HttpFailed;
         }
 
+        // Progress/xferinfo for cooperative cancel — context lives on this stack frame.
+        var cb_ctx: CallbackCtx = .{
+            .control = control,
+            .on_chunk = on_chunk,
+            .chunk_ctx = chunk_ctx,
+        };
+        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_NOPROGRESS, @as(c_long, 0));
+        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFODATA, @as(?*anyopaque, @ptrCast(&cb_ctx)));
+        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFOFUNCTION, xferInfo);
+
         if (stream) {
             const cb = on_chunk orelse return error.Unexpected;
-            var stream_state: StreamState = .{
-                .on_chunk = cb,
-                .chunk_ctx = chunk_ctx,
-            };
-            easy.setWritedata(@ptrCast(&stream_state)) catch return error.HttpFailed;
+            cb_ctx.on_chunk = cb;
+            easy.setWritedata(@ptrCast(&cb_ctx)) catch return error.HttpFailed;
             easy.setWritefunction(streamWrite) catch return error.HttpFailed;
 
             const resp = easy.perform() catch {
-                if (stream_state.failed) return stream_state.err;
-                return mapCurlDiag(easy.diagnostics);
+                if (cb_ctx.aborted == .cancelled or cb_ctx.failed and cb_ctx.err == error.Cancelled)
+                    return error.Cancelled;
+                if (cb_ctx.aborted == .timeout or cb_ctx.failed and cb_ctx.err == error.Timeout)
+                    return error.Timeout;
+                if (cb_ctx.failed) return cb_ctx.err;
+                return mapCurlDiag(easy.diagnostics, control);
             };
-            if (stream_state.failed) return stream_state.err;
+            if (cb_ctx.failed) return cb_ctx.err;
+            if (cb_ctx.aborted == .cancelled) return error.Cancelled;
+            if (cb_ctx.aborted == .timeout) return error.Timeout;
             return .{ .status = @intCast(resp.status_code), .body = &.{} };
         }
 
         var body_writer: Io.Writer.Allocating = .init(self.allocator);
         errdefer body_writer.deinit();
+        cb_ctx.body_writer = &body_writer;
         easy.setWriter(&body_writer.writer) catch return error.HttpFailed;
-        const resp = easy.perform() catch return mapCurlDiag(easy.diagnostics);
+        const resp = easy.perform() catch {
+            if (cb_ctx.aborted == .cancelled) return error.Cancelled;
+            if (cb_ctx.aborted == .timeout) return error.Timeout;
+            return mapCurlDiag(easy.diagnostics, control);
+        };
         body_writer.writer.flush() catch {};
         const bytes = body_writer.toOwnedSlice() catch return error.OutOfMemory;
         return .{ .status = @intCast(resp.status_code), .body = bytes };
     }
 };
 
-const StreamState = struct {
-    on_chunk: StreamChunk,
-    chunk_ctx: ?*anyopaque,
-    failed: bool = false,
-    err: Error = error.HttpFailed,
-};
-
 fn streamWrite(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     const real_size = size * nmemb;
-    const state: *StreamState = @ptrCast(@alignCast(user_data));
+    const state: *CallbackCtx = @ptrCast(@alignCast(user_data));
+    if (state.control.isCancelled()) {
+        state.failed = true;
+        state.err = error.Cancelled;
+        state.aborted = .cancelled;
+        return 0;
+    }
+    if (state.control.isExpired(rc.monoNowNs())) {
+        state.failed = true;
+        state.err = error.Timeout;
+        state.aborted = .timeout;
+        return 0;
+    }
     const data = (@as([*]const u8, @ptrCast(ptr)))[0..real_size];
-    state.on_chunk(state.chunk_ctx, data) catch |err| {
+    const cb = state.on_chunk orelse {
+        state.failed = true;
+        state.err = error.Unexpected;
+        return 0;
+    };
+    cb(state.chunk_ctx, data) catch |err| {
         state.failed = true;
         state.err = err;
         return 0;
@@ -300,11 +381,41 @@ fn streamWrite(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaq
     return real_size;
 }
 
-fn mapCurlDiag(diag: curl.Diagnostics) Error {
+/// libcurl xferinfo: return non-zero to abort transfer.
+fn xferInfo(
+    clientp: ?*anyopaque,
+    dltotal: libcurl.curl_off_t,
+    dlnow: libcurl.curl_off_t,
+    ultotal: libcurl.curl_off_t,
+    ulnow: libcurl.curl_off_t,
+) callconv(.c) c_int {
+    _ = dltotal;
+    _ = dlnow;
+    _ = ultotal;
+    _ = ulnow;
+    const state: *CallbackCtx = @ptrCast(@alignCast(clientp.?));
+    if (state.control.isCancelled()) {
+        state.aborted = .cancelled;
+        return 1;
+    }
+    if (state.control.isExpired(rc.monoNowNs())) {
+        state.aborted = .timeout;
+        return 1;
+    }
+    return 0;
+}
+
+fn mapCurlDiag(diag: curl.Diagnostics, control: RequestControl) Error {
+    if (control.isCancelled()) return error.Cancelled;
+    if (control.isExpired(rc.monoNowNs())) return error.Timeout;
     if (diag.error_code) |ec| {
         switch (ec) {
             .code => |code| {
-                if (code == curl.libcurl.CURLE_OPERATION_TIMEDOUT) return error.Timeout;
+                if (code == libcurl.CURLE_OPERATION_TIMEDOUT) return error.Timeout;
+                if (code == libcurl.CURLE_ABORTED_BY_CALLBACK) {
+                    if (control.isCancelled()) return error.Cancelled;
+                    return error.Timeout;
+                }
             },
             .m_code => {},
         }
@@ -314,13 +425,6 @@ fn mapCurlDiag(diag: curl.Diagnostics) Error {
 
 fn isRetryableStatus(status: u16) bool {
     return status == 408 or status == 429 or status >= 500;
-}
-
-fn sleepRetry(io: Io, base_ms: u64, attempt: u8) void {
-    const shift: u6 = @intCast(@min(attempt, 4));
-    const delay_ms = base_ms * (@as(u64, 1) << shift);
-    const duration: Io.Duration = .{ .nanoseconds = @intCast(delay_ms * std.time.ns_per_ms) };
-    Io.sleep(io, duration, .real) catch {};
 }
 
 fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8) Error![]u8 {
@@ -337,4 +441,10 @@ test "curl buildUrl joins base and path" {
     const url_a = try buildUrl(gpa, "https://api.anthropic.com/", "/v1/messages");
     defer gpa.free(url_a);
     try std.testing.expectEqualStrings("https://api.anthropic.com/v1/messages", url_a);
+}
+
+test "curl preflight cancel before network" {
+    var flag: rc.CancelFlag = .{};
+    flag.request();
+    try std.testing.expectError(error.Cancelled, rc.preflight(RequestControl.none().withCancel(&flag)));
 }

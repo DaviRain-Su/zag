@@ -1,9 +1,15 @@
 //! HTTP transport backend: Zig std.http.Client (default).
 //!
 //! Selected when `-Dhttp_backend=std`. See `http.zig` facade.
+//!
+//! Lifecycle (h-provider-001): `setRequestControl` installs a borrowed cancel
+//! flag + monotonic deadline enforced before attempts and during body streams.
+//! A watchdog shuts down the connection socket on cancel/deadline for bounded
+//! abort latency. No silent ignore of configured `timeout_ms`.
 
 const std = @import("std");
 const errors = @import("../errors.zig");
+const lifecycle = @import("lifecycle.zig");
 
 pub const Transport = struct {
     allocator: std.mem.Allocator,
@@ -25,6 +31,8 @@ pub const Transport = struct {
     owns_extra_headers: bool,
     proxy_http: ?*std.http.Client.Proxy = null,
     proxy_https: ?*std.http.Client.Proxy = null,
+    /// Borrowed per-request control (set via setRequestControl; not owned).
+    request_control: lifecycle.Control = .{},
 
     pub const Options = struct {
         base_url: []const u8,
@@ -110,6 +118,16 @@ pub const Transport = struct {
             }
         }
         return transport;
+    }
+
+    /// Install borrowed cancel/deadline for the next request(s). Caller ensures
+    /// the cancel atomic outlives in-flight work. Not thread-safe vs concurrent requests.
+    pub fn setRequestControl(self: *Transport, control: lifecycle.Control) void {
+        self.request_control = control;
+    }
+
+    pub fn clearRequestControl(self: *Transport) void {
+        self.request_control = .{};
     }
 
     pub fn deinit(self: *Transport) void {
@@ -249,6 +267,9 @@ pub const Transport = struct {
         req_opts: ?RequestOptions,
     ) !Response {
         const active_opts = self.resolveRequestOptions(req_opts);
+        const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
+        try control.checkNow();
+
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
@@ -261,6 +282,7 @@ pub const Transport = struct {
 
         var attempt: u8 = 0;
         while (attempt <= active_opts.max_retries) : (attempt += 1) {
+            try control.checkNow();
             var header_list = try std.ArrayList(std.http.Header).initCapacity(alloc, 0);
             defer header_list.deinit(alloc);
             if (self.extra_headers.len > 0) {
@@ -300,10 +322,22 @@ pub const Transport = struct {
                 }
             }
 
+            var watch: lifecycle.AbortWatch = .{
+                .control = control,
+                .io = self.io,
+            };
+            const watch_thread = if (control.cancel_atomic != null or control.deadline_mono_ns != null)
+                watch.start() catch null
+            else
+                null;
+            defer watch.finish(watch_thread);
+
             var req = self.client.request(method, uri, .{
                 .extra_headers = header_list.items,
                 .keep_alive = false,
             }) catch |err| {
+                if (control.isCancelled()) return error.Cancelled;
+                if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                 if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                     return err;
                 }
@@ -311,6 +345,10 @@ pub const Transport = struct {
                 continue;
             };
             defer req.deinit();
+
+            if (req.connection) |conn| {
+                watch.stream_ptr.store(&conn.stream_reader.stream, .seq_cst);
+            }
 
             if (body) |payload| {
                 req.transfer_encoding = .{ .content_length = payload.len };
@@ -354,6 +392,8 @@ pub const Transport = struct {
 
             var redirect_buffer: [8 * 1024]u8 = undefined;
             var response = req.receiveHead(&redirect_buffer) catch |err| {
+                if (control.isCancelled()) return error.Cancelled;
+                if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                 if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                     return err;
                 }
@@ -365,7 +405,8 @@ pub const Transport = struct {
             const retry_after_ms = parseRetryAfterSeconds(&response.head);
             const request_id = extractHeaderValue(&response.head, "x-request-id");
 
-            const response_bytes = readResponseBody(self.allocator, &response) catch |err| {
+            const response_bytes = readResponseBody(self.allocator, &response, control) catch |err| {
+                if (err == error.Cancelled or err == error.Timeout) return err;
                 if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                     return err;
                 }
@@ -404,6 +445,8 @@ pub const Transport = struct {
         req_opts: ?RequestOptions,
     ) errors.Error!void {
         const active_opts = self.resolveRequestOptions(req_opts);
+        const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
+        try control.checkNow();
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         const alloc = arena.allocator();
@@ -481,10 +524,22 @@ pub const Transport = struct {
                 }
             }
 
+            var watch: lifecycle.AbortWatch = .{
+                .control = control,
+                .io = self.io,
+            };
+            const watch_thread = if (control.cancel_atomic != null or control.deadline_mono_ns != null)
+                watch.start() catch null
+            else
+                null;
+            defer watch.finish(watch_thread);
+
             var req = self.client.request(method, uri, .{
                 .extra_headers = header_list.items,
                 .keep_alive = false,
             }) catch |err| {
+                if (control.isCancelled()) return error.Cancelled;
+                if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                 if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                     return errors.Error.HttpError;
                 }
@@ -493,9 +548,15 @@ pub const Transport = struct {
             };
             defer req.deinit();
 
+            if (req.connection) |conn| {
+                watch.stream_ptr.store(&conn.stream_reader.stream, .seq_cst);
+            }
+
             if (body) |payload| {
                 req.transfer_encoding = .{ .content_length = payload.len };
                 var body_writer = req.sendBodyUnflushed(&.{}) catch |err| {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                     if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
                     }
@@ -503,6 +564,8 @@ pub const Transport = struct {
                     continue;
                 };
                 body_writer.writer.writeAll(payload) catch |err| {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                     if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
                     }
@@ -510,6 +573,8 @@ pub const Transport = struct {
                     continue;
                 };
                 body_writer.end() catch |err| {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                     if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
                     }
@@ -517,6 +582,8 @@ pub const Transport = struct {
                     continue;
                 };
                 req.connection.?.flush() catch |err| {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                     if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
                     }
@@ -525,6 +592,8 @@ pub const Transport = struct {
                 };
             } else {
                 req.sendBodiless() catch |err| {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                     if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
                     }
@@ -535,6 +604,8 @@ pub const Transport = struct {
 
             var redirect_buffer: [8 * 1024]u8 = undefined;
             var response = req.receiveHead(&redirect_buffer) catch |err| {
+                if (control.isCancelled()) return error.Cancelled;
+                if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                 if (!isRetryableFetchError(err) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                     return errors.Error.HttpError;
                 }
@@ -547,7 +618,9 @@ pub const Transport = struct {
             const request_id = extractHeaderValue(&response.head, "x-request-id");
 
             if (status < 200 or status >= 300) {
-                const response_body = readResponseBody(self.allocator, &response) catch {
+                const response_body = readResponseBody(self.allocator, &response, control) catch {
+                    if (control.isCancelled()) return error.Cancelled;
+                    if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
                     if (!isRetryableStatus(status) or attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
                     }
@@ -567,7 +640,9 @@ pub const Transport = struct {
                 });
             }
 
-            streamResponseBody(&response, alloc, on_chunk, chunk_ctx) catch |err| {
+            streamResponseBody(&response, alloc, on_chunk, chunk_ctx, control) catch |err| {
+                if (err == error.Cancelled) return error.Cancelled;
+                if (err == error.Timeout) return error.Timeout;
                 if (err == errors.Error.HttpError or @as(anyerror, err) == error.ReadFailed) {
                     if (attempt == active_opts.max_retries or !isRetryableMethod(method)) {
                         return errors.Error.HttpError;
@@ -581,7 +656,6 @@ pub const Transport = struct {
         }
         return errors.Error.HttpError;
     }
-
 };
 
 pub fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8) ![]u8 {
@@ -742,7 +816,9 @@ pub fn mapTransportError(err: anyerror) errors.Error {
         errors.Error.DeserializeError => errors.Error.DeserializeError,
         errors.Error.SerializeError => errors.Error.SerializeError,
         errors.Error.Timeout => errors.Error.Timeout,
+        errors.Error.Cancelled => errors.Error.Cancelled,
         errors.Error.Unimplemented => errors.Error.Unimplemented,
+        error.Canceled => errors.Error.Cancelled,
         else => errors.Error.HttpError,
     };
 }
@@ -752,6 +828,7 @@ fn streamResponseBody(
     allocator: std.mem.Allocator,
     on_chunk: Transport.StreamChunk,
     chunk_ctx: ?*anyopaque,
+    control: lifecycle.Control,
 ) !void {
     const content_encoding = response.head.content_encoding;
     var decompression_buffer: []u8 = &[_]u8{};
@@ -775,8 +852,11 @@ fn streamResponseBody(
     const reader = response.readerDecompressing(&transfer_buffer, &decompressor, decompression_buffer);
 
     while (true) {
+        try control.checkNow();
         var tmp: [4096]u8 = undefined;
         const n = reader.readSliceShort(&tmp) catch |err| {
+            if (control.isCancelled()) return error.Cancelled;
+            if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
             if (err == error.ReadFailed) {
                 if (response.bodyErr()) |body_err| return body_err;
             }
@@ -826,10 +906,44 @@ fn readResponseBodyToSink(
 fn readResponseBody(
     persistent_allocator: std.mem.Allocator,
     response: *std.http.Client.Response,
+    control: lifecycle.Control,
 ) ![]u8 {
+    // Chunked read with control checks (streamRemaining cannot observe cancel).
     var body_writer = std.Io.Writer.Allocating.init(persistent_allocator);
-    defer body_writer.deinit();
-    try readResponseBodyToSink(response, persistent_allocator, &body_writer.writer);
+    errdefer body_writer.deinit();
+    const content_encoding = response.head.content_encoding;
+    var decompression_buffer: []u8 = &[_]u8{};
+    var owns_decompression_buffer = false;
+    if (content_encoding == .zstd or content_encoding == .deflate or content_encoding == .gzip) {
+        if (content_encoding == .zstd) {
+            decompression_buffer = try persistent_allocator.alloc(u8, std.compress.zstd.default_window_len);
+            owns_decompression_buffer = true;
+        } else {
+            decompression_buffer = try persistent_allocator.alloc(u8, std.compress.flate.max_window_len);
+            owns_decompression_buffer = true;
+        }
+    } else if (content_encoding == .compress) {
+        return error.UnsupportedCompressionMethod;
+    }
+    defer if (owns_decompression_buffer) persistent_allocator.free(decompression_buffer);
+
+    var transfer_buffer: [8192]u8 = undefined;
+    var decompressor: std.http.Decompress = undefined;
+    const reader = response.readerDecompressing(&transfer_buffer, &decompressor, decompression_buffer);
+    while (true) {
+        try control.checkNow();
+        var tmp: [4096]u8 = undefined;
+        const n = reader.readSliceShort(&tmp) catch |err| {
+            if (control.isCancelled()) return error.Cancelled;
+            if (control.isExpired(lifecycle.monoNowNs())) return error.Timeout;
+            if (err == error.ReadFailed) {
+                if (response.bodyErr()) |body_err| return body_err;
+            }
+            return err;
+        };
+        if (n == 0) break;
+        try body_writer.writer.writeAll(tmp[0..n]);
+    }
     return try body_writer.toOwnedSlice();
 }
 

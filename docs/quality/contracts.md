@@ -35,7 +35,16 @@ At least OpenAI-compatible and Anthropic-style fixtures cover the canonical beha
 
 ## Current status
 
-Request/turn/error/SSE assembly fixtures exist. Deadline enforcement, in-flight cancellation, partial Tool-call discard, and the fixture-directory/dual-backend convention remain P1.
+Request/turn/error/SSE assembly fixtures exist. **h-provider-001** adds:
+
+- L0 `RequestControl` + `CancelFlag` + non-retryable Timeout/Cancelled.
+- std and curl enforce `timeout_ms` / control (loopback slow-server wall bound; cancel abort).
+- Preflight cancel/zero-timeout fails before network.
+- Partial tool-call fragments discarded (no finish on error); loop does not append incomplete turns.
+- Deadline shared across retries; Timeout not retried.
+- Dual backend: `zig build test` and `zig build test -Dhttp_backend=curl`.
+
+Stable raw fixture directory naming under `testdata/contracts/` remains optional polish.
 
 ## L3
 

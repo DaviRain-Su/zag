@@ -4,7 +4,7 @@
 |------|---------|
 | Code | `packages/zag-agent-core/src/loop.zig` |
 | Layer | Agent Core Kernel |
-| Current maturity | **L1+** — core loop/goldens + truthful failure terminals via facade; in-flight cancel still open |
+| Current maturity | **L1+** — core loop/goldens + truthful terminals; in-flight provider cancel/deadline landed (h-provider-001); tool mid-flight cancel still open |
 | Target | L2 (H) → L3 steer/read-only parallelism (C6) |
 | Reference | Pi agent loop; Nanocodex Turn |
 
@@ -27,15 +27,14 @@ Run one agent loop: build model view, request one assistant turn, execute reques
 
 Stable stop categories include:
 
-`completed | max_turns | cancelled | provider_error | session_error | trace_error | out_of_memory | invalid_toolset`
+`completed | max_turns | cancelled | timeout | provider_error | session_error | trace_error | out_of_memory | invalid_toolset | invalid_context`
 
-- Loop returns Result for `completed` / `max_turns` / `cancelled`.
+- Loop returns Result for `completed` / `max_turns` / `cancelled` / **`timeout`**.
 - Loop returns `error.ProviderFailed` for provider/auth failures (facade → `ok=false`, `provider_error`).
+- In-flight provider **Timeout** → Result `stop_reason=timeout` (ok=false at facade); **Cancelled** → Result `cancelled` (ok=true).
 - Loop returns `error.InvalidToolset` / `error.OutOfMemory` / `error.TraceFailed` as typed errors (facade maps to `invalid_toolset` / `out_of_memory` / `trace_error` — **never** misclassified as `provider_error`).
 - `session_error` / `trace_error` terminals are committed by the **facade** only.
 - Mid-run trace emit failures are never swallowed (`mapTraceEmit` → `OutOfMemory` or `TraceFailed`).
-
-Deadline/transport distinctions may be structured error details while preserving a stable top-level category.
 
 ## Tool error shape
 
@@ -53,11 +52,12 @@ Malformed host registration is not an `unknown_tool` soft result; it fails befor
 
 ## Cancellation/deadline boundary
 
-- Current cooperative flag checks between provider turns and Tool calls.
-- L2 provider path propagates cancellation/deadline into in-flight provider/stream operations.
-- A Tool that declares cancellation support receives the run cancellation/deadline context.
-- Pending accepted calls receive cancelled results when needed for transcript consistency.
-- Partial streamed Tool-call arguments are never executed.
+- Cooperative flag checks between provider turns and Tool calls.
+- **In-flight provider path** (h-provider-001): same cancel flag + optional end-to-end `provider_timeout_ms` become `RequestControl` for every `provider.chat` attempt; HTTP std/curl actively abort.
+- Deadline budget is end-to-end across loop retries; Timeout/Cancelled are not retried.
+- Only a complete validated `AssistantTurn` is appended; partial streamed tool-call fragments are discarded on cancel/timeout.
+- Pending **accepted** tool calls still get cancelled bodies for transcript consistency when cancel fires between tools.
+- Tool handlers that declare `.cooperative` cancel metadata do not yet receive mid-flight preemption (still post-H / shell task).
 
 ## Execution strategy
 
@@ -65,7 +65,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 ## Current gaps
 
-- In-flight provider/stream/tool cancellation is not supported.
+- Mid-flight Tool-handler cancel (shell/process) still open.
 - High-level Observer event lifecycle is not yet an SDK contract.
 
 ## L2 acceptance
@@ -75,8 +75,8 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 - [x] cancel between calls fills pending Tool results and remains resume-safe.
 - [x] at least two golden transcripts exist.
 - [x] every normal/error path has one matching terminal state across API and trace (facade owner; h-trace-001).
-- [ ] in-flight provider cancellation/deadline is contract-tested.
-- [ ] partial Tool calls never execute after stream cancellation.
+- [x] in-flight provider cancellation/deadline is contract-tested (h-provider-001).
+- [x] partial Tool calls never execute after stream cancellation (discard + loop fixtures).
 - [x] max-turns and failure trace semantics are stable.
 
 ## Loop vs Graph

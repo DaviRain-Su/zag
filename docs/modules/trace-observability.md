@@ -15,8 +15,8 @@ Trace is a versioned audit channel for reconstructing run decisions. Observer is
 
 1. Every **started** run (`run_start` succeeded) has exactly one committed terminal event (`run_end`) for ordinary post-start failures and normal Results.
 2. Terminal state is derived from the actual result/error; `Agent.deinit` / `Trace.deinit` only release memory.
-3. Stable `stop_reason` values: `completed | max_turns | cancelled | provider_error | session_error | trace_error | out_of_memory | invalid_toolset`.
-4. `run_end.ok=false` for harness failures; clean cooperative `cancelled` and normal `max_turns` / `completed` use `ok=true`.
+3. Stable `stop_reason` values: `completed | max_turns | cancelled | timeout | provider_error | session_error | trace_error | out_of_memory | invalid_toolset | invalid_context`.
+4. `run_end.ok=false` for harness failures and **deadline `timeout`**; clean cooperative `cancelled` and normal `max_turns` / `completed` use `ok=true`.
 5. Explicit path persistence is fail-closed: typed `TraceIoFailed` / `InvalidPath` (never OOM-mapped filesystem errors).
 6. **One reply = one run.** Explicit path atomically holds the **latest completed reply** only (not a lifetime accumulation).
 7. Redaction before serialize/persist is P1 (`h-redact-001`).

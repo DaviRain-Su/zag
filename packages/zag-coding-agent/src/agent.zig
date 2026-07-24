@@ -44,8 +44,12 @@ pub const Options = struct {
     /// Package version string for trace metadata.
     version: []const u8 = "0.5.0",
     /// Loop-level retries on retryable provider errors.
+    /// Timeout and Cancelled are never retried (end-to-end deadline).
     chat_retries: u8 = 2,
     retry_base_delay_ms: u64 = 500,
+    /// End-to-end provider deadline (ms); null = no deadline (default).
+    /// Wired into loop RequestControl; 0 = immediate Timeout.
+    provider_timeout_ms: ?u64 = null,
     /// Catalog row for cost rates / context (from `ai.resolve`); null = no USD estimate.
     model_info: ?ai.ModelInfo = null,
 };
@@ -410,6 +414,7 @@ pub const Agent = struct {
                 .chat_retries = self.options.chat_retries,
                 .retry_base_delay_ms = self.options.retry_base_delay_ms,
                 .cancel = &self.cancel,
+                .provider_timeout_ms = self.options.provider_timeout_ms,
                 .on_compaction = onSessionCompaction,
                 .compaction_ctx = session,
             },
@@ -520,7 +525,8 @@ pub const Agent = struct {
         return switch (stop) {
             // Clean cooperative cancel is a normal Result, not a harness failure.
             .completed, .max_turns, .cancelled => true,
-            .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset, .invalid_context => false,
+            // Deadline exhausted is a failed run (ok=false).
+            .timeout, .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset, .invalid_context => false,
         };
     }
 
@@ -777,6 +783,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "ok"),
@@ -827,6 +834,7 @@ const MockChat = struct {
         arena: std.mem.Allocator,
         _: []const message.Message,
         _: []const tool.Definition,
+        _: provider_mod.RequestControl,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *MockChat = @ptrCast(@alignCast(ptr));
         self.calls.* += 1;
@@ -1503,6 +1511,7 @@ const CaptureViewChat = struct {
         arena: std.mem.Allocator,
         messages: []const message.Message,
         _: []const tool.Definition,
+        _: provider_mod.RequestControl,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *CaptureViewChat = @ptrCast(@alignCast(ptr));
         self.calls.* += 1;
@@ -1773,6 +1782,7 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
             arena: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
+            _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "should-not-reach"),
