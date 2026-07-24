@@ -37,7 +37,7 @@ These are owned by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md)
 
 ### Edit-integrity delivery state
 
-The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes and mandatory success text are allocated before staging; the helper writes, flushes, rechecks Guard, and replaces the canonical selected target. Contained final file symlinks therefore keep their link entry/text while the resolved target changes. One-shot test seams and a real Agent recovery fixture exercise the `edit-v1` contract. This evidence still requires independent verification and merged-main std/curl Gate, so the module and Phase H do not advance yet.
+The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes and mandatory success text are allocated before staging; endpoint checks and canonical target/parent proofs run before parent creation or temp open; the helper writes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies instead of relying on `Atomic.deinit`'s swallowed deletion error. Contained final file symlinks keep their link entry/text while the resolved target changes. One-shot endpoint, commit, cleanup, and Agent recovery fixtures exercise the contract. Independent re-verification and merged-main std/curl Gate remain pending, so the module and Phase H do not advance yet.
 
 ## H read/search contract
 
@@ -59,23 +59,33 @@ Private test-only limits or pure helpers may shrink boundaries for deterministic
 
 ## H write/edit integrity contract
 
-Both mutators build complete new bytes before opening a commit temporary. The temporary is created in the selected target's parent, receives all bytes, is writer-flushed, passes a final containment recheck, then atomically replaces the selected target.
+Both mutators build complete new bytes before opening a commit temporary. Before parent creation/staging they reject trailing host separators, final `.`/`..`, workspace-root-resolving endpoints, and existing directory/non-file endpoints. Existing endpoints must be regular files strictly below Guard root. Interior normalization such as `dir/../file` remains valid only when Guard and the canonical selected parent prove containment.
+
+After selection, the target is re-proven strictly below Guard root and the staging parent is proven root-or-descendant before opening it. The temporary is created in that selected target parent, receives all bytes, is writer-flushed, passes a final containment recheck, then atomically replaces the selected target.
 
 - Existing target: any pre-commit or replace failure preserves exact prior bytes.
 - Absent `write_file` target: failure preserves absence.
-- Ordinary error paths clean the uncommitted temporary.
+- Once a temporary exists, failure handling explicitly closes it, attempts deletion, and verifies absence when possible. Confirmed deletion reports `temp_artifact=absent`; unconfirmed deletion reports `stage=temp_cleanup` and `temp_artifact=may_remain` without exposing the name.
 - A contained final file symlink resolves to its contained real target; commit changes that target and leaves the symlink object/link text intact. Escaping, dangling, looping, or unresolvable links remain `jail_deny`.
 - Success exposes complete bytes and cannot later become an ambiguous hard failure because success text or optional diff enrichment could not allocate.
-- Missing parent directories created by `write_file` may remain after a later failure; rollback is forbidden. The target is still preserved/absent, no temporary remains, and this narrow residue is reported as `parent_dirs=may_remain`.
+- Missing parent directories created by `write_file` may remain after a later failure; rollback is forbidden. The target is still preserved/absent and this residue is reported as `parent_dirs=may_remain`; temporary state is reported independently by `temp_artifact`.
 - `search_replace` never creates parent directories; missing/ambiguous/stale/oversized pre-commit outcomes remain non-mutating.
 
-Expected commit failures use:
+Expected commit failures with confirmed absence of any temporary use:
 
 ```text
-error: code=edit_io_failed format=edit-v1 operation=<write_file|search_replace> stage=<parent_create|temp_create|write|flush|replace> target=preserved parent_dirs=<unchanged|may_remain>
+error: code=edit_io_failed format=edit-v1 operation=<write_file|search_replace> stage=<parent_create|temp_create|write|flush|replace> target=preserved parent_dirs=<unchanged|may_remain> temp_artifact=absent
 ```
 
-The first line contains no raw OS error, temporary name, absolute path, or file content and fits the trace Tool-result cap. A failed final containment recheck keeps the existing `jail_deny` result and preserves the target; after `write_file` parent creation began, the jail result additionally reports `parent_dirs=may_remain`. `OutOfMemory` remains typed before commit; no post-commit allocation may turn success into failure.
+Cleanup failure takes precedence over the primary post-create failure:
+
+```text
+error: code=edit_io_failed format=edit-v1 operation=<write_file|search_replace> stage=temp_cleanup primary_stage=<write|flush|containment|replace> target=preserved parent_dirs=<unchanged|may_remain> temp_artifact=may_remain
+```
+
+The first line contains no raw OS error, temporary name, absolute path, or file content and fits the trace Tool-result cap. `temp_artifact=may_remain` is confined to `stage=temp_cleanup` and to the validated staging parent. A failed final containment recheck with confirmed cleanup keeps `jail_deny`, preserves the target, and reports `temp_artifact=absent`; cleanup failure instead uses the precedence form above. `OutOfMemory` remains typed before commit; no post-commit allocation may turn success into failure.
+
+The Agent edit-fault fixture uses yolo to compose the production handler with transcript/session/resume/trace. It does not prove prompting. Ask/remember evidence lives in separate core fixtures. Trace correlation is single-call name/body/count correlation: transcript/session own Tool-call ID pairing, while trace `tool_result` has no call ID.
 
 This is software-crash/ordinary-I/O preservation only. It does not claim `fsync`/power-loss durability, hostile concurrent-filesystem safety, compare-and-swap, metadata fidelity, or multi-file atomicity.
 
@@ -89,8 +99,9 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] zero/multiple anchor failures do not mutate and are tested.
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
-- [ ] write/edit faults preserve exact prior target state, clean temporary state, and expose stable `edit-v1` results (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
-- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
+- [ ] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`; review-01 fixes await re-verification).
+- [ ] write/edit faults preserve exact prior target state and expose stable cleanup-truthful `edit-v1` results (`h-edit-integrity-001`; review-01 fixes await re-verification).
+- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; review-01 fixes await re-verification).
 - [ ] lexical remember alias/jail fixtures prove the documented conservative H boundary (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
 - [x] shell/error integration passes its separate lifecycle contract and independent/main Gate (`h-shell-001`).
 

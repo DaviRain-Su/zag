@@ -41,7 +41,8 @@ The file-tool jail and shell policy are different controls. `run_shell` is not m
 - Resolve the workspace root once per `loop.run` (threaded as borrowed `tool.Context.workspace_root_real`); handlers lazy-resolve when the field is null.
 - Existing read/list/search targets must resolve beneath that root (component-boundary compare: `/ws` does not contain `/ws2`).
 - Write/create walks every existing ancestor; non-existent suffix under a verified ancestor is allowed **without** `..` after the first missing component (`new/../escape/...` → deny). Escaping or dangling intermediate/final symlinks deny. Checks complete **before** any parent create.
-- Contained file/dir symlinks (target still inside root) remain usable for read/list/search/write/replace (writes under a dir symlink skip recreating that parent).
+- File mutators additionally require a lexical file endpoint (no trailing host separator or final `.`/`..`). Existing endpoints must resolve to regular files strictly below root; directory/root aliases are invalid arguments. After canonical selection, the target is re-proven strictly below root and its staging parent root-or-descendant before any atomic temporary is opened.
+- Contained file/dir symlinks (target still inside root) remain usable for read/list/search/write/replace, subject to endpoint kind: final directory symlinks are valid directory endpoints for read/list/search but not file mutators; writes under a contained directory symlink skip recreating that parent.
 - Containment path compare uses **host** separators only (POSIX: `/` only — root `/tmp/ws` does not contain sibling `/tmp/ws\outside`).
 - `list_dir` on an escaping directory symlink → `jail_deny`; listing a parent may show symlink **names** without reading targets.
 - grep/glob walkers do not follow escaping/dangling symlinks; nested escapes skip without leaking outside bytes; directory real-path identity bounds symlink loops.

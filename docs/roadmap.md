@@ -61,7 +61,7 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-tool-runtime-001](./plan/tasks/h-tool-runtime-001.md) | stateful Tool, mandatory descriptor, fail-closed custom policy |
 | [h-workspace-001](./plan/tasks/h-workspace-001.md) | symlink-aware containment for all file Tools |
 | [h-trace-001](./plan/tasks/h-trace-001.md) | one truthful terminal state and visible trace I/O failure |
-| [h-edit-integrity-001](./plan/tasks/h-edit-integrity-001.md) | **in progress:** atomic preserve implementation/fixtures landed on task branch; independent/main Gate pending |
+| [h-edit-integrity-001](./plan/tasks/h-edit-integrity-001.md) | **in progress:** review-01 endpoint/cleanup remediation landed on task branch; re-review/main Gate pending |
 
 ### P1
 

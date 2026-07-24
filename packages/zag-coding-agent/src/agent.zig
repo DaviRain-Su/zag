@@ -4066,7 +4066,7 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
 const edit_agent_call_id = "edit-fault-write-1";
 const edit_agent_target = ".zag-test-h-edit-agent/edits/target.txt";
 const edit_agent_failure_body =
-    "error: code=edit_io_failed format=edit-v1 operation=write_file stage=write target=preserved parent_dirs=unchanged";
+    "error: code=edit_io_failed format=edit-v1 operation=write_file stage=write target=preserved parent_dirs=unchanged temp_artifact=absent";
 
 fn expectStructuredEditFailureTrace(gpa: std.mem.Allocator, buf: []const u8) !void {
     var permission_count: u32 = 0;
@@ -4205,6 +4205,8 @@ test "h-edit: recoverable write fault composes transcript session resume parsed 
     };
 
     var mock: Mock = .{};
+    // This fixture owns edit-fault composition only. Separate core tests own
+    // ask/remember prompting and execution-time Guard evidence.
     var agent = try Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = Mock.chat },

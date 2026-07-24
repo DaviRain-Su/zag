@@ -122,6 +122,10 @@ var test_shell_config: if (builtin.is_test) ShellConfig else void =
     if (builtin.is_test) .{} else {};
 var test_edit_fault: if (builtin.is_test) TestEditFault else void =
     if (builtin.is_test) .none else {};
+var test_fail_temp_cleanup_delete: if (builtin.is_test) bool else void =
+    if (builtin.is_test) false else {};
+var test_replace_observed_closed: if (builtin.is_test) bool else void =
+    if (builtin.is_test) false else {};
 
 fn activeShellConfig() ShellConfig {
     if (builtin.is_test) return test_shell_config;
@@ -132,6 +136,13 @@ fn takeEditFault(comptime expected: TestEditFault) bool {
     if (!builtin.is_test) return false;
     if (test_edit_fault != expected) return false;
     test_edit_fault = .none;
+    return true;
+}
+
+fn takeTempCleanupDeleteFault() bool {
+    if (!builtin.is_test) return false;
+    if (!test_fail_temp_cleanup_delete) return false;
+    test_fail_temp_cleanup_delete = false;
     return true;
 }
 
@@ -156,12 +167,23 @@ pub const testing = if (builtin.is_test) struct {
 
     pub fn failNextEditAt(fault: EditFault) void {
         std.debug.assert(fault != .none);
+        if (fault == .replace) test_replace_observed_closed = false;
         test_edit_fault = fault;
+    }
+
+    pub fn failNextTempCleanupDelete() void {
+        test_fail_temp_cleanup_delete = true;
+    }
+
+    pub fn replaceFaultObservedClosed() bool {
+        return test_replace_observed_closed;
     }
 
     pub fn reset() void {
         test_shell_config = .{};
         test_edit_fault = .none;
+        test_fail_temp_cleanup_delete = false;
+        test_replace_observed_closed = false;
     }
 } else struct {};
 
@@ -236,12 +258,18 @@ pub fn searchReplace(ctx: tool.Context, instance: ?*anyopaque, arguments_json: [
         );
     }
 
+    workspace.checkToolPath(path) catch |err| return lexicalJail(ctx, path, err);
+    try validateFileEndpointShape(path);
+
     var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
     defer guard.deinit(ctx.allocator);
 
     // Existing target (or contained final symlink) must resolve inside root.
     guard.checkExisting(ctx.io, ctx.cwd, path) catch |err| {
         return jailOrFail(ctx, path, err);
+    };
+    validateMutationEndpoint(ctx, guard, path, false) catch |err| {
+        return mutationEndpointFailure(ctx, path, err);
     };
 
     const contents = readEditTarget(ctx, path) catch |err| switch (err) {
@@ -336,12 +364,18 @@ pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
         );
     }
 
+    workspace.checkToolPath(path) catch |err| return lexicalJail(ctx, path, err);
+    try validateFileEndpointShape(path);
+
     var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
     defer guard.deinit(ctx.allocator);
 
     // Ancestor walk before any create: escaping/dangling parents denied.
     guard.checkCreate(ctx.allocator, ctx.io, ctx.cwd, path) catch |err| {
         return jailOrFail(ctx, path, err);
+    };
+    validateMutationEndpoint(ctx, guard, path, true) catch |err| {
+        return mutationEndpointFailure(ctx, path, err);
     };
 
     // Allocate the mandatory success body before parent creation or commit.
@@ -375,6 +409,7 @@ const EditStage = enum {
     write,
     flush,
     replace,
+    temp_cleanup,
 
     fn name(self: EditStage) []const u8 {
         return @tagName(self);
@@ -390,13 +425,108 @@ const ParentDirs = enum {
     }
 };
 
+const TempArtifact = enum {
+    absent,
+    may_remain,
+
+    fn name(self: TempArtifact) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const MutationEndpointError = workspace.ContainError || error{InvalidFileEndpoint};
+
+fn isHostPathSeparator(byte: u8) bool {
+    return if (builtin.os.tag == .windows)
+        byte == '/' or byte == '\\'
+    else
+        byte == '/';
+}
+
+fn validateFileEndpointShape(path: []const u8) error{InvalidArguments}!void {
+    std.debug.assert(path.len > 0);
+    if (isHostPathSeparator(path[path.len - 1])) return error.InvalidArguments;
+
+    var final_start = path.len;
+    while (final_start > 0 and !isHostPathSeparator(path[final_start - 1])) {
+        final_start -= 1;
+    }
+    const final_component = path[final_start..];
+    if (std.mem.eql(u8, final_component, ".") or
+        std.mem.eql(u8, final_component, ".."))
+    {
+        return error.InvalidArguments;
+    }
+}
+
+fn validateMutationEndpoint(
+    ctx: tool.Context,
+    guard: workspace.Guard,
+    request_path: []const u8,
+    allow_missing: bool,
+) MutationEndpointError!void {
+    const selected = guard.resolveContained(ctx.allocator, ctx.io, ctx.cwd, request_path) catch |err| switch (err) {
+        error.NotFound => if (allow_missing) return else return error.NotFound,
+        else => return err,
+    };
+    defer ctx.allocator.free(selected);
+
+    if (!guard.root.contains(selected)) return error.OutsideWorkspace;
+    if (std.mem.eql(u8, selected, guard.root.path)) return error.InvalidFileEndpoint;
+
+    const stat = ctx.cwd.statFile(ctx.io, selected, .{ .follow_symlinks = true }) catch |err| switch (err) {
+        error.FileNotFound => if (allow_missing) return else return error.NotFound,
+        else => return error.ResolveFailed,
+    };
+    if (stat.kind != .file) return error.InvalidFileEndpoint;
+}
+
+fn mutationEndpointFailure(
+    ctx: tool.Context,
+    path: []const u8,
+    err: MutationEndpointError,
+) tool.HandlerError![]u8 {
+    return switch (err) {
+        error.InvalidFileEndpoint => error.InvalidArguments,
+        error.OutsideWorkspace => jailOrFail(ctx, path, error.OutsideWorkspace),
+        error.InvalidPath => jailOrFail(ctx, path, error.InvalidPath),
+        error.NotFound => jailOrFail(ctx, path, error.NotFound),
+        error.ResolveFailed => jailOrFail(ctx, path, error.ResolveFailed),
+        error.OutOfMemory => error.OutOfMemory,
+    };
+}
+
+fn lexicalJail(
+    ctx: tool.Context,
+    path: []const u8,
+    err: workspace.Error,
+) tool.HandlerError![]u8 {
+    return switch (err) {
+        error.OutsideWorkspace => jailOrFail(ctx, path, error.OutsideWorkspace),
+        error.InvalidPath => jailOrFail(ctx, path, error.InvalidPath),
+    };
+}
+
 /// Publish one complete edit with Zig 0.16 `Io.File.Atomic`.
 ///
 /// The selected destination is canonicalized first so a contained final file
 /// symlink commits to its real target rather than renaming over the symlink.
 /// Opening that target's canonical parent and passing only its basename to
 /// `createFileAtomic` keeps staging and replacement on the same parent
-/// filesystem. `flush` is the buffered Zig writer flush, not file/dir fsync.
+/// filesystem. Failures explicitly close/delete/check the temporary because
+/// Zig 0.16 `Atomic.deinit` swallows deletion errors. `flush` is the buffered
+/// Zig writer flush, not file/dir fsync.
+const AtomicPrimaryFailure = union(enum) {
+    write,
+    flush,
+    containment: workspace.ContainError,
+    replace,
+
+    fn name(self: AtomicPrimaryFailure) []const u8 {
+        return @tagName(self);
+    }
+};
+
 fn atomicCommit(
     ctx: tool.Context,
     guard: workspace.Guard,
@@ -408,59 +538,155 @@ fn atomicCommit(
     if (operation == .write_file) {
         ensureParentDirs(ctx, request_path, &parent_dirs) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return try editIoFailure(ctx.allocator, operation, .parent_create, parent_dirs),
+            else => return try editIoFailure(ctx.allocator, operation, .parent_create, parent_dirs, .absent),
         };
         if (takeEditFault(.parent_create)) {
-            return try editIoFailure(ctx.allocator, operation, .parent_create, parent_dirs);
+            return try editIoFailure(ctx.allocator, operation, .parent_create, parent_dirs, .absent);
         }
     }
 
     const selected_path = selectCommitPath(ctx, guard, operation, request_path) catch |err| {
-        return try finalContainmentFailure(ctx, request_path, parent_dirs, err);
+        return try finalContainmentFailure(ctx, request_path, parent_dirs, .absent, err);
     };
     defer ctx.allocator.free(selected_path);
 
     const parent_path = std.fs.path.dirname(selected_path) orelse {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
     };
     const target_basename = std.fs.path.basename(selected_path);
     if (target_basename.len == 0) {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
     }
 
     var target_parent = Io.Dir.openDirAbsolute(ctx.io, parent_path, .{}) catch {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
     };
     defer target_parent.close(ctx.io);
 
     if (takeEditFault(.temp_create)) {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
     }
 
     var atomic_file = target_parent.createFileAtomic(ctx.io, target_basename, .{
         .replace = true,
     }) catch {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
     };
-    defer atomic_file.deinit(ctx.io);
+    var atomic_needs_deinit = true;
+    defer if (atomic_needs_deinit) atomic_file.deinit(ctx.io);
 
     var write_buffer: [4096]u8 = undefined;
     var file_writer = atomic_file.file.writer(ctx.io, &write_buffer);
     writeCompleteForCommit(&file_writer, complete_bytes) catch {
-        return try editIoFailure(ctx.allocator, operation, .write, parent_dirs);
+        return try finishAtomicFailure(
+            ctx,
+            request_path,
+            operation,
+            parent_dirs,
+            &atomic_file,
+            &atomic_needs_deinit,
+            .write,
+        );
     };
     flushCompleteForCommit(&file_writer) catch {
-        return try editIoFailure(ctx.allocator, operation, .flush, parent_dirs);
+        return try finishAtomicFailure(
+            ctx,
+            request_path,
+            operation,
+            parent_dirs,
+            &atomic_file,
+            &atomic_needs_deinit,
+            .flush,
+        );
     };
 
     recheckForCommit(ctx, guard, operation, request_path) catch |err| {
-        return try finalContainmentFailure(ctx, request_path, parent_dirs, err);
+        return try finishAtomicFailure(
+            ctx,
+            request_path,
+            operation,
+            parent_dirs,
+            &atomic_file,
+            &atomic_needs_deinit,
+            .{ .containment = err },
+        );
     };
 
     replaceForCommit(&atomic_file, ctx.io) catch {
-        return try editIoFailure(ctx.allocator, operation, .replace, parent_dirs);
+        return try finishAtomicFailure(
+            ctx,
+            request_path,
+            operation,
+            parent_dirs,
+            &atomic_file,
+            &atomic_needs_deinit,
+            .replace,
+        );
     };
     return null;
+}
+
+fn finishAtomicFailure(
+    ctx: tool.Context,
+    request_path: []const u8,
+    operation: EditOperation,
+    parent_dirs: ParentDirs,
+    atomic_file: *Io.File.Atomic,
+    atomic_needs_deinit: *bool,
+    primary: AtomicPrimaryFailure,
+) tool.HandlerError![]u8 {
+    std.debug.assert(atomic_needs_deinit.*);
+    const temp_artifact = cleanupTemporary(atomic_file, ctx.io);
+    atomic_needs_deinit.* = false;
+
+    if (temp_artifact == .may_remain) {
+        return tempCleanupFailure(ctx.allocator, operation, primary, parent_dirs);
+    }
+    return switch (primary) {
+        .write => editIoFailure(ctx.allocator, operation, .write, parent_dirs, .absent),
+        .flush => editIoFailure(ctx.allocator, operation, .flush, parent_dirs, .absent),
+        .containment => |err| finalContainmentFailure(
+            ctx,
+            request_path,
+            parent_dirs,
+            .absent,
+            err,
+        ),
+        .replace => editIoFailure(ctx.allocator, operation, .replace, parent_dirs, .absent),
+    };
+}
+
+fn cleanupTemporary(atomic_file: *Io.File.Atomic, io: Io) TempArtifact {
+    std.debug.assert(atomic_file.file_exists);
+    std.debug.assert(!atomic_file.close_dir_on_deinit);
+    if (atomic_file.file_open) {
+        atomic_file.file.close(io);
+        atomic_file.file_open = false;
+    }
+
+    const temp_sub_path = std.fmt.hex(atomic_file.file_basename_hex);
+    const delete_failed = takeTempCleanupDeleteFault() or delete_failed: {
+        atomic_file.dir.deleteFile(io, &temp_sub_path) catch |err| switch (err) {
+            error.FileNotFound => break :delete_failed false,
+            else => break :delete_failed true,
+        };
+        break :delete_failed false;
+    };
+
+    const outcome: TempArtifact = if (!delete_failed)
+        .absent
+    else verify: {
+        _ = atomic_file.dir.statFile(io, &temp_sub_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+            error.FileNotFound => break :verify .absent,
+            else => break :verify .may_remain,
+        };
+        break :verify .may_remain;
+    };
+
+    // Disarm Zig 0.16 Atomic.deinit: it would otherwise retry deletion while
+    // swallowing the outcome, making `temp_artifact=may_remain` unobservable.
+    atomic_file.file_exists = false;
+    return outcome;
 }
 
 fn selectCommitPath(
@@ -470,6 +696,8 @@ fn selectCommitPath(
     request_path: []const u8,
 ) workspace.ContainError![]u8 {
     if (guard.resolveContained(ctx.allocator, ctx.io, ctx.cwd, request_path)) |existing| {
+        errdefer ctx.allocator.free(existing);
+        try validateSelectedCommitPath(ctx, guard, operation, existing);
         return existing;
     } else |err| switch (err) {
         error.NotFound => {
@@ -484,9 +712,32 @@ fn selectCommitPath(
     const parent_real = try guard.resolveContained(ctx.allocator, ctx.io, ctx.cwd, parent_rel);
     defer ctx.allocator.free(parent_real);
     const basename = std.fs.path.basename(request_path);
-    if (basename.len == 0) return error.InvalidPath;
-    return std.fs.path.join(ctx.allocator, &.{ parent_real, basename }) catch
+    if (basename.len == 0 or std.mem.eql(u8, basename, ".") or std.mem.eql(u8, basename, ".."))
+        return error.InvalidPath;
+    const selected = std.fs.path.join(ctx.allocator, &.{ parent_real, basename }) catch
         return error.OutOfMemory;
+    errdefer ctx.allocator.free(selected);
+    try validateSelectedCommitPath(ctx, guard, operation, selected);
+    return selected;
+}
+
+fn validateSelectedCommitPath(
+    ctx: tool.Context,
+    guard: workspace.Guard,
+    operation: EditOperation,
+    selected_path: []const u8,
+) workspace.ContainError!void {
+    if (!guard.root.contains(selected_path)) return error.OutsideWorkspace;
+    if (std.mem.eql(u8, selected_path, guard.root.path)) return error.InvalidPath;
+
+    const parent_path = std.fs.path.dirname(selected_path) orelse return error.InvalidPath;
+    if (!guard.root.contains(parent_path)) return error.OutsideWorkspace;
+
+    const stat = ctx.cwd.statFile(ctx.io, selected_path, .{ .follow_symlinks = true }) catch |err| switch (err) {
+        error.FileNotFound => if (operation == .write_file) return else return error.NotFound,
+        else => return error.ResolveFailed,
+    };
+    if (stat.kind != .file) return error.InvalidPath;
 }
 
 fn writeCompleteForCommit(file_writer: *Io.File.Writer, complete_bytes: []const u8) !void {
@@ -526,7 +777,16 @@ fn recheckForCommit(
 }
 
 fn replaceForCommit(atomic_file: *Io.File.Atomic, io: Io) !void {
-    if (takeEditFault(.replace)) return error.InjectedEditReplaceFailure;
+    std.debug.assert(atomic_file.file_exists);
+    if (atomic_file.file_open) {
+        atomic_file.file.close(io);
+        atomic_file.file_open = false;
+    }
+    if (takeEditFault(.replace)) {
+        if (builtin.is_test) test_replace_observed_closed = !atomic_file.file_open;
+        return error.InjectedEditReplaceFailure;
+    }
+    // Zig 0.16 Atomic.replace now enters directly at its rename boundary.
     try atomic_file.replace(io);
 }
 
@@ -535,12 +795,30 @@ fn editIoFailure(
     operation: EditOperation,
     stage: EditStage,
     parent_dirs: ParentDirs,
+    temp_artifact: TempArtifact,
+) tool.HandlerError![]u8 {
+    std.debug.assert(stage != .temp_cleanup);
+    var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const line = std.fmt.bufPrint(
+        &line_buf,
+        "error: code=edit_io_failed format=edit-v1 operation={s} stage={s} target=preserved parent_dirs={s} temp_artifact={s}",
+        .{ operation.name(), stage.name(), parent_dirs.name(), temp_artifact.name() },
+    ) catch return error.ToolFailed;
+    std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+    return gpa.dupe(u8, line) catch return error.OutOfMemory;
+}
+
+fn tempCleanupFailure(
+    gpa: std.mem.Allocator,
+    operation: EditOperation,
+    primary: AtomicPrimaryFailure,
+    parent_dirs: ParentDirs,
 ) tool.HandlerError![]u8 {
     var line_buf: [trace.cap_tool_result_body]u8 = undefined;
     const line = std.fmt.bufPrint(
         &line_buf,
-        "error: code=edit_io_failed format=edit-v1 operation={s} stage={s} target=preserved parent_dirs={s}",
-        .{ operation.name(), stage.name(), parent_dirs.name() },
+        "error: code=edit_io_failed format=edit-v1 operation={s} stage=temp_cleanup primary_stage={s} target=preserved parent_dirs={s} temp_artifact=may_remain",
+        .{ operation.name(), primary.name(), parent_dirs.name() },
     ) catch return error.ToolFailed;
     std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
     return gpa.dupe(u8, line) catch return error.OutOfMemory;
@@ -550,8 +828,10 @@ fn finalContainmentFailure(
     ctx: tool.Context,
     path: []const u8,
     parent_dirs: ParentDirs,
+    temp_artifact: TempArtifact,
     err: workspace.ContainError,
 ) tool.HandlerError![]u8 {
+    std.debug.assert(temp_artifact == .absent);
     // At the final security-critical boundary, disappearance is unresolved
     // containment rather than an ordinary pre-edit missing-file result.
     const deny_err: workspace.ContainError = if (err == error.NotFound)
@@ -559,17 +839,18 @@ fn finalContainmentFailure(
     else
         err;
     const base = try jailOrFail(ctx, path, deny_err);
-    if (parent_dirs == .unchanged) return base;
     defer ctx.allocator.free(base);
 
-    // `write_file` may already have created parents. Keep the result's primary
-    // jail classification while reporting the only authorized partial residue.
     const jail_prefix = "error: code=jail_deny ";
     if (!std.mem.startsWith(u8, base, jail_prefix)) return error.ToolFailed;
+    const parent_field = if (parent_dirs == .may_remain)
+        "parent_dirs=may_remain "
+    else
+        "";
     return std.fmt.allocPrint(
         ctx.allocator,
-        "{s}parent_dirs=may_remain {s}",
-        .{ jail_prefix, base[jail_prefix.len..] },
+        "{s}{s}temp_artifact=absent {s}",
+        .{ jail_prefix, parent_field, base[jail_prefix.len..] },
     ) catch return error.OutOfMemory;
 }
 
@@ -1229,6 +1510,7 @@ fn expectEditFaultBody(
 ) !void {
     try std.testing.expect(body.len <= trace.cap_tool_result_body);
     try std.testing.expect(std.mem.indexOf(u8, body, "InjectedEdit") == null);
+    if (fault == .replace) try std.testing.expect(testing.replaceFaultObservedClosed());
     if (fault == .containment) {
         try std.testing.expect(std.mem.startsWith(u8, body, "error: code=jail_deny "));
         try std.testing.expect(std.mem.indexOf(u8, body, "edit_io_failed") == null);
@@ -1237,6 +1519,7 @@ fn expectEditFaultBody(
         } else {
             try std.testing.expect(std.mem.indexOf(u8, body, "parent_dirs=") == null);
         }
+        try std.testing.expect(std.mem.indexOf(u8, body, "temp_artifact=absent") != null);
         return;
     }
 
@@ -1251,7 +1534,7 @@ fn expectEditFaultBody(
     var expected_buf: [trace.cap_tool_result_body]u8 = undefined;
     const expected = try std.fmt.bufPrint(
         &expected_buf,
-        "error: code=edit_io_failed format=edit-v1 operation={s} stage={s} target=preserved parent_dirs={s}",
+        "error: code=edit_io_failed format=edit-v1 operation={s} stage={s} target=preserved parent_dirs={s} temp_artifact=absent",
         .{ operation.name(), stage.name(), parent_dirs.name() },
     );
     try std.testing.expectEqualStrings(expected, body);
@@ -1312,6 +1595,221 @@ fn expectSymlink(
     try std.testing.expectEqualStrings(expected_text, link_buf[0..link_len]);
 }
 
+fn executePublicEdit(
+    ctx: tool.Context,
+    operation: EditOperation,
+    arguments: []const u8,
+) std.mem.Allocator.Error![]u8 {
+    var tools = phase1ExtraTools();
+    const fixture_toolset: tool.Toolset = .{ .tools = &tools };
+    const registry = fixture_toolset.registry();
+    return registry.execute(ctx, operation.name(), arguments);
+}
+
+fn expectInvalidEndpointBody(body: []const u8) !void {
+    try std.testing.expect(core.tool_error.hasCode(body, .invalid_arguments));
+    try std.testing.expect(std.mem.indexOf(u8, body, "edit_io_failed") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "temp_artifact") == null);
+}
+
+fn expectEndpointWorkspaceState(
+    gpa: std.mem.Allocator,
+    io: Io,
+    parent: Io.Dir,
+    ws: Io.Dir,
+    expected_ws_entries: []const []const u8,
+) !void {
+    try expectDirEntries(io, parent, &.{ "outside", "ws" });
+    try expectDirEntries(io, ws, expected_ws_entries);
+
+    var outside = try parent.openDir(io, "outside", .{ .iterate = true });
+    defer outside.close(io);
+    try expectDirEntries(io, outside, &.{"sentinel.txt"});
+    try expectFileBytes(gpa, io, outside, "sentinel.txt", "OUTSIDE_SENTINEL\n");
+}
+
+test "edit endpoints reject final dot trailing separator and root resolution before staging" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/sentinel.txt", .data = "OUTSIDE_SENTINEL\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    try expectPathAbsentIn(ws, io, "new-dir");
+    try expectPathAbsentIn(ws, io, "new-dir/.");
+    const final_dot = try executePublicEdit(
+        ctx,
+        .write_file,
+        "{\"path\":\"new-dir/.\",\"content\":\"NEW_BYTES\\n\"}",
+    );
+    defer gpa.free(final_dot);
+    try expectInvalidEndpointBody(final_dot);
+    try expectPathAbsentIn(ws, io, "new-dir");
+    try expectPathAbsentIn(ws, io, "new-dir/.");
+    try expectEndpointWorkspaceState(gpa, io, parent.dir, ws, &.{});
+
+    try expectPathAbsentIn(ws, io, "alias.txt");
+    try expectPathAbsentIn(ws, io, "alias.txt/");
+    const trailing = try executePublicEdit(
+        ctx,
+        .write_file,
+        "{\"path\":\"alias.txt/\",\"content\":\"NEW_BYTES\\n\"}",
+    );
+    defer gpa.free(trailing);
+    try expectInvalidEndpointBody(trailing);
+    try expectPathAbsentIn(ws, io, "alias.txt");
+    try expectPathAbsentIn(ws, io, "alias.txt/");
+    try expectEndpointWorkspaceState(gpa, io, parent.dir, ws, &.{});
+
+    const root_before = try parent.dir.statFile(io, "ws", .{ .follow_symlinks = false });
+    try std.testing.expect(root_before.kind == .directory);
+    for ([_]struct { path: []const u8, arguments: []const u8 }{
+        .{ .path = ".", .arguments = "{\"path\":\".\",\"content\":\"NEW_BYTES\\n\"}" },
+        .{ .path = "./", .arguments = "{\"path\":\"./\",\"content\":\"NEW_BYTES\\n\"}" },
+    }) |case| {
+        const requested_before = try ws.statFile(io, case.path, .{ .follow_symlinks = false });
+        try std.testing.expect(requested_before.kind == .directory);
+        const body = try executePublicEdit(ctx, .write_file, case.arguments);
+        defer gpa.free(body);
+        try expectInvalidEndpointBody(body);
+        const requested_after = try ws.statFile(io, case.path, .{ .follow_symlinks = false });
+        try std.testing.expect(requested_after.kind == .directory);
+        const root_after = try parent.dir.statFile(io, "ws", .{ .follow_symlinks = false });
+        try std.testing.expect(root_after.kind == .directory);
+        try expectEndpointWorkspaceState(gpa, io, parent.dir, ws, &.{});
+    }
+
+    try ws.createDirPath(io, "sub");
+    const sub_before = try ws.statFile(io, "sub", .{ .follow_symlinks = false });
+    try std.testing.expect(sub_before.kind == .directory);
+    const parent_alias_before = try ws.statFile(io, "sub/..", .{ .follow_symlinks = false });
+    try std.testing.expect(parent_alias_before.kind == .directory);
+    const parent_alias = try executePublicEdit(
+        ctx,
+        .write_file,
+        "{\"path\":\"sub/..\",\"content\":\"NEW_BYTES\\n\"}",
+    );
+    defer gpa.free(parent_alias);
+    try expectInvalidEndpointBody(parent_alias);
+    const sub_after = try ws.statFile(io, "sub", .{ .follow_symlinks = false });
+    try std.testing.expect(sub_after.kind == .directory);
+    const parent_alias_after = try ws.statFile(io, "sub/..", .{ .follow_symlinks = false });
+    try std.testing.expect(parent_alias_after.kind == .directory);
+    var sub = try ws.openDir(io, "sub", .{ .iterate = true });
+    defer sub.close(io);
+    try expectDirEntries(io, sub, &.{});
+    try expectEndpointWorkspaceState(gpa, io, parent.dir, ws, &.{"sub"});
+}
+
+test "edit endpoints reject contained directory and root aliases for both handlers" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws/subdir");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/sentinel.txt", .data = "OUTSIDE_SENTINEL\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "subdir", "dir_alias", .{ .is_directory = true });
+    try ws.symLink(io, ".", "root_alias", .{ .is_directory = true });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    const endpoints = [_][]const u8{ "subdir", "dir_alias", "root_alias", ".", "./" };
+    for ([_]EditOperation{ .write_file, .search_replace }) |operation| {
+        for (endpoints) |endpoint| {
+            const subdir_before = try ws.statFile(io, "subdir", .{ .follow_symlinks = false });
+            try std.testing.expect(subdir_before.kind == .directory);
+            try expectSymlink(ws, io, "dir_alias", "subdir");
+            try expectSymlink(ws, io, "root_alias", ".");
+            var subdir_before_dir = try ws.openDir(io, "subdir", .{ .iterate = true });
+            defer subdir_before_dir.close(io);
+            try expectDirEntries(io, subdir_before_dir, &.{});
+            try expectEndpointWorkspaceState(
+                gpa,
+                io,
+                parent.dir,
+                ws,
+                &.{ "dir_alias", "root_alias", "subdir" },
+            );
+
+            const arguments = switch (operation) {
+                .write_file => try std.fmt.allocPrint(
+                    gpa,
+                    "{{\"path\":{f},\"content\":\"NEW_BYTES\\n\"}}",
+                    .{std.json.fmt(endpoint, .{})},
+                ),
+                .search_replace => try std.fmt.allocPrint(
+                    gpa,
+                    "{{\"path\":{f},\"old_string\":\"OLD\",\"new_string\":\"NEW\"}}",
+                    .{std.json.fmt(endpoint, .{})},
+                ),
+            };
+            defer gpa.free(arguments);
+            const body = try executePublicEdit(ctx, operation, arguments);
+            defer gpa.free(body);
+            try expectInvalidEndpointBody(body);
+
+            const subdir_after = try ws.statFile(io, "subdir", .{ .follow_symlinks = false });
+            try std.testing.expect(subdir_after.kind == .directory);
+            try expectSymlink(ws, io, "dir_alias", "subdir");
+            try expectSymlink(ws, io, "root_alias", ".");
+            var subdir_after_dir = try ws.openDir(io, "subdir", .{ .iterate = true });
+            defer subdir_after_dir.close(io);
+            try expectDirEntries(io, subdir_after_dir, &.{});
+            try expectEndpointWorkspaceState(
+                gpa,
+                io,
+                parent.dir,
+                ws,
+                &.{ "dir_alias", "root_alias", "subdir" },
+            );
+        }
+    }
+}
+
+test "edit endpoint preserves contained interior normalization" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws/dir");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/sentinel.txt", .data = "OUTSIDE_SENTINEL\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    const written = try executePublicEdit(
+        ctx,
+        .write_file,
+        "{\"path\":\"dir/../file.txt\",\"content\":\"alpha OLD omega\\n\"}",
+    );
+    defer gpa.free(written);
+    try std.testing.expect(std.mem.startsWith(u8, written, "ok:"));
+    try expectFileBytes(gpa, io, ws, "file.txt", "alpha OLD omega\n");
+
+    const replaced = try executePublicEdit(
+        ctx,
+        .search_replace,
+        "{\"path\":\"dir/../file.txt\",\"old_string\":\"OLD\",\"new_string\":\"NEW\"}",
+    );
+    defer gpa.free(replaced);
+    try std.testing.expect(std.mem.startsWith(u8, replaced, "ok:"));
+    try expectFileBytes(gpa, io, ws, "file.txt", "alpha NEW omega\n");
+
+    var dir = try ws.openDir(io, "dir", .{ .iterate = true });
+    defer dir.close(io);
+    try expectDirEntries(io, dir, &.{});
+    try expectEndpointWorkspaceState(gpa, io, parent.dir, ws, &.{ "dir", "file.txt" });
+}
+
 test "edit-v1 existing ordinary targets preserve exact bytes and clean temps" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -1334,6 +1832,89 @@ test "edit-v1 existing ordinary targets preserve exact bytes and clean temps" {
             try expectDirEntries(io, tmp.dir, &.{"target.txt"});
         }
     }
+}
+
+test "edit-v1 cleanup deletion failure is truthful observable and safely removable" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = original });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    testing.failNextEditAt(.write_after_prefix);
+    testing.failNextTempCleanupDelete();
+    const body = try invokeEditFixture(ctx, .write_file, "target.txt");
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings(
+        "error: code=edit_io_failed format=edit-v1 operation=write_file stage=temp_cleanup primary_stage=write target=preserved parent_dirs=unchanged temp_artifact=may_remain",
+        body,
+    );
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+
+    var artifact_name: ?[]u8 = null;
+    defer if (artifact_name) |name| gpa.free(name);
+    var file_count: usize = 0;
+    var it = tmp.dir.iterate();
+    while (try it.next(io)) |entry| {
+        file_count += 1;
+        try std.testing.expect(entry.kind == .file);
+        if (std.mem.eql(u8, entry.name, "target.txt")) continue;
+        try std.testing.expect(artifact_name == null);
+        artifact_name = try gpa.dupe(u8, entry.name);
+    }
+    try std.testing.expectEqual(@as(usize, 2), file_count);
+    const artifact = artifact_name orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, body, artifact) == null);
+    try std.testing.expect((try tmp.dir.statFile(io, artifact, .{ .follow_symlinks = false })).kind == .file);
+
+    try tmp.dir.deleteFile(io, artifact);
+    try expectPathAbsentIn(tmp.dir, io, artifact);
+    try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+}
+
+test "edit-v1 cleanup failure takes precedence over final containment jail" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = original });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    testing.failNextEditAt(.containment);
+    testing.failNextTempCleanupDelete();
+    const body = try invokeEditFixture(ctx, .write_file, "target.txt");
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings(
+        "error: code=edit_io_failed format=edit-v1 operation=write_file stage=temp_cleanup primary_stage=containment target=preserved parent_dirs=unchanged temp_artifact=may_remain",
+        body,
+    );
+    try std.testing.expect(std.mem.indexOf(u8, body, "code=jail_deny") == null);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+
+    var artifact_name: ?[]u8 = null;
+    defer if (artifact_name) |name| gpa.free(name);
+    var it = tmp.dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (!std.mem.eql(u8, entry.name, "target.txt")) {
+            try std.testing.expect(artifact_name == null);
+            artifact_name = try gpa.dupe(u8, entry.name);
+        }
+    }
+    const artifact = artifact_name orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, body, artifact) == null);
+    try tmp.dir.deleteFile(io, artifact);
+    try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
 }
 
 test "edit-v1 absent write_file target stays absent and temp-free on commit faults" {

@@ -18,7 +18,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 | Area | Status |
 |------|--------|
 | Phase H | **Blocked.** The final audit passed existing suites but found two unowned default file-surface L2 counterexamples. |
-| P0 | Original queue is done; `h-edit-integrity-001` is in progress with develop implementation/fixtures present and independent/main Gate pending. |
+| P0 | Original queue is done; `h-edit-integrity-001` review 01 blocked, remediation is on the task branch, and re-review/main Gate remain pending. |
 | P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is ready; retained integration evidence remains valid. |
 | Integration | `h-integration-001` is blocked on both file-surface tasks, then must repeat the sentence-by-sentence audit. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
@@ -35,7 +35,7 @@ original P0/P1 modules + doctor + shell ✅
          ┌──────────┴──────────┐
          ▼                     ▼
 in-progress: h-edit-integrity-001   ready: h-read-search-bounds-001
-atomic develop evidence; Gate pending   bounded + explicit incomplete results
+review-01 remediation; re-review pending   bounded + explicit incomplete results
          └──────────┬──────────┘
                     ▼
           blocked: h-integration-001

@@ -50,7 +50,7 @@ Canonical table: [assessment § priorities](../plan/analysis/2026-07-24-producti
 | [h-trace-001](../plan/tasks/h-trace-001.md) | [trace-observability](../modules/trace-observability.md) | exactly one truthful terminal; visible trace failure |
 | [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) | [tools-edit](../modules/tools-edit.md) | final-audit correction: preserve existing/absent single-file targets across commit faults |
 
-The original P0 queue is complete, but final audit reopened data preservation narrowly through `h-edit-integrity-001`. Its shared atomic helper and develop fixtures are now implemented on the in-progress task branch; independent verification and merged-main Gate remain open. No P2 capability implementation is promoted meanwhile.
+The original P0 queue is complete, but final audit reopened data preservation narrowly through `h-edit-integrity-001`. Independent review 01 blocked on endpoint normalization/outside staging and cleanup truth; the in-progress task branch now contains remediation fixtures and implementation, pending re-review and merged-main Gate. No P2 capability implementation is promoted meanwhile.
 
 ## H1 — Loop / lifecycle
 
@@ -92,7 +92,7 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 
 ### Reopened by final audit
 
-- [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) is in progress: the task branch now replaces direct truncate/write with one target-preserving same-parent atomic commit, retains contained final-symlink behavior, exposes stable `edit-v1` faults, and adds the Agent/session/trace recovery chain. Independent/main Gate is not yet complete.
+- [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) is in progress: direct truncate/write is gone; review-01 remediation adds strict file endpoints/selected-parent containment, observable cleanup truth, post-close replace faults, contained final-symlink behavior, and a yolo Agent/session/trace recovery chain. Separate core fixtures own ask/remember. Re-review/main Gate is not complete.
 - [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) must keep every read/list/grep/glob body within 64 KiB and mark every runtime cutoff with complete `fs-v1` incomplete metadata.
 - Permission remember is exact lexical request-path scoped for H; aliases re-prompt and Guard remains mandatory. Canonical object/path-domain authorization is post-H.
 - h-shell-001 remains closed and does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline.
