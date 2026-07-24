@@ -65,13 +65,20 @@ If committing the **failure** terminal itself fails (serialization OOM or explic
 
 Serialize a complete JSON line first, then `ensureUnusedCapacity`, then append and increment `event_count`. On any failure, buffer length and seq are unchanged (no sequence gap). Terminal commit does **not** mark finished/closed/count until serialization and (for explicit paths) atomic persistence succeed—or until the rolled-back in-memory failure terminal is committed after a persist fault.
 
-### Path policy
+### Path policy (symlink-aware)
 
-Same lexical relative/workspace rules as session paths. Absolute / `..` / empty / NUL → `InvalidPath`. Not an OS sandbox; no TOCTOU claim (trusted-host).
+- Lexical: relative, no `..` escape, no absolute (same as session paths).
+- **Create containment:** before preflight and before final replace, `workspace.Guard.checkCreate` on the workspace `cwd` (typically process cwd). Parent symlink/alias escape and dangling links → `InvalidPath` (fail-closed). OOM from Guard is preserved as `OutOfMemory`.
+- Atomic create/write uses the same workspace `cwd` handle.
+- **Not an OS sandbox.** Residual TOCTOU between Guard check and `createFileAtomic` is trusted-host only (same honesty as file tools).
 
-### Allocator honesty
+### Allocator / terminal reserve (real post-start guarantee)
 
-Before `run_start`, the facade reserves ~2KiB buffer capacity so a failure terminal can usually serialize under mild pressure. **Total allocator exhaustion after start may still leave no terminal** if even the reserved path cannot complete serialization; that case returns `OutOfMemory` and is not claimed as a hard L2 guarantee. Ordinary non-OOM failures always get one terminal in tests.
+- Event JSON is serialized on a **stack fixed buffer** (no heap for stringify).
+- Nonterminal appends call `ensureUnusedCapacity(line.len + terminal_reserve)` so free capacity always leaves room for a terminal.
+- Terminal appends use only pre-reserved free capacity (no `gpa` grow).
+- `stop_reason` is truncated to a fixed max so a terminal line is provably ≤ `terminal_reserve` (384 bytes).
+- **Contract-tested:** after `run_start`, forcing nonterminal growth OOM still allows `emitRunEnd(ok=false, out_of_memory)` under a FailingAllocator with exactly one terminal.
 
 ## Schema (L2)
 

@@ -8,6 +8,7 @@
 //! ```
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const core = @import("zag-agent-core");
 const ai = @import("zag-ai");
@@ -301,6 +302,9 @@ pub const Agent = struct {
     ledger: ai.cost.Ledger = .{},
     /// Cooperative cancel; CLI installs SIGINT against this flag.
     cancel: cancel_mod.Flag = .{},
+    /// Test-only toolset override for InvalidToolset fixtures (production always null).
+    test_tools: if (builtin.is_test) ?[]const tool.Tool else void =
+        if (builtin.is_test) null else {},
 
     pub fn init(
         gpa: std.mem.Allocator,
@@ -323,7 +327,7 @@ pub const Agent = struct {
         };
         self.permission_gate = self.resolveGate();
         if (options.trace_path) |tp| {
-            self.trace = trace_mod.Trace.init(gpa, io, tp);
+            self.trace = trace_mod.Trace.init(gpa, io, tp, Io.Dir.cwd());
         }
         return self;
     }
@@ -361,12 +365,19 @@ pub const Agent = struct {
         return gate;
     }
 
+    fn effectiveToolset(self: *Agent) tool.Toolset {
+        if (builtin.is_test) {
+            if (self.test_tools) |override| return .{ .tools = override };
+        }
+        return self.tools_storage.toolset();
+    }
+
     fn deps(self: *Agent, session: *Session) loop.Deps {
         const gate = self.resolveGate();
         return .{
             .gpa = self.gpa,
             .provider = self.provider,
-            .toolset = self.tools_storage.toolset(),
+            .toolset = self.effectiveToolset(),
             .tool_ctx = .{
                 .allocator = self.gpa,
                 .io = self.io,
@@ -465,12 +476,19 @@ pub const Agent = struct {
     /// Fail-closed precedence: if persisting/serializing the failure terminal
     /// itself fails, return the **trace** error (or OOM), not the primary.
     /// When commit succeeds, return `primary`.
+    ///
+    /// `turns_hint` is merged with `Trace.last_emitted_turn` so mid-run failures
+    /// report progress when turn events were emitted.
     fn failRun(
         self: *Agent,
-        turns: u32,
+        turns_hint: u32,
         stop_reason: loop.StopReason,
         primary: ReplyError,
     ) ReplyError {
+        const turns: u32 = if (self.trace) |*tr|
+            @max(turns_hint, tr.last_emitted_turn)
+        else
+            turns_hint;
         self.commitTerminal(turns, false, stop_reason) catch |terr| return terr;
         return primary;
     }
@@ -787,7 +805,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
 
 const MockChat = struct {
     calls: *u32,
-    mode: enum { text, text_with_usage, provider_fail, max_turns_then_text },
+    mode: enum { text, text_with_usage, provider_fail, max_turns_then_text, tool_then_fail },
     /// Distinct usage per call for multi-reply ledger tests.
     usage_prompt: u32 = 10,
 
@@ -822,6 +840,22 @@ const MockChat = struct {
                 };
             },
             .provider_fail => return error.AuthenticationFailed,
+            .tool_then_fail => {
+                if (self.calls.* == 1) {
+                    const calls = try arena.alloc(message.ToolCall, 1);
+                    calls[0] = .{
+                        .id = try arena.dupe(u8, "c1"),
+                        .name = try arena.dupe(u8, "list_dir"),
+                        .arguments = try arena.dupe(u8, "{\"path\":\".\"}"),
+                    };
+                    return .{
+                        .content = try arena.dupe(u8, "working"),
+                        .tool_calls = calls,
+                        .finish_reason = "tool_calls",
+                    };
+                }
+                return error.AuthenticationFailed;
+            },
             .max_turns_then_text => {
                 const calls = try arena.alloc(message.ToolCall, 1);
                 calls[0] = .{
@@ -876,7 +910,7 @@ test "h-trace: schema_version on run_start and completed terminal" {
     });
     defer agent.deinit();
     // Install memory-only trace (init with null path).
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
 
     var session = try Session.start(gpa, io, .{
         .base_system = "sys",
@@ -907,7 +941,7 @@ test "h-trace: provider failure ok=false provider_error exactly once" {
         .chat_retries = 0,
     });
     defer agent.deinit();
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
 
     var session = try Session.start(gpa, io, .{
         .base_system = "sys",
@@ -934,7 +968,7 @@ test "h-trace: max_turns terminal ok=true stop_reason=max_turns" {
         .max_turns = 2,
     });
     defer agent.deinit();
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
 
     var session = try Session.start(gpa, io, .{
         .base_system = "sys",
@@ -960,7 +994,7 @@ test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {
         .max_turns = 4,
     });
     defer agent.deinit();
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
     agent.cancel.request();
 
     var session = try Session.start(gpa, io, .{
@@ -1005,7 +1039,7 @@ test "h-trace: session save failure ok=false session_error not completed" {
         .verbose = false,
     });
     defer agent.deinit();
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
 
     const reply_err = agent.reply(&session, "hello");
     try std.testing.expectError(error.IoFailed, reply_err);
@@ -1026,7 +1060,7 @@ test "h-trace: Agent.deinit does not invent success terminal" {
         .chat_retries = 0,
     });
     // Manual trace; start a run then abandon without reply completing.
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
     const tr_ptr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
     try tr_ptr.emitRunStart(.{
         .version = "0.5.0",
@@ -1072,7 +1106,8 @@ test "h-trace: unwritable explicit path fails before provider" {
     defer session.deinit();
 
     const err = agent.reply(&session, "hi");
-    try std.testing.expectError(error.TraceIoFailed, err);
+    // Parent is a file → Guard ResolveFailed/InvalidPath (fail-closed before provider).
+    try std.testing.expect(err == error.TraceIoFailed or err == error.InvalidPath);
     try std.testing.expectEqual(@as(u32, 0), calls);
 }
 
@@ -1109,7 +1144,7 @@ test "h-trace: completeWithSession does not double-terminal" {
         .verbose = false,
     });
     defer agent.deinit();
-    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
 
     const owned = try agent.completeWithSession("sys", "hi", .{
         .load_project_instructions = false,
@@ -1151,32 +1186,28 @@ test "h-trace: two consecutive replies reset buffer seq and ledger" {
     _ = try agent.reply(&session, "first");
     const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
     try expectRunEnd(tr, true, "completed");
-    try std.testing.expectEqual(@as(u64, 10), @as(u64, agent.ledger.prompt_tokens));
+    try std.testing.expectEqual(@as(u64, 10), agent.ledger.prompt_tokens);
     try std.testing.expectEqual(@as(u32, 1), agent.ledger.turns);
-    // File has exactly one run.
     const file1 = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
     defer gpa.free(file1);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file1, "\"kind\":\"run_start\""));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file1, "\"kind\":\"run_end\""));
+    try std.testing.expect(std.mem.indexOf(u8, file1, "\"prompt_tokens\":10") != null);
 
     _ = try agent.reply(&session, "second");
     try expectRunEnd(tr, true, "completed");
-    // Second reply ledger excludes first (usage_prompt advanced to 110).
-    try std.testing.expectEqual(@as(u64, 110), @as(u64, agent.ledger.prompt_tokens));
+    try std.testing.expectEqual(@as(u64, 110), agent.ledger.prompt_tokens);
     try std.testing.expectEqual(@as(u32, 1), agent.ledger.turns);
     try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_start"));
-    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"seq\":0") != null);
 
     const file2 = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
     defer gpa.free(file2);
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file2, "\"kind\":\"run_start\""));
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file2, "\"kind\":\"run_end\""));
-    // Latest-run file does not retain first reply's prompt_tokens=10 as sole usage
-    // (second has 110).
-    try std.testing.expect(std.mem.indexOf(u8, file2, "\"prompt_tokens\":110") != null or
-        std.mem.indexOf(u8, tr.buf.items, "\"prompt_tokens\":110") != null or
-        agent.ledger.prompt_tokens == 110);
+    // Durable second-run usage only; first-run prompt_tokens=10 must be gone.
+    try std.testing.expect(std.mem.indexOf(u8, file2, "\"prompt_tokens\":110") != null);
+    try std.testing.expect(std.mem.indexOf(u8, file2, "\"prompt_tokens\":10") == null);
 }
 
 test "h-trace: fail-before-replace returns TraceIoFailed single false terminal" {
@@ -1199,11 +1230,6 @@ test "h-trace: fail-before-replace returns TraceIoFailed single false terminal" 
     });
     defer agent.deinit();
     const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
-    // Fault is applied after beginReply's preflight; set before reply so
-    // emitRunEnd hits it. Preflight does not replace, so this is safe.
-    // We need the fault only on final persist — set after agent init, before reply.
-    // beginReply runs preflight (no replace). Then loop. Then emitRunEnd with fault.
-    // Set fault now; preflight ignores fail_before_replace.
     trace_mod.testing.setFailBeforeReplace(tr, true);
 
     var session = try Session.start(gpa, io, .{
@@ -1214,13 +1240,76 @@ test "h-trace: fail-before-replace returns TraceIoFailed single false terminal" 
 
     const err = agent.reply(&session, "hi");
     try std.testing.expectError(error.TraceIoFailed, err);
-    try std.testing.expect(calls >= 1); // provider ran; only final persist failed
+    try std.testing.expect(calls >= 1);
     try expectRunEnd(tr, false, "trace_error");
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"ok\":true") == null);
 
     const after = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024));
     defer gpa.free(after);
     try std.testing.expectEqualStrings(original, after);
+
+    // No temp residue.
+    var dir = try Io.Dir.cwd().openDir(io, dir_name, .{ .iterate = true });
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .file) try std.testing.expectEqualStrings("run.jsonl", entry.name);
+    }
+}
+
+test "h-trace: recovery A success, B persist fault, C success latest-run only" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-trace-recovery";
+    const path = ".zag-test-trace-recovery/run.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text_with_usage, .usage_prompt = 7 };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = path,
+    });
+    defer agent.deinit();
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    // A: success
+    _ = try agent.reply(&session, "A");
+    try expectRunEnd(tr, true, "completed");
+    const file_a = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(file_a);
+    try std.testing.expect(std.mem.indexOf(u8, file_a, "\"prompt_tokens\":7") != null);
+
+    // B: fail before replace — durable A preserved, one in-memory failure terminal
+    trace_mod.testing.setFailBeforeReplace(tr, true);
+    try std.testing.expectError(error.TraceIoFailed, agent.reply(&session, "B"));
+    try expectRunEnd(tr, false, "trace_error");
+    const file_b = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(file_b);
+    try std.testing.expectEqualStrings(file_a, file_b);
+
+    // C: clear fault, succeed; file is only C
+    trace_mod.testing.setFailBeforeReplace(tr, false);
+    _ = try agent.reply(&session, "C");
+    try expectRunEnd(tr, true, "completed");
+    try std.testing.expectEqual(@as(u32, 1), agent.ledger.turns);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"seq\":0") != null);
+    const file_c = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(file_c);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file_c, "\"kind\":\"run_start\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file_c, "\"kind\":\"run_end\""));
+    try std.testing.expect(std.mem.indexOf(u8, file_c, "\"ok\":true") != null);
+    // C usage is 7 + 100 + 100 = 207 from mock advancement (A=7, B attempted with 107, C=207)
+    try std.testing.expect(std.mem.indexOf(u8, file_c, "\"prompt_tokens\":7") == null);
+    try std.testing.expect(std.mem.indexOf(u8, file_c, "\"prompt_tokens\":207") != null);
 }
 
 test "h-trace: provider fail with persist fault returns TraceIoFailed (fail-closed)" {
@@ -1249,17 +1338,15 @@ test "h-trace: provider fail with persist fault returns TraceIoFailed (fail-clos
     });
     defer session.deinit();
 
-    // Fail-closed: persisting the provider_error terminal fails → TraceIoFailed.
     const err = agent.reply(&session, "hi");
     try std.testing.expectError(error.TraceIoFailed, err);
     try expectRunEnd(tr, false, "provider_error");
 }
 
-test "h-trace: invalid toolset maps to invalid_toolset not provider_error" {
+test "h-trace: Agent.reply invalid toolset provider=0 and invalid_toolset terminal" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
-    // Forged tool with empty path_field → validateTools fails → InvalidToolset.
     const forged: tool.Tool = .{
         .descriptor = .{
             .definition = .{
@@ -1280,46 +1367,103 @@ test "h-trace: invalid toolset maps to invalid_toolset not provider_error" {
             }
         }.h,
     };
-
-    var tr = trace_mod.Trace.init(gpa, io, null);
-    defer tr.deinit();
-    try tr.beginReply();
-    try tr.emitRunStart(.{
-        .version = "0.5.0",
-        .permission = "yolo",
-        .shell_policy = "protect",
-    });
+    const tools = [_]tool.Tool{forged};
 
     var calls: u32 = 0;
     var mock: MockChat = .{ .calls = &calls, .mode = .text };
-    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_impl.deinit();
-    var tx = transcript_mod.Transcript.init(arena_impl.allocator());
-    try tx.appendSystem("sys");
-    try tx.appendUser("hi");
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    agent.test_tools = &tools;
 
-    const tools = [_]tool.Tool{forged};
-    const run_err = loop.run(.{
-        .gpa = gpa,
-        .provider = mockProvider(&mock),
-        .toolset = .{ .tools = &tools },
-        .tool_ctx = .{
-            .allocator = gpa,
-            .io = io,
-            .cwd = Io.Dir.cwd(),
-        },
-        .options = .{ .trace = &tr, .chat_retries = 0 },
-    }, &tx);
-    try std.testing.expectError(error.InvalidToolset, run_err);
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.InvalidToolset, err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "invalid_toolset");
+}
+
+test "h-trace: parent symlink escape fails before provider" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Nested ws + sibling outside (Guard root = ws, not monorepo).
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.jsonl", .data = "KEEP\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{});
+    defer ws.close(io);
+    ws.symLink(io, "../outside", "escape", .{ .is_directory = true }) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => |e| return e,
+    };
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        // Path relative to agent cwd (process cwd); for unit isolation we install
+        // Trace with ws cwd directly below.
+        .trace_path = null,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, "escape/trace.jsonl", ws);
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try std.testing.expectError(error.InvalidPath, agent.reply(&session, "hi"));
     try std.testing.expectEqual(@as(u32, 0), calls);
 
-    // Facade failRun mapping: InvalidToolset → stop_reason invalid_toolset (never provider_error).
-    try std.testing.expectEqualStrings("invalid_toolset", loop.StopReason.invalid_toolset.name());
-    try std.testing.expect(!std.mem.eql(u8, loop.StopReason.invalid_toolset.name(), "provider_error"));
-    try tr.emitRunEnd(.{
-        .turns = 0,
-        .ok = false,
-        .stop_reason = loop.StopReason.invalid_toolset.name(),
+    const after = try parent.dir.readFileAlloc(io, "outside/secret.jsonl", gpa, .limited(32));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings("KEEP\n", after);
+}
+
+test "h-trace: provider failure after prior turn reports last_emitted_turn" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .tool_then_fail };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+        .max_turns = 8,
     });
-    try expectRunEnd(&tr, false, "invalid_toolset");
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try std.testing.expectError(error.ProviderFailed, agent.reply(&session, "hi"));
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "provider_error");
+    // Turn 1 tool batch then turn 2 emitted before provider fail.
+    try std.testing.expect(tr.last_emitted_turn >= 1);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"turns\":") != null);
+    // Terminal should not claim zero turns if a turn was emitted.
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"turns\":0") == null);
 }

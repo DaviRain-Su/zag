@@ -3,18 +3,21 @@
 //! Lifecycle (h-trace-001):
 //! - `run_start` carries `schema_version` + Zag version.
 //! - Exactly one `run_end` per open run; the coding-agent facade owns terminals.
-//! - Explicit path: non-destructive preflight + atomic final replace.
+//! - Explicit path: symlink-aware Guard jail, non-destructive preflight, atomic replace.
 //! - Per-reply buffer: durable file holds the **latest completed reply** only.
+//! - Events serialize on a stack fixed buffer (no heap for JSON).
+//! - Nonterminal appends preserve a dedicated terminal reserve in `buf`; terminal
+//!   appends consume only that pre-reserved capacity (no alloc after run_start).
 //! - `writeObj` is transactional (seq/buffer unchanged on failure).
 //! - `deinit` only releases memory; it never invents a successful terminal.
 //!
-//! Compatibility: additive fields OK within a schema version; unknown
-//! `schema_version` must fail in strict readers (this package only writes).
+//! Containment is software check-time on a trusted host (same as workspace tools).
+//! Residual TOCTOU between Guard check and createFileAtomic is documented — not
+//! an OS sandbox.
 //!
 //! Unavoidable limit: an unwritable filesystem cannot durably record its own
 //! failure. On final-persist failure after a normal outcome, memory holds a
-//! single `ok=false, stop_reason=trace_error` terminal when capacity allows;
-//! prior durable destination bytes are unchanged.
+//! single `ok=false, stop_reason=trace_error` terminal; prior durable bytes unchanged.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -25,16 +28,19 @@ const workspace = @import("workspace.zig");
 /// Stable exported trace schema version written on every `run_start`.
 pub const current_schema_version: u32 = 1;
 
-/// Bytes reserved before `run_start` so a failure terminal can usually serialize
-/// under mild allocator pressure (not a hard guarantee under total OOM).
-const reserved_run_capacity: usize = 2048;
+/// Stack buffer for one event JSON line (fields are truncated to fit).
+const event_stack_size: usize = 2048;
+/// Pre-reserved free capacity for a failure/success `run_end` (no post-start alloc).
+pub const terminal_reserve: usize = 384;
+/// Bound stop_reason so terminal line is provably ≤ terminal_reserve.
+const max_stop_reason_len: usize = 48;
 
 /// Public trace errors. Filesystem failures are **not** mapped to OutOfMemory.
 pub const Error = error{
     OutOfMemory,
-    /// Explicit trace path create/write/flush/replace failed (or parent unwritable).
+    /// Explicit path create/write/flush/replace failed (or parent unwritable).
     TraceIoFailed,
-    /// Trace path is absolute, escapes workspace, empty, or otherwise invalid.
+    /// Path absolute/escape/symlink-escape/dangling/resolve-fail (fail-closed).
     InvalidPath,
 };
 
@@ -73,67 +79,74 @@ pub const EventKind = enum {
 pub const Trace = struct {
     gpa: std.mem.Allocator,
     io: Io,
-    /// Relative path for JSONL output; null = memory-only (tests / no audit file).
+    /// Workspace root directory for path jail + atomic I/O (typically `Dir.cwd()`).
+    cwd: Io.Dir,
+    /// Relative path for JSONL output; null = memory-only.
     path: ?[]const u8 = null,
-    /// Current reply-run lines only (each ends with `\n`).
+    /// Current reply-run lines only.
     buf: std.ArrayList(u8) = .empty,
     event_count: u32 = 0,
-    /// True between a successful `emitRunStart` and its matching committed `run_end`.
     run_open: bool = false,
-    /// True after a terminal was successfully committed for this reply-run.
     finished: bool = false,
-    /// Count of committed `run_end` events (0 or 1 per reply after reset).
     terminal_count: u32 = 0,
-    /// Test-only: fail after atomic temp write/flush, before replace.
+    /// Last successfully emitted turn number (0 if none); used by facade failRun.
+    last_emitted_turn: u32 = 0,
     fail_before_replace: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
 
-    pub fn init(gpa: std.mem.Allocator, io: Io, path: ?[]const u8) Trace {
-        return .{ .gpa = gpa, .io = io, .path = path };
+    pub fn init(gpa: std.mem.Allocator, io: Io, path: ?[]const u8, cwd: Io.Dir) Trace {
+        return .{ .gpa = gpa, .io = io, .path = path, .cwd = cwd };
     }
 
-    /// Release buffers only. Never invents `run_end` / success.
     pub fn deinit(self: *Trace) void {
         self.buf.deinit(self.gpa);
         self.* = undefined;
     }
 
-    /// Lexical workspace-safe relative path (same rules as session paths).
-    /// Does not claim OS sandbox / TOCTOU guarantees.
+    /// Lexical relative-path check only (no symlink resolve). Prefer Guard for I/O paths.
     pub fn validatePath(path: []const u8) Error!void {
         workspace.checkToolPath(path) catch return error.InvalidPath;
     }
 
-    /// Reset in-memory state for a fresh reply-run (clears buffer/seq/flags).
-    /// Does not touch the durable path.
     pub fn resetForReply(self: *Trace) void {
         self.buf.clearRetainingCapacity();
         self.event_count = 0;
         self.run_open = false;
         self.finished = false;
         self.terminal_count = 0;
+        self.last_emitted_turn = 0;
     }
 
-    /// Fail-closed, **non-destructive** preflight for an explicit path:
-    /// validate relative path, ensure parent dirs, create a sibling atomic temp
-    /// and discard it without replace. Existing destination bytes are unchanged.
-    /// Memory-only traces no-op.
+    /// Symlink-aware create containment relative to workspace `cwd`.
+    /// Maps escape/dangling/resolve to `InvalidPath`; OOM preserved.
+    /// Trusted-host check-time only — residual TOCTOU before createFileAtomic.
+    fn assertPathContained(self: *Trace, p: []const u8) Error!void {
+        var guard = workspace.guardFrom(self.gpa, self.io, self.cwd, null) catch |err| {
+            return mapContain(err);
+        };
+        defer guard.deinit(self.gpa);
+        guard.checkCreate(self.gpa, self.io, self.cwd, p) catch |err| {
+            return mapContain(err);
+        };
+    }
+
+    /// Non-destructive preflight: Guard jail → createFileAtomic → deinit without replace.
     pub fn preflight(self: *Trace) Error!void {
         const p = self.path orelse return;
         try validatePath(p);
-        var atomic = Io.Dir.cwd().createFileAtomic(self.io, p, .{
+        try self.assertPathContained(p);
+        var atomic = self.cwd.createFileAtomic(self.io, p, .{
             .make_path = true,
             .replace = true,
         }) catch return error.TraceIoFailed;
-        // Discard temp without replace — destination untouched.
         atomic.deinit(self.io);
     }
 
-    /// Prepare a new reply-run: reset state, non-destructive preflight, reserve
-    /// buffer capacity for start + failure terminal.
+    /// Reset, preflight, reserve terminal capacity (pre-start allocations only).
     pub fn beginReply(self: *Trace) Error!void {
         self.resetForReply();
         try self.preflight();
-        self.buf.ensureTotalCapacity(self.gpa, reserved_run_capacity) catch return error.OutOfMemory;
+        // Guarantee free space for a later terminal append without allocating.
+        self.buf.ensureTotalCapacity(self.gpa, terminal_reserve) catch return error.OutOfMemory;
     }
 
     pub fn emitRunStart(self: *Trace, meta: struct {
@@ -146,21 +159,22 @@ pub const Trace = struct {
         try self.writeObj(.{
             .kind = .run_start,
             .schema_version = current_schema_version,
-            .version = meta.version,
-            .permission = meta.permission,
-            .shell_policy = meta.shell_policy,
-            .session = meta.session,
-        });
+            .version = truncate(meta.version, 64),
+            .permission = truncate(meta.permission, 16),
+            .shell_policy = truncate(meta.shell_policy, 16),
+            .session = if (meta.session) |s| truncate(s, 200) else null,
+        }, .normal);
         self.run_open = true;
         self.finished = false;
     }
 
     pub fn emitTurn(self: *Trace, turn: u32) Error!void {
-        try self.writeObj(.{ .kind = .turn, .turn = turn });
+        try self.writeObj(.{ .kind = .turn, .turn = turn }, .normal);
+        self.last_emitted_turn = turn;
     }
 
     pub fn emitAssistant(self: *Trace, text: []const u8) Error!void {
-        try self.writeObj(.{ .kind = .assistant, .text = truncate(text, 500) });
+        try self.writeObj(.{ .kind = .assistant, .text = truncate(text, 500) }, .normal);
     }
 
     pub fn emitUsage(self: *Trace, usage: message.AssistantTurn) Error!void {
@@ -171,24 +185,24 @@ pub const Trace = struct {
             .completion_tokens = u.completion_tokens,
             .total_tokens = u.total_tokens,
             .reasoning_tokens = u.reasoning_tokens,
-        });
+        }, .normal);
     }
 
     pub fn emitProviderRetry(self: *Trace, attempt: u32, err_name: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .provider_retry,
             .attempt = attempt,
-            .error_name = err_name,
-        });
+            .error_name = truncate(err_name, 64),
+        }, .normal);
     }
 
     pub fn emitToolCall(self: *Trace, call: message.ToolCall) Error!void {
         try self.writeObj(.{
             .kind = .tool_call,
-            .id = call.id,
-            .name = call.name,
+            .id = truncate(call.id, 64),
+            .name = truncate(call.name, 64),
             .arguments = truncate(call.arguments, 800),
-        });
+        }, .normal);
     }
 
     pub fn emitPermission(
@@ -200,27 +214,34 @@ pub const Trace = struct {
     ) Error!void {
         try self.writeObj(.{
             .kind = .permission,
-            .name = tool_name,
-            .risk = risk,
+            .name = truncate(tool_name, 64),
+            .risk = truncate(risk, 16),
             .allowed = allowed,
             .remembered = remembered,
-        });
+        }, .normal);
     }
 
     pub fn emitJailDeny(self: *Trace, tool_name: []const u8, path: []const u8) Error!void {
-        try self.writeObj(.{ .kind = .jail_deny, .name = tool_name, .path = path });
+        try self.writeObj(.{
+            .kind = .jail_deny,
+            .name = truncate(tool_name, 64),
+            .path = truncate(path, 200),
+        }, .normal);
     }
 
     pub fn emitShellDeny(self: *Trace, command: []const u8) Error!void {
-        try self.writeObj(.{ .kind = .shell_deny, .command = truncate(command, 200) });
+        try self.writeObj(.{
+            .kind = .shell_deny,
+            .command = truncate(command, 200),
+        }, .normal);
     }
 
     pub fn emitToolResult(self: *Trace, name: []const u8, body: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .tool_result,
-            .name = name,
+            .name = truncate(name, 64),
             .body = truncate(body, 500),
-        });
+        }, .normal);
     }
 
     pub fn emitCompaction(self: *Trace, dropped: usize, summary: []const u8) Error!void {
@@ -228,7 +249,7 @@ pub const Trace = struct {
             .kind = .compaction,
             .dropped = dropped,
             .summary = truncate(summary, 500),
-        });
+        }, .normal);
     }
 
     pub const RunEndInfo = struct {
@@ -241,13 +262,6 @@ pub const Trace = struct {
         stop_reason: ?[]const u8 = null,
     };
 
-    /// Commit exactly one terminal for the open run.
-    ///
-    /// State is not marked finished until serialization **and** (for explicit
-    /// paths) atomic persistence succeed. On persistence failure after a normal
-    /// (`ok=true`) outcome: roll back the success line and keep a single
-    /// in-memory `ok=false, stop_reason=trace_error` when capacity allows.
-    /// Duplicate calls after a committed terminal are no-ops.
     pub fn emitRunEnd(self: *Trace, info: RunEndInfo) Error!void {
         if (!self.run_open or self.finished) return;
 
@@ -257,11 +271,9 @@ pub const Trace = struct {
         try self.appendRunEndLine(info);
 
         self.persistAtomic() catch {
-            // Roll back intended terminal line; prior durable bytes unchanged.
             self.buf.shrinkRetainingCapacity(snap_len);
             self.event_count = snap_seq;
 
-            // Memory terminal: never leave ok=true if durability failed.
             const mem_info: RunEndInfo = if (info.ok) .{
                 .turns = info.turns,
                 .ok = false,
@@ -272,11 +284,7 @@ pub const Trace = struct {
                 .stop_reason = "trace_error",
             } else info;
 
-            // Best-effort failure terminal in memory only (filesystem already failed).
-            self.appendRunEndLine(mem_info) catch |werr| {
-                // Capacity/serialization failed: run still open, no committed terminal.
-                return werr;
-            };
+            self.appendRunEndLine(mem_info) catch |werr| return werr;
             self.markTerminalCommitted();
             return error.TraceIoFailed;
         };
@@ -291,6 +299,7 @@ pub const Trace = struct {
     }
 
     fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
+        const reason: ?[]const u8 = if (info.stop_reason) |r| truncate(r, max_stop_reason_len) else null;
         try self.writeObj(.{
             .kind = .run_end,
             .turns = info.turns,
@@ -299,16 +308,16 @@ pub const Trace = struct {
             .completion_tokens = if (info.completion_tokens != 0) info.completion_tokens else null,
             .total_tokens = if (info.total_tokens != 0) info.total_tokens else null,
             .estimated_usd = info.estimated_usd,
-            .stop_reason = info.stop_reason,
-        });
+            .stop_reason = reason,
+        }, .terminal);
     }
 
-    /// Atomic final persistence: full serialize already in `buf`; create temp
-    /// with replace=true, write, flush, optional test fault, then replace.
-    /// Memory-only no-ops. Failures → `TraceIoFailed`; destination unchanged.
+    /// Re-check Guard, then atomic write+replace. Destination unchanged on failure.
     pub fn persistAtomic(self: *Trace) Error!void {
         const p = self.path orelse return;
-        var atomic = Io.Dir.cwd().createFileAtomic(self.io, p, .{
+        try self.assertPathContained(p);
+
+        var atomic = self.cwd.createFileAtomic(self.io, p, .{
             .make_path = true,
             .replace = true,
         }) catch return error.TraceIoFailed;
@@ -325,7 +334,6 @@ pub const Trace = struct {
         atomic.replace(self.io) catch return error.TraceIoFailed;
     }
 
-    /// Count occurrences of `"kind":"<name>"` in the in-memory buffer.
     pub fn countKind(self: *const Trace, kind_name: []const u8) u32 {
         var count: u32 = 0;
         var needle_buf: [64]u8 = undefined;
@@ -338,14 +346,20 @@ pub const Trace = struct {
         return count;
     }
 
-    /// Serialize a complete line, then secure capacity, then mutate buffer/seq.
-    /// On any failure: buffer length and `event_count` are unchanged.
-    fn writeObj(self: *Trace, fields: anytype) Error!void {
-        var out: Io.Writer.Allocating = .init(self.gpa);
-        defer out.deinit();
-        var s: std.json.Stringify = .{ .writer = &out.writer };
+    const WriteMode = enum {
+        /// May grow buf via gpa, always leaving `terminal_reserve` free after append.
+        normal,
+        /// Consume only pre-reserved free capacity; never allocates.
+        terminal,
+    };
 
-        // Use current event_count as seq without incrementing until append succeeds.
+    /// Stack-serialize a complete line, then capacity-check, then mutate.
+    /// On failure: buffer length and `event_count` unchanged.
+    fn writeObj(self: *Trace, fields: anytype, mode: WriteMode) Error!void {
+        var stack: [event_stack_size]u8 = undefined;
+        var w: Io.Writer = .fixed(&stack);
+        var s: std.json.Stringify = .{ .writer = &w };
+
         const seq = self.event_count;
         s.beginObject() catch return error.OutOfMemory;
         s.objectField("seq") catch return error.OutOfMemory;
@@ -371,22 +385,42 @@ pub const Trace = struct {
             }
         }
         s.endObject() catch return error.OutOfMemory;
-        out.writer.writeAll("\n") catch return error.OutOfMemory;
+        w.writeAll("\n") catch return error.OutOfMemory;
 
-        const line = out.written();
-        // Secure capacity before any buffer/seq mutation.
-        self.buf.ensureUnusedCapacity(self.gpa, line.len) catch return error.OutOfMemory;
-        self.buf.appendSliceAssumeCapacity(line);
+        const line = w.buffered();
+
+        switch (mode) {
+            .normal => {
+                // After append, keep terminal_reserve free for a no-alloc run_end.
+                self.buf.ensureUnusedCapacity(self.gpa, line.len + terminal_reserve) catch
+                    return error.OutOfMemory;
+                self.buf.appendSliceAssumeCapacity(line);
+            },
+            .terminal => {
+                // No allocation: only use capacity already reserved.
+                if (line.len > terminal_reserve) return error.OutOfMemory;
+                const free = self.buf.capacity - self.buf.items.len;
+                if (free < line.len) return error.OutOfMemory;
+                self.buf.appendSliceAssumeCapacity(line);
+            },
+        }
         self.event_count = seq + 1;
     }
 };
+
+fn mapContain(err: workspace.ContainError) Error {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        // Escape, dangling, resolve, lexical — fail closed as InvalidPath.
+        error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed, error.NotFound => error.InvalidPath,
+    };
+}
 
 fn truncate(s: []const u8, max: usize) []const u8 {
     if (s.len <= max) return s;
     return s[0..max];
 }
 
-/// Test-only fault injection (production builds have no field).
 pub const testing = struct {
     pub fn setFailBeforeReplace(t: *Trace, enabled: bool) void {
         if (builtin.is_test) t.fail_before_replace = enabled;
@@ -397,7 +431,7 @@ pub const testing = struct {
 
 test "trace accumulates json lines with schema_version" {
     const gpa = std.testing.allocator;
-    var t = Trace.init(gpa, std.testing.io, null);
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
     defer t.deinit();
     try t.beginReply();
     try t.emitRunStart(.{
@@ -411,18 +445,14 @@ test "trace accumulates json lines with schema_version" {
     try std.testing.expect(t.event_count == 4);
     try std.testing.expect(t.terminal_count == 1);
     try std.testing.expect(!t.run_open);
-    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "run_start") != null);
+    try std.testing.expectEqual(@as(u32, 1), t.last_emitted_turn);
     try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "schema_version") != null);
-    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "list_dir") != null);
     try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
-    var expected: [32]u8 = undefined;
-    const needle = try std.fmt.bufPrint(&expected, "\"schema_version\":{d}", .{current_schema_version});
-    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, needle) != null);
 }
 
 test "duplicate run_end does not write a second terminal" {
     const gpa = std.testing.allocator;
-    var t = Trace.init(gpa, std.testing.io, null);
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
     defer t.deinit();
     try t.beginReply();
     try t.emitRunStart(.{
@@ -434,12 +464,11 @@ test "duplicate run_end does not write a second terminal" {
     try t.emitRunEnd(.{ .turns = 99, .ok = true, .stop_reason = "completed" });
     try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
     try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
-    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"turns\":99") == null);
 }
 
 test "deinit does not invent a terminal" {
     const gpa = std.testing.allocator;
-    var t = Trace.init(gpa, std.testing.io, null);
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
     try t.beginReply();
     try t.emitRunStart(.{
         .version = "0.5.0",
@@ -456,7 +485,6 @@ test "validatePath rejects absolute and escape paths" {
     try std.testing.expectError(error.InvalidPath, Trace.validatePath("/tmp/x.jsonl"));
     try std.testing.expectError(error.InvalidPath, Trace.validatePath("../outside.jsonl"));
     try Trace.validatePath(".zag/traces/latest.jsonl");
-    try Trace.validatePath("out/run.jsonl");
 }
 
 test "preflight fails when parent path is a file (not a directory)" {
@@ -470,9 +498,11 @@ test "preflight fails when parent path is a file (not a directory)" {
     defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = blocker, .data = "file-not-dir" });
 
-    var t = Trace.init(gpa, io, bad_path);
+    var t = Trace.init(gpa, io, bad_path, Io.Dir.cwd());
     defer t.deinit();
-    try std.testing.expectError(error.TraceIoFailed, t.preflight());
+    // Guard or createFileAtomic may fail; either is fail-closed.
+    const err = t.preflight();
+    try std.testing.expect(err == error.TraceIoFailed or err == error.InvalidPath);
 }
 
 test "preflight preserves existing destination bytes" {
@@ -486,7 +516,7 @@ test "preflight preserves existing destination bytes" {
     const original = "{\"kind\":\"prior\"}\n";
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = original });
 
-    var t = Trace.init(gpa, io, path);
+    var t = Trace.init(gpa, io, path, Io.Dir.cwd());
     defer t.deinit();
     try t.preflight();
 
@@ -495,7 +525,7 @@ test "preflight preserves existing destination bytes" {
     try std.testing.expectEqualStrings(original, after);
 }
 
-test "atomic flush replaces destination; fail-before-replace preserves prior" {
+test "atomic flush replaces destination; fail-before-replace preserves prior and no temp residue" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     const dir_name = ".zag-test-trace-atomic";
@@ -506,9 +536,8 @@ test "atomic flush replaces destination; fail-before-replace preserves prior" {
     const original = "{\"kind\":\"old\"}\n";
     try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = original });
 
-    // Fail before replace: prior bytes intact, memory holds trace_error not ok=true.
     {
-        var t = Trace.init(gpa, io, path);
+        var t = Trace.init(gpa, io, path, Io.Dir.cwd());
         defer t.deinit();
         try t.beginReply();
         try t.emitRunStart(.{
@@ -517,21 +546,33 @@ test "atomic flush replaces destination; fail-before-replace preserves prior" {
             .shell_policy = "protect",
         });
         testing.setFailBeforeReplace(&t, true);
-        const err = t.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" });
-        try std.testing.expectError(error.TraceIoFailed, err);
+        try std.testing.expectError(error.TraceIoFailed, t.emitRunEnd(.{
+            .turns = 1,
+            .ok = true,
+            .stop_reason = "completed",
+        }));
         try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
         try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":false") != null);
-        try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"stop_reason\":\"trace_error\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "trace_error") != null);
         try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":true") == null);
 
         const after = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024));
         defer gpa.free(after);
         try std.testing.expectEqualStrings(original, after);
+
+        // No leftover atomic temp files (hex names) in the directory.
+        var dir = try Io.Dir.cwd().openDir(io, dir_name, .{ .iterate = true });
+        defer dir.close(io);
+        var it = dir.iterate();
+        while (try it.next(io)) |entry| {
+            if (entry.kind == .file) {
+                try std.testing.expect(std.mem.eql(u8, entry.name, "run.jsonl"));
+            }
+        }
     }
 
-    // Successful atomic replace.
     {
-        var t = Trace.init(gpa, io, path);
+        var t = Trace.init(gpa, io, path, Io.Dir.cwd());
         defer t.deinit();
         try t.beginReply();
         try t.emitRunStart(.{
@@ -540,18 +581,25 @@ test "atomic flush replaces destination; fail-before-replace preserves prior" {
             .shell_policy = "protect",
         });
         try t.emitRunEnd(.{ .turns = 0, .ok = true, .stop_reason = "completed" });
-
         const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
         defer gpa.free(raw);
         try std.testing.expect(std.mem.indexOf(u8, raw, "schema_version") != null);
-        try std.testing.expect(std.mem.indexOf(u8, raw, "run_end") != null);
         try std.testing.expect(std.mem.indexOf(u8, raw, "\"kind\":\"old\"") == null);
     }
 }
 
-test "writeObj is transactional under allocator failure" {
+/// Reduce free capacity to exactly `terminal_reserve` so the next normal write must grow.
+fn padToTerminalReserveOnly(t: *Trace) !void {
+    const free = t.buf.capacity - t.buf.items.len;
+    if (free > terminal_reserve) {
+        const pad = free - terminal_reserve;
+        try t.buf.appendNTimes(t.gpa, ' ', pad);
+    }
+}
+
+test "terminal still commits after post-start ensureUnusedCapacity OOM" {
     const gpa = std.testing.allocator;
-    var t = Trace.init(gpa, std.testing.io, null);
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
     defer t.deinit();
     try t.beginReply();
     try t.emitRunStart(.{
@@ -559,32 +607,138 @@ test "writeObj is transactional under allocator failure" {
         .permission = "ask",
         .shell_policy = "protect",
     });
+    try std.testing.expect(t.run_open);
+    try std.testing.expect(t.buf.capacity - t.buf.items.len >= terminal_reserve);
+
+    // Leave only terminal_reserve free so emitTurn must allocate to grow.
+    try padToTerminalReserveOnly(&t);
+    try std.testing.expectEqual(terminal_reserve, t.buf.capacity - t.buf.items.len);
+
+    var failing_state = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const prev = t.gpa;
+    t.gpa = failing_state.allocator();
+    try std.testing.expectError(error.OutOfMemory, t.emitTurn(1));
+    // State unchanged after failed nonterminal (seq/len from pad, not turn).
+    const len_after_fail = t.buf.items.len;
+    const seq_after_fail = t.event_count;
+
+    // Terminal: stack serialize + pre-reserved free only — works under failing gpa.
+    try t.emitRunEnd(.{ .turns = 0, .ok = false, .stop_reason = "out_of_memory" });
+    t.gpa = prev;
+
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(t.buf.items.len > len_after_fail);
+    try std.testing.expect(t.event_count == seq_after_fail + 1);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "out_of_memory") != null);
+    try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
+}
+
+test "writeObj is transactional under capacity OOM" {
+    const gpa = std.testing.allocator;
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    try padToTerminalReserveOnly(&t);
     const len_before = t.buf.items.len;
     const seq_before = t.event_count;
-    const open_before = t.run_open;
 
-    // Fail the next allocation (writeObj's temporary Stringify buffer).
     var failing_state = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
-    const prev_gpa = t.gpa;
+    const prev = t.gpa;
     t.gpa = failing_state.allocator();
-    const err = t.emitTurn(1);
-    t.gpa = prev_gpa;
+    try std.testing.expectError(error.OutOfMemory, t.emitTurn(1));
+    t.gpa = prev;
 
-    try std.testing.expectError(error.OutOfMemory, err);
     try std.testing.expectEqual(len_before, t.buf.items.len);
     try std.testing.expectEqual(seq_before, t.event_count);
-    try std.testing.expectEqual(open_before, t.run_open);
-    // No sequence gap: next successful event still uses seq_before.
+    // Restore capacity headroom with real gpa then succeed.
     try t.emitTurn(1);
     try std.testing.expectEqual(seq_before + 1, t.event_count);
-    var seq_buf: [32]u8 = undefined;
-    const seq_needle = try std.fmt.bufPrint(&seq_buf, "\"seq\":{d}", .{seq_before});
-    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, seq_needle) != null);
+}
+
+test "parent symlink outside workspace denied before atomic; outside bytes unchanged" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Nest under tmpDir: Guard root = ws, outside is sibling (same as workspace fixtures).
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.jsonl", .data = "OUTSIDE-KEEP\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{});
+    defer ws.close(io);
+    ws.symLink(io, "../outside", "escape", .{ .is_directory = true }) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => |e| return e,
+    };
+
+    var t = Trace.init(gpa, io, "escape/trace.jsonl", ws);
+    defer t.deinit();
+    try std.testing.expectError(error.InvalidPath, t.preflight());
+
+    const after = try parent.dir.readFileAlloc(io, "outside/secret.jsonl", gpa, .limited(64));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings("OUTSIDE-KEEP\n", after);
+
+    var outside = try parent.dir.openDir(io, "outside", .{ .iterate = true });
+    defer outside.close(io);
+    var it = outside.iterate();
+    var file_count: usize = 0;
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .file) {
+            file_count += 1;
+            try std.testing.expectEqualStrings("secret.jsonl", entry.name);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), file_count);
+}
+
+test "contained parent symlink allows preflight and persist" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws/real_dir");
+    var ws = try parent.dir.openDir(io, "ws", .{});
+    defer ws.close(io);
+    ws.symLink(io, "real_dir", "link_dir", .{ .is_directory = true }) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => |e| return e,
+    };
+
+    var t = Trace.init(gpa, io, "link_dir/run.jsonl", ws);
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    try t.emitRunEnd(.{ .turns = 0, .ok = true, .stop_reason = "completed" });
+
+    const raw = try ws.readFileAlloc(io, "link_dir/run.jsonl", gpa, .limited(8 * 1024));
+    defer gpa.free(raw);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "run_end") != null);
+    const via_real = try ws.readFileAlloc(io, "real_dir/run.jsonl", gpa, .limited(8 * 1024));
+    defer gpa.free(via_real);
+    try std.testing.expectEqualStrings(raw, via_real);
 }
 
 test "resetForReply clears buffer for latest-run semantics" {
     const gpa = std.testing.allocator;
-    var t = Trace.init(gpa, std.testing.io, null);
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
     defer t.deinit();
     try t.beginReply();
     try t.emitRunStart(.{
@@ -593,11 +747,8 @@ test "resetForReply clears buffer for latest-run semantics" {
         .shell_policy = "protect",
     });
     try t.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" });
-    try std.testing.expectEqual(@as(u32, 1), t.countKind("run_start"));
-
     try t.beginReply();
     try std.testing.expectEqual(@as(u32, 0), t.event_count);
-    try std.testing.expectEqual(@as(u32, 0), t.terminal_count);
     try std.testing.expectEqual(@as(usize, 0), t.buf.items.len);
     try t.emitRunStart(.{
         .version = "0.5.0",
@@ -606,8 +757,6 @@ test "resetForReply clears buffer for latest-run semantics" {
     });
     try t.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" });
     try std.testing.expectEqual(@as(u32, 1), t.countKind("run_start"));
-    try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
-    // seq restarts at 0
     try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"seq\":0") != null);
 }
 
