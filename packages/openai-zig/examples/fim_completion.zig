@@ -30,7 +30,7 @@ pub fn main(init: std.process.Init) !void {
     const prompt = "def fib(a):";
 
     const response = client.completions().create_completion_with_options(
-        gpa,
+            gpa,
         .{
             .model = conf.model,
             .prompt = prompt,
