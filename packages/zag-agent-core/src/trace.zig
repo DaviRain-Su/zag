@@ -520,21 +520,31 @@ fn prepareTracedString(s: []const u8, max: usize) Error![]const u8 {
     return t;
 }
 
-pub const testing = struct {
+/// Test-only fault/injection helpers. Empty in production builds (decls erased).
+pub const testing = if (builtin.is_test) struct {
     pub fn setFailBeforeReplace(t: *Trace, enabled: bool) void {
-        if (builtin.is_test) t.fail_before_replace = enabled;
+        t.fail_before_replace = enabled;
     }
 
     pub fn setFailNextTerminalSerialize(t: *Trace, enabled: bool) void {
-        if (builtin.is_test) t.fail_next_terminal_serialize = enabled;
+        t.fail_next_terminal_serialize = enabled;
     }
 
-    /// Private uncapped assistant text for intentional oversize serialization tests.
+    /// Uncapped assistant text for intentional oversize serialization tests.
     pub fn emitUntruncatedAssistant(t: *Trace, text: []const u8) Error!void {
-        // Bypass prepareTracedString — used only for stack-overflow size tests with valid UTF-8.
+        // Bypass prepareTracedString — only for stack-overflow size tests with valid UTF-8.
         try t.writeObj(.{ .kind = .assistant, .text = text }, .normal);
     }
-};
+} else struct {};
+
+comptime {
+    if (!builtin.is_test and @hasDecl(testing, "emitUntruncatedAssistant")) {
+        @compileError("trace.testing helpers must not exist outside unit tests");
+    }
+    if (!builtin.is_test and @hasDecl(testing, "setFailBeforeReplace")) {
+        @compileError("trace.testing helpers must not exist outside unit tests");
+    }
+}
 
 /// Fill `buf` with `len` control bytes (0x01) for worst-case JSON escape tests.
 fn fillControl(buf: []u8, byte: u8) void {
@@ -1008,6 +1018,63 @@ test "finite estimated_usd is emitted" {
     while (lines.next()) |line| {
         if (line.len == 0) continue;
         try parseStrictLine(gpa, line);
+    }
+}
+
+test "combined ser-fail + persist-fail: one memory trace_error, prior durable unchanged" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-trace-combined-fault";
+    const path = ".zag-test-trace-combined-fault/run.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const original = "{\"kind\":\"keep-me\"}\n";
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = original });
+
+    var t = Trace.init(gpa, io, path, Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+
+    // Intended terminal ser fails → minimal terminal; then atomic fail-before-replace.
+    testing.setFailNextTerminalSerialize(&t, true);
+    testing.setFailBeforeReplace(&t, true);
+
+    // Fail-closed: persistence of the fallback terminal fails → TraceIoFailed.
+    try std.testing.expectError(
+        error.TraceIoFailed,
+        t.emitRunEnd(.{ .turns = 3, .ok = true, .stop_reason = "completed", .estimated_usd = 1.0 }),
+    );
+
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(!t.run_open);
+    try std.testing.expect(t.finished);
+    try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "trace_error") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":true") == null);
+
+    var lines = std.mem.splitScalar(u8, t.buf.items, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try parseStrictLine(gpa, line);
+    }
+
+    const after = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(original, after);
+
+    // No leftover atomic temps in the directory.
+    var dir = try Io.Dir.cwd().openDir(io, dir_name, .{ .iterate = true });
+    defer dir.close(io);
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .file) try std.testing.expectEqualStrings("run.jsonl", entry.name);
     }
 }
 
