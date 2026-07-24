@@ -1,13 +1,36 @@
-# Zag project notes (for the coding agent)
+# Zag — agent entry
 
-- This is **Zag**: a Zig coding-agent tutorial + implementation.
-- Business code lives in packages: L0 `packages/zag-types/`; kernel in `packages/zag-agent-core/` (depends on zag-types only); product harness in `packages/zag-coding-agent/`; CLI in `packages/zag-cli/`; model plane in `packages/zag-ai/`. `src/main.zig` is a thin entry only. New capabilities must declare their target package (`docs/packaging.md`).
-- Keep **chapters/** in sync when behavior changes; keep **docs/maturity.md** in sync when capability level changes.
-- Default permission mode is **ask**; do not suggest `--yolo` for production.
-- Sessions are JSONL under `.zag/sessions/` when the user passes `-c` / `--session`.
-- Zig version is **0.16** (`std.process.Init`, `std.Io`).
-- **Teaching Phase 0–3 = tutorial-complete only.** Not production-ready.
-- **Next mainline = Phase H** (Production Floor → maturity L2). Specs: `docs/phases/H-harden.md`, `docs/modules/*`.
-- Do not claim “production-ready” or “Phase 3 = shipped for prod” in docs or replies until Phase H L2 exit criteria in `docs/maturity.md` are met.
-- Paths must stay relative (workspace jail). Prefer `--shell-policy protect`.
-- Doc map: `docs/README.md`. Vision: `docs/vision.md`. Roadmap: `docs/roadmap.md`.
+Zig coding-agent: **tutorial harness + production floor**. Zig **0.16**.
+
+## Where to change code
+
+| Layer | Path |
+|-------|------|
+| L0 types | `packages/zag-types/` |
+| Kernel loop | `packages/zag-agent-core/` |
+| Coding product | `packages/zag-coding-agent/` |
+| Model plane | `packages/zag-ai/` |
+| CLI | `packages/zag-cli/` |
+| Thin `main` | `src/main.zig` |
+
+Package rules: [docs/packaging.md](docs/packaging.md).
+
+## Hard rules (stable)
+
+- Default permission: **ask** — do not push `--yolo` for real use.
+- Paths stay **relative** (workspace jail). Prefer `--shell-policy protect`.
+- Sessions: `.zag/sessions/` when `-c` / `--session`.
+- Teaching 0–3 = tutorial only. Production claims need [docs/maturity.md](docs/maturity.md) L2 exit.
+
+## Doc map (start here)
+
+| Bucket | Entry |
+|--------|-------|
+| **Index** | [docs/INDEX.md](docs/INDEX.md) |
+| **Product Spec** | vision · maturity · architecture · packaging · modules |
+| **Active** | Phase H + [docs/plan/](docs/plan/) + [docs/decisions/active/](docs/decisions/active/) |
+| **Complete** | Teaching chapters · [docs/decisions/complete/](docs/decisions/complete/) |
+| **Reference** | [docs/references.md](docs/references.md) · [docs/research/](docs/research/) |
+| **Quality** | [docs/quality/](docs/quality/) (evals · generated readability/security scores) |
+
+When behavior changes: update `chapters/` and/or `docs/maturity.md` in the same change.

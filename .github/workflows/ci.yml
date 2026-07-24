@@ -32,6 +32,12 @@ jobs:
       - name: Catalog sources in sync
         run: python3 packages/zag-ai/scripts/generate_catalog.py --check
 
+      - name: Docs score (readability + security)
+        run: python3 scripts/score_docs.py --check
+
+      - name: Docs lint (XPlan layout)
+        run: python3 scripts/lint_docs.py
+
       - name: OpenAPI path coverage (openai-zig)
         working-directory: packages/openai-zig
         run: python3 scripts/check-path-coverage.py

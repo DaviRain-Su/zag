@@ -213,7 +213,23 @@ pub fn build(b: *std.Build) void {
     );
     catalog_check_step.dependOn(&catalog_check.step);
 
-    const test_step = b.step("test", "Run all tests + openai path coverage + catalog check");
+    const docs_score = b.addSystemCommand(&.{
+        "python3",
+        "scripts/score_docs.py",
+        "--check",
+    });
+    const docs_lint = b.addSystemCommand(&.{
+        "python3",
+        "scripts/lint_docs.py",
+    });
+    docs_lint.step.dependOn(&docs_score.step);
+    const docs_lint_step = b.step(
+        "docs-lint",
+        "Score docs (readability/security) then lint XPlan layout",
+    );
+    docs_lint_step.dependOn(&docs_lint.step);
+
+    const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
     test_step.dependOn(&run_ai_tests.step);
@@ -223,4 +239,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(openai_coverage_step);
     test_step.dependOn(catalog_check_step);
+    test_step.dependOn(docs_lint_step);
 }

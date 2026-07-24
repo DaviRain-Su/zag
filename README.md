@@ -18,7 +18,7 @@
 
 | 文档 | 内容 |
 |------|------|
-| **[docs/README.md](./docs/README.md)** | 文档地图（推荐入口） |
+| **[docs/INDEX.md](./docs/INDEX.md)** | 文档桶地图（Product Spec / Active / Complete / Reference / Quality） |
 | [docs/vision.md](./docs/vision.md) | 定位与吸收原则 |
 | [docs/maturity.md](./docs/maturity.md) | L0–L3 成熟度真理源 |
 | [docs/roadmap.md](./docs/roadmap.md) | Teaching / H / Capability / Quality |
