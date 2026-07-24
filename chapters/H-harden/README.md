@@ -44,7 +44,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | H2 Edit | [tools-edit](../../docs/modules/tools-edit.md) | search_replace/write under file+dir containment (h-workspace-001); Plan UX still open |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
-| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file symlink containment (h-workspace-001) + secret redaction (h-redact-001) + doctor report (h-doctor-001 in-progress); Safety remains L1+ until review + integration |
+| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file containment + redaction + doctor/readiness done; Safety remains L1+ until h-integration-001 |
 | H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage；deadline/cancel/partial Tool safety（h-provider-001）；log scrub helpers（h-redact-001） |
 | H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle + h-redact-001 redaction before serialize；dashboard still open |
 
@@ -57,9 +57,9 @@ P0: h-session-001 · h-tool-runtime-001 · h-workspace-001 · h-trace-001
   ↓
 P1 modules: h-context-001 · h-provider-001 · h-redact-001 ✅
   ↓
-h-doctor-001（provider/API-key-independent readiness report）in-progress
+h-doctor-001（provider/API-key-independent readiness report）✅
   ↓
-h-integration-001（two missing Agent composition chains + matrix audit）
+h-integration-001（two missing Agent composition chains + matrix audit）ready
   ↓
 Phase H exit decision
   ↓

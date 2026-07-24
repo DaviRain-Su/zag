@@ -108,7 +108,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, and the doctor report are implemented (h-workspace-001, h-redact-001, h-doctor-001 in-progress); Workspace/Safety row stays **L1+** until independent doctor acceptance and h-integration-001.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, and doctor/readiness are complete (h-workspace-001, h-redact-001, h-doctor-001); Workspace/Safety stays **L1+** until h-integration-001.
 
 ## H4 — Context / Session
 
@@ -149,12 +149,11 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
 ### Landed (doctor)
 
-- provider-independent, path-free doctor/readiness output: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**in-progress** — typed report + `zag --doctor` before resolve; no-key/matrix/unresolvable/secret fixtures).
+- provider-independent, path-free doctor/readiness output: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**done** — typed report + permanent no-key process/matrix/unresolvable/secret fixtures; main std/curl passed).
 
 ### Remaining
 
-- formal doctor acceptance after independent review / main-branch verification (row stays L1+);
-- default Agent policy/containment real-composition evidence: [h-integration-001](../plan/tasks/h-integration-001.md) (waits on doctor Gate);
+- default Agent policy/containment real-composition evidence: [h-integration-001](../plan/tasks/h-integration-001.md) (**ready**);
 - OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
 
 ## H6 — Provider
@@ -209,10 +208,10 @@ P0 session + Tool + workspace + trace
   └─► P1 redaction ✅
          │
          ▼
-h-doctor-001（provider-independent readiness truth）in-progress
+h-doctor-001（provider-independent readiness truth）✅
          │
          ▼
-h-integration-001（two missing Agent composition chains + matrix audit）
+h-integration-001（two missing Agent composition chains + matrix audit）ready
          │
          ▼
 Phase H L2 exit decision

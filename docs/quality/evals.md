@@ -87,7 +87,7 @@ These remain useful but do not cover the assessment blockers.
 5. doctor runs without provider/API key and reports fixed, path-free project/test/policy/containment/redaction/sandbox states before provider resolution. ✅ h-doctor-001:
    - library: coding-agent `doctor.zig` candidate matrix, fail-closed format (`NoSpaceLeft` on tiny buffer), shared obtain→map body with injected `ResolveFailed`/`OutOfMemory` → `unavailable_fail_closed` + full path-free format, secret non-leak;
    - **process fixture** `doctor_process_fixture` (root `zig build test`, both HTTP backends): spawns built `zag` with **empty env** (no API keys/config) under isolated cwd — default `--doctor` exit 0 + full fixed keys; `--yolo --shell-policy off --no-project --doctor`; legal `-s`/`--trace` + `--doctor` creates **no** session/trace files; absolute/`../` session + `--doctor` exit 2 with generic validation error and **no** path/secret echo.
-   - Formal Workspace/Safety row acceptance still after independent review + h-integration-001.
+   - Independent review and main std/curl verification passed; Workspace/Safety remains L1+ only until h-integration-001 composition.
 6. default Agent policy denial and escaping-symlink containment denial agree across unchanged outside/target bytes, machine-readable Tool result, transcript, persisted/resumed session, permission/jail trace, and truthful terminal. **Pending:** h-integration-001.
 7. cancel between accepted Tools preserves original IDs, skips pending handlers, writes cancelled bodies for every pending call, and agrees across Result/transcript/save-resume/one trace terminal. **Pending:** h-integration-001. This is not mid-flight Tool/shell preemption.
 

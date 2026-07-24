@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
-| Current maturity | **L1+** — symlink-aware **file containment** + secret redaction (h-redact-001) + doctor report **implemented** (h-doctor-001 in-progress); overall row still L1+ until independent review + integration |
+| Current maturity | **L1+** — symlink-aware **file containment**, secret redaction, and doctor/readiness are complete; default Agent policy/containment composition still waits on h-integration-001 |
 | Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
 | Reference | Hyper sandbox; Codex sandbox |
 
@@ -76,7 +76,7 @@ A denylist reduces accidents; it is not an adversarial sandbox.
 
 ## Doctor/readiness
 
-Task: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**in-progress** — implemented; acceptance after independent review).
+Task: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**done** — independent review + main std/curl verification passed).
 
 Code: `packages/zag-coding-agent/src/doctor.zig` (typed report); CLI adapter `zag --doctor` in `packages/zag-cli`; process fixture `packages/zag-cli/src/doctor_process_fixture.zig` (root `zig build test`).
 
@@ -88,7 +88,7 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
 - ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
-- ~~doctor not implemented~~ **Implemented** h-doctor-001 (path-free report + no-key CLI seam); L2 row acceptance still waits independent review + h-integration-001.
+- ~~doctor not implemented~~ **Closed** h-doctor-001 (path-free report + permanent no-key process fixture); row still waits h-integration-001 composition evidence.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
 
@@ -98,8 +98,8 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 - [x] normal contained paths and documented contained symlinks work.
 - [x] policy matrix tests pass (shell denylist; file fixtures in evals).
 - [x] secret fixtures do not appear in verbose/trace/session output (h-redact-001).
-- [ ] doctor exposes active controls without provider/API-key resolution *(code + fixtures landed in h-doctor-001; formal acceptance after independent review / main-branch Gate)*.
-- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (file containment, redaction, doctor implementation evidence; Workspace/Safety row still L1+ until review + integration).
+- [x] doctor exposes active controls without provider/API-key resolution (h-doctor-001; permanent process fixture).
+- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (Workspace/Safety row still L1+ until h-integration-001).
 
 ## L3 (C7)
 
