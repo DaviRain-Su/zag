@@ -1,7 +1,7 @@
 ---
 id: h-context-001
 scope: phase-h/context-compaction
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-session-001, h-trace-001]
 ---
