@@ -16,7 +16,7 @@ Close Phase H through real product composition, not duplicate module tests: add 
   1. `h-integration: default Agent ask-deny write leaves target, permission_denied, save/resume+trace`
   2. `h-integration: default Agent yolo escaping-symlink jail_deny, outside intact, save/resume+trace`
   3. `h-integration: cancel between accepted Tools preserves IDs, skips pending, one cancelled terminal`
-- **Hygiene rework (post review-01):** `ScopedCwd.leave` fail-loud restore; exact `FileNotFound` target-absent; exact permission/jail/tool_call/tool_result counts; raw session JSONL id+code checks; loop-turn Agent cancel checkbox remains open until Gate.
+- **Hygiene rework (post review-01):** `ScopedCwd.leave` fail-loud restore; exact `FileNotFound` target-absent; exact permission/jail/tool_call/tool_result counts; structured session JSONL pairing (assistant id ↔ tool record body/code); structured unique `run_end` parse; distinct second/third pending cancel tools; loop-turn Agent cancel checkbox remains open until Gate.
 - Status stays **in-progress** (not done). Phase H / Workspace / Loop / Quality remain **L1+** until independent review + main-branch std/curl Gate.
 - Not claimed: mid-flight Tool/shell preemption, SDK-ready, headless, Phase H L2.
 

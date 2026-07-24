@@ -3466,23 +3466,118 @@ fn expectPairedToolId(items: []const message.Message, id: []const u8) ![]const u
     return body;
 }
 
-/// Strengthen durability evidence: on-disk session JSONL carries non-secret id
-/// + expected code token and must not contain a forbidden needle (if any).
-fn expectSessionFileHasIdAndCode(
+/// Expected durable tool-body check bound to one original provider call id.
+const SessionBodyExpect = union(enum) {
+    /// Full body string equality on the tool record with this tool_call_id.
+    exact: []const u8,
+    /// Machine-readable harness code present on that tool record only.
+    code: tool_error.Code,
+};
+
+/// Structured session JSONL pairing (no whole-file independent needles).
+/// Skips header lines without `role`. Fail-loud on malformed JSON, missing
+/// assistant id, missing/duplicate tool records, or body mismatch.
+fn expectSessionPairedOutcome(
     gpa: std.mem.Allocator,
     io: Io,
     path: []const u8,
     id: []const u8,
-    code_token: []const u8,
-    forbidden: ?[]const u8,
+    body_expect: SessionBodyExpect,
 ) !void {
     const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024 * 1024));
     defer gpa.free(raw);
-    try std.testing.expect(std.mem.indexOf(u8, raw, id) != null);
-    try std.testing.expect(std.mem.indexOf(u8, raw, code_token) != null);
-    if (forbidden) |f| {
-        try std.testing.expect(std.mem.indexOf(u8, raw, f) == null);
+
+    var saw_assistant_id = false;
+    var tool_hits: u32 = 0;
+    var matched_body = false;
+
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
+            return error.TestUnexpectedResult;
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.TestUnexpectedResult;
+        const obj = parsed.value.object;
+
+        // Header / meta lines: schema_version / type without role.
+        const role_v = obj.get("role") orelse continue;
+        if (role_v != .string) return error.TestUnexpectedResult;
+        const role = role_v.string;
+
+        if (std.mem.eql(u8, role, "assistant")) {
+            if (obj.get("tool_calls")) |tc_v| {
+                if (tc_v != .array) return error.TestUnexpectedResult;
+                for (tc_v.array.items) |item| {
+                    if (item != .object) return error.TestUnexpectedResult;
+                    const cid_v = item.object.get("id") orelse return error.TestUnexpectedResult;
+                    if (cid_v != .string) return error.TestUnexpectedResult;
+                    if (std.mem.eql(u8, cid_v.string, id)) saw_assistant_id = true;
+                }
+            }
+            continue;
+        }
+
+        if (std.mem.eql(u8, role, "tool")) {
+            const tid_v = obj.get("tool_call_id") orelse return error.TestUnexpectedResult;
+            if (tid_v != .string) return error.TestUnexpectedResult;
+            if (!std.mem.eql(u8, tid_v.string, id)) continue;
+            tool_hits += 1;
+            if (tool_hits > 1) return error.TestUnexpectedResult; // duplicate tool for id
+            const content_v = obj.get("content") orelse return error.TestUnexpectedResult;
+            if (content_v != .string) return error.TestUnexpectedResult;
+            const body = content_v.string;
+            switch (body_expect) {
+                .exact => |want| {
+                    if (std.mem.eql(u8, body, want)) matched_body = true;
+                },
+                .code => |code| {
+                    if (tool_error.hasCode(body, code)) matched_body = true;
+                },
+            }
+            continue;
+        }
     }
+
+    if (!saw_assistant_id) return error.TestUnexpectedResult;
+    if (tool_hits != 1) return error.TestUnexpectedResult;
+    if (!matched_body) return error.TestUnexpectedResult;
+}
+
+/// Integration Gate terminal: exactly one parsed `kind=run_end` object with
+/// matching `ok` bool and `stop_reason` string (same object). Fail-loud on
+/// malformed lines, missing fields, wrong types, or duplicate terminals.
+fn expectUniqueStructuredRunEnd(
+    gpa: std.mem.Allocator,
+    buf: []const u8,
+    ok: bool,
+    stop_reason: []const u8,
+) !void {
+    var run_end_count: u32 = 0;
+    var lines = std.mem.splitScalar(u8, buf, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
+            return error.TestUnexpectedResult;
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.TestUnexpectedResult;
+        const obj = parsed.value.object;
+        const kind_v = obj.get("kind") orelse return error.TestUnexpectedResult;
+        if (kind_v != .string) return error.TestUnexpectedResult;
+        if (!std.mem.eql(u8, kind_v.string, "run_end")) continue;
+
+        run_end_count += 1;
+        if (run_end_count > 1) return error.TestUnexpectedResult;
+
+        const ok_v = obj.get("ok") orelse return error.TestUnexpectedResult;
+        if (ok_v != .bool) return error.TestUnexpectedResult;
+        if (ok_v.bool != ok) return error.TestUnexpectedResult;
+
+        const stop_v = obj.get("stop_reason") orelse return error.TestUnexpectedResult;
+        if (stop_v != .string) return error.TestUnexpectedResult;
+        if (!std.mem.eql(u8, stop_v.string, stop_reason)) return error.TestUnexpectedResult;
+    }
+    if (run_end_count != 1) return error.TestUnexpectedResult;
 }
 
 test "h-integration: default Agent ask-deny write leaves target, permission_denied, save/resume+trace" {
@@ -3568,6 +3663,7 @@ test "h-integration: default Agent ask-deny write leaves target, permission_deni
 
         const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
         try expectRunEnd(tr, true, "completed");
+        try expectUniqueStructuredRunEnd(gpa, tr.buf.items, true, "completed");
         // One gated write denial: exactly one permission event (+ tool_call/result).
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("permission"));
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
@@ -3576,17 +3672,14 @@ test "h-integration: default Agent ask-deny write leaves target, permission_deni
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"allowed\":false") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"risk\":\"write\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "write_file") != null);
-        // Exactly one truthful terminal.
         try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
 
-        // Args may still mention intended content; durable bytes must pair id + deny code.
-        try expectSessionFileHasIdAndCode(
+        try expectSessionPairedOutcome(
             gpa,
             io,
             sess_path,
             "int-policy-write-1",
-            "code=permission_denied",
-            null,
+            .{ .code = .permission_denied },
         );
     }
 
@@ -3601,13 +3694,12 @@ test "h-integration: default Agent ask-deny write leaves target, permission_deni
     const resumed_body = try expectPairedToolId(resumed.transcript.items(), "int-policy-write-1");
     try std.testing.expect(tool_error.hasCode(resumed_body, .permission_denied));
     try expectPathAbsent(io, target);
-    try expectSessionFileHasIdAndCode(
+    try expectSessionPairedOutcome(
         gpa,
         io,
         sess_path,
         "int-policy-write-1",
-        "code=permission_denied",
-        null,
+        .{ .code = .permission_denied },
     );
 }
 
@@ -3706,6 +3798,7 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
 
         const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
         try expectRunEnd(tr, true, "completed");
+        try expectUniqueStructuredRunEnd(gpa, tr.buf.items, true, "completed");
         // One escaping read: exactly one jail_deny (+ tool_call/result).
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("jail_deny"));
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
@@ -3715,13 +3808,12 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "OUTSIDE_SECRET") == null);
         try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
 
-        try expectSessionFileHasIdAndCode(
+        try expectSessionPairedOutcome(
             gpa,
             io,
             sess_path,
             "int-jail-read-1",
-            "code=jail_deny",
-            "OUTSIDE_SECRET",
+            .{ .code = .jail_deny },
         );
     }
 
@@ -3738,13 +3830,12 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
     const after2 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
     defer gpa.free(after2);
     try std.testing.expectEqualStrings(outside_bytes, after2);
-    try expectSessionFileHasIdAndCode(
+    try expectSessionPairedOutcome(
         gpa,
         io,
         sess_path,
         "int-jail-read-1",
-        "code=jail_deny",
-        "OUTSIDE_SECRET",
+        .{ .code = .jail_deny },
     );
 }
 
@@ -3762,13 +3853,15 @@ const BetweenCancelFirst = struct {
     }
 };
 
-const BetweenCancelSecond = struct {
+const BetweenCancelPending = struct {
     ran: *u32,
+    label: []const u8,
 
     fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
-        const self: *BetweenCancelSecond = @ptrCast(@alignCast(instance.?));
+        const self: *BetweenCancelPending = @ptrCast(@alignCast(instance.?));
         self.ran.* += 1;
-        return ctx.allocator.dupe(u8, "second-must-not-run") catch return error.OutOfMemory;
+        return std.fmt.allocPrint(ctx.allocator, "{s}-must-not-run", .{self.label}) catch
+            return error.OutOfMemory;
     }
 };
 
@@ -3812,7 +3905,7 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
                 };
                 tc[2] = .{
                     .id = try arena.dupe(u8, "provider-multi-3"),
-                    .name = try arena.dupe(u8, "second_tool"),
+                    .name = try arena.dupe(u8, "third_tool"),
                     .arguments = try arena.dupe(u8, "{}"),
                 };
                 return .{ .content = "batch", .tool_calls = tc, .finish_reason = "tool_calls" };
@@ -3840,10 +3933,13 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
 
     var first_ran: u32 = 0;
     var second_ran: u32 = 0;
+    var third_ran: u32 = 0;
     var first_state: BetweenCancelFirst = .{ .cancel = &agent.cancel, .ran = &first_ran };
-    var second_state: BetweenCancelSecond = .{ .ran = &second_ran };
+    var second_state: BetweenCancelPending = .{ .ran = &second_ran, .label = "second" };
+    var third_state: BetweenCancelPending = .{ .ran = &third_ran, .label = "third" };
 
     // Test-only tool override (no production escape hatch): cancel state only.
+    // Distinct second/third names + instances so each pending handler is counted.
     const tools = [_]tool.Tool{
         .{
             .descriptor = .{
@@ -3877,7 +3973,24 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
                 },
             },
             .instance = &second_state,
-            .handler = BetweenCancelSecond.handle,
+            .handler = BetweenCancelPending.handle,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "third_tool",
+                    .description = "must not run after cancel",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .none,
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .instance = &third_state,
+            .handler = BetweenCancelPending.handle,
         },
     };
     agent.test_tools = &tools;
@@ -3895,6 +4008,7 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
         try std.testing.expectEqual(loop.StopReason.cancelled, result.stop_reason);
         try std.testing.expectEqual(@as(u32, 1), first_ran);
         try std.testing.expectEqual(@as(u32, 0), second_ran);
+        try std.testing.expectEqual(@as(u32, 0), third_ran);
         try std.testing.expectEqual(@as(u32, 1), mock.step);
 
         const body1 = try expectPairedToolId(session.transcript.items(), "provider-multi-1");
@@ -3907,44 +4021,43 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
 
         const body3 = try expectPairedToolId(session.transcript.items(), "provider-multi-3");
         try std.testing.expect(tool_error.hasCode(body3, .cancelled));
+        try std.testing.expect(std.mem.indexOf(u8, body3, "third-must-not-run") == null);
 
         const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
         try expectRunEnd(tr, true, "cancelled");
+        try expectUniqueStructuredRunEnd(gpa, tr.buf.items, true, "cancelled");
         try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
         // Between-call cancel: only the executed call emits tool_call; every
         // accepted call (executed + pending cancelled) emits tool_result.
-        // Pending tool_result has no id field (schema); IDs pair on transcript.
+        // Pending tool_result has no id field (schema); IDs pair on transcript/session.
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
         try std.testing.expectEqual(@as(u32, 3), tr.countKind("tool_result"));
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "provider-multi-1") != null);
-        // Pending ids are not required on tool_result lines (schema has name+body only).
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "code=cancelled") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "first-handler-done") != null);
 
-        try expectSessionFileHasIdAndCode(
+        // Durable session: each original id bound to its own tool record outcome.
+        try expectSessionPairedOutcome(
             gpa,
             io,
             sess_path,
             "provider-multi-1",
-            "code=cancelled",
-            null,
+            .{ .exact = "first-handler-done" },
         );
-        try expectSessionFileHasIdAndCode(
+        try expectSessionPairedOutcome(
             gpa,
             io,
             sess_path,
             "provider-multi-2",
-            "code=cancelled",
-            null,
+            .{ .code = .cancelled },
         );
-        try expectSessionFileHasIdAndCode(
+        try expectSessionPairedOutcome(
             gpa,
             io,
             sess_path,
             "provider-multi-3",
-            "code=cancelled",
-            null,
+            .{ .code = .cancelled },
         );
     }
 
@@ -3958,16 +4071,30 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
     defer resumed.deinit();
     const r1 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-1");
     try std.testing.expectEqualStrings("first-handler-done", r1);
+    try std.testing.expect(!tool_error.hasCode(r1, .cancelled));
     const r2 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-2");
     try std.testing.expect(tool_error.hasCode(r2, .cancelled));
     const r3 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-3");
     try std.testing.expect(tool_error.hasCode(r3, .cancelled));
-    try expectSessionFileHasIdAndCode(
+    try expectSessionPairedOutcome(
+        gpa,
+        io,
+        sess_path,
+        "provider-multi-1",
+        .{ .exact = "first-handler-done" },
+    );
+    try expectSessionPairedOutcome(
         gpa,
         io,
         sess_path,
         "provider-multi-2",
-        "code=cancelled",
-        null,
+        .{ .code = .cancelled },
+    );
+    try expectSessionPairedOutcome(
+        gpa,
+        io,
+        sess_path,
+        "provider-multi-3",
+        .{ .code = .cancelled },
     );
 }
