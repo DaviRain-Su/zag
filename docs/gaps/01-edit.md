@@ -13,13 +13,14 @@
 
 | 缺口 | 为何算生产问题 | 落点 |
 |------|----------------|------|
-| **唯一**整文件 overwrite | 大文件易毁掉；偏一行无法局部改 | H2 · [tools-edit](../modules/tools-edit.md) |
-| 无内容锚点 / search_replace | 空白/错位 diff 高发 | H2（钉死 search_replace+锚点） |
-| 无 grep/glob | 定位靠 shell 或臆测 | H2 |
-| 无写后 diff 回灌 | 模型不知道净变更 | H2 |
+| ~~唯一整文件 overwrite~~ | — | ✅ H2：`search_replace` 默认 + `write_file` 保留 |
+| ~~无内容锚点~~ | — | ✅ 唯一 `old_string`；失败码 `anchor_not_found` / `ambiguous_anchor` |
+| ~~无 grep/glob~~ | — | ✅ `fs_tools` + jail |
+| ~~无写后 diff~~ | — | ✅ 可选短 `git diff`（失败省略） |
 | 权限仅两档全局 | 无法「只对某 path remember」 | H3 · [permissions](../modules/permissions.md) |
 | 无 plan 模式语义 | 大改前缺少只读规划合同 | H3 占位 → C6 |
-| shell 错误形状不统一 | exit/timeout/policy 难区分 | H2 旁路 · [tools-shell](../modules/tools-shell.md) |
+| shell 错误形状不统一 | exit/timeout/policy 难区分 | H 旁路 · [tools-shell](../modules/tools-shell.md) |
+| edit golden transcript | 端到端回归 | H2 收口 / Quality |
 
 ## 非本阶段
 

@@ -25,8 +25,8 @@
 |--------|:----:|------|-------------------|---------|------|
 | Loop / Turn | L1 | `packages/zag-agent-core/src/loop.zig`（含 `chatWithRetry`） | 统一可机读 tool 错误；cancel 干净结束；max_turns/超时进 trace；≥2 golden | 并行只读、steer、Turn 生命周期 | Pi loop；Nanocodex Turn |
 | Tools · read | L1 | `packages/zag-coding-agent/src/runtime/fs_tools.zig` | jail 内 list/read 稳定；大文件截断可解释 | LSP 诊断闭环 | Hyper tools |
-| Tools · write/edit | L1 | `packages/zag-coding-agent/src/runtime/edit_tools.zig`（整文件 write） | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
-| Tools · search | L0 | — | `grep` + `glob` 在 jail 内，结果有 budget | AST / codebase-graph | Hyper；Aider |
+| Tools · write/edit | L1+ | `edit_tools.zig`：`search_replace`（唯一内容锚点）+ `write_file`；写后可选 `git diff` | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
+| Tools · search | L1+ | `fs_tools.zig`：`grep`（字面量）+ `glob`（`*`/`**`）；jail + result budget | `grep` + `glob` 在 jail 内，结果有 budget | AST / codebase-graph | Hyper；Aider |
 | Tools · shell | L1 | `edit_tools.zig` `run_shell` | 超时/截断/exit code 统一形状；policy 测试矩阵绿 | 后台 job + monitor | Hyper background |
 | Permissions | L1 | `packages/zag-agent-core/src/permissions.zig` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
 | Workspace / Sandbox | L1 | `workspace.zig` + `shell_policy.zig` | jail + denylist + **secret redact** + `/doctor` 最小；SECURITY 诚实 | OS sandbox（seatbelt/bwrap） | Hyper sandbox；Codex |

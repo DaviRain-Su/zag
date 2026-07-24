@@ -38,7 +38,7 @@ pub const Mode = enum {
 pub const Risk = enum {
     /// list_dir, read_file — no confirmation in ask mode.
     read,
-    /// write_file
+    /// write_file, search_replace
     write,
     /// run_shell
     execute,
@@ -48,9 +48,10 @@ pub const Risk = enum {
     }
 };
 
-/// Classify a tool by name (Phase 1 built-ins).
+/// Classify a tool by name (built-ins).
 pub fn riskOf(tool_name: []const u8) Risk {
-    if (std.mem.eql(u8, tool_name, "write_file")) return .write;
+    if (std.mem.eql(u8, tool_name, "write_file") or
+        std.mem.eql(u8, tool_name, "search_replace")) return .write;
     if (std.mem.eql(u8, tool_name, "run_shell")) return .execute;
     return .read;
 }
@@ -166,7 +167,10 @@ pub fn deniedMessage(
 test "riskOf classification" {
     try std.testing.expect(riskOf("list_dir") == .read);
     try std.testing.expect(riskOf("read_file") == .read);
+    try std.testing.expect(riskOf("grep") == .read);
+    try std.testing.expect(riskOf("glob") == .read);
     try std.testing.expect(riskOf("write_file") == .write);
+    try std.testing.expect(riskOf("search_replace") == .write);
     try std.testing.expect(riskOf("run_shell") == .execute);
 }
 

@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`、`toolset.zig` |
-| 成熟度 | write=L1；edit/search=L0 → **L2（H2）** → L3（C4） |
+| 成熟度 | write/edit/search = **L1+（H2 大半）** → L2 收口 golden；L3（C4） |
 | 对标 | Hyper hashline；omp；Codex apply_patch |
 
 ## 不变式
@@ -40,10 +40,10 @@
 
 ## L2 验收
 
-- [ ] 默认 tool 描述引导模型优先 `search_replace`  
-- [ ] stale 锚点可靠 read + 重试恢复（golden 或单测）  
-- [ ] grep/glob 受 jail；绝对路径失败  
-- [ ] overwrite 不再是文档中的「唯一」编辑方式  
+- [x] 默认 tool 描述引导模型优先 `search_replace`  
+- [x] stale 锚点 soft-fail（`anchor_not_found` / `ambiguous_anchor`）+ 单测；golden 仍可选  
+- [x] grep/glob 受 jail；绝对路径失败  
+- [x] overwrite 不再是文档中的「唯一」编辑方式  
 
 ## L3（C4）
 

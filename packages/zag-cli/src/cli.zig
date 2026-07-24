@@ -11,13 +11,15 @@ const coding = @import("zag-coding-agent");
 const default_system =
     \\You are Zag, a coding agent that can read and modify the working directory.
     \\Tools:
-    \\- list_dir, read_file — explore (always allowed after jail check)
-    \\- write_file — create/overwrite files (permission + workspace jail)
+    \\- list_dir, read_file, grep, glob — explore (always allowed after jail check)
+    \\- search_replace — default edit: unique old_string anchor → new_string (permission + jail)
+    \\- write_file — create new files or intentional full overwrite (permission + jail)
     \\- run_shell — shell commands (permission + policy denylist)
     \\Rules:
     \\- Prefer tools over guessing about files on disk.
     \\- Paths must be relative to the working directory; absolute paths and '..' escapes are denied.
-    \\- For edits: read first when possible, then write the full file content.
+    \\- For edits: read first, then prefer search_replace; use write_file only for new files or full rewrites.
+    \\- If search_replace returns anchor_not_found or ambiguous_anchor, re-read and widen the anchor; do not blindly overwrite.
     \\- If a tool is denied (permission, jail, or policy), do not retry blindly; explain and wait.
     \\- Honor project instructions from AGENTS.md when present.
     \\- Be concise. When finished, answer without further tool calls.
@@ -404,7 +406,7 @@ fn printUsage() !void {
         \\  --stream                   SSE streaming completions
         \\  --config PATH              JSON config (.zag/config.json also auto-loaded)
         \\
-        \\Tools: list_dir, read_file, write_file, run_shell
+        \\Tools: list_dir, read_file, grep, glob, search_replace, write_file, run_shell
         \\Security: relative paths only; shell denylist even under --yolo
         \\
         \\Model (packages/zag-ai):

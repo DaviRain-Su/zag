@@ -36,7 +36,7 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 | 切片 | 规格 | 主要代码（现状） |
 |------|------|------------------|
 | H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | `zag-agent-core/src/loop.zig` |
-| H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `zag-coding-agent/src/runtime/edit_tools.zig` |
+| H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `search_replace` + `grep`/`glob` **已落地**；`edit_tools` / `fs_tools` |
 | H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `zag-agent-core/src/permissions.zig` |
 | H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | `context.zig` · `session_store.zig` |
 | H5 Safety | [workspace-sandbox.md](../../docs/modules/workspace-sandbox.md) | `workspace.zig` · `shell_policy.zig` |
@@ -50,13 +50,14 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 ## 3. 先跑起来（实现后填写）
 
 ```bash
-# TODO(H): 替换为硬化后的验收命令
-# zig build test
-# zig build run -- --yolo -v --trace "…"
-# cat .zag/traces/latest.jsonl
+# H2 相关单测随 monorepo 跑
+zig build test
+# 手工：--yolo 下让模型 search_replace / grep（需 API key）
+# zig build run -- --yolo -v '用 grep 找 TODO，再用 search_replace 改一处'
 ```
 
 出门条件见 [maturity L2 总验收](../../docs/maturity.md#l2-总验收phase-h-出门条件)。
+H2 核心工具面已可用；全 L2 仍需 H1/H3–H7 + Quality。
 
 ---
 

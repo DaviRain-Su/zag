@@ -37,10 +37,12 @@
 
 **规格：** [modules/tools-edit.md](../modules/tools-edit.md)
 
-- **钉死：** 默认编辑路径 = `search_replace` + **内容锚点**（Hyper hashline 简化版）；`write_file` 保留给新建/小文件  
-- `grep` / `glob` 进默认 toolset，受 jail + result budget  
-- 写后可选 `git diff` 回灌（runtime 辅助）  
-- 禁止「生产默认只有整文件 overwrite」作为唯一编辑路径  
+**已有（勿重做）：** `search_replace`（唯一 `old_string` 锚点；`anchor_not_found` / `ambiguous_anchor` / `too_large`）；`grep` / `glob`（jail + budget）；`write_file` 保留新建/整文件；写后可选短 `git diff`；默认 toolset + CLI system 引导优先 `search_replace`。
+
+**H2 收口剩余：**
+
+- golden transcript：stale 锚点 → read → 重试（可选；单测已覆盖锚点失败）  
+- shell 错误形状统一（旁路，见 tools-shell）
 
 ## H3 — Permissions
 

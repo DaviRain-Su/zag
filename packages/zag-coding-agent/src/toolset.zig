@@ -20,19 +20,23 @@ pub const Phase0Storage = struct {
     }
 };
 
-/// Phase 1 full coding toolset: list/read/write/shell.
+/// Default coding toolset: explore + search + edit + shell.
 pub const Phase1Storage = struct {
-    tools: [4]tool.Tool,
+    tools: [7]tool.Tool,
 
     pub fn init() Phase1Storage {
         const ro = fs_tools.phase0Tools();
+        const search = fs_tools.searchTools();
         const rw = edit_tools.phase1ExtraTools();
         return .{
             .tools = .{
-                ro[0],
-                ro[1],
-                rw[0],
-                rw[1],
+                ro[0], // list_dir
+                ro[1], // read_file
+                search[0], // grep
+                search[1], // glob
+                rw[0], // search_replace (preferred edit)
+                rw[1], // write_file
+                rw[2], // run_shell
             },
         };
     }

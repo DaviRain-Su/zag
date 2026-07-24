@@ -62,7 +62,10 @@ pub fn pathArgument(
 pub fn toolUsesPath(tool_name: []const u8) bool {
     return std.mem.eql(u8, tool_name, "list_dir") or
         std.mem.eql(u8, tool_name, "read_file") or
-        std.mem.eql(u8, tool_name, "write_file");
+        std.mem.eql(u8, tool_name, "write_file") or
+        std.mem.eql(u8, tool_name, "search_replace") or
+        std.mem.eql(u8, tool_name, "grep") or
+        std.mem.eql(u8, tool_name, "glob");
 }
 
 test "jail allows relative paths" {

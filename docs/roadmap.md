@@ -84,7 +84,7 @@ Teaching 0 → 1 → 2 → 3  ✅
 | 切片 | 抬升 | 模块规格 |
 |------|------|----------|
 | H1 Loop | 可机读错误、cancel、配置进 trace、golden | [modules/loop-turn.md](./modules/loop-turn.md) |
-| H2 Edit | search_replace+锚点、grep/glob、写后 diff | [modules/tools-edit.md](./modules/tools-edit.md) |
+| H2 Edit | search_replace+锚点、grep/glob、写后 diff（**大半已落地**） | [modules/tools-edit.md](./modules/tools-edit.md) |
 | H3 Permissions | 矩阵、remember、plan 语义占位 | [modules/permissions.md](./modules/permissions.md) |
 | H4 Context/Session | 四层 prompt、compaction、schema 版本 | [modules/context-compaction.md](./modules/context-compaction.md)、[session-store.md](./modules/session-store.md) |
 | H5 Safety | policy 矩阵、redact、doctor；明确非 OS sandbox | [modules/workspace-sandbox.md](./modules/workspace-sandbox.md) |
