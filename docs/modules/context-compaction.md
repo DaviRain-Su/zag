@@ -77,8 +77,8 @@ Body history (after leading transcript systems) is validated before trim:
 
 | Case | Behavior |
 |------|----------|
-| Sanitized prior fits | Exact sanitized prior under `Prior session context:` |
-| Does not fit (or only floor room) | Explicit record: `prior_bytes` = **sanitized** length, `kept_bytes` (may be 0), `digest=wyhash64` over sanitized bytes (16 hex), optional kept prefix, `[LINEAGE_TRUNCATED]` |
+| Valid UTF-8 prior fits | Exact prior under `Prior session context:` (subtractive capacity check) |
+| Invalid UTF-8 prior (any size) or valid prior does not fit | Explicit record: `prior_bytes` = **sanitized** length, `kept_bytes` (may be 0), `digest=wyhash64` over sanitized bytes (16 hex), optional kept prefix, `[LINEAGE_TRUNCATED]` |
 
 Never silently truncate prior summary bytes without the marker/digest record. Tiny `summary_max_chars` (e.g. 1 or 8) with a large or invalid-UTF-8 prior still keeps full `prior_bytes` + full digest + marker.
 

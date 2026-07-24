@@ -178,20 +178,28 @@ fn decimalDigits(n: usize) usize {
 /// Length of the minimal truncated lineage record (no kept prefix), with
 /// fixed-width 16-digit hex digest. `prior_sanitized_len` is the byte length
 /// after UTF-8 sanitization (same value written as `prior_bytes=`).
+/// Uses saturating adds so external lengths cannot wrap the total.
 pub fn minimalTruncatedLineageLen(prior_sanitized_len: usize) usize {
     // Prior session context (truncated):\n
     // prior_bytes=N kept_bytes=0 digest=wyhash64:HHHHHHHHHHHHHHHH\n
     // [LINEAGE_TRUNCATED]\n
-    const line1 = "Prior session context (truncated):\n".len;
-    const line2 = "prior_bytes=".len + decimalDigits(prior_sanitized_len) +
-        " kept_bytes=0 digest=wyhash64:".len + 16 + 1; // +1 = '\n'
-    const line3 = lineage_truncated_marker.len + 1;
-    return line1 + line2 + line3;
+    var n: usize = "Prior session context (truncated):\n".len;
+    n +|= "prior_bytes=".len;
+    n +|= decimalDigits(prior_sanitized_len);
+    n +|= " kept_bytes=0 digest=wyhash64:".len;
+    n +|= 16;
+    n +|= 1; // '\n'
+    n +|= lineage_truncated_marker.len;
+    n +|= 1; // '\n'
+    return n;
 }
 
 /// Byte length of `s` after the same U+FFFD sanitization as `sanitizeUtf8`,
 /// without allocating. Uses saturating adds so pathological input cannot wrap.
 /// Valid UTF-8 returns `s.len` unchanged.
+///
+/// Bound checks use `seq_len > s.len - i` (with invariant `i <= s.len`) rather
+/// than `i + seq_len > s.len` to avoid overflow on the addition.
 pub fn utf8SanitizedByteLen(s: []const u8) usize {
     if (std.unicode.utf8ValidateSlice(s)) return s.len;
     const fffd_len: usize = "\u{FFFD}".len; // 3
@@ -203,12 +211,13 @@ pub fn utf8SanitizedByteLen(s: []const u8) usize {
             i += 1;
             continue;
         };
-        if (i + seq_len > s.len) {
+        // Invariant: i <= s.len. Prefer subtractive bound check.
+        if (seq_len > s.len - i) {
             n +|= fffd_len;
             i += 1;
             continue;
         }
-        _ = std.unicode.utf8Decode(s[i .. i + seq_len]) catch {
+        _ = std.unicode.utf8Decode(s[i..][0..seq_len]) catch {
             n +|= fffd_len;
             i += 1;
             continue;
@@ -217,6 +226,15 @@ pub fn utf8SanitizedByteLen(s: []const u8) usize {
         i += seq_len;
     }
     return n;
+}
+
+/// True when `room` can hold `prefix || payload || '\n'` without overflowing adds.
+fn fitsExactLineage(room: usize, prefix_len: usize, payload_len: usize) bool {
+    if (room <= prefix_len) return false;
+    const after_prefix = room - prefix_len;
+    // Need payload and a trailing newline.
+    if (after_prefix <= payload_len) return false;
+    return after_prefix - payload_len >= 1;
 }
 
 /// Build a model-facing view with four layers + history tail.
@@ -568,7 +586,8 @@ fn buildSummary(
 
     // Highlights only if residual room remains after mandatory sections.
     const hl_tag = "Highlights:\n";
-    if (body.written().len + hl_tag.len <= budget) {
+    const used0 = body.written().len;
+    if (used0 < budget and budget - used0 >= hl_tag.len) {
         body.writer.print("{s}", .{hl_tag}) catch return error.OutOfMemory;
         for (dropped_msgs) |m| {
             const role = m.role.jsonName();
@@ -576,7 +595,8 @@ fn buildSummary(
             const snippet = truncateUtf8(sanitized, 120);
             var line_buf: [200]u8 = undefined;
             const line = std.fmt.bufPrint(&line_buf, "- {s}: {s}\n", .{ role, snippet }) catch continue;
-            if (body.written().len + line.len > budget) break;
+            const used = body.written().len;
+            if (used >= budget or budget - used < line.len) break;
             body.writer.print("{s}", .{line}) catch return error.OutOfMemory;
         }
     }
@@ -603,22 +623,24 @@ fn truncateUtf8Owned(arena: std.mem.Allocator, owned: []u8, max: usize) error{Ou
 /// Lineage semantics:
 /// - `prior_bytes` = byte length of **sanitized** prior (U+FFFD expansion)
 /// - digest = wyhash64 over the **same sanitized** bytes
-/// - exact form only when sanitized prior fits; else truncated record
+/// - exact form only for **valid** UTF-8 priors that fit (subtractive capacity check)
+/// - invalid UTF-8 priors always use truncated form so `prior_bytes`/digest stay auditable
 fn writeLineage(
     body: *std.Io.Writer.Allocating,
     arena: std.mem.Allocator,
     prior_session: []const u8,
     max_chars: usize,
 ) error{OutOfMemory}!void {
+    const prior_was_invalid = !std.unicode.utf8ValidateSlice(prior_session);
     const prior_clean = try sanitizeUtf8(arena, prior_session);
     const digest = std.hash.Wyhash.hash(0, prior_clean);
     const used = body.written().len;
     if (used >= max_chars) return;
     const room = max_chars - used;
 
-    // Exact prior when sanitized bytes fit entirely.
+    // Exact prior only when input was already valid UTF-8 and capacity fits.
     const exact_prefix = "Prior session context:\n";
-    if (exact_prefix.len + prior_clean.len + 1 <= room) {
+    if (!prior_was_invalid and fitsExactLineage(room, exact_prefix.len, prior_clean.len)) {
         body.writer.print("{s}{s}\n", .{ exact_prefix, prior_clean }) catch return error.OutOfMemory;
         return;
     }
@@ -638,6 +660,7 @@ fn writeLineage(
 }
 
 /// Try to write truncated lineage with a UTF-8-safe kept prefix. Returns true if written.
+/// Capacity checks are subtractive / saturating — no unchecked multi-term sums.
 fn writeTruncatedLineageWithKept(
     body: *std.Io.Writer.Allocating,
     prior_clean: []const u8,
@@ -646,18 +669,13 @@ fn writeTruncatedLineageWithKept(
 ) error{OutOfMemory}!bool {
     const line1 = "Prior session context (truncated):\n";
     const kept_label = "kept:\n";
-    const marker_line = lineage_truncated_marker.len + 1;
 
     // Shrink kept until form B fits in `room`.
     var k = prior_clean.len;
     while (true) {
         const kept = truncateUtf8(prior_clean, k);
         k = kept.len;
-        const meta_len = "prior_bytes=".len + decimalDigits(prior_clean.len) +
-            " kept_bytes=".len + decimalDigits(k) +
-            " digest=wyhash64:".len + 16 + 1;
-        const total = line1.len + meta_len + kept_label.len + k + 1 + marker_line;
-        if (total <= room) {
+        if (truncatedLineageWithKeptFits(room, prior_clean.len, k, line1.len, kept_label.len)) {
             body.writer.print(
                 "{s}prior_bytes={d} kept_bytes={d} digest=wyhash64:{x:0>16}\nkept:\n{s}\n{s}\n",
                 .{ line1, prior_clean.len, k, digest, kept, lineage_truncated_marker },
@@ -670,8 +688,35 @@ fn writeTruncatedLineageWithKept(
     }
 }
 
+/// Subtractive capacity check for truncated lineage form B (with kept section).
+fn truncatedLineageWithKeptFits(
+    room: usize,
+    prior_sanitized_len: usize,
+    kept_len: usize,
+    line1_len: usize,
+    kept_label_len: usize,
+) bool {
+    var rem = room;
+    if (rem < line1_len) return false;
+    rem -= line1_len;
+    // meta: prior_bytes=N kept_bytes=K digest=wyhash64:HEX\n
+    const meta_fixed = "prior_bytes=".len + " kept_bytes=".len + " digest=wyhash64:".len + 16 + 1;
+    const meta_need = meta_fixed +| decimalDigits(prior_sanitized_len) +| decimalDigits(kept_len);
+    if (rem < meta_need) return false;
+    rem -= meta_need;
+    if (rem < kept_label_len) return false;
+    rem -= kept_label_len;
+    if (rem < kept_len) return false;
+    rem -= kept_len;
+    // newline after kept + marker line
+    if (rem < 1) return false;
+    rem -= 1;
+    const marker_line = lineage_truncated_marker.len +| 1;
+    return rem >= marker_line;
+}
+
 /// Replace invalid UTF-8 sequences with U+FFFD. Valid input is returned as a
-/// dupe only when needed; callers may get a new allocation always for simplicity.
+/// borrowed slice (no alloc); invalid input is arena-owned.
 fn sanitizeUtf8(arena: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]const u8 {
     if (std.unicode.utf8ValidateSlice(s)) return s;
     var list: std.ArrayList(u8) = .empty;
@@ -683,17 +728,18 @@ fn sanitizeUtf8(arena: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]co
             i += 1;
             continue;
         };
-        if (i + seq_len > s.len) {
+        // Invariant: i <= s.len. Prefer subtractive bound check.
+        if (seq_len > s.len - i) {
             try list.appendSlice(arena, "\u{FFFD}");
             i += 1;
             continue;
         }
-        _ = std.unicode.utf8Decode(s[i .. i + seq_len]) catch {
+        _ = std.unicode.utf8Decode(s[i..][0..seq_len]) catch {
             try list.appendSlice(arena, "\u{FFFD}");
             i += 1;
             continue;
         };
-        try list.appendSlice(arena, s[i .. i + seq_len]);
+        try list.appendSlice(arena, s[i..][0..seq_len]);
         i += seq_len;
     }
     return try list.toOwnedSlice(arena);
@@ -1315,32 +1361,62 @@ test "h-context: tiny budget with 790-byte prior keeps full lineage metadata" {
     }
 }
 
-test "h-context: invalid UTF-8 prior sanitized length drives floor and lineage" {
+test "h-context: utf8SanitizedByteLen matches sanitizeUtf8 length (table)" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const Case = struct { name: []const u8, bytes: []const u8 };
+    // UTF-8 samples: 2-byte U+00A9 © = C2 A9; 3-byte U+20AC € = E2 82 AC;
+    // 4-byte U+1F600 😀 = F0 9F 98 80.
+    const cases = [_]Case{
+        .{ .name = "ascii", .bytes = "hello world" },
+        .{ .name = "empty", .bytes = "" },
+        .{ .name = "valid-2byte", .bytes = &[_]u8{ 0xC2, 0xA9 } },
+        .{ .name = "valid-3byte", .bytes = &[_]u8{ 0xE2, 0x82, 0xAC } },
+        .{ .name = "valid-4byte", .bytes = &[_]u8{ 0xF0, 0x9F, 0x98, 0x80 } },
+        .{ .name = "isolated-continuation", .bytes = &[_]u8{0x80} },
+        .{ .name = "invalid-lead-ff", .bytes = &[_]u8{0xFF} },
+        .{ .name = "invalid-lead-fe", .bytes = &[_]u8{0xFE} },
+        .{ .name = "truncated-2byte", .bytes = &[_]u8{0xC2} },
+        .{ .name = "truncated-3byte", .bytes = &[_]u8{ 0xE2, 0x82 } },
+        .{ .name = "truncated-4byte", .bytes = &[_]u8{ 0xF0, 0x9F, 0x98 } },
+        .{ .name = "bad-cont-2byte", .bytes = &[_]u8{ 0xC2, 0x20 } },
+        .{ .name = "bad-cont-3byte-mid", .bytes = &[_]u8{ 0xE2, 0x20, 0xAC } },
+        .{ .name = "bad-cont-3byte-end", .bytes = &[_]u8{ 0xE2, 0x82, 0x20 } },
+        .{ .name = "mixed-ascii-invalid", .bytes = &[_]u8{ 'a', 0xFF, 'b', 0x80, 'c' } },
+        .{ .name = "nine-invalid", .bytes = &[_]u8{ 0xFF, 0xFE, 0xFD, 0xFF, 0xFE, 0xFD, 0xFF, 0xFE, 0xFD } },
+        .{ .name = "repeated-ff", .bytes = &[_]u8{ 0xFF, 0xFF, 0xFF, 0xFF } },
+        .{ .name = "overlong-ish-c0", .bytes = &[_]u8{ 0xC0, 0x80 } },
+    };
+
+    for (cases) |c| {
+        const len_est = utf8SanitizedByteLen(c.bytes);
+        const cleaned = try sanitizeUtf8(arena, c.bytes);
+        try std.testing.expectEqual(len_est, cleaned.len);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(cleaned));
+    }
+}
+
+test "h-context: raw-nine invalid prior end-to-end tiny compaction prior_bytes=27" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
     // 9 invalid bytes → 27 sanitized: decimal width 1→2 (floor must not use raw len).
     const raw9 = [_]u8{ 0xFF, 0xFE, 0xFD, 0xFF, 0xFE, 0xFD, 0xFF, 0xFE, 0xFD };
+    try std.testing.expectEqual(@as(usize, 9), raw9.len);
     try std.testing.expectEqual(@as(usize, 27), utf8SanitizedByteLen(&raw9));
     try std.testing.expect(decimalDigits(9) < decimalDigits(27));
+
     const floor9_san = summaryFloor(2, &raw9);
-    // Naive raw-length floor would under-reserve by one digit.
-    const naive_raw = droppedHeaderLen(2) + minimalTruncatedLineageLen(9);
+    const naive_raw = droppedHeaderLen(2) +| minimalTruncatedLineageLen(9);
     try std.testing.expect(floor9_san > naive_raw);
     try std.testing.expect(floor9_san <= summary_cap);
     try std.testing.expectEqual(floor9_san, clampSummaryBudget(1, 2, &raw9));
 
-    // Truncated path: need sanitized prior larger than residual floor room for exact form.
-    // 34 × 0xFF → 102 sanitized bytes (raw digits 2, sanitized digits 3).
-    var raw34: [34]u8 = undefined;
-    @memset(&raw34, 0xFF);
-    const san_len = utf8SanitizedByteLen(&raw34);
-    try std.testing.expectEqual(@as(usize, 102), san_len);
-    try std.testing.expect(decimalDigits(34) < decimalDigits(102));
-
-    const prior_clean = try sanitizeUtf8(arena, &raw34);
-    try std.testing.expectEqual(san_len, prior_clean.len);
+    const prior_clean = try sanitizeUtf8(arena, &raw9);
+    try std.testing.expectEqual(@as(usize, 27), prior_clean.len);
     const digest = std.hash.Wyhash.hash(0, prior_clean);
     var dig_buf: [48]u8 = undefined;
     const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x:0>16}", .{digest});
@@ -1356,29 +1432,70 @@ test "h-context: invalid UTF-8 prior sanitized length drives floor and lineage" 
         .assistantText("a3"),
     };
 
+    // Invalid priors always take truncated form → prior_bytes/digest auditable.
+    for ([_]usize{ 1, 8 }) |tiny| {
+        const v = try viewForModel(arena, &full, .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 1,
+            .summary_max_chars = tiny,
+        }, .{ .system = "base", .session = &raw9 });
+
+        try std.testing.expect(v.compaction != null);
+        const sum = v.compaction.?.summary;
+        try std.testing.expect(sum.len <= summary_cap);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
+        try std.testing.expect(std.mem.indexOf(u8, sum, "earlier messages omitted") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=27") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, "kept_bytes=0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, dig_needle) != null);
+        try std.testing.expect(std.mem.indexOf(u8, sum, lineage_truncated_marker) != null);
+        const dig_at = std.mem.indexOf(u8, sum, "digest=wyhash64:").?;
+        const hex = sum[dig_at + "digest=wyhash64:".len ..][0..16];
+        for (hex) |c| {
+            const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
+            try std.testing.expect(ok);
+        }
+    }
+}
+
+test "h-context: larger invalid prior still truncated with sanitized prior_bytes" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    // 34 × 0xFF → 102 sanitized (raw digits 2, sanitized digits 3).
+    var raw34: [34]u8 = undefined;
+    @memset(&raw34, 0xFF);
+    try std.testing.expectEqual(@as(usize, 102), utf8SanitizedByteLen(&raw34));
+    try std.testing.expect(decimalDigits(34) < decimalDigits(102));
+
+    const prior_clean = try sanitizeUtf8(arena, &raw34);
+    const digest = std.hash.Wyhash.hash(0, prior_clean);
+    var dig_buf: [48]u8 = undefined;
+    const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x:0>16}", .{digest});
+
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u1"),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
+        .user("u3"),
+        .assistantText("a3"),
+    };
     const v = try viewForModel(arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
         .summary_max_chars = 1,
     }, .{ .system = "base", .session = &raw34 });
-
     try std.testing.expect(v.compaction != null);
     const sum = v.compaction.?.summary;
     try std.testing.expect(sum.len <= summary_cap);
-    try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
-    try std.testing.expect(std.mem.indexOf(u8, sum, "earlier messages omitted") != null);
-    // prior_bytes is sanitized length, not raw 34.
     try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=102") != null);
-    try std.testing.expect(std.mem.indexOf(u8, sum, "kept_bytes=0") != null);
     try std.testing.expect(std.mem.indexOf(u8, sum, dig_needle) != null);
     try std.testing.expect(std.mem.indexOf(u8, sum, lineage_truncated_marker) != null);
-    const dig_at = std.mem.indexOf(u8, sum, "digest=wyhash64:").?;
-    const hex = sum[dig_at + "digest=wyhash64:".len ..][0..16];
-    for (hex) |c| {
-        const ok = (c >= '0' and c <= '9') or (c >= 'a' and c <= 'f');
-        try std.testing.expect(ok);
-    }
 }
 
 test "h-context: invalid UTF-8 sanitized to U+FFFD not OOM" {
