@@ -268,16 +268,14 @@ pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
     var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
     defer guard.deinit(ctx.allocator);
 
-    // Ancestor walk before createDirPath: escaping/dangling parents denied.
+    // Ancestor walk before any create: escaping/dangling parents denied.
     guard.checkCreate(ctx.allocator, ctx.io, ctx.cwd, path) catch |err| {
         return jailOrFail(ctx, path, err);
     };
 
-    if (std.fs.path.dirname(path)) |dir_path| {
-        if (dir_path.len > 0) {
-            ctx.cwd.createDirPath(ctx.io, dir_path) catch return error.ToolFailed;
-        }
-    }
+    // Create only missing parent dirs. Do not createDirPath over an existing
+    // contained directory symlink (that returns ToolFailed on Zig createDirPath).
+    ensureParentDirs(ctx, path) catch return error.ToolFailed;
 
     ctx.cwd.writeFile(ctx.io, .{
         .sub_path = path,
@@ -302,6 +300,74 @@ fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) 
         error.OutOfMemory => error.OutOfMemory,
         error.NotFound => error.ToolFailed,
     };
+}
+
+/// Ensure parent directories exist without recreating existing symlink/dir parents.
+///
+/// After Guard.checkCreate, existing prefixes are contained. If the full parent
+/// already opens as a directory (plain dir or contained dir symlink), skip
+/// create. Otherwise create only the pure-missing suffix under the longest
+/// openable prefix so `link_dir/nested/file` works when `link_dir` is a symlink.
+fn ensureParentDirs(ctx: tool.Context, file_path: []const u8) !void {
+    const dir_path = std.fs.path.dirname(file_path) orelse return;
+    if (dir_path.len == 0 or std.mem.eql(u8, dir_path, ".")) return;
+
+    // Fast path: whole parent already a directory (plain or contained symlink).
+    if (ctx.cwd.statFile(ctx.io, dir_path, .{ .follow_symlinks = true })) |st| {
+        if (st.kind == .directory) return;
+        return error.NotDir;
+    } else |_| {}
+
+    const seps: []const u8 = if (@import("builtin").os.tag == .windows) "/\\" else "/";
+
+    var acc: std.ArrayList(u8) = .empty;
+    defer acc.deinit(ctx.allocator);
+
+    // Owned path of longest openable prefix; null means workspace cwd.
+    var openable_owned: ?[]u8 = null;
+    defer if (openable_owned) |p| ctx.allocator.free(p);
+
+    var missing: std.ArrayList([]const u8) = .empty;
+    defer missing.deinit(ctx.allocator);
+
+    var saw_missing = false;
+    var it = std.mem.tokenizeAny(u8, dir_path, seps);
+    while (it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+
+        if (saw_missing) {
+            if (std.mem.eql(u8, part, "..")) return error.InvalidPath;
+            try missing.append(ctx.allocator, part);
+            continue;
+        }
+
+        if (acc.items.len > 0) try acc.append(ctx.allocator, std.fs.path.sep);
+        try acc.appendSlice(ctx.allocator, part);
+
+        const partial = acc.items;
+        if (ctx.cwd.statFile(ctx.io, partial, .{ .follow_symlinks = true })) |st| {
+            if (st.kind != .directory) return error.NotDir;
+            if (openable_owned) |old| ctx.allocator.free(old);
+            openable_owned = try ctx.allocator.dupe(u8, partial);
+        } else |_| {
+            saw_missing = true;
+            try missing.append(ctx.allocator, part);
+        }
+    }
+
+    if (missing.items.len == 0) return;
+
+    // Join missing parts into a relative create path.
+    const rel_create = try std.fs.path.join(ctx.allocator, missing.items);
+    defer ctx.allocator.free(rel_create);
+
+    if (openable_owned) |prefix| {
+        var base = try ctx.cwd.openDir(ctx.io, prefix, .{ .access_sub_paths = true });
+        defer base.close(ctx.io);
+        try base.createDirPath(ctx.io, rel_create);
+    } else {
+        try ctx.cwd.createDirPath(ctx.io, rel_create);
+    }
 }
 
 fn maybeAppendGitDiff(ctx: tool.Context, path: []const u8, base: []u8) tool.HandlerError![]u8 {
@@ -601,7 +667,7 @@ test "symlink containment: write/search_replace cannot mutate outside" {
     defer gpa.free(outside2);
     try std.testing.expectEqualStrings("OUTSIDE_ORIGINAL\n", outside2);
 
-    // contained symlink write/replace allowed and only mutates inside target
+    // contained file symlink write/replace allowed and only mutates inside target
     const w_in = try writeFile(ctx, null,
         \\{"path":"link_in","content":"alpha BETA gamma\n"}
     );
@@ -624,4 +690,70 @@ test "symlink containment: write/search_replace cannot mutate outside" {
     const outside3 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
     defer gpa.free(outside3);
     try std.testing.expectEqualStrings("OUTSIDE_ORIGINAL\n", outside3);
+
+    // Exploit: missing prefix + `..` + escape dir must not create outside files.
+    const exploit = try writeFile(ctx, null,
+        \\{"path":"brand_new/../escape_dir/pwned.txt","content":"PWNED\n"}
+    );
+    defer gpa.free(exploit);
+    try std.testing.expect(std.mem.indexOf(u8, exploit, "code=jail_deny") != null);
+    // outside has no pwned; brand_new should not be left as a partial escape path
+    const pwned = parent.dir.statFile(io, "outside/pwned.txt", .{});
+    try std.testing.expectError(error.FileNotFound, pwned);
+}
+
+test "contained directory symlink write and nested create" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+
+    try parent.dir.createDirPath(io, "ws/inside_dir");
+    try parent.dir.writeFile(io, .{ .sub_path = "ws/inside_dir/a.txt", .data = "hello world\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "inside_dir", "link_dir", .{ .is_directory = true });
+
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    // write under contained dir symlink (existing parent is symlink)
+    const w_new = try writeFile(ctx, null,
+        \\{"path":"link_dir/new.txt","content":"from-link\n"}
+    );
+    defer gpa.free(w_new);
+    try std.testing.expect(std.mem.indexOf(u8, w_new, "ok:") != null);
+    const on_real = try ws.readFileAlloc(io, "inside_dir/new.txt", gpa, .limited(64));
+    defer gpa.free(on_real);
+    try std.testing.expectEqualStrings("from-link\n", on_real);
+
+    // nested create under contained dir symlink
+    const w_nest = try writeFile(ctx, null,
+        \\{"path":"link_dir/sub/deep.txt","content":"deep-ok\n"}
+    );
+    defer gpa.free(w_nest);
+    try std.testing.expect(std.mem.indexOf(u8, w_nest, "ok:") != null);
+    const deep = try ws.readFileAlloc(io, "inside_dir/sub/deep.txt", gpa, .limited(64));
+    defer gpa.free(deep);
+    try std.testing.expectEqualStrings("deep-ok\n", deep);
+
+    // read/list/search_replace via dir link
+    const listed = try @import("fs_tools.zig").listDir(ctx, null, "{\"path\":\"link_dir\"}");
+    defer gpa.free(listed);
+    try std.testing.expect(std.mem.indexOf(u8, listed, "new.txt") != null);
+
+    const read = try @import("fs_tools.zig").readFile(ctx, null, "{\"path\":\"link_dir/a.txt\"}");
+    defer gpa.free(read);
+    try std.testing.expect(std.mem.indexOf(u8, read, "hello world") != null);
+
+    const sr = try searchReplace(ctx, null,
+        \\{"path":"link_dir/a.txt","old_string":"hello","new_string":"HELLO"}
+    );
+    defer gpa.free(sr);
+    try std.testing.expect(std.mem.indexOf(u8, sr, "ok: search_replace") != null);
+    const a_after = try ws.readFileAlloc(io, "inside_dir/a.txt", gpa, .limited(64));
+    defer gpa.free(a_after);
+    try std.testing.expectEqualStrings("HELLO world\n", a_after);
 }

@@ -17,6 +17,7 @@
 //! (loop turns this into a soft `invalid_arguments` tool result before the handler).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const zt = @import("zag-types");
 
@@ -42,6 +43,24 @@ pub const PathExtractError = error{
     InvalidArguments,
 };
 
+// ── host path separators ─────────────────────────────────────────────
+// POSIX/macOS: only `/` is a separator; `\` is a legal filename byte.
+// Windows: both `/` and `\` are separators.
+
+fn isPathSep(c: u8) bool {
+    if (builtin.os.tag == .windows) return c == '/' or c == '\\';
+    return c == '/';
+}
+
+/// Tokenize separators for this host (do not treat `\` as sep on POSIX).
+fn pathSepChars() []const u8 {
+    return if (builtin.os.tag == .windows) "/\\" else "/";
+}
+
+fn nativeSep() u8 {
+    return std.fs.path.sep;
+}
+
 /// Resolved workspace root real path (absolute, canonical).
 ///
 /// `path` is borrowed when obtained from `tool.Context.workspace_root_real`,
@@ -56,6 +75,8 @@ pub const Root = struct {
     }
 
     /// Prefer a pre-resolved borrowed root from Context; otherwise resolve cwd.
+    /// Cached root is identity-only for the **same** cwd; it does not expand
+    /// containment to a different directory.
     pub fn obtain(
         allocator: std.mem.Allocator,
         io: Io,
@@ -64,6 +85,13 @@ pub const Root = struct {
     ) ContainError!Root {
         if (cached) |c| {
             if (c.len == 0) return error.ResolveFailed;
+            // Verify cached root still matches this cwd (no expanded boundary).
+            const live = resolveCwdReal(allocator, io, cwd) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => return error.ResolveFailed,
+            };
+            defer allocator.free(live);
+            if (!std.mem.eql(u8, c, live)) return error.ResolveFailed;
             return .{ .path = c, .owned = false };
         }
         const resolved = resolveCwdReal(allocator, io, cwd) catch |err| switch (err) {
@@ -97,7 +125,7 @@ pub const Guard = struct {
         try checkToolPath(rel_path);
         const sub = if (rel_path.len == 0) "." else rel_path;
 
-        if (std.mem.eql(u8, sub, ".") or std.mem.eql(u8, sub, "./")) {
+        if (std.mem.eql(u8, sub, ".") or isDotSlashOnly(sub)) {
             // cwd itself is the root by construction.
             return;
         }
@@ -117,9 +145,10 @@ pub const Guard = struct {
     }
 
     /// Write/create: every existing ancestor (and final if present) must resolve
-    /// inside the root. Non-existent suffix under a verified ancestor is allowed.
-    /// Dangling / escaping intermediate or final symlinks are denied. Does not
-    /// skip components by jumping to the nearest existing parent.
+    /// inside the root. Non-existent suffix under a verified ancestor is allowed
+    /// only for ordinary child names — `..` after the first missing component is
+    /// `InvalidPath` (blocks `new/../escape/...` when `new` does not exist yet).
+    /// Dangling / escaping intermediate or final symlinks are denied.
     pub fn checkCreate(
         self: Guard,
         allocator: std.mem.Allocator,
@@ -130,27 +159,26 @@ pub const Guard = struct {
         try checkToolPath(rel_path);
         if (rel_path.len == 0) return error.InvalidPath;
 
-        // Walk components without skipping middle dangling links.
         var acc: std.ArrayList(u8) = .empty;
         defer acc.deinit(allocator);
 
-        var it = std.mem.tokenizeAny(u8, rel_path, "/\\");
+        var it = std.mem.tokenizeAny(u8, rel_path, pathSepChars());
         var saw_missing = false;
         var any_component = false;
 
         while (it.next()) |part| {
             if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
-            // `..` already rejected by checkToolPath when it escapes; remaining
-            // in-tree `..` is still a real component for resolution.
             any_component = true;
 
             if (saw_missing) {
-                // Suffix is to-be-created; do not resolve further.
+                // After first pure-missing component, reject `..` so an uncreated
+                // prefix cannot be skipped to reach a later escaping name.
+                if (std.mem.eql(u8, part, "..")) return error.InvalidPath;
                 continue;
             }
 
             if (acc.items.len > 0) {
-                try acc.append(allocator, std.fs.path.sep);
+                try acc.append(allocator, nativeSep());
             }
             try acc.appendSlice(allocator, part);
 
@@ -158,11 +186,11 @@ pub const Guard = struct {
             const real = realPathRelative(cwd, io, partial) catch |err| switch (err) {
                 error.FileNotFound => {
                     if (isSymlinkNoFollow(cwd, io, partial)) {
-                        // Dangling or unresolvable symlink at this component.
                         return error.OutsideWorkspace;
                     }
-                    // Pure missing — remaining path may be created under the
-                    // last verified ancestor (or cwd root).
+                    // If this component is `..` and pure-missing, the parent walk
+                    // already failed in a surprising way — fail closed.
+                    if (std.mem.eql(u8, part, "..")) return error.InvalidPath;
                     saw_missing = true;
                     continue;
                 },
@@ -174,10 +202,7 @@ pub const Guard = struct {
             if (!self.root.contains(real.slice())) return error.OutsideWorkspace;
         }
 
-        if (!any_component) {
-            // ".", empty segments only — not a valid write target path.
-            return error.InvalidPath;
-        }
+        if (!any_component) return error.InvalidPath;
     }
 
     /// Resolve `rel_path` to a real absolute path and require containment.
@@ -191,7 +216,7 @@ pub const Guard = struct {
     ) ContainError![]u8 {
         try self.checkExisting(io, cwd, rel_path);
         const sub = if (rel_path.len == 0) "." else rel_path;
-        if (std.mem.eql(u8, sub, ".") or std.mem.eql(u8, sub, "./")) {
+        if (std.mem.eql(u8, sub, ".") or isDotSlashOnly(sub)) {
             return allocator.dupe(u8, self.root.path) catch return error.OutOfMemory;
         }
         const real = realPathRelative(cwd, io, sub) catch |err| switch (err) {
@@ -207,6 +232,12 @@ pub const Guard = struct {
         return allocator.dupe(u8, real.slice()) catch return error.OutOfMemory;
     }
 };
+
+fn isDotSlashOnly(sub: []const u8) bool {
+    // "./" or ".\\" (windows) only
+    if (sub.len == 2 and sub[0] == '.' and isPathSep(sub[1])) return true;
+    return false;
+}
 
 /// Map containment failure to a soft tool body (`code=jail_deny`) or typed OOM.
 /// `NotFound` is not converted — callers handle ordinary missing paths.
@@ -248,7 +279,7 @@ pub fn checkToolPath(path: []const u8) Error!void {
         return error.OutsideWorkspace;
 
     var depth: i32 = 0;
-    var it = std.mem.tokenizeAny(u8, path, "/\\");
+    var it = std.mem.tokenizeAny(u8, path, pathSepChars());
     while (it.next()) |part| {
         if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
         if (std.mem.eql(u8, part, "..")) {
@@ -262,8 +293,8 @@ pub fn checkToolPath(path: []const u8) Error!void {
 
 /// Component-boundary containment: `/ws` does not contain `/ws2`.
 ///
-/// Both sides should be absolute real paths. Trailing separators are ignored
-/// except for a root path consisting of a single separator.
+/// Host-correct separators only: on POSIX, `\` is **not** a path separator, so
+/// root `/tmp/ws` does **not** contain sibling `/tmp/ws\outside`.
 pub fn pathIsWithinRoot(root_abs: []const u8, candidate_abs: []const u8) bool {
     const root = stripTrailingSeps(root_abs);
     const cand = stripTrailingSeps(candidate_abs);
@@ -271,23 +302,20 @@ pub fn pathIsWithinRoot(root_abs: []const u8, candidate_abs: []const u8) bool {
 
     if (std.mem.eql(u8, root, cand)) return true;
 
-    // Filesystem root (`/` or `\`) contains every absolute path on that volume.
-    if (root.len == 1 and (root[0] == '/' or root[0] == '\\')) {
-        return cand.len > 0 and (cand[0] == '/' or cand[0] == '\\');
+    // Filesystem root (`/` on POSIX; `\` or `/` on Windows volume root).
+    if (root.len == 1 and isPathSep(root[0])) {
+        return cand.len > 0 and isPathSep(cand[0]);
     }
 
-    // Ensure next character is a path separator so `/ws` ⊄ `/ws2`.
     if (cand.len <= root.len) return false;
     if (!std.mem.startsWith(u8, cand, root)) return false;
-    const next = cand[root.len];
-    return next == '/' or next == '\\';
+    return isPathSep(cand[root.len]);
 }
 
 fn stripTrailingSeps(p: []const u8) []const u8 {
     if (p.len == 0) return p;
     var end = p.len;
-    while (end > 1 and (p[end - 1] == '/' or p[end - 1] == '\\')) : (end -= 1) {}
-    // Keep a single root separator ("/" or "\\") when the path is only seps.
+    while (end > 1 and isPathSep(p[end - 1])) : (end -= 1) {}
     if (end == 0) return p[0..1];
     return p[0..end];
 }
@@ -390,6 +418,14 @@ test "pathIsWithinRoot component boundary" {
     try std.testing.expect(!pathIsWithinRoot("/ws/project", "/ws"));
     try std.testing.expect(pathIsWithinRoot("/", "/etc"));
     try std.testing.expect(pathIsWithinRoot("/", "/"));
+
+    // POSIX: backslash is NOT a separator — root must not swallow sibling with `\` in name.
+    if (builtin.os.tag != .windows) {
+        try std.testing.expect(!pathIsWithinRoot("/tmp/ws", "/tmp/ws\\outside"));
+        try std.testing.expect(!pathIsWithinRoot("/tmp/ws", "/tmp/ws\\outside/x"));
+        // Trailing backslash is not a trailing separator on POSIX.
+        try std.testing.expect(!pathIsWithinRoot("/tmp/ws", "/tmp/ws\\"));
+    }
 }
 
 test "pathFromDescriptor respects workspace access" {
@@ -428,14 +464,6 @@ test "pathFromDescriptor requires string field when path claimed" {
 }
 
 test "Root and Guard contain ordinary paths; escape symlink denied" {
-    // Fixture layout (siblings under parent — outside is NOT inside workspace):
-    //   parent/
-    //     outside/secret.txt
-    //     ws/          ← tool cwd
-    //       inside.txt
-    //       link_out → ../outside/secret.txt
-    //       link_in  → inside.txt
-    //       nest/link_out → ../../outside/secret.txt
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -457,6 +485,7 @@ test "Root and Guard contain ordinary paths; escape symlink denied" {
     try ws.createDirPath(io, "nest");
     try ws.symLink(io, "../../outside/secret.txt", "nest/link_out", .{});
     try ws.symLink(io, "../nope-missing", "dangling", .{});
+    try ws.symLink(io, "../outside", "escape_dir", .{ .is_directory = true });
 
     var guard = try guardFrom(gpa, io, ws, null);
     defer guard.deinit(gpa);
@@ -470,25 +499,71 @@ test "Root and Guard contain ordinary paths; escape symlink denied" {
     try std.testing.expectError(error.OutsideWorkspace, guard.checkExisting(io, ws, "dangling"));
     try std.testing.expectError(error.NotFound, guard.checkExisting(io, ws, "missing.txt"));
 
-    // Create: cannot write through escaping link or dangling parent.
     try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "link_out"));
     try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "link_out/more"));
     try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "dangling/x"));
     try guard.checkCreate(gpa, io, ws, "new_file.txt");
     try guard.checkCreate(gpa, io, ws, "subdir/nested.txt");
-    try guard.checkCreate(gpa, io, ws, "link_in"); // contained final symlink OK
+    try guard.checkCreate(gpa, io, ws, "link_in");
 
-    // Outside sibling must not be considered inside the workspace root.
+    // Exploit: missing prefix + `..` must not skip to escaping dir.
+    try std.testing.expectError(error.InvalidPath, guard.checkCreate(gpa, io, ws, "new/../escape_dir/pwned.txt"));
+    try std.testing.expectError(error.InvalidPath, guard.checkCreate(gpa, io, ws, "missing/../dangling/x"));
+    // Normal missing child still OK.
+    try guard.checkCreate(gpa, io, ws, "missing/child.txt");
+    // Existing balanced `..` that still resolves inside stays allowed by checkCreate
+    // only if every resolved prefix is inside (escape_dir component fails).
+    try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "nest/../escape_dir/x"));
+    try guard.checkCreate(gpa, io, ws, "nest/../inside.txt");
+
     var outside_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const outside_n = try parent.dir.realPathFile(io, "outside", &outside_buf);
     try std.testing.expect(!guard.root.contains(outside_buf[0..outside_n]));
 }
 
-test "cached Root.obtain reuses borrowed path" {
+test "POSIX backslash sibling name is outside root" {
+    // parent/ws  and  parent/ws\outside  (literal backslash in filename)
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    if (builtinSymlinkUnsupported()) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+
+    try parent.dir.createDirPath(io, "ws");
+    // Literal sibling name containing backslash.
+    const sibling_name = "ws\\outside";
+    try parent.dir.writeFile(io, .{ .sub_path = sibling_name, .data = "BACKSLASH_OUTSIDE\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+
+    try ws.symLink(io, "../ws\\outside", "to_bs_sibling", .{});
+
+    var guard = try guardFrom(gpa, io, ws, null);
+    defer guard.deinit(gpa);
+
+    // Real paths must not treat `\` as separator.
+    var root_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const root_n = try ws.realPathFile(io, ".", &root_buf);
+    var sib_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const sib_n = try parent.dir.realPathFile(io, sibling_name, &sib_buf);
+    try std.testing.expect(!pathIsWithinRoot(root_buf[0..root_n], sib_buf[0..sib_n]));
+    try std.testing.expect(!guard.root.contains(sib_buf[0..sib_n]));
+
+    try std.testing.expectError(error.OutsideWorkspace, guard.checkExisting(io, ws, "to_bs_sibling"));
+    try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "to_bs_sibling"));
+}
+
+test "cached Root.obtain reuses borrowed path; rejects mismatched cwd" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+    var other = std.testing.tmpDir(.{});
+    defer other.cleanup();
 
     const owned = try resolveCwdReal(gpa, io, tmp.dir);
     defer gpa.free(owned);
@@ -498,10 +573,11 @@ test "cached Root.obtain reuses borrowed path" {
     try std.testing.expect(!root.owned);
     try std.testing.expectEqualStrings(owned, root.path);
     try std.testing.expect(root.contains(owned));
+
+    // Cached path from a different cwd must not expand the boundary.
+    try std.testing.expectError(error.ResolveFailed, Root.obtain(gpa, io, other.dir, owned));
 }
 
 fn builtinSymlinkUnsupported() bool {
-    // Zig 0.16 supports Io.Dir.symLink on macOS/Linux; Windows needs privilege.
-    // Skip on Windows so CI does not false-pass.
-    return @import("builtin").os.tag == .windows;
+    return builtin.os.tag == .windows;
 }

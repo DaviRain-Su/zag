@@ -40,8 +40,9 @@ The file-tool jail and shell policy are different controls. `run_shell` is not m
 - Reject empty/NUL/absolute/drive/UNC and lexical escape paths.
 - Resolve the workspace root once per `loop.run` (threaded as borrowed `tool.Context.workspace_root_real`); handlers lazy-resolve when the field is null.
 - Existing read/list/search targets must resolve beneath that root (component-boundary compare: `/ws` does not contain `/ws2`).
-- Write/create walks every existing ancestor; non-existent suffix under a verified ancestor is allowed. Escaping or dangling intermediate/final symlinks deny. Checks complete **before** `createDirPath`.
-- Contained file/dir symlinks (target still inside root) remain usable for read/list/search/write/replace.
+- Write/create walks every existing ancestor; non-existent suffix under a verified ancestor is allowed **without** `..` after the first missing component (`new/../escape/...` → deny). Escaping or dangling intermediate/final symlinks deny. Checks complete **before** any parent create.
+- Contained file/dir symlinks (target still inside root) remain usable for read/list/search/write/replace (writes under a dir symlink skip recreating that parent).
+- Containment path compare uses **host** separators only (POSIX: `/` only — root `/tmp/ws` does not contain sibling `/tmp/ws\outside`).
 - `list_dir` on an escaping directory symlink → `jail_deny`; listing a parent may show symlink **names** without reading targets.
 - grep/glob walkers do not follow escaping/dangling symlinks; nested escapes skip without leaking outside bytes; directory real-path identity bounds symlink loops.
 - Enforcement failure or unresolvable security-critical cases deny with machine-readable `code=jail_deny`. Ordinary missing files stay `ToolFailed` / not “safe to escape”.

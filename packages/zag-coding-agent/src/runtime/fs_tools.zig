@@ -350,7 +350,11 @@ fn walkTree(
         visited_dirs.deinit(ctx.allocator);
     }
 
-    try paths.append(ctx.allocator, try ctx.allocator.dupe(u8, root));
+    {
+        const root_owned = try ctx.allocator.dupe(u8, root);
+        errdefer ctx.allocator.free(root_owned);
+        try paths.append(ctx.allocator, root_owned);
+    }
 
     var index: u32 = 0;
     while (index < paths.items.len) : (index += 1) {
@@ -365,8 +369,12 @@ fn walkTree(
 
         // Containment: skip nested escapes/dangling without leaking outside bytes.
         // Root was already verified by the caller; re-check for children.
+        // OutOfMemory must propagate (never swallow as skip).
         if (index != 0) {
-            guard.checkExisting(ctx.io, ctx.cwd, rel) catch continue;
+            guard.checkExisting(ctx.io, ctx.cwd, rel) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => continue,
+            };
         }
 
         const st = ctx.cwd.statFile(ctx.io, rel, .{
@@ -446,7 +454,10 @@ fn pathDepth(rel: []const u8) u32 {
     if (std.mem.eql(u8, rel, ".")) return 0;
     var depth: u32 = 0;
     for (rel) |c| {
-        if (c == '/' or c == '\\') depth += 1;
+        // Host separators only: on POSIX `\` is a filename byte, not a depth edge.
+        if (@import("builtin").os.tag == .windows) {
+            if (c == '/' or c == '\\') depth += 1;
+        } else if (c == '/') depth += 1;
     }
     return depth + 1;
 }
@@ -782,4 +793,64 @@ test "symlink containment: read/list/grep/glob deny escape, allow contained" {
     const loop_grep = try grep(ctx, null, "{\"pattern\":\"loop-note\",\"path\":\".\"}");
     defer gpa.free(loop_grep);
     try std.testing.expect(std.mem.indexOf(u8, loop_grep, "loop-note") != null or std.mem.indexOf(u8, loop_grep, "note.txt") != null);
+}
+
+test "POSIX backslash sibling: all file tools deny without leak" {
+    // parent/ws and parent/ws\outside (literal backslash filename) are siblings.
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+
+    try parent.dir.createDirPath(io, "ws");
+    const sibling = "ws\\outside";
+    try parent.dir.writeFile(io, .{ .sub_path = sibling, .data = "BACKSLASH_OUTSIDE_SECRET\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "../ws\\outside", "to_bs", .{});
+    try ws.writeFile(io, .{ .sub_path = "ok.txt", .data = "inside findme\n" });
+
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    const r = try readFile(ctx, null, "{\"path\":\"to_bs\"}");
+    defer gpa.free(r);
+    try std.testing.expect(std.mem.indexOf(u8, r, "code=jail_deny") != null);
+    try std.testing.expect(std.mem.indexOf(u8, r, "BACKSLASH_OUTSIDE") == null);
+
+    // list_dir on the symlink file path fails as not-a-dir or jail — never leaks content
+    const ld = try listDir(ctx, null, "{\"path\":\"to_bs\"}");
+    defer gpa.free(ld);
+    try std.testing.expect(std.mem.indexOf(u8, ld, "BACKSLASH_OUTSIDE") == null);
+
+    const g = try grep(ctx, null, "{\"pattern\":\"BACKSLASH\",\"path\":\"to_bs\"}");
+    defer gpa.free(g);
+    try std.testing.expect(std.mem.indexOf(u8, g, "code=jail_deny") != null);
+    try std.testing.expect(std.mem.indexOf(u8, g, "BACKSLASH_OUTSIDE") == null);
+
+    const gl = try glob(ctx, null, "{\"pattern\":\"**/*\",\"path\":\"to_bs\"}");
+    defer gpa.free(gl);
+    try std.testing.expect(std.mem.indexOf(u8, gl, "code=jail_deny") != null or std.mem.indexOf(u8, gl, "BACKSLASH") == null);
+
+    const edit = @import("edit_tools.zig");
+    const w = try edit.writeFile(ctx, null,
+        \\{"path":"to_bs","content":"PWNED\n"}
+    );
+    defer gpa.free(w);
+    try std.testing.expect(std.mem.indexOf(u8, w, "code=jail_deny") != null);
+    const outside = try parent.dir.readFileAlloc(io, sibling, gpa, .limited(64));
+    defer gpa.free(outside);
+    try std.testing.expectEqualStrings("BACKSLASH_OUTSIDE_SECRET\n", outside);
+
+    const sr = try edit.searchReplace(ctx, null,
+        \\{"path":"to_bs","old_string":"BACKSLASH_OUTSIDE_SECRET","new_string":"PWNED"}
+    );
+    defer gpa.free(sr);
+    try std.testing.expect(std.mem.indexOf(u8, sr, "code=jail_deny") != null);
+    const outside2 = try parent.dir.readFileAlloc(io, sibling, gpa, .limited(64));
+    defer gpa.free(outside2);
+    try std.testing.expectEqualStrings("BACKSLASH_OUTSIDE_SECRET\n", outside2);
 }
