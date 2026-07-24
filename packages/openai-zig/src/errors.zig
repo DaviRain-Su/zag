@@ -17,6 +17,8 @@ pub const Error = error{
     Timeout,
     /// Cooperative cancel observed mid-request (h-provider-001).
     Cancelled,
+    /// Backend cannot enforce required deadline/active-cancel control.
+    UnsupportedControl,
     Unimplemented,
 };
 
@@ -63,7 +65,7 @@ pub const HttpErrorDetail = struct {
 pub fn unexpectedStatus(detail: HttpErrorDetail) Error {
     const parsed = if (detail.body.len > 0 and detail.message == null and detail.type == null and
         detail.param == null and detail.code == null and detail.detail == null)
-    parseApiError(detail.body)
+        parseApiError(detail.body)
     else
         null;
 

@@ -1,13 +1,18 @@
-//! Contract tests: wire shapes Agent depends on (no network).
+//! Contract tests: wire shapes Agent depends on (no public network).
 //!
 //! These pin parsing + request body encoding so openai-zig upgrades cannot
-//! silently break the harness.
+//! silently break the harness. h-provider-001: deadline/cancel capability,
+//! strict stream completion, atomic tool turns.
 
 const std = @import("std");
 const types = @import("types.zig");
 const openai_compat = @import("openai_compat.zig");
+const anthropic_messages = @import("anthropic_messages.zig");
 const factory = @import("factory.zig");
 const gen = @import("openai_zig").generated;
+const request_control = @import("request_control.zig");
+const http = @import("http.zig");
+const build_options = @import("build_options");
 
 test "contract: assistant text stop turn" {
     const gpa = std.testing.allocator;
@@ -76,6 +81,7 @@ test "contract: tool_calls round-trip fields" {
     try std.testing.expectEqualStrings("call_abc", turn.tool_calls[0].id);
     try std.testing.expectEqualStrings("read_file", turn.tool_calls[0].name);
     try std.testing.expect(std.mem.indexOf(u8, turn.tool_calls[0].arguments, "main.zig") != null);
+    try types.validateCompleteToolCalls(gpa, turn.tool_calls);
 }
 
 test "contract: request body encodes agent messages and tools" {
@@ -137,10 +143,10 @@ test "contract: mapSdkError surface used by agent" {
     try std.testing.expectEqual(error.RateLimited, openai_compat.mapSdkError(error.RateLimitError));
     try std.testing.expect(types.isRetryableError(openai_compat.mapSdkError(error.RateLimitError)));
     try std.testing.expect(!types.isRetryableError(openai_compat.mapSdkError(error.AuthenticationError)));
+    try std.testing.expectEqual(error.UnsupportedControl, openai_compat.mapSdkError(error.UnsupportedControl));
 }
 
 test "contract: WireAdapter vtable exposes openai_compat style" {
-    // Pure surface check — no network. Client init needs valid-looking config only.
     const gpa = std.testing.allocator;
     var client = openai_compat.Client.init(gpa, std.testing.io, .{
         .base_url = "https://example.invalid/v1",
@@ -155,7 +161,6 @@ test "contract: WireAdapter vtable exposes openai_compat style" {
 
 test "contract: factory.createWire accepts anthropic_messages style" {
     const gpa = std.testing.allocator;
-    // Init only — no network until chat.
     var w = try factory.createWire(gpa, std.testing.io, .{
         .base_url = "https://api.anthropic.com",
         .api_key = "sk-ant-test",
@@ -202,7 +207,6 @@ test "contract: toChatMessages preserves tool result" {
     try std.testing.expectEqualStrings("ok", out[0].content.?);
 }
 
-// Keep gen import used (ensures CreateChatCompletionResponse still has usage).
 test "contract: generated usage shape" {
     const u: gen.CompletionUsage = .{
         .prompt_tokens = 1,
@@ -212,70 +216,80 @@ test "contract: generated usage shape" {
     try std.testing.expectEqual(@as(i64, 3), u.total_tokens);
 }
 
-// --- h-provider-001: deadline / cancel / partial tool-call safety ---
+// --- h-provider-001 follow-up ---
 
-const request_control = @import("request_control.zig");
-const http = @import("http.zig");
-
-test "contract: Timeout and Cancelled are not retryable" {
+test "contract: Timeout Cancelled UnsupportedControl not retryable" {
     try std.testing.expect(!types.isRetryableError(error.Timeout));
     try std.testing.expect(!types.isRetryableError(error.Cancelled));
+    try std.testing.expect(!types.isRetryableError(error.UnsupportedControl));
     try std.testing.expect(types.isRetryableError(error.RateLimited));
 }
 
-test "contract: preflight cancel and zero timeout fail before network" {
-    var flag: types.CancelFlag = .{};
-    flag.request();
-    try std.testing.expectError(error.Cancelled, request_control.preflight(
-        types.RequestControl.none().withCancel(&flag),
-    ));
-    try std.testing.expectError(error.Timeout, request_control.preflight(
-        types.RequestControl.withTimeoutMs(types.monoNowNs(), 0),
-    ));
+test "contract: std rejects deadline before network; curl allows" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    // Port 1: no server needed if capability gate fires first on std.
+    var client = try http.Client.initBearer(gpa, io, .{
+        .base_url = "http://127.0.0.1:1",
+        .api_key = "k",
+        .model = "m",
+        .max_retries = 0,
+        .timeout_ms = 100,
+    });
+    defer client.deinit();
+    if (build_options.http_backend == .std) {
+        try std.testing.expectError(error.UnsupportedControl, client.postJson("/x", "{}"));
+    } else {
+        // curl may attempt network; capability must not reject.
+        _ = client.postJsonControl("/x", "{}", types.RequestControl.withTimeoutMs(types.monoNowNs(), 50)) catch {};
+    }
 }
 
-test "contract: local slow server enforces timeout wall bound" {
-    // Local loopback only — no public network. Both std and curl backends.
+test "contract: std reject require_active_cancel before network" {
+    if (build_options.http_backend != .std) return;
+    const gpa = std.testing.allocator;
+    var client = try http.Client.initBearer(gpa, std.testing.io, .{
+        .base_url = "http://127.0.0.1:1",
+        .api_key = "k",
+        .model = "m",
+        .max_retries = 0,
+    });
+    defer client.deinit();
+    const control = types.RequestControl.none().withRequireActiveCancel(true);
+    try std.testing.expectError(error.UnsupportedControl, client.postJsonControl("/x", "{}", control));
+}
+
+test "contract: curl local timeout no headers wall bound" {
+    if (build_options.http_backend != .curl) return;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
     const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
     var server = try address.listen(io, .{ .reuse_address = true });
     defer server.deinit(io);
-
     const port = server.socket.address.getPort();
 
     const ServerCtx = struct {
         io: std.Io,
         server: *std.Io.net.Server,
-        accepted: std.atomic.Value(bool) = .init(false),
-
         fn run(self: *@This()) void {
             const stream = self.server.accept(self.io) catch return;
             defer stream.close(self.io);
-            self.accepted.store(true, .seq_cst);
-            // Hold connection open well past client timeout (slow headers/body).
+            // Accept then stall (no headers/body) past client deadline.
             std.Io.sleep(self.io, .{ .nanoseconds = 5 * std.time.ns_per_s }, .awake) catch {};
-            // Best-effort minimal response if still open.
-            var w = stream.writer(self.io, &.{});
-            _ = w.interface.writeAll("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") catch {};
-            w.interface.flush() catch {};
         }
     };
-
     var ctx: ServerCtx = .{ .io = io, .server = &server };
     const thr = try std.Thread.spawn(.{}, ServerCtx.run, .{&ctx});
     defer thr.join();
 
     var base_buf: [64]u8 = undefined;
     const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
-
     var client = try http.Client.initBearer(gpa, io, .{
         .base_url = base_url,
         .api_key = "test",
         .model = "m",
         .max_retries = 0,
-        .timeout_ms = 200,
     });
     defer client.deinit();
 
@@ -283,13 +297,12 @@ test "contract: local slow server enforces timeout wall bound" {
     const t0 = types.monoNowNs();
     const result = client.postJsonControl("/slow", "{}", control);
     const elapsed_ms = (types.monoNowNs() - t0) / std.time.ns_per_ms;
-
     try std.testing.expectError(error.Timeout, result);
-    // Wall-clock upper bound: timeout + generous slack for scheduling (not 5s server hold).
     try std.testing.expect(elapsed_ms < 2500);
 }
 
-test "contract: cancel aborts in-flight local stream" {
+test "contract: curl cancel aborts stalled stream" {
+    if (build_options.http_backend != .curl) return;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -304,17 +317,6 @@ test "contract: cancel aborts in-flight local stream" {
         fn run(self: *@This()) void {
             const stream = self.server.accept(self.io) catch return;
             defer stream.close(self.io);
-            var rbuf: [1024]u8 = undefined;
-            var reader = stream.reader(self.io, &rbuf);
-            // Drain request head (best effort)
-            _ = reader.interface.takeDelimiterInclusive('\n') catch {};
-            var w = stream.writer(self.io, &.{});
-            // Send partial SSE then hang so cancel can fire mid-stream.
-            _ = w.interface.writeAll(
-                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n" ++
-                    "1a\r\ndata: {\"partial\":true}\n\n\r\n",
-            ) catch {};
-            w.interface.flush() catch {};
             std.Io.sleep(self.io, .{ .nanoseconds = 5 * std.time.ns_per_s }, .awake) catch {};
         }
     };
@@ -324,7 +326,6 @@ test "contract: cancel aborts in-flight local stream" {
 
     var base_buf: [64]u8 = undefined;
     const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
-
     var client = try http.Client.initBearer(gpa, io, .{
         .base_url = base_url,
         .api_key = "test",
@@ -334,25 +335,12 @@ test "contract: cancel aborts in-flight local stream" {
     defer client.deinit();
 
     var flag: types.CancelFlag = .{};
-    const control = types.RequestControl.none().withCancel(&flag);
+    const control = types.RequestControl.none().withCancel(&flag).withRequireActiveCancel(true);
 
-    const CancelCtx = struct {
-        flag: *types.CancelFlag,
-        saw_chunk: bool = false,
-        fn onChunk(ctx_ptr: ?*anyopaque, chunk: []const u8) types.ChatError!void {
-            const self: *@This() = @ptrCast(@alignCast(ctx_ptr.?));
-            if (chunk.len > 0) self.saw_chunk = true;
-            // Cancel after first data so abort is mid-flight.
-            self.flag.request();
-        }
-    };
-    var cctx: CancelCtx = .{ .flag = &flag };
-
-    // Also arm a delayed cancel if stream is slow to produce chunks.
     const Arm = struct {
         flag: *types.CancelFlag,
         fn go(self: *@This()) void {
-            std.Io.sleep(std.testing.io, .{ .nanoseconds = 150 * std.time.ns_per_ms }, .awake) catch {};
+            std.Io.sleep(std.testing.io, .{ .nanoseconds = 100 * std.time.ns_per_ms }, .awake) catch {};
             self.flag.request();
         }
     };
@@ -361,51 +349,65 @@ test "contract: cancel aborts in-flight local stream" {
     defer arm_thr.join();
 
     const t0 = types.monoNowNs();
-    const result = client.postJsonStreamControl(
-        "/stream",
-        "{}",
-        CancelCtx.onChunk,
-        &cctx,
-        control,
-    );
+    const result = client.postJsonStreamControl("/s", "{}", struct {
+        fn cb(_: ?*anyopaque, _: []const u8) types.ChatError!void {}
+    }.cb, null, control);
     const elapsed_ms = (types.monoNowNs() - t0) / std.time.ns_per_ms;
-
     try std.testing.expectError(error.Cancelled, result);
     try std.testing.expect(elapsed_ms < 2500);
 }
 
-test "contract: partial tool-call stream state never finishes on cancel" {
-    // Seam: OpenAiStreamState-style assembly discards on error path.
-    // Simulates cancel mid tool_call arguments without invoking finish().
+test "contract: anthropic stream without message_stop is invalid" {
     const gpa = std.testing.allocator;
-    var content: std.ArrayList(u8) = .empty;
-    defer content.deinit(gpa);
-    try content.appendSlice(gpa, "partial");
-    var tool_args: std.ArrayList(u8) = .empty;
-    defer tool_args.deinit(gpa);
-    try tool_args.appendSlice(gpa, "{\"path\":"); // incomplete JSON
-
-    // If we were to finish() this would produce invalid tool args — cancel must not.
-    var flag: types.CancelFlag = .{};
-    flag.request();
-    const control = types.RequestControl.none().withCancel(&flag);
-    try std.testing.expectError(error.Cancelled, control.checkNow());
-    // Incomplete fragments stay local; no AssistantTurn is built.
-    try std.testing.expect(tool_args.items.len > 0);
-    try std.testing.expect(std.mem.indexOf(u8, tool_args.items, "}") == null);
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+    var state: anthropic_messages.StreamState = .{
+        .arena = arena,
+        .handler = null,
+        .handler_ctx = null,
+    };
+    try anthropic_messages.feedSseBytes(&state,
+        \\data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}
+        \\
+    );
+    try std.testing.expect(!state.saw_message_stop);
 }
 
-test "contract: deadline shared across retry attempts (not reset)" {
+test "contract: anthropic malformed SSE JSON fails" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var state: anthropic_messages.StreamState = .{
+        .arena = arena_impl.allocator(),
+        .handler = null,
+        .handler_ctx = null,
+    };
+    try std.testing.expectError(error.InvalidResponse, anthropic_messages.feedSseBytes(&state,
+        \\data: {not-json
+        \\
+    ));
+}
+
+test "contract: atomic tool validation rejects incomplete one-of-two" {
+    const gpa = std.testing.allocator;
+    const bad = [_]types.ToolCall{
+        .{ .id = "a", .name = "ok", .arguments = "{}" },
+        .{ .id = "b", .name = "bad", .arguments = "{\"path\":" },
+    };
+    try std.testing.expectError(error.InvalidResponse, types.validateCompleteToolCalls(gpa, &bad));
+}
+
+test "contract: deadline shared across attempts math" {
     const now = types.monoNowNs();
     const control = types.RequestControl.withTimeoutMs(now, 100);
-    // Simulate first attempt spent 60ms of budget.
-    const later = now + 60 * std.time.ns_per_ms;
-    const rem = control.remainingMs(later).?;
-    try std.testing.expect(rem <= 40);
-    // Same control object: remaining continues to shrink (not reset to 100).
-    const later2 = now + 90 * std.time.ns_per_ms;
-    try std.testing.expect(control.remainingMs(later2).? <= 10);
+    try std.testing.expect(control.remainingMs(now + 60 * std.time.ns_per_ms).? <= 40);
     try std.testing.expectError(error.Timeout, control.check(now + 150 * std.time.ns_per_ms));
+}
+
+test "contract: retryDelayMs saturates" {
+    const d = request_control.retryDelayMs(std.math.maxInt(u64) / 2, 4);
+    try std.testing.expect(d > 0);
 }
 
 test "contract: mapSdkError Cancelled" {

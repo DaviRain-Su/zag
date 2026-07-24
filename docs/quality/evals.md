@@ -82,8 +82,8 @@ These remain useful but do not cover the assessment blockers.
 
 1. two-stage compaction: final `dropped` and summary/lineage match the returned view. ✅ h-context-001 (`context.zig` fixed-point fixtures + agent session/trace integration).
 2. fake configured secrets do not appear in verbose, trace, or session bytes.
-3. timeout is enforced for std/curl paths (loopback wall-bound fixtures; default null = no timeout). ✅ h-provider-001
-4. stream cancellation discards incomplete Tool-call fragments. ✅ h-provider-001
+3. timeout enforced on **curl**; **std** configured timeout → `unsupported_control` before network (default null = no timeout). ✅ h-provider-001 capability-truth
+4. stream requires protocol completion; incomplete tool args reject whole turn. ✅ h-provider-001
 5. external stateful Tool/Provider/Observer/policy/session consumer passes.
 6. headless JSON stdout is clean; failure exit/error matrix is stable.
 

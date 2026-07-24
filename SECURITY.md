@@ -61,7 +61,9 @@ Preflight is non-destructive (atomic temp discarded without replace) and **symli
 
 ## Provider deadline / cancel (h-provider-001)
 
-Configured `timeout_ms` is enforced on **both** std and curl HTTP backends (monotonic deadline; no silent ignore). Default remains **no** timeout when unset. Cooperative cancel (SIGINT / `CancelFlag`) aborts in-flight provider/stream work: curl via progress callback, std via connection shutdown watchdog (~25ms poll + scheduling). Partial streamed tool-call arguments are discarded and never executed. Terminal categories: `cancelled` (ok=true), `timeout` (ok=false), auth/transport remain `provider_error`. This is trusted-host cooperative interrupt — **not** an OS sandbox or multi-tenant isolation.
+- **curl** (`-Dhttp_backend=curl`): configured `timeout_ms` and active cancel (libcurl TIMEOUT_MS + xferinfo) are enforced; setopt failure fails closed before perform.
+- **std** (D-005 default): ordinary no-timeout HTTP remains usable. A **configured deadline** or required active cancel returns typed `UnsupportedControl` / terminal `unsupported_control` **before** network work — no unsafe cross-thread socket shutdown, no silent ineffective timeout.
+- Default remains **no** timeout when unset. Loop is the sole retry owner for agent chat. Partial streamed tool-call arguments are discarded. Terminals: `cancelled` (ok=true), `timeout` / `unsupported_control` (ok=false), auth/transport `provider_error`. Trusted-host only — not an OS sandbox.
 
 ## OS sandbox boundary
 

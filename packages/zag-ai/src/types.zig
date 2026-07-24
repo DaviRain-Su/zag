@@ -21,3 +21,4 @@ pub const CancelFlag = zt.CancelFlag;
 pub const RequestControl = zt.RequestControl;
 pub const monoNowNs = zt.monoNowNs;
 pub const isRetryableError = zt.isRetryableError;
+pub const validateCompleteToolCalls = zt.validateCompleteToolCalls;

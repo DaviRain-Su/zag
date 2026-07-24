@@ -1,20 +1,42 @@
 //! Shared request lifecycle helpers for openai-zig transports (no zag-types dep).
 //!
 //! Hosts (zag-ai) install cancel flag + monotonic deadline via Transport methods.
+//!
+//! ## Capability truth
+//!
+//! - **curl**: can enforce active deadline + active cancel.
+//! - **std**: ordinary requests OK; deadline / require_active_cancel → fail closed
+//!   with `error.Timeout` mapping via Cancelled/Timeout path is not used — use
+//!   `assertSupported` → `error.Unimplemented` is wrong; we map to a distinct
+//!   transport error. openai-zig uses `errors.Error.Unimplemented` historically;
+//!   Agent maps UnsupportedControl from zag-ai before calling SDK when possible.
+//!
+//! No cross-thread connection shutdown (removed: UAF race).
 
 const std = @import("std");
 const builtin = @import("builtin");
 const posix = std.posix;
 const errors = @import("../errors.zig");
+const build_options = @import("openai_build_options");
 
 /// Borrowed cancel + absolute mono deadline for one in-flight request.
 pub const Control = struct {
     /// Points at host-owned `std.atomic.Value(bool)` (e.g. CancelFlag.cancelled).
     cancel_atomic: ?*const std.atomic.Value(bool) = null,
     deadline_mono_ns: ?u64 = null,
+    /// Demand active mid-request abort (curl only).
+    require_active_cancel: bool = false,
 
     pub fn none() Control {
         return .{};
+    }
+
+    pub fn hasDeadline(self: Control) bool {
+        return self.deadline_mono_ns != null;
+    }
+
+    pub fn needsEnforcedLifecycle(self: Control) bool {
+        return self.hasDeadline() or self.require_active_cancel;
     }
 
     pub fn isCancelled(self: Control) bool {
@@ -50,6 +72,17 @@ pub const Control = struct {
         return configured_ms orelse 0;
     }
 };
+
+pub fn backendSupportsActiveLifecycle() bool {
+    return build_options.http_backend == .curl;
+}
+
+/// Fail closed before network when std cannot enforce required control.
+pub fn assertSupported(control: Control) errors.Error!void {
+    if (!control.needsEnforcedLifecycle()) return;
+    if (backendSupportsActiveLifecycle()) return;
+    return error.UnsupportedControl;
+}
 
 pub fn monoNowNs() u64 {
     switch (builtin.os.tag) {
@@ -92,37 +125,6 @@ pub fn mergeConfiguredTimeout(control: Control, timeout_ms: ?u64) Control {
     return .{
         .cancel_atomic = control.cancel_atomic,
         .deadline_mono_ns = now +| add_ns,
+        .require_active_cancel = control.require_active_cancel,
     };
 }
-
-/// Watchdog: shuts down stream when cancel/deadline trips.
-pub const AbortWatch = struct {
-    control: Control,
-    io: std.Io,
-    stream_ptr: std.atomic.Value(?*std.Io.net.Stream) = .init(null),
-    stop: std.atomic.Value(bool) = .init(false),
-
-    pub fn start(self: *AbortWatch) !std.Thread {
-        return std.Thread.spawn(.{}, threadMain, .{self});
-    }
-
-    pub fn finish(self: *AbortWatch, thread: ?std.Thread) void {
-        self.stop.store(true, .seq_cst);
-        if (thread) |t| t.join();
-        self.stream_ptr.store(null, .seq_cst);
-    }
-
-    fn threadMain(self: *AbortWatch) void {
-        while (!self.stop.load(.seq_cst)) {
-            const now = monoNowNs();
-            if (self.control.isCancelled() or self.control.isExpired(now)) {
-                if (self.stream_ptr.load(.seq_cst)) |s| {
-                    s.shutdown(self.io, .both) catch {};
-                }
-                return;
-            }
-            const duration: std.Io.Duration = .{ .nanoseconds = 25 * std.time.ns_per_ms };
-            std.Io.sleep(self.io, duration, .awake) catch {};
-        }
-    }
-};

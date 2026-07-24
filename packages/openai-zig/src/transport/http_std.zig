@@ -2,10 +2,10 @@
 //!
 //! Selected when `-Dhttp_backend=std`. See `http.zig` facade.
 //!
-//! Lifecycle (h-provider-001): `setRequestControl` installs a borrowed cancel
-//! flag + monotonic deadline enforced before attempts and during body streams.
-//! A watchdog shuts down the connection socket on cancel/deadline for bounded
-//! abort latency. No silent ignore of configured `timeout_ms`.
+//! Lifecycle (h-provider-001): `setRequestControl` installs borrowed cancel +
+//! deadline. **std** fails closed with UnsupportedControl when a deadline or
+//! require_active_cancel is set (no unsafe cross-thread socket shutdown).
+//! Cooperative cancel: preflight + between-chunk only.
 
 const std = @import("std");
 const errors = @import("../errors.zig");
@@ -268,6 +268,7 @@ pub const Transport = struct {
     ) !Response {
         const active_opts = self.resolveRequestOptions(req_opts);
         const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
+        try lifecycle.assertSupported(control);
         try control.checkNow();
 
         var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -322,16 +323,6 @@ pub const Transport = struct {
                 }
             }
 
-            var watch: lifecycle.AbortWatch = .{
-                .control = control,
-                .io = self.io,
-            };
-            const watch_thread = if (control.cancel_atomic != null or control.deadline_mono_ns != null)
-                watch.start() catch null
-            else
-                null;
-            defer watch.finish(watch_thread);
-
             var req = self.client.request(method, uri, .{
                 .extra_headers = header_list.items,
                 .keep_alive = false,
@@ -345,10 +336,6 @@ pub const Transport = struct {
                 continue;
             };
             defer req.deinit();
-
-            if (req.connection) |conn| {
-                watch.stream_ptr.store(&conn.stream_reader.stream, .seq_cst);
-            }
 
             if (body) |payload| {
                 req.transfer_encoding = .{ .content_length = payload.len };
@@ -446,6 +433,7 @@ pub const Transport = struct {
     ) errors.Error!void {
         const active_opts = self.resolveRequestOptions(req_opts);
         const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
+        try lifecycle.assertSupported(control);
         try control.checkNow();
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -524,16 +512,6 @@ pub const Transport = struct {
                 }
             }
 
-            var watch: lifecycle.AbortWatch = .{
-                .control = control,
-                .io = self.io,
-            };
-            const watch_thread = if (control.cancel_atomic != null or control.deadline_mono_ns != null)
-                watch.start() catch null
-            else
-                null;
-            defer watch.finish(watch_thread);
-
             var req = self.client.request(method, uri, .{
                 .extra_headers = header_list.items,
                 .keep_alive = false,
@@ -547,10 +525,6 @@ pub const Transport = struct {
                 continue;
             };
             defer req.deinit();
-
-            if (req.connection) |conn| {
-                watch.stream_ptr.store(&conn.stream_reader.stream, .seq_cst);
-            }
 
             if (body) |payload| {
                 req.transfer_encoding = .{ .content_length = payload.len };
@@ -817,6 +791,7 @@ pub fn mapTransportError(err: anyerror) errors.Error {
         errors.Error.SerializeError => errors.Error.SerializeError,
         errors.Error.Timeout => errors.Error.Timeout,
         errors.Error.Cancelled => errors.Error.Cancelled,
+        errors.Error.UnsupportedControl => errors.Error.UnsupportedControl,
         errors.Error.Unimplemented => errors.Error.Unimplemented,
         error.Canceled => errors.Error.Cancelled,
         else => errors.Error.HttpError,

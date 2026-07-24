@@ -128,30 +128,33 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 ## Deadline / cancel / 流式（h-provider-001）
 
+### Capability model（诚实边界）
+
+| Backend | Ordinary no-timeout HTTP | Configured deadline / `timeout_ms` | Active in-flight cancel | Cooperative cancel flag only |
+|---------|--------------------------|------------------------------------|-------------------------|------------------------------|
+| **std** (D-005 default) | ✅ works | `UnsupportedControl` **before network** | `UnsupportedControl` if `require_active_cancel` | preflight + between-chunk only (**not** bounded active abort) |
+| **curl** | ✅ | ✅ `CURLOPT_TIMEOUT_MS` remaining budget | ✅ xferinfo abort | same (active) |
+
+- Default `timeout_ms=null` imposes **no** timeout on either backend.
+- No silent store of ineffective timeout; no unsafe std cross-thread connection shutdown.
+- **L2 for controlled lifecycle is backend-capability L2**: production deadline/active-cancel needs curl (`-Dhttp_backend=curl`).
+
 ### RequestControl 合同（L0）
 
-- `zag-types.RequestControl`：单调 `deadline_mono_ns` + 借用 `*CancelFlag`（原子 seq_cst）。
-- 无 IO 依赖；`monoNowNs()` 用 OS 单调时钟（macOS `UPTIME_RAW` / Linux `MONOTONIC`）。
-- 校验优先级：Cancelled > Timeout。
-- `ChatOptions.control` 承载生命周期（非采样旋钮）；Provider vtable `chat(..., control)` 贯穿 loop → WireProvider → wire → HTTP。
+- `deadline_mono_ns` + borrowed `*CancelFlag` + `require_active_cancel`.
+- `needsEnforcedLifecycle()` → std fail closed; curl enforces.
+- Loop sole retry owner for agent chat (wire `max_retries=0` on provider path).
+- Timeout/Cancelled/UnsupportedControl never retried; deadline budget end-to-end.
 
-### 执行（std + curl）
+### Stream completion / atomic tool turns
 
-| 后端 | timeout | in-flight cancel | 默认 |
-|------|---------|------------------|------|
-| **std** | 合并 `timeout_ms` → deadline；读循环检查；watchdog **shutdown** 连接（~25ms 轮询 + 调度） | 同左；SIGINT 可经 flag + shutdown | `timeout_ms=null` **不**强加超时 |
-| **curl** | `CURLOPT_TIMEOUT_MS` = 剩余预算；0 = 无限（当未配置） | `CURLOPT_XFERINFOFUNCTION` 中止；callback 上下文仅 `perform` 栈期 | 同左（**不再**默认 60s） |
+- OpenAI: explicit SSE `[DONE]` required; premature EOF / leftover event → error; no fabricated done.
+- Anthropic: explicit `message_stop` required; malformed SSE JSON fails whole turn.
+- Before return: every tool call nonempty id/name + arguments complete JSON **object**; any invalid slot rejects entire turn.
 
-- 配置的 `timeout_ms` **必须**执行；禁止静默存储无效字段。
-- 传输层与 loop 重试共享同一 deadline 预算（不 per-retry 重置）。
-- 半截 tool-call JSON：stream 错误路径 **不**调用 `finish()`；不完整 AssistantTurn 不进 transcript / 不执行。
-- 终态：`cancelled`（ok=true）；`timeout`（ok=false）；auth/transport 仍 `provider_error`。
+### Terminals
 
-### OS / backend 限制
-
-- 可信本机：连接 shutdown / curl abort 为协作中断，**不是** OS sandbox。
-- std 阻塞在未设超时的内核连接阶段时，bound 依赖 watchdog shutdown 的调度延迟（文档上界：秒级测试墙钟，目标 << 服务端故意挂起）。
-- curl 依赖 libcurl progress/timeout；无额外线程泄漏（Easy 栈上 deinit/join 确定）。
+- `cancelled` ok=true; `timeout` ok=false; `unsupported_control` ok=false; auth/transport `provider_error`.
 
 ## Contract tests
 

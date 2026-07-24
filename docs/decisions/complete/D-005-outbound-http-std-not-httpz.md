@@ -27,9 +27,9 @@ Using a server library as a client is a category error. HTTP **server** choice (
 
 ## Honest note on `std.http.Client`
 
-Upstream remains awkward on 0.16 (TLS/hang/timeout sharp edges). Zag mitigations: `keep_alive = false`, retries, SSE vs buffered paths, status → `wire.Error`.
+Upstream remains awkward on 0.16 (TLS/hang/timeout sharp edges). Zag mitigations: `keep_alive = false`, app-level retries (loop owns agent retries), SSE vs buffered paths, status → `wire.Error`.
 
-**Phase 3 bake-off confirmed:** `timeout_ms` is stored on the std path but **not enforced**; curl honors `CURLOPT_TIMEOUT_MS` (~1.5s abort on `/delay/5`). See [http-backend-bakeoff.md](../../quality/http-backend-bakeoff.md).
+**h-provider-001 capability truth:** default remains **std** for ordinary no-timeout HTTP. A configured deadline / required active cancel is **not** silently ignored on std — it returns typed `UnsupportedControl` before network work. Production deadline/active-cancel needs **curl** (`-Dhttp_backend=curl`), which enforces `CURLOPT_TIMEOUT_MS` + xferinfo abort. See [zag-ai-provider.md](../../modules/zag-ai-provider.md) and [http-backend-bakeoff.md](../../quality/http-backend-bakeoff.md).
 
 ## Libcurl route — closed
 

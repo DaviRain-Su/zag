@@ -260,9 +260,10 @@ pub const Client = struct {
 
         const timeout_ms = control.curlTimeoutMs(rc.monoNowNs(), self.timeout_ms);
         // When deadline/config present, always set TIMEOUT_MS (including 1ms when expired).
+        // Check every setopt: silent disable is forbidden.
         if (timeout_ms > 0 or control.deadline_mono_ns != null or self.timeout_ms != null) {
             const t: c_long = @intCast(@min(timeout_ms, std.math.maxInt(c_long)));
-            _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_TIMEOUT_MS, t);
+            try checkCurlSetopt(libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_TIMEOUT_MS, t));
         }
 
         var header_list: curl.Easy.Headers = .{};
@@ -307,15 +308,15 @@ pub const Client = struct {
             easy.setPostFields(payload) catch return error.HttpFailed;
         }
 
-        // Progress/xferinfo for cooperative cancel — context lives on this stack frame.
+        // Progress/xferinfo for active cancel — context lives on this stack frame only.
         var cb_ctx: CallbackCtx = .{
             .control = control,
             .on_chunk = on_chunk,
             .chunk_ctx = chunk_ctx,
         };
-        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_NOPROGRESS, @as(c_long, 0));
-        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFODATA, @as(?*anyopaque, @ptrCast(&cb_ctx)));
-        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFOFUNCTION, xferInfo);
+        try checkCurlSetopt(libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_NOPROGRESS, @as(c_long, 0)));
+        try checkCurlSetopt(libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFODATA, @as(?*anyopaque, @ptrCast(&cb_ctx))));
+        try checkCurlSetopt(libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFOFUNCTION, xferInfo));
 
         if (stream) {
             const cb = on_chunk orelse return error.Unexpected;
@@ -351,6 +352,10 @@ pub const Client = struct {
         return .{ .status = @intCast(resp.status_code), .body = bytes };
     }
 };
+
+fn checkCurlSetopt(code: libcurl.CURLcode) Error!void {
+    if (code != libcurl.CURLE_OK) return error.HttpFailed;
+}
 
 fn streamWrite(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaque) callconv(.c) c_uint {
     const real_size = size * nmemb;

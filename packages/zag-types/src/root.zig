@@ -27,6 +27,8 @@ pub const ChatError = error{
     BadRequest,
     /// Capability not available on this wire (e.g. embeddings on Anthropic).
     NotSupported,
+    /// Backend cannot enforce required deadline/active-cancel control (fail closed).
+    UnsupportedControl,
 };
 
 /// Cooperative cancel flag. Thread- and signal-safe via seq_cst atomics.
@@ -92,14 +94,35 @@ pub fn monoNowNs() u64 {
 ///
 /// - `deadline_mono_ns`: absolute mono ns; null = no deadline.
 /// - `cancel`: borrowed flag; null = no mid-request cancel signal.
+/// - `require_active_cancel`: when true, transport must actively interrupt in-flight
+///   work (curl xferinfo/timeout). std cannot provide this and must fail closed
+///   with `UnsupportedControl` before network work.
 /// - Thread safety: cancel is atomic; deadline is a plain value (immutable after build).
 /// - L0 has no IO: transports supply the same mono clock via `monoNowNs` / checks.
+/// - Pointer lifetime: `cancel` must outlive the in-flight request (host-owned).
 pub const RequestControl = struct {
     deadline_mono_ns: ?u64 = null,
     cancel: ?*CancelFlag = null,
+    /// Demand bounded active mid-request abort (not mere preflight/between-chunk).
+    require_active_cancel: bool = false,
 
     pub fn none() RequestControl {
         return .{};
+    }
+
+    /// True when a deadline is set (configured timeout / remaining budget).
+    pub fn hasDeadline(self: RequestControl) bool {
+        return self.deadline_mono_ns != null;
+    }
+
+    /// True when control requires capabilities beyond ordinary no-timeout HTTP.
+    pub fn needsEnforcedLifecycle(self: RequestControl) bool {
+        return self.hasDeadline() or self.require_active_cancel;
+    }
+
+    /// Ordinary cooperative cancel (preflight / between-chunk) without active interrupt.
+    pub fn hasCooperativeCancel(self: RequestControl) bool {
+        return self.cancel != null;
     }
 
     /// Build a deadline from relative `timeout_ms` and current mono time.
@@ -118,6 +141,12 @@ pub const RequestControl = struct {
     pub fn withCancel(self: RequestControl, flag: *CancelFlag) RequestControl {
         var c = self;
         c.cancel = flag;
+        return c;
+    }
+
+    pub fn withRequireActiveCancel(self: RequestControl, required: bool) RequestControl {
+        var c = self;
+        c.require_active_cancel = required;
         return c;
     }
 
@@ -425,9 +454,29 @@ pub const StreamHandler = *const fn (ctx: ?*anyopaque, event: StreamEvent) anyer
 pub fn isRetryableError(err: anyerror) bool {
     return switch (err) {
         error.RateLimited, error.ServerError, error.HttpFailed => true,
-        error.Timeout, error.Cancelled, error.NotSupported => false,
+        error.Timeout, error.Cancelled, error.NotSupported, error.UnsupportedControl => false,
         else => false,
     };
+}
+
+/// Validate a complete AssistantTurn's tool calls before crossing the provider boundary.
+/// Every tool call needs nonempty id/name and arguments that parse as a JSON **object**.
+/// Any invalid slot rejects the entire turn (atomic). Scratch `allocator` for parse only.
+pub fn validateCompleteToolCalls(allocator: std.mem.Allocator, tool_calls: []const ToolCall) ChatError!void {
+    for (tool_calls) |tc| {
+        if (tc.id.len == 0 or tc.name.len == 0) return error.InvalidResponse;
+        var parsed = std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
+            tc.arguments,
+            .{},
+        ) catch return error.InvalidResponse;
+        defer parsed.deinit();
+        switch (parsed.value) {
+            .object => {},
+            else => return error.InvalidResponse,
+        }
+    }
 }
 
 test "role json names" {
@@ -458,6 +507,36 @@ test "isRetryableError" {
 
 test "isRetryableError does not treat NotSupported as retryable" {
     try std.testing.expect(!isRetryableError(error.NotSupported));
+    try std.testing.expect(!isRetryableError(error.UnsupportedControl));
+}
+
+test "validateCompleteToolCalls rejects incomplete JSON and scalars" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectError(error.InvalidResponse, validateCompleteToolCalls(gpa, &.{.{
+        .id = "c1",
+        .name = "read_file",
+        .arguments = "{\"path\":",
+    }}));
+    try std.testing.expectError(error.InvalidResponse, validateCompleteToolCalls(gpa, &.{.{
+        .id = "c1",
+        .name = "read_file",
+        .arguments = "\"just-a-string\"",
+    }}));
+    try std.testing.expectError(error.InvalidResponse, validateCompleteToolCalls(gpa, &.{.{
+        .id = "c1",
+        .name = "read_file",
+        .arguments = "[1,2]",
+    }}));
+    try std.testing.expectError(error.InvalidResponse, validateCompleteToolCalls(gpa, &.{.{
+        .id = "",
+        .name = "x",
+        .arguments = "{}",
+    }}));
+    try validateCompleteToolCalls(gpa, &.{.{
+        .id = "c1",
+        .name = "read_file",
+        .arguments = "{\"path\":\"a\"}",
+    }});
 }
 
 test "isRetryableError does not treat Timeout or Cancelled as retryable" {

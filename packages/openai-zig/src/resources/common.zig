@@ -412,22 +412,21 @@ fn StreamEventParser(comptime T: type) type {
         }
 
         fn flush(self: *@This()) errors.Error!void {
+            // Leftover unterminated line or event buffer → incomplete SSE.
             if (self.line_buf.items.len > 0) {
                 const line = @This().trimLine(self.line_buf.items);
                 try self.consumeLine(line);
                 self.line_buf.clearRetainingCapacity();
             }
             if (self.data_buf.items.len > 0) {
-                try self.dispatch();
-                self.data_buf.clearRetainingCapacity();
-                self.ready_to_dispatch = false;
+                // Unterminated event (no blank-line dispatch) at EOF: fail closed.
+                return errors.Error.HttpError;
             }
 
-            if (!self.done and self.has_dispatched_events) {
-                self.done = true;
-                if (self.on_done) |handler| {
-                    try handler(self.done_ctx);
-                }
+            // Strict: require explicit `[DONE]` (or other path that set `done`).
+            // Do not fabricate completion on premature EOF.
+            if (!self.done) {
+                return errors.Error.HttpError;
             }
         }
 
@@ -650,7 +649,7 @@ pub const MultipartBuilder = struct {
         name: []const u8,
         value: []const u8,
     ) errors.Error!void {
-                self.out.appendSlice(self.allocator, "--") catch return errors.Error.SerializeError;
+        self.out.appendSlice(self.allocator, "--") catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, self.boundary) catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, "\r\n") catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, "Content-Disposition: form-data; name=\"") catch return errors.Error.SerializeError;
@@ -666,7 +665,7 @@ pub const MultipartBuilder = struct {
         value: []const u8,
         content_type: []const u8,
     ) errors.Error!void {
-                self.out.appendSlice(self.allocator, "--") catch return errors.Error.SerializeError;
+        self.out.appendSlice(self.allocator, "--") catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, self.boundary) catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, "\r\n") catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, "Content-Disposition: form-data; name=\"") catch return errors.Error.SerializeError;
@@ -686,7 +685,7 @@ pub const MultipartBuilder = struct {
         content_type: []const u8,
         data: []const u8,
     ) errors.Error!void {
-                self.out.appendSlice(self.allocator, "--") catch return errors.Error.SerializeError;
+        self.out.appendSlice(self.allocator, "--") catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, self.boundary) catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, "\r\n") catch return errors.Error.SerializeError;
         self.out.appendSlice(self.allocator, "Content-Disposition: form-data; name=\"") catch return errors.Error.SerializeError;

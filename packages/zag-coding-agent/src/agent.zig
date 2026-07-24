@@ -525,8 +525,8 @@ pub const Agent = struct {
         return switch (stop) {
             // Clean cooperative cancel is a normal Result, not a harness failure.
             .completed, .max_turns, .cancelled => true,
-            // Deadline exhausted is a failed run (ok=false).
-            .timeout, .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset, .invalid_context => false,
+            // Deadline / unsupported control are failed runs (ok=false).
+            .timeout, .unsupported_control, .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset, .invalid_context => false,
         };
     }
 
@@ -1002,6 +1002,62 @@ test "h-trace: max_turns terminal ok=true stop_reason=max_turns" {
 
     const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
     try expectRunEnd(tr, true, "max_turns");
+}
+
+test "h-provider: unsupported_control timeout on mock" {
+    // When provider returns UnsupportedControl, loop Result is ok=false category.
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        calls: *u32,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
+            return error.UnsupportedControl;
+        }
+    };
+    var calls: u32 = 0;
+    var mock: Mock = .{ .calls = &calls };
+    var agent = Agent.init(gpa, std.testing.io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{ .permission_mode = .yolo, .chat_retries = 3 });
+    defer agent.deinit();
+    var session = try Session.start(gpa, std.testing.io, .{ .base_system = "sys" });
+    defer session.deinit();
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.unsupported_control, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), calls); // not retried
+}
+
+test "h-provider: timeout terminal ok=false" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return error.Timeout;
+        }
+    };
+    var agent = Agent.init(gpa, std.testing.io, .{
+        .ptr = undefined,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{ .permission_mode = .yolo, .trace_path = null });
+    defer agent.deinit();
+    // Memory-only trace via force buffer - use null path but still check stop_reason
+    var session = try Session.start(gpa, std.testing.io, .{ .base_system = "sys" });
+    defer session.deinit();
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.timeout, result.stop_reason);
 }
 
 test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {

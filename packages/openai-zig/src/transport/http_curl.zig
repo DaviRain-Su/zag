@@ -208,6 +208,7 @@ pub const Transport = struct {
     ) errors.Error!Response {
         const active_opts = self.resolveRequestOptions(req_opts);
         const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
+        try lifecycle.assertSupported(control);
         try control.checkNow();
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
@@ -297,14 +298,18 @@ pub const Transport = struct {
         const timeout_ms = control.curlTimeoutMs(lifecycle.monoNowNs(), active_opts.timeout_ms);
         if (timeout_ms > 0 or control.deadline_mono_ns != null or active_opts.timeout_ms != null) {
             const t: c_long = @intCast(@min(timeout_ms, std.math.maxInt(c_long)));
-            _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_TIMEOUT_MS, t);
+            if (libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_TIMEOUT_MS, t) != libcurl.CURLE_OK)
+                return errors.Error.HttpError;
         }
 
-        // Progress callback context lives for this attempt only.
+        // Progress callback context lives for this attempt only; setopt must succeed.
         var life_ctx: CurlLifeCtx = .{ .control = control };
-        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_NOPROGRESS, @as(c_long, 0));
-        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFODATA, @as(?*anyopaque, @ptrCast(&life_ctx)));
-        _ = libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFOFUNCTION, curlXferInfo);
+        if (libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_NOPROGRESS, @as(c_long, 0)) != libcurl.CURLE_OK)
+            return errors.Error.HttpError;
+        if (libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFODATA, @as(?*anyopaque, @ptrCast(&life_ctx))) != libcurl.CURLE_OK)
+            return errors.Error.HttpError;
+        if (libcurl.curl_easy_setopt(easy.handle, libcurl.CURLOPT_XFERINFOFUNCTION, curlXferInfo) != libcurl.CURLE_OK)
+            return errors.Error.HttpError;
 
         if (self.proxy_url) |proxy| {
             const proxy_z = try arena.dupeZ(u8, proxy);

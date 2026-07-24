@@ -27,11 +27,11 @@ Run one agent loop: build model view, request one assistant turn, execute reques
 
 Stable stop categories include:
 
-`completed | max_turns | cancelled | timeout | provider_error | session_error | trace_error | out_of_memory | invalid_toolset | invalid_context`
+`completed | max_turns | cancelled | timeout | unsupported_control | provider_error | session_error | trace_error | out_of_memory | invalid_toolset | invalid_context`
 
-- Loop returns Result for `completed` / `max_turns` / `cancelled` / **`timeout`**.
+- Loop returns Result for `completed` / `max_turns` / `cancelled` / **`timeout`** / **`unsupported_control`**.
 - Loop returns `error.ProviderFailed` for provider/auth failures (facade → `ok=false`, `provider_error`).
-- In-flight provider **Timeout** → Result `stop_reason=timeout` (ok=false at facade); **Cancelled** → Result `cancelled` (ok=true).
+- **Timeout** → `timeout` (ok=false); **Cancelled** → `cancelled` (ok=true); **UnsupportedControl** → `unsupported_control` (ok=false).
 - Loop returns `error.InvalidToolset` / `error.OutOfMemory` / `error.TraceFailed` as typed errors (facade maps to `invalid_toolset` / `out_of_memory` / `trace_error` — **never** misclassified as `provider_error`).
 - `session_error` / `trace_error` terminals are committed by the **facade** only.
 - Mid-run trace emit failures are never swallowed (`mapTraceEmit` → `OutOfMemory` or `TraceFailed`).
@@ -53,8 +53,9 @@ Malformed host registration is not an `unknown_tool` soft result; it fails befor
 ## Cancellation/deadline boundary
 
 - Cooperative flag checks between provider turns and Tool calls.
-- **In-flight provider path** (h-provider-001): same cancel flag + optional end-to-end `provider_timeout_ms` become `RequestControl` for every `provider.chat` attempt; HTTP std/curl actively abort.
-- Deadline budget is end-to-end across loop retries; Timeout/Cancelled are not retried.
+- **In-flight provider path** (h-provider-001): cancel flag + optional end-to-end `provider_timeout_ms` → `RequestControl`.
+- **curl** actively enforces deadline/cancel; **std** fails closed with `unsupported_control` when a deadline is configured (ordinary no-timeout std remains usable).
+- Loop is sole retry/backoff owner (overflow-safe ≤25ms slices); Timeout/Cancelled/UnsupportedControl are not retried.
 - Only a complete validated `AssistantTurn` is appended; partial streamed tool-call fragments are discarded on cancel/timeout.
 - Pending **accepted** tool calls still get cancelled bodies for transcript consistency when cancel fires between tools.
 - Tool handlers that declare `.cooperative` cancel metadata do not yet receive mid-flight preemption (still post-H / shell task).

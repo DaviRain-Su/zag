@@ -104,7 +104,11 @@ pub const Client = struct {
         const chat_tools = try toChatTools(arena, tools);
         const req = try buildChatRequest(self.config.model, chat_messages, chat_tools, opts, false);
 
-        // Thread request control into openai-zig transport for deadline/cancel.
+        // Agent path: loop owns retries (exactly chat_retries+1 network attempts).
+        const saved_retries = self.sdk.transport.max_retries;
+        self.sdk.transport.max_retries = 0;
+        defer self.sdk.transport.max_retries = saved_retries;
+
         self.sdk.transport.setRequestControl(toSdkControl(opts.control));
         defer self.sdk.transport.clearRequestControl();
 
@@ -113,7 +117,9 @@ pub const Client = struct {
         };
         defer parsed.deinit();
 
-        return try turnFromResponse(arena, parsed.value);
+        const turn = try turnFromResponse(arena, parsed.value);
+        try types.validateCompleteToolCalls(arena, turn.tool_calls);
+        return turn;
     }
 
     /// OpenAI Chat Completions SSE stream; returns assembled turn.
@@ -137,11 +143,14 @@ pub const Client = struct {
             .handler_ctx = handler_ctx,
         };
 
-        // Thread request control into openai-zig transport for deadline/cancel.
+        const saved_retries = self.sdk.transport.max_retries;
+        self.sdk.transport.max_retries = 0;
+        defer self.sdk.transport.max_retries = saved_retries;
+
         self.sdk.transport.setRequestControl(toSdkControl(opts.control));
         defer self.sdk.transport.clearRequestControl();
 
-        // On cancel/timeout, partial OpenAiStreamState is discarded (never finish()).
+        // On cancel/timeout/incomplete, partial state is discarded (never finish()).
         self.sdk.chat().create_chat_completion_stream_with_done(
             arena,
             req,
@@ -155,7 +164,10 @@ pub const Client = struct {
         };
 
         if (state.err) |e| return e;
-        return state.finish() catch return error.OutOfMemory;
+        if (!state.saw_protocol_done) return error.InvalidResponse;
+        const turn = state.finish() catch return error.OutOfMemory;
+        try types.validateCompleteToolCalls(arena, turn.tool_calls);
+        return turn;
     }
 
     pub fn chatStream(
@@ -323,6 +335,8 @@ const OpenAiStreamState = struct {
     tool_names: std.ArrayList([]const u8) = .empty,
     tool_args: std.ArrayList(std.ArrayList(u8)) = .empty,
     finish_reason: []const u8 = "",
+    /// Set only on explicit SSE `[DONE]` via on_done (never fabricated).
+    saw_protocol_done: bool = false,
     err: ?Error = null,
 
     fn ensureToolSlot(self: *OpenAiStreamState, index: usize) !void {
@@ -452,6 +466,8 @@ fn onOpenAiSdkEvent(
 
 fn onOpenAiSdkDone(user_ctx: ?*anyopaque) openai.errors.Error!void {
     const state: *OpenAiStreamState = @ptrCast(@alignCast(user_ctx.?));
+    // Invoked only after explicit `[DONE]` (strict SSE parser).
+    state.saw_protocol_done = true;
     if (state.handler) |h| {
         h(state.handler_ctx, .done) catch {
             state.err = error.StreamFailed;
@@ -504,9 +520,9 @@ fn toSdkControl(control: types.RequestControl) openai.transport.lifecycle.Contro
     return .{
         .cancel_atomic = if (control.cancel) |f| &f.cancelled else null,
         .deadline_mono_ns = control.deadline_mono_ns,
+        .require_active_cancel = control.require_active_cancel,
     };
 }
-// openai = openai_zig package (import alias at top of file)
 
 /// Map **openai-zig SDK** errors into shared `wire.Error`.
 /// Only used by this OpenAI adapter — Anthropic uses `http` + `wire.Error` directly.
@@ -519,6 +535,7 @@ pub fn mapSdkError(err: anyerror) Error {
     if (std.mem.eql(u8, name, "RateLimitError")) return error.RateLimited;
     if (std.mem.eql(u8, name, "Timeout") or std.mem.eql(u8, name, "TimeoutError")) return error.Timeout;
     if (std.mem.eql(u8, name, "Cancelled") or std.mem.eql(u8, name, "Canceled")) return error.Cancelled;
+    if (std.mem.eql(u8, name, "UnsupportedControl")) return error.UnsupportedControl;
     if (std.mem.eql(u8, name, "InternalServerError")) return error.ServerError;
     if (std.mem.eql(u8, name, "BadRequestError") or
         std.mem.eql(u8, name, "UnprocessableEntityError") or
@@ -538,6 +555,7 @@ pub fn mapSdkError(err: anyerror) Error {
     if (std.mem.eql(u8, name, "StreamFailed")) return error.StreamFailed;
     if (std.mem.eql(u8, name, "BadStatus")) return error.BadStatus;
     if (std.mem.eql(u8, name, "NotSupported")) return error.NotSupported;
+    if (std.mem.eql(u8, name, "UnsupportedControl")) return error.UnsupportedControl;
     return error.HttpFailed;
 }
 

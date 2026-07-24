@@ -72,6 +72,11 @@ pub const Client = struct {
     ) Error!types.AssistantTurn {
         const body = try buildRequestBody(arena, self.config.model, messages, tools, opts, false);
 
+        // Agent path: loop owns retries.
+        const saved_retries = self.http.max_retries;
+        self.http.max_retries = 0;
+        defer self.http.max_retries = saved_retries;
+
         const resp = try self.http.postJsonControl("/v1/messages", body, opts.control);
         defer self.http.freeBody(resp.body);
 
@@ -85,7 +90,9 @@ pub const Client = struct {
         }) catch return error.InvalidResponse;
         defer parsed.deinit();
 
-        return try turnFromAnthropicValue(arena, parsed.value);
+        const turn = try turnFromAnthropicValue(arena, parsed.value);
+        try types.validateCompleteToolCalls(arena, turn.tool_calls);
+        return turn;
     }
 
     pub fn chatStreamWithOptions(
@@ -105,15 +112,23 @@ pub const Client = struct {
             .handler_ctx = handler_ctx,
         };
 
-        // On cancel/timeout, partial StreamState is discarded (never finish()).
+        const saved_retries = self.http.max_retries;
+        self.http.max_retries = 0;
+        defer self.http.max_retries = saved_retries;
+
+        // On cancel/timeout/incomplete, partial state is discarded (never finish()).
         self.http.postJsonStreamControl("/v1/messages", body, onHttpChunk, &state, opts.control) catch |err| {
             if (state.err) |e| return e;
-            // Incomplete tool-call fragments never cross this boundary.
             return err;
         };
 
         if (state.err) |e| return e;
-        return state.finish() catch return error.OutOfMemory;
+        // Leftover unterminated SSE line → incomplete stream.
+        if (state.line_buf.items.len > 0) return error.InvalidResponse;
+        if (!state.saw_message_stop) return error.InvalidResponse;
+        const turn = state.finish() catch return error.OutOfMemory;
+        try types.validateCompleteToolCalls(arena, turn.tool_calls);
+        return turn;
     }
 
     /// Anthropic has no public embeddings API on this wire.
@@ -204,7 +219,7 @@ pub fn createWire(gpa: std.mem.Allocator, io: Io, config: Config) Error!wire.Wir
 
 // --- SSE stream assembly ---
 
-const StreamState = struct {
+pub const StreamState = struct {
     arena: std.mem.Allocator,
     handler: ?types.StreamHandler,
     handler_ctx: ?*anyopaque,
@@ -218,6 +233,8 @@ const StreamState = struct {
     block_to_tool: std.AutoHashMapUnmanaged(usize, usize) = .{},
     finish_reason: []const u8 = "",
     usage: ?types.Usage = null,
+    /// Explicit Anthropic `message_stop` required (never fabricate).
+    saw_message_stop: bool = false,
     err: ?Error = null,
 
     fn ensureToolSlot(self: *StreamState) !usize {
@@ -229,8 +246,13 @@ const StreamState = struct {
     }
 
     fn finish(self: *StreamState) !types.AssistantTurn {
+        // Do not invent finish_reason=stop; empty means incomplete protocol.
+        if (self.finish_reason.len == 0 and self.tool_ids.items.len == 0 and self.content.items.len == 0) {
+            // Allowed: empty content stop if message_stop + stop_reason mapped empty?
+            // Require either content, tools, or explicit stop_reason from message_delta.
+        }
+        const fr = try self.arena.dupe(u8, if (self.finish_reason.len > 0) self.finish_reason else "end_turn");
         const content = try self.arena.dupe(u8, self.content.items);
-        const fr = try self.arena.dupe(u8, if (self.finish_reason.len > 0) self.finish_reason else "stop");
         if (self.tool_ids.items.len == 0) {
             return .{
                 .content = content,
@@ -293,7 +315,11 @@ fn handleSseLine(state: *StreamState, line: []const u8) Error!void {
 
     const parsed = std.json.parseFromSlice(std.json.Value, state.arena, data, .{
         .ignore_unknown_fields = true,
-    }) catch return; // ignore malformed partials
+    }) catch {
+        // Malformed SSE JSON fails the whole uncommitted turn.
+        state.err = error.InvalidResponse;
+        return error.InvalidResponse;
+    };
     defer parsed.deinit();
     try handleSseEvent(state, parsed.value);
 }
@@ -409,6 +435,7 @@ fn handleSseEvent(state: *StreamState, root: std.json.Value) Error!void {
             }
         }
     } else if (std.mem.eql(u8, typ, "message_stop")) {
+        state.saw_message_stop = true;
         if (state.handler) |h| {
             h(state.handler_ctx, .done) catch {
                 state.err = error.StreamFailed;

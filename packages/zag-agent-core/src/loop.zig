@@ -87,6 +87,8 @@ pub const StopReason = enum {
     cancelled,
     /// End-to-end provider deadline fired (ok=false).
     timeout,
+    /// Backend cannot enforce required deadline/active-cancel (ok=false).
+    unsupported_control,
     provider_error,
     /// Session save failed after loop Result; terminal ok=false (facade).
     session_error,
@@ -105,6 +107,7 @@ pub const StopReason = enum {
             .max_turns => "max_turns",
             .cancelled => "cancelled",
             .timeout => "timeout",
+            .unsupported_control => "unsupported_control",
             .provider_error => "provider_error",
             .session_error => "session_error",
             .trace_error => "trace_error",
@@ -228,6 +231,12 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
                 .turns = turns,
                 .usage = usage_total,
                 .stop_reason = .timeout,
+            },
+            .unsupported_control => return .{
+                .final_text = last_text,
+                .turns = turns,
+                .usage = usage_total,
+                .stop_reason = .unsupported_control,
             },
         };
 
@@ -455,6 +464,7 @@ const ChatOutcome = union(enum) {
     turn: message.AssistantTurn,
     cancelled: void,
     timeout: void,
+    unsupported_control: void,
 };
 
 fn chatWithRetry(
@@ -491,14 +501,15 @@ fn chatWithRetry(
             switch (err) {
                 error.Cancelled => return .{ .cancelled = {} },
                 error.Timeout => return .{ .timeout = {} },
+                error.UnsupportedControl, error.NotSupported => return .{ .unsupported_control = {} },
                 else => {},
             }
             const retryable = zt.isRetryableError(err);
             const more = attempt + 1 < max_attempts;
             if (!retryable or !more) return error.ProviderFailed;
 
-            // Do not sleep past remaining deadline budget.
-            var delay_ms = deps.options.retry_base_delay_ms * (@as(u64, 1) << @intCast(@min(attempt, 4)));
+            // Overflow-safe delay, clamped to remaining deadline, sliced ≤25ms.
+            var delay_ms = retryDelayMsSaturating(deps.options.retry_base_delay_ms, attempt);
             if (control.remainingMs(zt.monoNowNs())) |rem| {
                 if (rem == 0) return .{ .timeout = {} };
                 delay_ms = @min(delay_ms, rem);
@@ -513,11 +524,36 @@ fn chatWithRetry(
                     .{ attempt + 1, deps.options.chat_retries, @errorName(err) },
                 );
             }
-            const duration: std.Io.Duration = .{ .nanoseconds = @intCast(delay_ms * std.time.ns_per_ms) };
-            std.Io.sleep(deps.tool_ctx.io, duration, .real) catch {};
+            sleepSliced(deps.tool_ctx.io, delay_ms, control) catch |se| switch (se) {
+                error.Cancelled => return .{ .cancelled = {} },
+                error.Timeout => return .{ .timeout = {} },
+            };
         }
     }
     return error.ProviderFailed;
+}
+
+fn retryDelayMsSaturating(base_ms: u64, attempt: u32) u64 {
+    const shift: u6 = @intCast(@min(attempt, 4));
+    const factor: u64 = @as(u64, 1) << shift;
+    return std.math.mul(u64, base_ms, factor) catch std.math.maxInt(u64);
+}
+
+/// Short-sliced sleep so cancel is observed promptly during long backoff.
+fn sleepSliced(io: std.Io, delay_ms: u64, control: zt.RequestControl) error{ Cancelled, Timeout }!void {
+    const slice_ms: u64 = 25;
+    var left = delay_ms;
+    while (left > 0) {
+        control.checkNow() catch |e| return e;
+        const step = @min(left, slice_ms);
+        const ns: i96 = @intCast(@as(u64, step) *% std.time.ns_per_ms);
+        const duration: std.Io.Duration = .{ .nanoseconds = ns };
+        std.Io.sleep(io, duration, .real) catch {
+            if (control.isCancelled()) return error.Cancelled;
+        };
+        left -|= step;
+    }
+    control.checkNow() catch |e| return e;
 }
 
 fn finishTool(

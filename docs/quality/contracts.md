@@ -35,14 +35,14 @@ At least OpenAI-compatible and Anthropic-style fixtures cover the canonical beha
 
 ## Current status
 
-Request/turn/error/SSE assembly fixtures exist. **h-provider-001** adds:
+**h-provider-001** (capability-truth follow-up):
 
-- L0 `RequestControl` + `CancelFlag` + non-retryable Timeout/Cancelled.
-- std and curl enforce `timeout_ms` / control (loopback slow-server wall bound; cancel abort).
-- Preflight cancel/zero-timeout fails before network.
-- Partial tool-call fragments discarded (no finish on error); loop does not append incomplete turns.
-- Deadline shared across retries; Timeout not retried.
-- Dual backend: `zig build test` and `zig build test -Dhttp_backend=curl`.
+- L0 `RequestControl` + non-retryable Timeout/Cancelled/UnsupportedControl.
+- **std**: ordinary HTTP OK; configured deadline / `require_active_cancel` → `UnsupportedControl` before network (no watchdog).
+- **curl**: loopback timeout/cancel wall-bound fixtures; active xferinfo + TIMEOUT_MS; setopt failures fail closed.
+- Loop sole retry owner; overflow-safe sliced backoff; deadline shared across attempts.
+- Strict OpenAI `[DONE]` / Anthropic `message_stop`; atomic tool-call JSON object validation.
+- Dual backend CI.
 
 Stable raw fixture directory naming under `testdata/contracts/` remains optional polish.
 
