@@ -55,7 +55,7 @@ Schema presence or existing happy-path tests do not mark H3/H4 closed.
 ```text
 P0: h-session-001 · h-tool-runtime-001 · h-workspace-001 · h-trace-001
   ↓
-P1: h-context-001 · h-provider-001 · h-redact-001 (branch; pending Gate)
+P1: h-context-001 · h-provider-001 · h-redact-001 ✅
   ↓
 h-integration-001（real composition failure matrix）
   ↓

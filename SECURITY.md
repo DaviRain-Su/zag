@@ -43,7 +43,7 @@ Built-ins declare capabilities; custom Tool names require mandatory runtime capa
 
 ### Session and audit reliability
 
-Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is **implemented on branch, pending Gate** for known keys/patterns (h-redact-001) — still treat `.zag/` as sensitive.
+Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is complete for known keys/patterns (h-redact-001) — still treat `.zag/` as sensitive.
 
 ## Secrets
 
@@ -64,7 +64,7 @@ Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/termi
   - trace: `Trace.redactor == null` / never bound (skip redaction before serialize).
 - **Not claimed:** zeroization of freed secret buffers, DLP over arbitrary tool/file content, or proof that `.zag/` is secret-free.
 - Treat all `.zag/` files as sensitive local state and keep them out of version control.
-- Status: h-redact-001 **branch implemented, pending Gate** (not done).
+- Status: h-redact-001 **done** after independent review and main-branch std/curl verification.
 
 Redaction reduces known-key and shape leakage; it will not prove arbitrary file/Tool output secret-free.
 
@@ -94,7 +94,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~explicit Tool capabilities/fail-closed custom policy~~ | **done** Phase H P0 h-tool-runtime-001 |
 | ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
 | ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 |
-| systematic secret redaction | Phase H P1 h-redact-001 — **branch implemented, pending Gate** (not DLP; `.zag/` still sensitive) |
+| ~~systematic secret redaction~~ | **done** Phase H P1 h-redact-001 (not DLP; `.zag/` still sensitive) |
 | ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (tool/shell mid-flight cancel still open) |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |

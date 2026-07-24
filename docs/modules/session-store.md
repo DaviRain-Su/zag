@@ -23,7 +23,7 @@ The Session owner holds transcript memory, path, metadata, and the active-writer
 6. L2 has at most one active writer per persisted session; last-writer-wins is forbidden.
 7. Session files may contain code, command output, and residual secrets; `.zag/` remains sensitive local state even after redaction.
 8. Session paths are **lexical** relative-workspace paths only (absolute/`..` rejected). This is not symlink containment.
-9. **Redaction (h-redact-001, branch; pending Gate):** product `Writer.save` requires a `*const Redactor` (borrowed for the call only — not retained). Every arbitrary string field is redacted into temporary buffers **before** atomic serialize. Secret-bearing tool-call IDs map to collision-safe `zag-rtid-<n>` (skips IDs already present, including prior resume). In-memory transcript is not mutated. Redaction OOM → `OutOfMemory` with prior file bytes preserved. Product Agent/CLI always bind a redactor. Explicit low-level unredacted bypasses: `createNewUnredacted` / `openOrCreateUnredacted` / `saveUnredacted` / `saveWithMetaUnredacted` / `Writer.saveUnredacted` (also: `Observer.stderrLogUnredacted()`, Trace `redactor=null`).
+9. **Redaction (h-redact-001):** product `Writer.save` requires a `*const Redactor` (borrowed for the call only — not retained). Every arbitrary string field is redacted into temporary buffers **before** atomic serialize. Secret-bearing tool-call IDs map to collision-safe `zag-rtid-<n>` (skips IDs already present, including prior resume). In-memory transcript is not mutated. Redaction OOM → `OutOfMemory` with prior file bytes preserved. Product Agent/CLI always bind a redactor. Explicit low-level unredacted bypasses: `createNewUnredacted` / `openOrCreateUnredacted` / `saveUnredacted` / `saveWithMetaUnredacted` / `Writer.saveUnredacted` (also: `Observer.stderrLogUnredacted()`, Trace `redactor=null`).
 
 ## Schema v1 (current format)
 
@@ -69,7 +69,7 @@ CLI mapping:
 4. Release/clean temporary state on failure while preserving the prior target.
 5. Return persistence errors through `Agent.reply` and headless structured output.
 6. Prevent a second active writer with an exclusive advisory lock on `{path}.lock`.
-7. Public `save` / `saveWithMeta` take the same advisory lock for the call; they cannot bypass single-writer.
+7. Module-level redacted/unredacted save helpers take the same advisory lock for the call; they cannot bypass single-writer.
 
 This is a **software-crash preservation** contract. Power-loss/fsync durability is **not** claimed by L2.
 

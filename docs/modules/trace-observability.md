@@ -19,7 +19,7 @@ Trace is a versioned audit channel for reconstructing run decisions. Observer is
 4. `run_end.ok=false` for harness failures, **deadline `timeout`**, and **`unsupported_control`**; clean cooperative `cancelled` and normal `max_turns` / `completed` use `ok=true`.
 5. Explicit path persistence is fail-closed: typed `TraceIoFailed` / `InvalidPath` (never OOM-mapped filesystem errors).
 6. **One reply = one run.** Explicit path atomically holds the **latest completed reply** only (not a lifetime accumulation).
-7. Redaction before serialize/persist (`h-redact-001`, **branch; pending Gate**): when `Trace.redactor` is set (product Agent attaches for the reply and **clears on every exit**), every arbitrary string field is redacted **before** JSON serialization. Public `stop_reason` is redacted; Agent-controlled vocabulary is allocation-free. Redaction OOM → `OutOfMemory` (fail closed; terminal path falls back to minimal internal reason). **Low-level bypass:** `Trace.redactor == null` / unbound (product Agent always binds for the reply). See also session `*Unredacted` APIs and `Observer.stderrLogUnredacted()`.
+7. Redaction before serialize/persist (`h-redact-001`): when `Trace.redactor` is set (product Agent attaches for the reply and **clears on every exit**), every arbitrary string field is redacted **before** JSON serialization. Public `stop_reason` is redacted; Agent-controlled vocabulary is allocation-free. Redaction OOM → `OutOfMemory` (fail closed; terminal path falls back to minimal internal reason). **Low-level bypass:** `Trace.redactor == null` / unbound (product Agent always binds for the reply). See also session `*Unredacted` APIs and `Observer.stderrLogUnredacted()`.
 
 ## Lifecycle owner
 
@@ -147,7 +147,7 @@ Callbacks must not own borrowed event slices after return unless they copy them.
 - [x] per-reply latest-run file/buffer semantics + run-local ledger.
 - [x] transactional writeObj under allocator failure.
 - [x] fail-closed precedence when failure-terminal persist fails.
-- [ ] secret redaction before write (`h-redact-001` — branch implemented, pending Gate).
+- [x] secret redaction before write (`h-redact-001`).
 - [x] SECURITY links to this contract.
 
 ## L3

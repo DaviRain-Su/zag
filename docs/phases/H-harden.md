@@ -78,18 +78,18 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 - `grep` / `glob` with result budgets;
 - `write_file` for create/full replacement;
 - optional post-write diff;
+- all built-in file Tools use descriptor-selected real containment (h-workspace-001);
 - shell policy/timeout/truncation basics.
 
 ### Remaining
 
-- all file Tools must use descriptor-selected real containment;
 - shell error/deadline/cancel shape must align with H lifecycle contracts;
 - C4 edit sharpness/change review remains post-H capability.
 
 ## H3 — Tool runtime / permissions
 
 Specs: [tool-runtime](../modules/tool-runtime.md), [permissions](../modules/permissions.md).
-Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [h-tool-runtime-001](../plan/tasks/h-tool-runtime-001.md) (**in-progress** until merge).
+Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [h-tool-runtime-001](../plan/tasks/h-tool-runtime-001.md) (**done**).
 
 ### Landed (L2)
 
@@ -108,7 +108,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment is done (h-workspace-001); secret redaction is **implemented on branch, pending Gate** (h-redact-001); Workspace/Safety row stays **L1+** until doctor.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment and secret redaction are done (h-workspace-001, h-redact-001); Workspace/Safety row stays **L1+** until doctor.
 
 ## H4 — Context / Session
 
@@ -143,13 +143,12 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 - fixed shell-policy matrix (denylist; not OS sandbox);
 - explicit trusted-host/non-OS-sandbox threat model in SECURITY + module docs.
 
-### Implemented on branch (pending Gate — not Landed)
+### Landed
 
 - shared secret redaction before verbose/trace/session (P1 h-redact-001); known-key/shape only; `.zag/` still sensitive; no DLP/zeroization claim.
 
 ### Remaining
 
-- h-redact-001 Gate close;
 - doctor/readiness output;
 - OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
 
@@ -164,7 +163,7 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 - std/curl selectable transports;
 - curl active deadline/cancel; std capability-truth `unsupported_control` (h-provider-001);
 - incomplete Tool-call fragment discard; retry ownership;
-- HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001 branch; pending Gate).
+- HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001).
 
 ### Remaining
 
@@ -185,7 +184,7 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 - typed `TraceIoFailed` / `InvalidPath` (not OOM);
 - deinit release-only (no false success).
 
-### Implemented on branch (h-redact-001; pending Gate — not Landed)
+### Landed (h-redact-001)
 
 - secret redaction before serialize when redactor attached (product path);
 - public `stop_reason` redaction; Agent-controlled vocabulary allocation-free;
@@ -193,7 +192,6 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 
 ### Remaining
 
-- h-redact-001 Gate close;
 - external-consumer gates in CI;
 - dashboard / correlation (L3).
 
@@ -203,7 +201,7 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 P0 session + Tool + workspace + trace
   ├─► P1 context ✅
   ├─► P1 provider deadline/cancel ✅
-  └─► P1 redaction (branch; pending Gate)
+  └─► P1 redaction ✅
          │
          ▼
 h-integration-001（real product composition + failure matrix）

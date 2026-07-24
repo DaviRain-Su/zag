@@ -20,7 +20,7 @@
 | ~~built-in 权限仅两档全局~~ | — | ✅ write-path remember + `--no-remember` |
 | ~~无 plan 模式语义~~ | — | ✅ `SessionKind.plan` stub；完整 UX → C6 |
 | ~~custom Tool risk 按名称且 unknown→read~~ | **closed** D-007 / h-tool-runtime-001：descriptor risk fail-closed | done |
-| file Tool 仅 lexical jail | symlink 可越界 | P0 [workspace-sandbox](../modules/workspace-sandbox.md) |
+| ~~file Tool 仅 lexical jail~~ | **closed** h-workspace-001：symlink-aware Guard + handler recheck | done |
 | shell 错误/deadline/cancel 形状未闭合 | exit/timeout/policy/cancel 难统一审计 | H P1 · [tools-shell](../modules/tools-shell.md) |
 | edit/failure golden matrix | 端到端回归需覆盖 custom deny/containment | H Quality |
 
@@ -33,4 +33,4 @@
 
 ## 下一步
 
-先完成 Phase H P0 `h-tool-runtime-001` 与 `h-workspace-001`；built-in matrix 已有，但 Permissions/Workspace 尚未达到 extensible L2。
+`h-tool-runtime-001` 与 `h-workspace-001` 已完成；Permissions 已达 L2，file containment 子能力已关闭。下一步由 `h-integration-001` 贯通 edit/policy/containment failure matrix；shell mid-flight lifecycle 与更强 edit UX 仍按各自后续合同推进。

@@ -1,7 +1,7 @@
 ---
 id: h-redact-001
 scope: phase-h/security-redaction
-status: in-progress
+status: done
 priority: P1
 depends-on: [h-session-001, h-trace-001]
 ---
@@ -12,7 +12,7 @@ Introduce one shared redaction boundary for configured secrets and common API-ke
 
 > Follow-up: collision-safe `zag-rtid-*` tool IDs; public stop_reason redaction +
 > Agent defer clear; explicit `*Unredacted` session APIs; permission/CLI no raw paths/args;
-> redactor allocator sweep + pattern matrix. Status **in-progress** for orchestrator. Gate not closed; do not mark done until main reverify.
+> redactor allocator sweep + pattern matrix. Gate closed after independent core/lifecycle/outward review, six-way branch matrix, and main std/curl re-verification.
 
 # context
 

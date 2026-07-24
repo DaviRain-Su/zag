@@ -78,14 +78,17 @@ These remain useful but do not cover the assessment blockers.
 22. intended terminal serialize failure → one minimal `trace_error` terminal, run closed. ✅
 23. invalid UTF-8 string fields → `TraceSerializationFailed` (not OOM), then recoverable terminal. ✅
 
-## P1 minimum fixtures
+## P1 Phase H module fixtures
 
 1. two-stage compaction: final `dropped` and summary/lineage match the returned view. ✅ h-context-001 (`context.zig` fixed-point fixtures + agent session/trace integration).
-2. fake configured secrets do not appear in verbose, trace, or session bytes. ⬜ h-redact-001 (branch; pending Gate) (unit longest/boundary/xai/AWS/OOM; initial create; Session after Agent deinit; multi-tool ID pseudonyms; mid-trace OOM terminal; in-memory raw vs redacted resume).
+2. fake configured secrets do not appear in verbose, trace, or session bytes. ✅ h-redact-001 (longest/boundary/pattern + allocator sweeps; initial create; Session after Agent deinit; collision-safe Tool IDs across resume; mid-trace OOM terminal; outward diagnostic helpers).
 3. timeout enforced on **curl**; **std** configured timeout → `unsupported_control` before network (default null = no timeout). ✅ h-provider-001 capability-truth
 4. stream requires protocol completion; incomplete tool args reject whole turn. ✅ h-provider-001
-5. external stateful Tool/Provider/Observer/policy/session consumer passes.
-6. headless JSON stdout is clean; failure exit/error matrix is stable.
+
+## Independent post-H gate fixtures
+
+1. SDK-ready: an external stateful Tool/Provider/Observer/policy/session consumer passes (`sdk-contract-001`).
+2. Headless: JSON stdout is clean and the failure exit/error matrix is stable (`headless-001`).
 
 ## Edit eval (H2/C4)
 

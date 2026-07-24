@@ -1,7 +1,7 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: pending
+status: ready
 priority: P1
 depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001]
 ---

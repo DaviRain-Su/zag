@@ -72,7 +72,7 @@ A denylist reduces accidents; it is not an adversarial sandbox.
 | Product path | Agent/CLI always own/bind a redactor; verbose uses `logEventRedacted`; Session create/save and Trace reply attach policy |
 | Low-level bypasses | explicit only — session `createNewUnredacted` / `openOrCreateUnredacted` / `saveUnredacted` / `saveWithMetaUnredacted` / `Writer.saveUnredacted`; `Observer.stderrLogUnredacted()`; Trace with `redactor=null` / unbound |
 | Failure | typed OOM fail-closed; verbose may drop line; session/trace preserve prior durable bytes; mid-trace OOM → one `out_of_memory` terminal |
-| Limits | no zeroization claim; not DLP; `.zag/` remains sensitive; **pending Gate** (h-redact-001 not closed) |
+| Limits | no zeroization claim; not DLP; `.zag/` remains sensitive |
 
 ## Doctor/readiness
 
@@ -81,7 +81,7 @@ Report project instructions/test entry, permission mode, shell policy, lexical/r
 ## Current gaps
 
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
-- systematic redaction — **branch implemented, pending Gate** (known keys/patterns only; not DLP).
+- ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
 - doctor is not implemented.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
@@ -91,9 +91,9 @@ Report project instructions/test entry, permission mode, shell policy, lexical/r
 - [x] escaping symlinks are denied for read/list/grep/glob/write/search_replace. *(file containment sub-capability)*
 - [x] normal contained paths and documented contained symlinks work.
 - [x] policy matrix tests pass (shell denylist; file fixtures in evals).
-- [ ] secret fixtures do not appear in verbose/trace/session output.
+- [x] secret fixtures do not appear in verbose/trace/session output (h-redact-001).
 - [ ] doctor exposes active controls.
-- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (file containment noted complete; Workspace/Safety row still blocked by redaction/doctor).
+- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (file containment and redaction complete; Workspace/Safety row still blocked by doctor).
 
 ## L3 (C7)
 

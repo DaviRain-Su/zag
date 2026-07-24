@@ -7,6 +7,8 @@
 | Baseline | Local `main` on 2026-07-24 |
 | Delivery rule | Correctness before capability breadth |
 
+> **Historical snapshot:** findings below describe the accepted pre-task baseline. Current completion truth lives in [the task index](../README.md) and [maturity](../../maturity.md); completed items are not reopened by this preserved assessment record.
+
 ## Verdict
 
 Zag should keep **Zig 0.16** and the **All-in-One product × reusable Kernel** direction. The package layering is real and the implementation has a strong tutorial/engineering baseline, but the current product is **not production-ready and not SDK-ready**.
