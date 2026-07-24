@@ -95,7 +95,8 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
 | ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 |
 | ~~systematic secret redaction~~ | **done** Phase H P1 h-redact-001 (not DLP; `.zag/` still sensitive) |
-| ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (tool/shell mid-flight cancel still open) |
+| ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (already-running Tool/shell preemption is separate post-H process work) |
+| doctor/readiness control report | ready Phase H P1 h-doctor-001; not implemented yet |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |
 
@@ -107,3 +108,5 @@ A security/correctness fix must:
 2. add a deterministic failure fixture to [quality/evals](./docs/quality/evals.md);
 3. implement the fix without weakening the default `ask` policy;
 4. update [maturity](./docs/maturity.md) and the relevant teaching chapter in the same delivery.
+
+The planned [h-doctor-001](./docs/plan/tasks/h-doctor-001.md) reports these controls before provider/API-key resolution; until that task lands, no `--doctor` behavior is claimed.

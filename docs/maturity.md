@@ -21,13 +21,13 @@
 
 | Subsystem | Current | Evidence and blocker | L2 exit | L3 direction |
 |-----------|:-------:|----------------------|---------|--------------|
-| Loop / Turn | **L1+** | soft Tool errors、serial order、goldens、between-call cancel、facade 单 terminal；**in-flight provider cancel/deadline**（h-provider-001）已有；tool mid-flight cancel 仍开 | API/error/trace terminal 一致 ✅；provider cancel/deadline 有界 ✅；≥2 goldens | steer、parallel read-only |
-| Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；`buildTool`+`validateTools`+`loop.run` 对 missing/invalid caps fail-closed；path/shell 参数校验；Provider/WireProvider 仅 ToolDefinition；`.cooperative` 仅为声明（mid-flight cancel 属 h-provider-001） | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
+| Loop / Turn | **L1+** | soft Tool errors、serial order、goldens、between-call cancel、facade 单 terminal；provider in-flight cancel/deadline（h-provider-001）已有；仍待 h-integration-001 的 accepted multi-Tool cancel 组合证据；Tool/shell mid-flight preemption 明确为 post-H process work | API/error/trace terminal 一致 ✅；provider cancel/deadline 有界 ✅；≥2 goldens；真实组合 cancel fixture | steer、parallel read-only |
+| Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；`buildTool`+`validateTools`+`loop.run` 对 missing/invalid caps fail-closed；path/shell 参数校验；Provider/WireProvider 仅 ToolDefinition；`.cooperative` 仅为声明（handler preemption 属 post-H shell/process work，不属于 h-provider-001） | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
 | Tools · read/search | **L1+** | list/read/grep/glob + budgets；symlink-aware containment（h-workspace-001）已拦 escape；结果预算有 | 结果有界 + walker 矩阵稳定 | LSP/repo map integration |
 | Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff；create/write 经 Guard 祖先 walk；escape/dangling deny | containment 下 stale/ambiguous 可恢复且不误写 | hashline/apply_patch、hunk review |
 | Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox；policy 选 shell 靠 descriptor.shell 非名称 | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
 | Permissions | **L2** | D-007: Gate/Ask/plan/remember 消费 descriptor.risk；custom write/execute 与 built-in 同 gate；无 `riskOf(name)` | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
-| Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）+ **secret redaction**（h-redact-001）；descriptor 选 path/shell；shell 仍 denylist；**无** doctor → 整行未达 L2 | file containment ✅；redaction ✅；doctor、诚实 threat model 文档齐 | OS sandbox/network/worktree |
+| Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）+ **secret redaction**（h-redact-001）；descriptor 选 path/shell；shell 仍 denylist；doctor 已规格化但未实现（h-doctor-001 ready） | file containment ✅；redaction ✅；provider-independent doctor；诚实 threat model 文档齐 | OS sandbox/network/worktree |
 | Context / Compaction | **L2** | h-context-001: fixed-point final-view；ID 精确 tool bundle fail-closed→`invalid_context`；lineage 截断有 digest/marker；共享 summary_cap=800；UTF-8 sanitize；session/trace 成功路径 byte-equal；soft min_tail；OOM 不静默 | final returned view 与 dropped/summary/session/trace 一致 ✅ | repo map、智能选文件 |
 | Session / Resume | **L2** | D-006: create/resume distinct; open_or_create SDK-only; atomic save + per-Writer test fault preserves prior bytes; `Agent.reply` save IoFailed fixture; one active writer via reusable `{path}.lock`; strict header (version required on typed header); lexical session path; P0 fixtures (create-existing, resume missing/invalid/unsupported/general-I/O, fault-save, busy, stale sidecar, CLI open-mode). Not claimed: fsync/power-loss, symlink containment, hostile Writer-copy defense | explicit create/resume; atomic preservation; visible save errors; exclusive writer/conflict | fork/tree/journal as needed |
 | Provider / zag-ai | **L1+** | two wire styles、retry/usage/cost；**curl** active deadline/cancel；**std** ordinary OK + controlled lifecycle fail-closed `unsupported_control`；strict stream/tool atomic（h-provider-001）；HTTP 诊断仅 status+body length（h-redact-001） | capability-truth deadline/cancel ✅；redaction diagnostics ✅；contract matrix | fallback/multi-key/third protocol on demand |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；tool-policy + session + symlink + trace + context + provider deadline/cancel + **redaction** fixtures 已进 | P0/P1 failure matrix进入 CI；不得削弱断言 | edit/cost/performance baselines |
+| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；module-level tool-policy + session + symlink + trace + context + provider deadline/cancel + redaction 已进；doctor 与两条 Agent 组合链仍待 | doctor + P0/P1 real-composition matrix 进入 CI；不得削弱断言 | edit/cost/performance baselines |
 
 ## Phase H production-floor exit
 
@@ -45,15 +45,15 @@
 
 1. **Session durability**：create/resume 分离；invalid/unsupported/I/O 不回退新会话；save 原文件保护；错误可见；并发 writer 冲突。
 2. **Tool contract**：Tool 有 instance state 和 mandatory runtime descriptor；risk/path/cancel 不按名称猜测；缺失 metadata fail-closed。
-3. **Filesystem containment**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace（**file sub-capability done** h-workspace-001）；shell 边界单独诚实说明；整行 Safety 仍待 doctor。
+3. **Filesystem containment/readiness**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace（file sub-capability done h-workspace-001）；shell 边界单独诚实说明；provider-independent doctor 必须暴露 active/degraded controls（h-doctor-001 ready）。
 4. **Truthful lifecycle**：每个 started run 恰有一个 terminal；provider/save/trace 失败不得记为 completed success（h-trace-001 ✅；timeout/in-flight cancel h-provider-001 ✅）。
 5. **Context accounting**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致（h-context-001 ✅）。
 6. **Secrets**：fake configured key 不出现在 verbose、trace、session fixtures（h-redact-001 ✅）；`.zag/` 仍标敏感；无 zeroization/DLP 声称。
-7. **Deadline/cancel**：curl 真正执行 deadline/active cancel；std 配置 deadline 显式 `unsupported_control`（普通无超时仍可用）；半截 Tool call 不执行（h-provider-001 capability-truth ✅；tool/shell mid-flight 仍开）。
+7. **Deadline/cancel**：curl 真正执行 provider deadline/active cancel；std 配置 deadline 显式 `unsupported_control`（普通无超时仍可用）；半截 Tool call 不执行（h-provider-001 capability-truth ✅）；accepted multi-Tool turn 的 between-Tool cancel 由 h-integration-001 组合验证。已运行 Tool/shell 的 mid-flight preemption 不属于 h-provider-001，作为 post-H process work 保持显式 open。
 8. **Editing/runtime**：search_replace/grep/glob 可用；shell exit/timeout/truncation/deny 为稳定机器可读形状。
 9. **Observability**：trace schema versioned ✅；permission/jail/shell/usage/stop reason 可复盘；显式 trace I/O failure 可见 ✅；secret redaction before write ✅。
-10. **Regression evidence**：goldens + P0 fault fixtures + security/redaction + provider cancel contracts 均在 CI。
-11. **Documentation truth**：README、SECURITY、architecture、Phase H 与本表一致，不声称 OS sandbox 或 SDK-ready 已具备。
+10. **Regression evidence**：goldens + P0/P1 module faults + provider-independent doctor + default Agent policy/containment chain + between-Tool cancel composition 均在 CI。
+11. **Documentation truth**：README、SECURITY、architecture、Phase H、doctor output 与本表一致，不声称 OS sandbox、mid-flight Tool preemption 或 SDK-ready 已具备。
 
 L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。
 
@@ -77,7 +77,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Phase 1 | write/shell/ask | descriptor-driven risk (D-007 L2); file symlink containment closed in H |
 | Phase 2 | session/context | durability/open L2；compaction accounting L2（h-context-001） |
 | Phase 3 | lexical jail/policy/trace | real file containment (H); truthful/versioned trace (h-trace-001); redaction (h-redact-001) |
-| **Phase H** | raises all existing surfaces | current active P0/P1 tasks |
+| **Phase H** | raises all existing surfaces | current active doctor + real-composition closeout tasks |
 
 ## Maintenance
 

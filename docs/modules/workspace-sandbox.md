@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
-| Current maturity | **L1+** — symlink-aware **file containment** + secret redaction (h-redact-001); shell policy and doctor incomplete for full L2 |
+| Current maturity | **L1+** — symlink-aware **file containment** + secret redaction (h-redact-001); doctor/readiness is specified but not implemented |
 | Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
 | Reference | Hyper sandbox; Codex sandbox |
 
@@ -76,13 +76,17 @@ A denylist reduces accidents; it is not an adversarial sandbox.
 
 ## Doctor/readiness
 
-Report project instructions/test entry, permission mode, shell policy, lexical/real containment status, and sandbox availability. Doctor reports; it does not silently change policy.
+Task: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**ready**).
+
+`zag --doctor` is a provider-independent, human-readable readiness report. It runs before API-key/provider resolution and reports only fixed, path-free statuses for project-instruction/test-entry **candidate presence**, permission mode, shell policy, lexical jail, real/symlink-aware file containment, product redaction-on-run, and OS-sandbox enforcement. Candidate detection reads no body and is not proof that instructions load or tests pass.
+
+Doctor reports; it does not silently change policy. `ready` real containment means the current workspace root resolved and the file Tool Guard is applicable—it does not mean shell containment or OS enforcement. Failure to resolve the root reports `unavailable_fail_closed`. H reports exactly `os_sandbox=not_implemented`; the separate shell field is `shell_containment=not_path_contained`. Provider-key redaction binding is `deferred_until_provider_resolve` because doctor intentionally performs no provider resolution. The text report is not the stable machine protocol owned by `headless-001`.
 
 ## Current gaps
 
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
 - ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
-- doctor is not implemented.
+- doctor is specified in h-doctor-001 but not implemented.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
 
@@ -92,7 +96,7 @@ Report project instructions/test entry, permission mode, shell policy, lexical/r
 - [x] normal contained paths and documented contained symlinks work.
 - [x] policy matrix tests pass (shell denylist; file fixtures in evals).
 - [x] secret fixtures do not appear in verbose/trace/session output (h-redact-001).
-- [ ] doctor exposes active controls.
+- [ ] doctor exposes active controls without provider/API-key resolution (h-doctor-001 ready).
 - [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (file containment and redaction complete; Workspace/Safety row still blocked by doctor).
 
 ## L3 (C7)

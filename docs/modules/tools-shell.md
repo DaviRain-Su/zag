@@ -26,7 +26,7 @@
 
 ## Current gaps
 
-- run cancellation does not preempt an in-flight Tool handler;
+- run cancellation does not preempt an in-flight Tool handler (post-H process-ownership work; not h-provider-001);
 - shell/process ownership and result shape need failure fixtures;
 - denylist is accident reduction, not OS isolation.
 

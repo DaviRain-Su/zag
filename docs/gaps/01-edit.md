@@ -33,4 +33,4 @@
 
 ## 下一步
 
-`h-tool-runtime-001` 与 `h-workspace-001` 已完成；Permissions 已达 L2，file containment 子能力已关闭。下一步由 `h-integration-001` 贯通 edit/policy/containment failure matrix；shell mid-flight lifecycle 与更强 edit UX 仍按各自后续合同推进。
+`h-tool-runtime-001` 与 `h-workspace-001` 已完成；Permissions 已达 L2，file containment 子能力已关闭。`h-doctor-001` 先暴露 active/degraded controls，再由 `h-integration-001` 贯通 default Agent policy/containment failure chain；shell mid-flight lifecycle 与更强 edit UX 仍按各自后续合同推进。

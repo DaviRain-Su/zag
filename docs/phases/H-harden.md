@@ -62,11 +62,11 @@ Spec: [loop-turn](../modules/loop-turn.md).
 - pending Tool-call cancellation results keep transcript resume-safe;
 - golden transcripts.
 
-### Remaining
+### Remaining for H
 
-- mid-flight Tool/shell cancellation still open (provider stream cancel landed in h-provider-001).
+- h-integration-001 must prove a complete accepted multi-Tool turn cancelled **between** invocations remains ID-paired, save/resume-safe, and truthfully terminal across the Agent product path.
 
-Truthful API/error/trace terminals landed via facade (h-trace-001). Provider in-flight cancel/deadline landed (h-provider-001). H1 remains **L1+** until tool mid-flight cancel closes.
+Provider in-flight cancel/deadline landed in h-provider-001. Preempting an already running Tool/shell handler requires process ownership and bounded cleanup; it remains explicit post-H shell/process work and is not assigned to h-provider-001. H1 remains **L1+** until the real-composition Gate passes, not because H claims mid-flight handler preemption.
 
 ## H2 — Edit/search/shell
 
@@ -104,7 +104,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 
 ### Remaining (not H3 L2 blockers)
 
-- mid-flight cancel for `.cooperative` handlers (P1 [h-provider-001](../plan/tasks/h-provider-001.md));
+- mid-flight preemption for `.cooperative` handlers (post-H shell/process ownership; not h-provider-001 and not an H3 L2 blocker);
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
@@ -149,7 +149,8 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
 ### Remaining
 
-- doctor/readiness output;
+- provider-independent, path-free doctor/readiness output: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**ready**);
+- default Agent policy/containment real-composition evidence: [h-integration-001](../plan/tasks/h-integration-001.md) (waits on doctor);
 - OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
 
 ## H6 — Provider
@@ -204,10 +205,13 @@ P0 session + Tool + workspace + trace
   └─► P1 redaction ✅
          │
          ▼
-h-integration-001（real product composition + failure matrix）
+h-doctor-001（provider-independent readiness truth）
          │
          ▼
-Phase H L2 exit
+h-integration-001（two missing Agent composition chains + matrix audit）
+         │
+         ▼
+Phase H L2 exit decision
   ├─► Zig SDK-ready gate
   ├─► headless/process gate
   ├─► C4 edit sharpness
@@ -219,4 +223,4 @@ This is a DAG. Independent P0 work may overlap in isolated worktrees when task p
 
 ## Exit
 
-Phase H exits only when all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) and the linked task verifications pass. A green current test suite, package split, or partial checklist cannot waive an exit condition.
+Phase H exits only when h-doctor-001 and h-integration-001 pass independent review, both backends pass again on main, and all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) remain true. A green current test suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler.

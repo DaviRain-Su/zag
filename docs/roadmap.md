@@ -22,7 +22,7 @@ Teaching 0 → 1 → 2 → 3  ✅
                 ▼
 Phase H correctness
   P0: session · Tool policy · containment · truthful trace
-  P1: context · redact · deadline/cancel · quality
+  P1: context · redact · provider deadline/cancel · doctor · real composition
                 │
                 ├────► Zig SDK-ready gate ───► package publication decision
                 ├────► headless/process gate ─► ACP/editor integration later
@@ -69,9 +69,10 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-context-001](./plan/tasks/h-context-001.md) | session + trace | final-view compaction accounting |
 | [h-provider-001](./plan/tasks/h-provider-001.md) | trace | enforced deadline/in-flight cancel/partial Tool safety |
 | [h-redact-001](./plan/tasks/h-redact-001.md) | session + trace | shared pre-persistence redaction |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 | real Agent composition + complete failure matrix + truth update |
+| [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | no-key readiness/control truth; no policy mutation or OS-sandbox claim |
+| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 + doctor | two missing Agent composition chains + matrix audit + truth update |
 
-Phase H exits only through the integration task and [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit).
+Phase H exits only after doctor and integration pass their independent worktree Gates, both backends pass again on main, and [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit) remains true.
 
 ## Post-H gates
 
@@ -181,6 +182,7 @@ Headless moved to an earlier gate. C9 retains optional TUI, diff UX, dashboard, 
 
 - provider/catalog breadth without a user requirement;
 - Graph, Memory Repo, TUI, full LSP/AST, background jobs;
+- mid-flight Tool/shell preemption disguised as provider work (it requires post-H process ownership/cleanup);
 - package/repo splitting for appearance;
 - unmeasured Zig performance/startup/cross-build claims;
 - production/L2/SDK-ready language based only on green happy-path tests.

@@ -21,7 +21,7 @@
 | ~~trace schema absent~~ | **closed** `schema_version=1` on `run_start` | done `h-trace-001` |
 | ~~shared secret redaction~~ | **closed** h-redact-001 — known-key/shape only; `.zag/` still sensitive; not DLP | done `h-redact-001` |
 | policy/containment/fault matrix incomplete | safety story is not regression evidence | [quality/evals](../quality/evals.md) |
-| no doctor/readiness | active controls/degradation are not visible | H5 |
+| no doctor/readiness | active controls/degradation are not visible | ready `h-doctor-001` |
 
 ## OS sandbox boundary
 
@@ -29,4 +29,4 @@ OS sandbox/network/process-tree enforcement is C7, not Phase H. Trusted-host L2 
 
 ## Next
 
-P0 Tool/workspace/trace and P1 redaction are closed. Next: doctor and the real-composition integration matrix. See [Phase H](../phases/H-harden.md) and [C7](../phases/C7-sandbox.md).
+P0 Tool/workspace/trace and P1 module tasks are closed. Next: deliver [h-doctor-001](../plan/tasks/h-doctor-001.md), then the two missing Agent chains in [h-integration-001](../plan/tasks/h-integration-001.md). OS sandbox/process ownership remains [C7](../phases/C7-sandbox.md).

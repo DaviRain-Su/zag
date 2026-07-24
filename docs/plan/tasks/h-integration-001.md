@@ -1,14 +1,14 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: ready
+status: pending
 priority: P1
-depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001]
+depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001]
 ---
 
 # objective
 
-Close Phase H through real product composition, not isolated module tests: exercise Agent → context/provider → descriptor/policy/containment → Tool → transcript/session/trace across the P0/P1 failure matrix and update the production-floor truth only if every exit condition passes.
+Close Phase H through real product composition, not duplicate module tests: add the two missing Agent-level failure chains (default Tool policy/containment and cancellation between accepted Tools), verify the existing P0/P1 matrix plus doctor through product composition, and update production-floor truth only if every exit condition passes.
 
 # context
 
@@ -32,13 +32,27 @@ Close Phase H through real product composition, not isolated module tests: exerc
 - `SECURITY.md`
 - `chapters/H-harden/README.md`
 
+# required composition fixtures
+
+1. **Default Agent policy and containment failures.** Script real default built-in Tool calls through `Agent.reply` (not raw `Registry.execute`):
+   - an ask/policy-denied mutation leaves the target unchanged and records descriptor-derived permission denial;
+   - an escaping-symlink file request under an otherwise permissive gate does not expose or mutate outside bytes and records a jail denial;
+   - each Tool result keeps the stable machine-readable code, appears in the transcript, survives session save/resume with its original Tool-call ID, emits the matching permission/jail trace event, and ends with the truthful run terminal (a recovered soft Tool denial may still complete normally).
+2. **Cancellation between accepted Tools.** A complete provider turn containing at least two accepted Tool calls cancels after the first invocation and before the next:
+   - the already executed call and every pending call retain their original provider Tool-call IDs;
+   - every pending accepted call receives a machine-readable `cancelled` Tool body without handler execution;
+   - API Result, transcript, persisted/resumed session, and trace agree on one `cancelled` terminal.
+
+This task verifies only the current between-Tool cancellation contract. It must not claim that an already running Tool/shell process can be preempted; that process-ownership work is post-H.
+
 # verification
 
-- all P0/P1 fixtures in `docs/quality/evals.md` execute through real composition where applicable;
-- no integration boundary retains a stub/name-based fallback that bypasses the new contracts;
-- session/save/trace/provider/cancel failure state agrees across API, transcript, file bytes, and trace;
+- the two required fixtures above execute through the coding-product Agent with real policy, containment, session, and trace implementations;
+- existing Agent fixtures continue to cover context final-view accounting, provider timeout/cancel/unsupported/failure terminals, session/trace persistence faults, strict Tool bundles, and redaction; low-level serializer/allocator/wire edge cases remain owned by their module suites rather than being copied here;
+- all applicable P0/P1 fixtures in `docs/quality/evals.md` are reachable through real composition, with no stub or name-based fallback bypassing the contracts;
+- doctor output and the integration evidence agree with README/SECURITY/maturity threat-model claims;
 - root and every package test pass;
 - `zig build test --summary all`;
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
-- only after all checks pass may maturity/README change Phase H to L2.
+- only after independent review, both main-branch backend runs, and every Phase H exit sentence passes may maturity/README change Phase H to L2.

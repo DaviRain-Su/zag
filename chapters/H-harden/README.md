@@ -40,11 +40,11 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 
 | Slice | Spec | Current truth |
 |-------|------|---------------|
-| H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens + facade terminal；provider in-flight cancel/deadline（h-provider-001）；tool mid-flight cancel open |
+| H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens + facade terminal；provider in-flight cancel/deadline（h-provider-001）；accepted multi-Tool between-call composition pending；mid-flight Tool preemption post-H |
 | H2 Edit | [tools-edit](../../docs/modules/tools-edit.md) | search_replace/write under file+dir containment (h-workspace-001); Plan UX still open |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
-| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file symlink containment (h-workspace-001) + secret redaction (h-redact-001); doctor open → Safety L1+ |
+| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file symlink containment (h-workspace-001) + secret redaction (h-redact-001); h-doctor-001 ready → Safety remains L1+ |
 | H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage；deadline/cancel/partial Tool safety（h-provider-001）；log scrub helpers（h-redact-001） |
 | H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle + h-redact-001 redaction before serialize；dashboard still open |
 
@@ -55,11 +55,13 @@ Schema presence or existing happy-path tests do not mark H3/H4 closed.
 ```text
 P0: h-session-001 · h-tool-runtime-001 · h-workspace-001 · h-trace-001
   ↓
-P1: h-context-001 · h-provider-001 · h-redact-001 ✅
+P1 modules: h-context-001 · h-provider-001 · h-redact-001 ✅
   ↓
-h-integration-001（real composition failure matrix）
+h-doctor-001（provider/API-key-independent readiness report）
   ↓
-Phase H exit
+h-integration-001（two missing Agent composition chains + matrix audit）
+  ↓
+Phase H exit decision
   ↓
 SDK-ready gate · headless gate · C4/C5.1/C7 by dependency
 ```
@@ -86,4 +88,4 @@ Each task adds its named failure fixture before claiming closeout. Live provider
 
 ## 5. Exit
 
-All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) and P0/P1 task verifications must pass. H completion does not automatically imply SDK-ready or headless-ready; those are separate gates.
+All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit), h-doctor-001, and h-integration-001 verifications must pass independently and on main. H completion does not claim mid-flight Tool/shell preemption and does not automatically imply SDK-ready or headless-ready; those are separate gates.

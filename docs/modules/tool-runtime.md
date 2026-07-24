@@ -75,7 +75,7 @@ Zig cannot prevent a host from forging a `Tool` literal. Normal product path can
 
 ## Cancellation metadata
 
-`cancellation` is required metadata. Built-ins are `.none`. `.cooperative` declares that a handler **claims** it can observe cancel/deadline when the host supplies context — it does **not** implement mid-flight cancel by itself (P1 h-provider-001). `tool.Context` does not currently carry a cancel flag.
+`cancellation` is required metadata. Built-ins are `.none`. `.cooperative` declares that a handler **claims** it can observe cancel/deadline when the host supplies context — it does **not** implement mid-flight cancel by itself. `tool.Context` does not currently carry a cancel flag. h-provider-001 owns provider I/O cancellation only; handler/shell preemption requires post-H process ownership and bounded cleanup.
 
 ## Errors
 

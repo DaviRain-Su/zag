@@ -4,7 +4,7 @@
 |------|---------|
 | Code | `packages/zag-agent-core/src/loop.zig` |
 | Layer | Agent Core Kernel |
-| Current maturity | **L1+** — core loop/goldens + truthful terminals; in-flight provider cancel/deadline landed (h-provider-001); tool mid-flight cancel still open |
+| Current maturity | **L1+** — core loop/goldens + truthful terminals; provider in-flight cancel/deadline landed; accepted multi-Tool between-call composition Gate pending |
 | Target | L2 (H) → L3 steer/read-only parallelism (C6) |
 | Reference | Pi agent loop; Nanocodex Turn |
 
@@ -58,7 +58,7 @@ Malformed host registration is not an `unknown_tool` soft result; it fails befor
 - Loop is sole retry/backoff owner (overflow-safe ≤25ms slices); Timeout/Cancelled/UnsupportedControl are not retried.
 - Only a complete validated `AssistantTurn` is appended; partial streamed tool-call fragments are discarded on cancel/timeout.
 - Pending **accepted** tool calls still get cancelled bodies for transcript consistency when cancel fires between tools.
-- Tool handlers that declare `.cooperative` cancel metadata do not yet receive mid-flight preemption (still post-H / shell task).
+- Tool handlers that declare `.cooperative` cancel metadata do not yet receive mid-flight preemption. This is post-H shell/process ownership work, not part of h-provider-001 or the between-Tool H fixture.
 
 ## Execution strategy
 
@@ -66,14 +66,16 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 ## Current gaps
 
-- Mid-flight Tool-handler cancel (shell/process) still open.
+- h-integration-001 must verify the accepted multi-Tool between-call cancellation chain across Agent/session/trace.
+- Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work.
 - High-level Observer event lifecycle is not yet an SDK contract.
 
 ## L2 acceptance
 
 - [x] stable machine-readable Tool errors for built-in paths.
 - [x] serial Tool order is tested.
-- [x] cancel between calls fills pending Tool results and remains resume-safe.
+- [x] module-level cancel between calls fills pending Tool results and remains resume-safe.
+- [ ] Agent-level accepted multi-Tool cancel preserves IDs and agrees across persisted resume + one terminal (h-integration-001).
 - [x] at least two golden transcripts exist.
 - [x] every normal/error path has one matching terminal state across API and trace (facade owner; h-trace-001).
 - [x] in-flight provider cancellation/deadline is contract-tested (h-provider-001).
