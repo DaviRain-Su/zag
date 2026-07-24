@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-agent-core/src/context.zig`、`zag-coding-agent/src/project.zig` |
-| 成熟度 | L1（截断）→ **L2（H4）** → L3（repo map，C5） |
+| 成熟度 | L1（截断）→ **L2（H4 已落地）** → L3（repo map，C5） |
 | 对标 | Pi session/compaction；Aider repo map；Hyper compaction |
 
 ## 不变式
@@ -21,7 +21,7 @@
 | session | 用户长期偏好、压缩摘要 | 会话文件 |
 | ephemeral | 本 turn 提醒、doctor、Oracle 建议 | 单 turn |
 
-`viewForModel` = 组装四层 + 选取的历史消息尾部。
+`viewForModel` = 组装四层 + 选取的历史消息尾部（跳过 transcript 内旧 leading system，避免与 Layers 重复）。超限时只改 **view**，并返回 `CompactionEvent` 供 session 头落盘。
 
 ## Compaction 最小算法（L2）
 
@@ -32,9 +32,9 @@
 
 ## L2 验收
 
-- [ ] 四层在文档与代码注释对齐  
-- [ ] 超限触发 compaction；摘要后项目规则仍在  
-- [ ] 全量 transcript 仍可从磁盘读到压缩前要点或摘要  
+- [x] 四层在文档与代码注释对齐  
+- [x] 超限触发 compaction；摘要后项目规则仍在（Layers.project 每 turn 注入）  
+- [x] 全量 transcript 仍可从磁盘读到压缩前要点或摘要（`compaction_summary` 头字段；transcript 不删行）  
 
 ## L3（C5）
 

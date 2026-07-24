@@ -38,6 +38,11 @@ pub const Options = struct {
     observer: observer_mod.Observer = .none(),
     permission_gate: permissions.Gate = .yolo(),
     context: context_mod.Options = .{},
+    /// Four prompt layers for the model view (H4). Used when `get_layers` is null.
+    layers: context_mod.Layers = .{},
+    /// Optional live layers (e.g. Session after compaction). Prefer over `layers`.
+    get_layers: ?*const fn (ctx: ?*anyopaque) context_mod.Layers = null,
+    layers_ctx: ?*anyopaque = null,
     shell_policy: shell_policy.Mode = .protect,
     /// Optional structured audit log (not freed by loop).
     trace: ?*trace_mod.Trace = null,
@@ -46,6 +51,9 @@ pub const Options = struct {
     retry_base_delay_ms: u64 = 500,
     /// Cooperative cancel (SIGINT / tests). Checked between turns and tools.
     cancel: ?*cancel_mod.Flag = null,
+    /// Optional sink when view compaction fires (summary is turn-arena owned — sink must dupe).
+    on_compaction: ?*const fn (ctx: ?*anyopaque, event: context_mod.CompactionEvent) void = null,
+    compaction_ctx: ?*anyopaque = null,
 };
 
 pub const RunError = error{
@@ -111,11 +119,24 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         defer turn_arena_impl.deinit();
         const scratch = turn_arena_impl.allocator();
 
+        const layers = if (deps.options.get_layers) |gl|
+            gl(deps.options.layers_ctx)
+        else
+            deps.options.layers;
         const view = context_mod.viewForModel(
             scratch,
             transcript.items(),
             deps.options.context,
+            layers,
         ) catch return error.OutOfMemory;
+        if (view.compaction) |ev| {
+            if (deps.options.on_compaction) |cb| {
+                cb(deps.options.compaction_ctx, ev);
+            }
+            if (deps.options.trace) |tr| {
+                tr.emitCompaction(ev.dropped, ev.summary) catch {};
+            }
+        }
 
         const turn = try chatWithRetry(deps, scratch, view.messages);
 

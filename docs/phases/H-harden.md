@@ -54,10 +54,13 @@
 
 **规格：** [context-compaction.md](../modules/context-compaction.md)、[session-store.md](../modules/session-store.md)
 
-- prompt 四层：system / project / session / ephemeral  
-- compaction 最小版：超限 → 结构化摘要 + 保留最近 N；算法与落盘格式成文  
-- session schema 版本号 + 迁移规则  
-- transcript（权威）≠ model-view（投影）边界写死  
+**已落地：**
+
+- prompt 四层：`context.Layers`（system / project / session / ephemeral）经 `viewForModel` 组装  
+- compaction：超限 → 启发式摘要进 view + `SessionMeta.compaction_*`；**不删** transcript  
+- session `schema_version`（+ legacy `v`）；未知版本拒绝；trace `compaction` 事件  
+
+**H4 出门：** 本切片收口完成。repo map / session fork → C5。
 
 ## H5 — Safety
 

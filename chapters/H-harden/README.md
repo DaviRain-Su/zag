@@ -38,7 +38,7 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 | H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | **出门**：cancel + golden + 串行策略 |
 | H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `search_replace` + `grep`/`glob` **已落地**；`edit_tools` / `fs_tools` |
 | H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `zag-agent-core/src/permissions.zig` |
-| H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | `context.zig` · `session_store.zig` |
+| H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | **出门**：`Layers` + view-only compaction + `schema_version` |
 | H5 Safety | [workspace-sandbox.md](../../docs/modules/workspace-sandbox.md) | `workspace.zig` · `shell_policy.zig` |
 | H6 Provider | [zag-ai-provider.md](../../docs/modules/zag-ai-provider.md) | `packages/zag-ai/` + `provider.zig`（retry/usage **部分已有**） |
 | H7 Trace | [trace-observability.md](../../docs/modules/trace-observability.md) | `zag-agent-core/src/trace.zig`（usage 事件雏形） |
@@ -50,14 +50,18 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 ## 3. 先跑起来（实现后填写）
 
 ```bash
-# H2 相关单测随 monorepo 跑
+# H2 / H4 相关单测随 monorepo 跑
 zig build test
+
+# H4：带 session 持久化（压缩摘要写进 JSONL 头）
+# zig build run -- -c -v '做一个多轮对话，观察 .zag/sessions/default.jsonl 头字段'
+
 # 手工：--yolo 下让模型 search_replace / grep（需 API key）
 # zig build run -- --yolo -v '用 grep 找 TODO，再用 search_replace 改一处'
 ```
 
 出门条件见 [maturity L2 总验收](../../docs/maturity.md#l2-总验收phase-h-出门条件)。
-H2 核心工具面已可用；全 L2 仍需 H1/H3–H7 + Quality。
+H1–H4 核心面已可用；全 L2 仍需 H5–H7 + Quality。
 
 ---
 

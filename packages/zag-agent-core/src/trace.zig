@@ -17,6 +17,7 @@ pub const EventKind = enum {
     shell_deny,
     tool_result,
     provider_retry,
+    compaction,
     run_end,
 
     pub fn jsonName(self: EventKind) []const u8 {
@@ -31,6 +32,7 @@ pub const EventKind = enum {
             .shell_deny => "shell_deny",
             .tool_result => "tool_result",
             .provider_retry => "provider_retry",
+            .compaction => "compaction",
             .run_end => "run_end",
         };
     }
@@ -139,6 +141,14 @@ pub const Trace = struct {
             .kind = .tool_result,
             .name = name,
             .body = truncate(body, 500),
+        });
+    }
+
+    pub fn emitCompaction(self: *Trace, dropped: usize, summary: []const u8) std.mem.Allocator.Error!void {
+        try self.writeObj(.{
+            .kind = .compaction,
+            .dropped = dropped,
+            .summary = truncate(summary, 500),
         });
     }
 

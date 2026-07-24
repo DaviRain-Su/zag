@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-agent-core/src/{session_store,transcript}.zig` |
-| 成熟度 | L1 → **L2（H4）** → L3（fork/树，C5） |
+| 成熟度 | L1 → **L2（H4 已落地）** → L3（fork/树，C5） |
 | 对标 | Pi session；Hyper sessions；Nanocodex checkpoint |
 
 ## 不变式
@@ -12,16 +12,20 @@
 2. **必须有 schema 版本**；未知版本 → 明确错误，不静默解析。  
 3. 可能含代码与命令输出：按敏感本地状态对待（gitignore）。
 
-## Schema（L2 目标）
+## Schema（L2）
 
-JSONL 或头部 JSON 元数据至少包含：
+JSONL 头部 + 消息行。头字段：
 
 | 字段 | 说明 |
 |------|------|
-| `schema_version` | 整数，从 1 起 |
-| `zag_version` | 写入时的包版本 |
-| `created_at` / `updated_at` | 可选 ISO 或 unix |
-| 消息行 | 与 message 类型兼容 |
+| `schema_version` | 整数，当前 **1**（亦写 legacy `v`） |
+| `type` | 恒为 `zag_session` |
+| `zag_version` | 写入时的包版本（可选） |
+| `compaction_gen` | 视图压缩代数 |
+| `compaction_summary` | 最近一次启发式摘要（可选） |
+| 消息行 | `role` / `content` / `tool_calls` … |
+
+未知 `schema_version` → `UnsupportedSchema`（不静默解析）。无头旧文件按 v1 加载。
 
 ### 迁移
 
@@ -30,9 +34,9 @@ JSONL 或头部 JSON 元数据至少包含：
 
 ## L2 验收
 
-- [ ] 新旧版本加载行为有测试  
-- [ ] resume 后 tool 对仍然成对  
-- [ ] 文档列出最小字段  
+- [x] 新旧版本加载行为有测试（legacy `v`、无头、schema=99 拒绝）  
+- [x] resume 后 tool 对仍然成对（既有 golden / roundtrip）  
+- [x] 文档列出最小字段  
 
 ## L3
 

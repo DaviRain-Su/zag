@@ -68,8 +68,16 @@ pub const Session = struct {
     transcript: transcript_mod.Transcript,
     /// Owned path for auto-save, or null for ephemeral.
     path: ?[]u8 = null,
-    /// Which project file was injected, if any (borrowed into system text).
+    /// Base system prompt (owned by session arena).
+    base_system: []const u8 = "",
+    /// Project instructions body (owned by session arena); empty if none.
+    project_body: []const u8 = "",
+    /// Which project file was loaded, if any.
     project_source: ?[]const u8 = null,
+    compaction_gen: u32 = 0,
+    /// Latest compaction summary for the session layer / header (arena-owned).
+    compaction_summary: ?[]const u8 = null,
+    zag_version: []const u8 = "0.5.0",
 
     pub fn start(
         gpa: std.mem.Allocator,
@@ -82,8 +90,9 @@ pub const Session = struct {
             arena_impl.deinit();
             gpa.destroy(arena_impl);
         }
+        const arena = arena_impl.allocator();
 
-        var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+        var transcript = transcript_mod.Transcript.init(arena);
         var path_owned: ?[]u8 = null;
         errdefer if (path_owned) |p| gpa.free(p);
 
@@ -91,50 +100,96 @@ pub const Session = struct {
             path_owned = gpa.dupe(u8, p) catch return error.OutOfMemory;
         }
 
+        const base_owned = arena.dupe(u8, opts.base_system) catch return error.OutOfMemory;
+        var project_body: []const u8 = "";
         var project_source: ?[]const u8 = null;
+        var compaction_gen: u32 = 0;
+        var compaction_summary: ?[]const u8 = null;
 
         if (opts.continue_existing) {
             if (path_owned) |p| {
-                session_store.load(gpa, io, Io.Dir.cwd(), p, &transcript) catch |err| switch (err) {
+                const meta = session_store.loadWithMeta(gpa, io, Io.Dir.cwd(), p, &transcript) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
-                    error.IoFailed, error.InvalidSession => {
-                        try seedNewTranscript(gpa, io, &transcript, opts, &project_source);
+                    error.IoFailed, error.InvalidSession, error.UnsupportedSchema => {
+                        try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
+                        return finishSession(gpa, io, arena_impl, transcript, path_owned, base_owned, project_body, project_source, 0, null);
                     },
                 };
+                compaction_gen = meta.compaction_gen;
+                compaction_summary = meta.compaction_summary;
+                // Reload live project file for Layers even on resume.
+                if (opts.load_project_instructions) {
+                    if (project_mod.load(gpa, io, Io.Dir.cwd()) catch null) |loaded| {
+                        defer gpa.free(loaded.body);
+                        project_source = loaded.source;
+                        project_body = arena.dupe(u8, loaded.body) catch return error.OutOfMemory;
+                    }
+                }
                 if (transcript.items().len == 0) {
-                    try seedNewTranscript(gpa, io, &transcript, opts, &project_source);
+                    try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
                 }
             } else {
-                try seedNewTranscript(gpa, io, &transcript, opts, &project_source);
+                try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
             }
         } else {
-            try seedNewTranscript(gpa, io, &transcript, opts, &project_source);
+            try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
         }
 
+        return finishSession(
+            gpa,
+            io,
+            arena_impl,
+            transcript,
+            path_owned,
+            base_owned,
+            project_body,
+            project_source,
+            compaction_gen,
+            compaction_summary,
+        );
+    }
+
+    fn finishSession(
+        gpa: std.mem.Allocator,
+        io: Io,
+        arena_impl: *std.heap.ArenaAllocator,
+        transcript: transcript_mod.Transcript,
+        path_owned: ?[]u8,
+        base_system: []const u8,
+        project_body: []const u8,
+        project_source: ?[]const u8,
+        compaction_gen: u32,
+        compaction_summary: ?[]const u8,
+    ) Session {
         return .{
             .gpa = gpa,
             .io = io,
             .arena_impl = arena_impl,
             .transcript = transcript,
             .path = path_owned,
+            .base_system = base_system,
+            .project_body = project_body,
             .project_source = project_source,
+            .compaction_gen = compaction_gen,
+            .compaction_summary = compaction_summary,
         };
     }
 
     fn seedNewTranscript(
         gpa: std.mem.Allocator,
         io: Io,
+        arena: std.mem.Allocator,
         transcript: *transcript_mod.Transcript,
         opts: SessionStartOptions,
+        project_body: *[]const u8,
         project_source: *?[]const u8,
     ) loop.RunError!void {
-        var project_body: ?[]u8 = null;
-        defer if (project_body) |b| gpa.free(b);
-
         if (opts.load_project_instructions) {
             if (project_mod.load(gpa, io, Io.Dir.cwd()) catch null) |loaded| {
+                defer gpa.free(loaded.body);
                 project_source.* = loaded.source;
-                project_body = loaded.body;
+                project_body.* = arena.dupe(u8, loaded.body) catch return error.OutOfMemory;
+                // Keep a merged system row for legacy resume / audit; view skips it.
                 const composed = project_mod.composeSystemPrompt(gpa, opts.base_system, .{
                     .source = loaded.source,
                     .body = loaded.body,
@@ -147,6 +202,22 @@ pub const Session = struct {
         try transcript.appendSystem(opts.base_system);
     }
 
+    pub fn layers(self: *const Session) context_mod.Layers {
+        return .{
+            .system = self.base_system,
+            .project = self.project_body,
+            .session = self.compaction_summary orelse "",
+            .ephemeral = "",
+        };
+    }
+
+    pub fn noteCompaction(self: *Session, event: context_mod.CompactionEvent) void {
+        const arena = self.arena_impl.allocator();
+        const owned = arena.dupe(u8, event.summary) catch return;
+        self.compaction_summary = owned;
+        self.compaction_gen += 1;
+    }
+
     pub fn deinit(self: *Session) void {
         if (self.path) |p| self.gpa.free(p);
         self.arena_impl.deinit();
@@ -157,7 +228,12 @@ pub const Session = struct {
     /// Persist transcript if a path is configured.
     pub fn save(self: *Session) session_store.Error!void {
         const p = self.path orelse return;
-        try session_store.save(self.gpa, self.io, Io.Dir.cwd(), p, self.transcript.items());
+        try session_store.saveWithMeta(self.gpa, self.io, Io.Dir.cwd(), p, self.transcript.items(), .{
+            .schema_version = session_store.current_schema_version,
+            .zag_version = self.zag_version,
+            .compaction_gen = self.compaction_gen,
+            .compaction_summary = self.compaction_summary,
+        });
     }
 };
 
@@ -238,7 +314,7 @@ pub const Agent = struct {
         return gate;
     }
 
-    fn deps(self: *Agent) loop.Deps {
+    fn deps(self: *Agent, session: *Session) loop.Deps {
         const gate = self.resolveGate();
         return .{
             .gpa = self.gpa,
@@ -257,13 +333,27 @@ pub const Agent = struct {
                 },
                 .permission_gate = gate,
                 .context = self.options.context,
+                .get_layers = sessionLayers,
+                .layers_ctx = session,
                 .shell_policy = self.options.shell_policy,
                 .trace = if (self.trace) |*tr| tr else null,
                 .chat_retries = self.options.chat_retries,
                 .retry_base_delay_ms = self.options.retry_base_delay_ms,
                 .cancel = &self.cancel,
+                .on_compaction = onSessionCompaction,
+                .compaction_ctx = session,
             },
         };
+    }
+
+    fn sessionLayers(ctx: ?*anyopaque) context_mod.Layers {
+        const session: *Session = @ptrCast(@alignCast(ctx.?));
+        return session.layers();
+    }
+
+    fn onSessionCompaction(ctx: ?*anyopaque, event: context_mod.CompactionEvent) void {
+        const session: *Session = @ptrCast(@alignCast(ctx.?));
+        session.noteCompaction(event);
     }
 
     fn onAgentEvent(ptr: ?*anyopaque, event: observer_mod.Event) void {
@@ -340,8 +430,9 @@ pub const Agent = struct {
     /// Append a user message, run harness, auto-save session when path set.
     pub fn reply(self: *Agent, session: *Session, user_text: []const u8) loop.RunError!loop.Result {
         self.ensureRunStart(session);
+        session.zag_version = self.options.version;
         try session.transcript.appendUser(user_text);
-        const result = try loop.run(self.deps(), &session.transcript);
+        const result = try loop.run(self.deps(session), &session.transcript);
         session.save() catch |err| {
             if (self.options.verbose) {
                 std.log.warn("session save failed: {s}", .{@errorName(err)});

@@ -30,8 +30,8 @@
 | Tools · shell | L1 | `edit_tools.zig` `run_shell` | 超时/截断/exit code 统一形状；policy 测试矩阵绿 | 后台 job + monitor | Hyper background |
 | Permissions | L2 | `permissions.zig`：read/write/shell 矩阵；会话 remember；`SessionKind.plan` stub；CLI `--plan` / `--no-remember`；trace `remembered` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
 | Workspace / Sandbox | L1 | `workspace.zig` + `shell_policy.zig` | jail + denylist + **secret redact** + `/doctor` 最小；SECURITY 诚实 | OS sandbox（seatbelt/bwrap） | Hyper sandbox；Codex |
-| Context / Compaction | L1 | `context.zig`（截断 + catalog 预算） | 四层 prompt；超限 compaction（摘要+最近 N）落盘可解释 | repo map；智能选文件；**Memory 挂载点** | Pi；Aider；Hyper |
-| Session / Resume | L1 | `session_store.zig` | schema 版本 + 迁移；transcript≠view 边界写死 | session 树 / fork / 旁支 | Pi；Nanocodex fork |
+| Context / Compaction | **L2** | `context.zig`（四层 Layers + view-only compaction） | 四层 prompt；超限 compaction（摘要+最近 N）落盘可解释 | repo map；智能选文件；**Memory 挂载点** | Pi；Aider；Hyper |
+| Session / Resume | **L2** | `session_store.zig`（schema_version + meta） | schema 版本 + 迁移；transcript≠view 边界写死 | session 树 / fork / 旁支 | Pi；Nanocodex fork |
 | Provider / zag-ai | L1+ | `packages/zag-ai/`：WireAdapter + `createWire`；openai_compat + anthropic_messages；shared http/Config；embed on vtable；retry/usage/contract_tests；catalog→comptime + `cost.Ledger` 已接线 CLI。欠：session 文件元数据、流式取消测试、redact 联动 | H6 收口项勾满 → L2（见 [zag-ai-provider](./modules/zag-ai-provider.md)） | fallback / multi-key；第三协议 | Hyper models；omp |
 | Trace / Observability | L1+ | `trace.zig`（usage / provider_retry 事件） | schema 版本化；能复盘 permission/jail/shell/usage | dashboard；费用透视 | Hyper dashboard |
 | Memory Repo | L0 | 规格 [modules/memory.md](./modules/memory.md) | （H 不做）C5：默认关；可审可删；注入 ephemeral | embed 检索可选 | Hyper memory |
