@@ -132,6 +132,13 @@ pub const Usage = struct {
         };
     }
 
+    pub fn add(self: *Usage, other: Usage) void {
+        self.prompt_tokens +|= other.prompt_tokens;
+        self.completion_tokens +|= other.completion_tokens;
+        self.total_tokens +|= other.total_tokens;
+        self.reasoning_tokens +|= other.reasoning_tokens;
+    }
+
     fn clampU32(v: i64) u32 {
         if (v <= 0) return 0;
         if (v >= std.math.maxInt(u32)) return std.math.maxInt(u32);
@@ -205,6 +212,16 @@ test "usage clamp" {
     try std.testing.expectEqual(@as(u32, 10), u.prompt_tokens);
     try std.testing.expectEqual(@as(u32, 5), u.completion_tokens);
     try std.testing.expectEqual(@as(u32, 15), u.total_tokens);
+}
+
+test "usage add" {
+    var total: Usage = .{};
+    total.add(.{ .prompt_tokens = 10, .completion_tokens = 3, .total_tokens = 13 });
+    total.add(.{ .prompt_tokens = 5, .completion_tokens = 2, .total_tokens = 7, .reasoning_tokens = 1 });
+    try std.testing.expectEqual(@as(u32, 15), total.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 5), total.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 20), total.total_tokens);
+    try std.testing.expectEqual(@as(u32, 1), total.reasoning_tokens);
 }
 
 test "isRetryableError" {

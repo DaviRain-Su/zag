@@ -88,7 +88,7 @@ Teaching 0 → 1 → 2 → 3  ✅
 | H3 Permissions | 矩阵、remember、plan 语义占位 | [modules/permissions.md](./modules/permissions.md) |
 | H4 Context/Session | 四层 prompt、compaction、schema 版本 | [modules/context-compaction.md](./modules/context-compaction.md)、[session-store.md](./modules/session-store.md) |
 | H5 Safety | policy 矩阵、redact、doctor；明确非 OS sandbox | [modules/workspace-sandbox.md](./modules/workspace-sandbox.md) |
-| H6 Provider | 收口：流式取消、session usage 账本、contract 目录（retry/usage/ChatOptions **已有**） | [modules/zag-ai-provider.md](./modules/zag-ai-provider.md) |
+| H6 Provider | 收口：流式取消、session 文件元数据、contract 目录（retry/usage/ChatOptions/Ledger **已有**） | [modules/zag-ai-provider.md](./modules/zag-ai-provider.md) |
 | H7 Trace | schema 版本、复盘字段齐全（usage 事件 **已有雏形**） | [modules/trace-observability.md](./modules/trace-observability.md) |
 
 **出门条件：** [maturity.md § L2 总验收](./maturity.md#l2-总验收phase-h-出门条件)。

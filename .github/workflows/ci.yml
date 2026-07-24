@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Catalog sources in sync
+        run: python3 packages/zag-ai/scripts/generate_catalog.py --check
+
       - name: OpenAPI path coverage (openai-zig)
         working-directory: packages/openai-zig
         run: python3 scripts/check-path-coverage.py

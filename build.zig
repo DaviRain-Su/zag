@@ -202,7 +202,18 @@ pub fn build(b: *std.Build) void {
     );
     openai_coverage_step.dependOn(&openai_coverage.step);
 
-    const test_step = b.step("test", "Run all tests + openai path coverage");
+    const catalog_check = b.addSystemCommand(&.{
+        "python3",
+        "packages/zag-ai/scripts/generate_catalog.py",
+        "--check",
+    });
+    const catalog_check_step = b.step(
+        "catalog-check",
+        "Verify catalog_data.zig matches data/models/*.json",
+    );
+    catalog_check_step.dependOn(&catalog_check.step);
+
+    const test_step = b.step("test", "Run all tests + openai path coverage + catalog check");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
     test_step.dependOn(&run_ai_tests.step);
@@ -211,4 +222,5 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(openai_coverage_step);
+    test_step.dependOn(catalog_check_step);
 }

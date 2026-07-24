@@ -96,7 +96,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | Catalog 预算 | `catalog.contextBudgetChars` → `context.optionsForModel` |
 | 多厂商 preset | `presets.builtin`（openai_compat + anthropic_messages only） |
 | JSON catalog → comptime | `data/models/*.json` + `scripts/generate_catalog.py` → `catalog_data.zig` |
-| Cost 账本 | `cost.zig`（USD/1M tokens × Usage） |
+| Cost 账本 | `cost.zig` + Agent `ledger`（CLI 汇总 / trace `run_end`） |
 | Contract 雏形 | `packages/zag-ai/src/contract_tests.zig`（无网络） |
 | Multimodal / embed | `ContentPart`；`WireAdapter.embed` |
 
@@ -118,8 +118,9 @@ canonical: types.Message / ToolDefinition / ChatOptions
 ## Usage
 
 - ✅ turn 级 usage（供应商返回时）  
-- ✅ trace 事件  
-- ❌ 尚未：session 级聚合账本、费用估算  
+- ✅ trace 事件（含 turn `usage`；`run_end` 可带累计 tokens / `estimated_usd`）  
+- ✅ Agent `cost.Ledger`：每 chat turn 记账；CLI one-shot / REPL 结束打印汇总  
+- ❌ session JSONL 元数据里持久化 usage（仍待）  
 
 ## 流式
 
@@ -139,7 +140,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 - [x] WireAdapter + 至少两家 style  
 - [x] 重试政策文档 = 代码  
 - [x] usage 出现在 trace（turn 级）  
-- [ ] usage 可选进入 session 元数据 / 聚合  
+- [x] usage 聚合账本 + catalog USD 估算（Agent `ledger` / CLI 汇总；session 文件元数据仍待）  
 - [ ] 流式取消规格有测试或明确 TODO 绑定 CI  
 - [ ] contract 目录约定落地并进 CI 说明  
 - [ ] 与 H5：密钥不出现在 verbose/trace  

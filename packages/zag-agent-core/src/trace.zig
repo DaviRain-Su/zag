@@ -58,7 +58,7 @@ pub const Trace = struct {
     /// Emit run_end once if the trace was started but not closed.
     pub fn finishIfOpen(self: *Trace) void {
         if (self.finished or self.event_count == 0) return;
-        self.emitRunEnd(0, true) catch {};
+        self.emitRunEnd(.{ .turns = 0, .ok = true }) catch {};
     }
 
     pub fn emitRunStart(self: *Trace, meta: struct {
@@ -132,9 +132,27 @@ pub const Trace = struct {
         });
     }
 
-    pub fn emitRunEnd(self: *Trace, turns: u32, ok: bool) std.mem.Allocator.Error!void {
+    pub const RunEndInfo = struct {
+        turns: u32,
+        ok: bool,
+        prompt_tokens: u64 = 0,
+        completion_tokens: u64 = 0,
+        total_tokens: u64 = 0,
+        /// Present when catalog rates made a USD estimate possible.
+        estimated_usd: ?f64 = null,
+    };
+
+    pub fn emitRunEnd(self: *Trace, info: RunEndInfo) std.mem.Allocator.Error!void {
         if (self.finished) return;
-        try self.writeObj(.{ .kind = .run_end, .turns = turns, .ok = ok });
+        try self.writeObj(.{
+            .kind = .run_end,
+            .turns = info.turns,
+            .ok = info.ok,
+            .prompt_tokens = if (info.prompt_tokens != 0) info.prompt_tokens else null,
+            .completion_tokens = if (info.completion_tokens != 0) info.completion_tokens else null,
+            .total_tokens = if (info.total_tokens != 0) info.total_tokens else null,
+            .estimated_usd = info.estimated_usd,
+        });
         self.finished = true;
         try self.flush();
     }
@@ -205,7 +223,7 @@ test "trace accumulates json lines" {
     });
     try t.emitTurn(1);
     try t.emitToolCall(.{ .id = "c1", .name = "list_dir", .arguments = "{}" });
-    try t.emitRunEnd(1, true);
+    try t.emitRunEnd(.{ .turns = 1, .ok = true });
     try std.testing.expect(t.event_count == 4);
     try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "run_start") != null);
     try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "list_dir") != null);

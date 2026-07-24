@@ -6,6 +6,7 @@ const message = @import("message.zig");
 
 pub const Event = union(enum) {
     assistant_text: []const u8,
+    usage: message.Usage,
     tool_call: message.ToolCall,
     tool_result: struct {
         name: []const u8,
@@ -42,6 +43,12 @@ fn logToStderr(_: ?*anyopaque, event: Event) void {
     switch (event) {
         .assistant_text => |text| {
             if (text.len > 0) std.log.info("assistant: {s}", .{text});
+        },
+        .usage => |u| {
+            std.log.info(
+                "usage prompt={d} completion={d} total={d}",
+                .{ u.prompt_tokens, u.completion_tokens, u.total_tokens },
+            );
         },
         .tool_call => |call| {
             std.log.info("tool_call {s}({s})", .{ call.name, call.arguments });

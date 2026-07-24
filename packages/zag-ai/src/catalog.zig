@@ -9,7 +9,6 @@
 //! the table into a pure Zig `[]const ModelInfo`. Runtime: zero parse, zero heap.
 
 const std = @import("std");
-const presets = @import("presets.zig");
 const data = @import("catalog_data.zig");
 
 pub const CostRates = data.CostRates;
@@ -38,12 +37,10 @@ pub fn listForProvider(provider: []const u8, out: *std.ArrayList(ModelInfo), gpa
     }
 }
 
-/// Unknown ids still allowed — hosts add models often; catalog is for budgets/cost/flags.
+/// Unknown ids are still allowed at resolve/wire time — catalog is for budgets/cost/flags.
+/// This helper answers only: is the id present in the compile-time table?
 pub fn isKnownModel(provider: []const u8, id: []const u8) bool {
-    if (find(provider, id) != null) return true;
-    if (std.mem.eql(u8, provider, "custom") or std.mem.eql(u8, provider, "openrouter")) return true;
-    _ = presets.find(provider);
-    return true;
+    return lookup(provider, id) != null;
 }
 
 /// Prefer (provider, id), then id-only.
@@ -129,4 +126,10 @@ test "models table is comptime-known length" {
         if (models.len < 30) @compileError("catalog too small");
     }
     try std.testing.expect(models.len >= 30);
+}
+
+test "isKnownModel is catalog membership only" {
+    try std.testing.expect(isKnownModel("openai", "gpt-4o-mini"));
+    try std.testing.expect(isKnownModel("unknown-provider", "gpt-4o")); // id fallback
+    try std.testing.expect(!isKnownModel("custom", "totally-made-up-model-xyz"));
 }

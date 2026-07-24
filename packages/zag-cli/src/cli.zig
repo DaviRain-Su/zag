@@ -239,6 +239,7 @@ pub fn run(init: std.process.Init) !void {
         .context = context_opts,
         .chat_retries = resolve_result.chat_retries,
         .retry_base_delay_ms = resolve_result.retry_base_delay_ms,
+        .model_info = resolve_result.model_info,
     };
     if (resolve_result.max_turns) |mt| {
         agent_opts.max_turns = mt;
@@ -276,6 +277,10 @@ fn runOneShot(
 
     if (verbose) {
         std.log.info("completed in {d} turn(s)", .{result.turns});
+        agent.logCostSummary();
+    } else if (agent.ledger.turns > 0) {
+        // Quiet one-liner on run_end so cost is visible without -v.
+        agent.logCostSummary();
     }
 
     try writeStdout(agent.io, result.final_text);
@@ -340,12 +345,19 @@ fn runRepl(
             continue;
         };
 
+        if (agent.options.verbose) {
+            agent.logCostSummary();
+        }
+
         try writeStdout(io, "zag> ");
         try writeStdout(io, result.final_text);
         if (result.final_text.len == 0 or result.final_text[result.final_text.len - 1] != '\n') {
             try writeStdout(io, "\n");
         }
     }
+
+    // Session-end cost line (even without -v) when any usage was recorded.
+    agent.logCostSummary();
 }
 
 fn writeStdout(io: Io, bytes: []const u8) !void {

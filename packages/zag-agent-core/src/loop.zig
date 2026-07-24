@@ -49,6 +49,8 @@ pub const RunError = error{
 pub const Result = struct {
     final_text: []const u8,
     turns: u32,
+    /// Sum of provider-reported usage across chat turns (zeros if none reported).
+    usage: message.Usage = .{},
 };
 
 pub const Deps = struct {
@@ -62,6 +64,7 @@ pub const Deps = struct {
 pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
     var turns: u32 = 0;
     var last_text: []const u8 = "";
+    var usage_total: message.Usage = .{};
 
     while (turns < deps.options.max_turns) {
         turns += 1;
@@ -89,21 +92,17 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             tr.emitUsage(turn) catch {};
         }
         if (turn.usage) |u| {
-            if (deps.options.observer.on_event != null) {
-                std.log.info(
-                    "usage prompt={d} completion={d} total={d}",
-                    .{ u.prompt_tokens, u.completion_tokens, u.total_tokens },
-                );
-            }
+            usage_total.add(u);
+            deps.options.observer.emit(.{ .usage = u });
         }
 
         if (!turn.wantsTools()) {
-            return .{ .final_text = last_text, .turns = turns };
+            return .{ .final_text = last_text, .turns = turns, .usage = usage_total };
         }
 
         const last_msg = transcript.items()[transcript.items().len - 1];
         const calls = last_msg.tool_calls orelse {
-            return .{ .final_text = last_text, .turns = turns };
+            return .{ .final_text = last_text, .turns = turns, .usage = usage_total };
         };
 
         const registry = deps.toolset.registry();

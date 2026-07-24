@@ -10,6 +10,7 @@
 const std = @import("std");
 const Io = std.Io;
 const core = @import("zag-agent-core");
+const ai = @import("zag-ai");
 const toolset_mod = @import("toolset.zig");
 const project_mod = @import("project.zig");
 
@@ -39,6 +40,8 @@ pub const Options = struct {
     /// Loop-level retries on retryable provider errors.
     chat_retries: u8 = 2,
     retry_base_delay_ms: u64 = 500,
+    /// Catalog row for cost rates / context (from `ai.resolve`); null = no USD estimate.
+    model_info: ?ai.ModelInfo = null,
 };
 
 pub const SessionStartOptions = struct {
@@ -163,6 +166,8 @@ pub const Agent = struct {
     permission_gate: permissions.Gate,
     /// Owned when options.trace_path is set.
     trace: ?trace_mod.Trace = null,
+    /// Session/run cost accumulator (updated on each provider usage event).
+    ledger: ai.cost.Ledger = .{},
 
     pub fn init(
         gpa: std.mem.Allocator,
@@ -179,6 +184,7 @@ pub const Agent = struct {
             .stdin_prompter = .{ .io = io },
             .permission_gate = .yolo(),
             .trace = null,
+            .ledger = .{},
         };
         self.permission_gate = self.resolveGate();
         if (options.trace_path) |tp| {
@@ -189,7 +195,9 @@ pub const Agent = struct {
 
     pub fn deinit(self: *Agent) void {
         if (self.trace) |*tr| {
-            tr.finishIfOpen();
+            if (!tr.finished and tr.event_count > 0) {
+                self.emitRunEnd(tr, 0, true);
+            }
             tr.deinit();
         }
         self.* = undefined;
@@ -225,10 +233,10 @@ pub const Agent = struct {
             },
             .options = .{
                 .max_turns = self.options.max_turns,
-                .observer = if (self.options.verbose)
-                    observer_mod.Observer.stderrLog()
-                else
-                    observer_mod.Observer.none(),
+                .observer = .{
+                    .ptr = self,
+                    .on_event = onAgentEvent,
+                },
                 .permission_gate = gate,
                 .context = self.options.context,
                 .shell_policy = self.options.shell_policy,
@@ -237,6 +245,26 @@ pub const Agent = struct {
                 .retry_base_delay_ms = self.options.retry_base_delay_ms,
             },
         };
+    }
+
+    fn onAgentEvent(ptr: ?*anyopaque, event: observer_mod.Event) void {
+        const self: *Agent = @ptrCast(@alignCast(ptr.?));
+        switch (event) {
+            .usage => |u| {
+                self.ledger.recordModel(u, self.options.model_info);
+                if (self.options.verbose) {
+                    observer_mod.Observer.stderrLog().emit(event);
+                    if (self.ledger.cost.known) {
+                        std.log.info("cost est cumulative=${d:.6}", .{self.ledger.cost.total});
+                    }
+                }
+            },
+            else => {
+                if (self.options.verbose) {
+                    observer_mod.Observer.stderrLog().emit(event);
+                }
+            },
+        }
     }
 
     fn ensureRunStart(self: *Agent, session: *Session) void {
@@ -248,6 +276,45 @@ pub const Agent = struct {
             .shell_policy = self.options.shell_policy.name(),
             .session = session.path,
         }) catch {};
+    }
+
+    fn emitRunEnd(self: *Agent, tr: *trace_mod.Trace, turns: u32, ok: bool) void {
+        const usd: ?f64 = if (self.ledger.cost.known) self.ledger.cost.total else null;
+        tr.emitRunEnd(.{
+            .turns = turns,
+            .ok = ok,
+            .prompt_tokens = self.ledger.prompt_tokens,
+            .completion_tokens = self.ledger.completion_tokens,
+            .total_tokens = self.ledger.total_tokens,
+            .estimated_usd = usd,
+        }) catch {};
+    }
+
+    /// Log session ledger to stderr (no-op when nothing was recorded).
+    pub fn logCostSummary(self: *const Agent) void {
+        if (self.ledger.turns == 0) return;
+        if (self.ledger.cost.known) {
+            std.log.info(
+                "cost api_calls={d} prompt={d} completion={d} total_tokens={d} est_usd=${d:.6}",
+                .{
+                    self.ledger.turns,
+                    self.ledger.prompt_tokens,
+                    self.ledger.completion_tokens,
+                    self.ledger.total_tokens,
+                    self.ledger.cost.total,
+                },
+            );
+        } else {
+            std.log.info(
+                "usage api_calls={d} prompt={d} completion={d} total_tokens={d} (no catalog rates)",
+                .{
+                    self.ledger.turns,
+                    self.ledger.prompt_tokens,
+                    self.ledger.completion_tokens,
+                    self.ledger.total_tokens,
+                },
+            );
+        }
     }
 
     /// Append a user message, run harness, auto-save session when path set.
@@ -292,16 +359,17 @@ pub const Agent = struct {
 
         const result = try self.reply(&session, user_prompt);
         if (self.trace) |*tr| {
-            tr.emitRunEnd(result.turns, true) catch {};
+            self.emitRunEnd(tr, result.turns, true);
         }
         const owned = self.gpa.dupe(u8, result.final_text) catch return error.OutOfMemory;
-        return .{ .final_text = owned, .turns = result.turns };
+        return .{ .final_text = owned, .turns = result.turns, .usage = result.usage };
     }
 };
 
 pub const OwnedResult = struct {
     final_text: []u8,
     turns: u32,
+    usage: message.Usage = .{},
 
     pub fn deinit(self: OwnedResult, gpa: std.mem.Allocator) void {
         gpa.free(self.final_text);
