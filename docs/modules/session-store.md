@@ -33,8 +33,8 @@ JSONL header plus message lines:
 | `schema_version` | Integer, current `1` (legacy `v` accepted; float rejected; required on typed header) |
 | `type` | Exact string `zag_session` (only first content line may be a header) |
 | `zag_version` | Optional writer package version |
-| `compaction_gen` | Compaction generation |
-| `compaction_summary` | Optional latest summary |
+| `compaction_gen` | Compaction generation: +1 per successfully applied final `CompactionEvent` (h-context-001) |
+| `compaction_summary` | Optional latest final summary (includes prior-session lineage when re-compacting) |
 | message row | `role`, `content`, `tool_calls`, `tool_call_id`, … |
 
 Header-less legacy files load as v1. `schema_version != 1` returns `UnsupportedSchema`; it must not seed a new session on that path.

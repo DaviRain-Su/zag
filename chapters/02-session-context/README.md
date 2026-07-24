@@ -102,20 +102,22 @@ Session (full transcript, durable)
 
 ---
 
-## 5. Context 策略（Phase 2 故意糙）
+## 5. Context 策略（Phase 2 教学 + H L2 会计）
 
 默认（可调 `context.Options`）：
 
-- 保留全部 **leading system**
-- 非 system **尾部最多 48 条**
-- **约 120k 字符** 软预算，从前沿丢掉
-- 不对齐到「裸 tool」：避免 tool 结果没有对应 assistant tool_calls
-- **不做** LLM 摘要（Phase 后可加）
+- 四层 prompt：system → project → session → ephemeral，再加 history 尾部
+- 非 system **尾部最多 48 条**；**约 120k 字符** 软预算
+- Tool 边界对齐：选中起点不会落在「裸 tool」结果上
+- 启发式 summary（非 LLM）；**fixed-point**：summary 插入后若再超预算，继续合法裁切并**重建** `dropped`/summary
+- `CompactionEvent` 描述**最终** view；session `compaction_gen` + summary 与 trace 同事件
+- soft budget / `min_tail`：无法再合法裁切时诚实终止（可能仍略超预算）
 
 坑（读完应能说）：
 
-- **丢历史**：模型忘早期约束；所以项目约定要在 system。
-- **摘要**：省 token 但可能编造——Phase 2 宁可不做。
+- **丢历史**：模型忘早期约束；所以项目约定要在 system / project 层。
+- **中间态会计**：若只记第一次 trim 的 `dropped`，session/trace 无法解释最终 view（h-context-001 已修）。
+- **摘要**：启发式可丢细节；LLM 摘要属 C5 可选能力。
 
 ---
 
@@ -140,8 +142,9 @@ Session (full transcript, durable)
 ## 8. 生产缺口
 
 Session open/save 已按 [D-006](../../docs/decisions/active/D-006-session-open-and-durability.md) 到 **L2**（create/resume 分离、原子保存、可见错误、单 writer）。
-仍未声称：fsync/掉电耐久、session 路径 symlink containment、fork/tree（L3/C5）。
-Context 裁切与四层 prompt 见 **[docs/gaps/02-session.md](../../docs/gaps/02-session.md)** 与 [context-compaction](../../docs/modules/context-compaction.md)。
+Context final-view accounting 已按 **h-context-001** 到 **L2**（fixed-point `dropped`/summary/lineage；session 与 trace 同最终事件）。
+仍未声称：fsync/掉电耐久、session 路径 symlink containment、fork/tree、repo map（L3/C5）。
+合同细节：[context-compaction](../../docs/modules/context-compaction.md) · [gaps/02-session](../../docs/gaps/02-session.md)。
 
 ---
 

@@ -115,6 +115,15 @@ Every `run_start` includes `schema_version`, Zag `version`, `permission`, `shell
 
 Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`.
 
+### Compaction event (h-context-001)
+
+| Field | Cap / rule |
+|-------|------------|
+| `dropped` | Final omitted body-prefix count (same as session event) |
+| `summary` | Bounded UTF-8; `cap_compaction_summary` = **800** (= `context.default_summary_max_chars`) so persisted trace can verify the same final bounded summary as session meta |
+
+Loop order: session `on_compaction` sink first; on sink OOM the run fails with `OutOfMemory` and **no** compaction line is written. Do not weaken exact-terminal / error behavior for other kinds.
+
 ## Public errors
 
 ```text

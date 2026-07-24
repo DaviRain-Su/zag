@@ -80,7 +80,7 @@ These remain useful but do not cover the assessment blockers.
 
 ## P1 minimum fixtures
 
-1. two-stage compaction: final `dropped` and summary/lineage match the returned view.
+1. two-stage compaction: final `dropped` and summary/lineage match the returned view. ✅ h-context-001 (`context.zig` fixed-point fixtures + agent session/trace integration).
 2. fake configured secrets do not appear in verbose, trace, or session bytes.
 3. timeout is enforced or explicitly unsupported for std/curl paths.
 4. stream cancellation discards incomplete Tool-call fragments.

@@ -28,7 +28,7 @@
 | Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox；policy 选 shell 靠 descriptor.shell 非名称 | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
 | Permissions | **L2** | D-007: Gate/Ask/plan/remember 消费 descriptor.risk；custom write/execute 与 built-in 同 gate；无 `riskOf(name)` | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
 | Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）；descriptor 选 path/shell；shell 仍 denylist；**无** secret redaction/doctor → 整行未达 L2 | file containment ✅；redaction、doctor、诚实 threat model 文档齐 | OS sandbox/network/worktree |
-| Context / Compaction | **L1+** | four Layers + view-only summary 已有；second-stage trim accounting 不完整 | final returned view 与 dropped/summary/session/trace 一致 | repo map、智能选文件 |
+| Context / Compaction | **L2** | h-context-001: fixed-point final-view accounting；`dropped`/summary/lineage 与返回 view 一致；session meta 与 trace 同事件；Tool 边界；soft min_tail 诚实终止；OOM 不静默分叉 | final returned view 与 dropped/summary/session/trace 一致 ✅ | repo map、智能选文件 |
 | Session / Resume | **L2** | D-006: create/resume distinct; open_or_create SDK-only; atomic save + per-Writer test fault preserves prior bytes; `Agent.reply` save IoFailed fixture; one active writer via reusable `{path}.lock`; strict header (version required on typed header); lexical session path; P0 fixtures (create-existing, resume missing/invalid/unsupported/general-I/O, fault-save, busy, stale sidecar, CLI open-mode). Not claimed: fsync/power-loss, symlink containment, hostile Writer-copy defense | explicit create/resume; atomic preservation; visible save errors; exclusive writer/conflict | fork/tree/journal as needed |
 | Provider / zag-ai | **L1+** | two wire styles、retry/usage/contracts/cost 已有；std timeout 无效、stream cancel/partial Tool safety 未闭合 | enforced-or-rejected deadline；in-flight cancel；redaction；contract matrix | fallback/multi-key/third protocol on demand |
 | Trace / Observability | **L2** | h-trace-001: schema；facade 单 terminal；Guard symlink jail；atomic non-destructive preflight；stack serialize + terminal_reserve；per-reply latest-run；fail-closed；redaction 仍 P1 | versioned schema ✅；truthful terminal ✅；symlink/atomic persistence ✅；redact P1 | dashboard/correlation |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；tool-policy + session + symlink containment + **trace lifecycle** P0 fixtures 已进；redaction 等仍缺 | P0/P1 failure matrix进入 CI；不得削弱断言 | edit/cost/performance baselines |
+| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；tool-policy + session + symlink containment + trace lifecycle + **context accounting** fixtures 已进；redaction 等仍缺 | P0/P1 failure matrix进入 CI；不得削弱断言 | edit/cost/performance baselines |
 
 ## Phase H production-floor exit
 
@@ -47,7 +47,7 @@
 2. **Tool contract**：Tool 有 instance state 和 mandatory runtime descriptor；risk/path/cancel 不按名称猜测；缺失 metadata fail-closed。
 3. **Filesystem containment**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace（**file sub-capability done** h-workspace-001）；shell 边界单独诚实说明；整行 Safety 仍待 redaction/doctor。
 4. **Truthful lifecycle**：每个 started run 恰有一个 terminal；provider/save/trace 失败不得记为 completed success（h-trace-001 ✅；timeout/in-flight cancel 仍 P1）。
-5. **Context accounting**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致。
+5. **Context accounting**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致（h-context-001 ✅）。
 6. **Secrets**：fake configured key 不出现在 verbose、trace、session fixtures；`.zag/` 仍标敏感。
 7. **Deadline/cancel**：公开 timeout 真正执行或明确拒绝；provider/stream cancellation 有界；半截 Tool call 不执行。
 8. **Editing/runtime**：search_replace/grep/glob 可用；shell exit/timeout/truncation/deny 为稳定机器可读形状。
@@ -75,7 +75,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 |----------|--------------|----------------|
 | Phase 0 | basic loop/read | lifecycle/error contracts |
 | Phase 1 | write/shell/ask | descriptor-driven risk (D-007 L2); file symlink containment closed in H |
-| Phase 2 | session/context | durability/open/compaction accounting |
+| Phase 2 | session/context | durability/open L2；compaction accounting L2（h-context-001） |
 | Phase 3 | lexical jail/policy/trace | real file containment (H); truthful/versioned trace (h-trace-001); redaction still open |
 | **Phase H** | raises all existing surfaces | current active P0/P1 tasks |
 

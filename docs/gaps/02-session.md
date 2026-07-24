@@ -14,11 +14,11 @@
 
 | Gap | Production failure | Delivery |
 |-----|--------------------|----------|
-| resume catches invalid/unsupported/general I/O and seeds a new transcript on the same path | later save can overwrite the only good/recoverable file | P0 `h-session-001` / [D-006](../decisions/active/D-006-session-open-and-durability.md) |
-| save truncates target and failure is hidden by Agent facade | crash/IO failure can lose state while caller sees success | P0 `h-session-001` |
-| no active-writer conflict contract | concurrent sessions can silently lose updates | P0 `h-session-001` |
-| second-stage trim is absent from `dropped`/summary | session/trace cannot explain the actual model view | P1 `h-context-001` |
-| fault fixtures missing | schema/roundtrip happy paths do not prove durability | [quality/evals](../quality/evals.md) |
+| resume catches invalid/unsupported/general I/O and seeds a new transcript on the same path | later save can overwrite the only good/recoverable file | P0 `h-session-001` / [D-006](../decisions/active/D-006-session-open-and-durability.md) — **closed L2** |
+| save truncates target and failure is hidden by Agent facade | crash/IO failure can lose state while caller sees success | P0 `h-session-001` — **closed L2** |
+| no active-writer conflict contract | concurrent sessions can silently lose updates | P0 `h-session-001` — **closed L2** |
+| second-stage trim is absent from `dropped`/summary | session/trace cannot explain the actual model view | P1 `h-context-001` — **closed L2** (fixed-point final-view accounting) |
+| fault fixtures missing | schema/roundtrip happy paths do not prove durability | session + context + trace P0/P1 fixtures in CI |
 | repo map/fork | medium-repo navigation and side questions | C5 after H contracts |
 
 ## Non-goals for H
@@ -30,4 +30,4 @@
 
 ## Next
 
-Complete the P0 session task, then P1 compaction accounting. C5.1 repo map and fork may start only after these contracts are stable.
+Session (D-006) and context accounting (h-context-001) are L2. C5.1 repo map and fork may start; Memory Repo remains later and default-off.

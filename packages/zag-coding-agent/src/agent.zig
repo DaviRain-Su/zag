@@ -259,9 +259,12 @@ pub const Session = struct {
         };
     }
 
-    pub fn noteCompaction(self: *Session, event: context_mod.CompactionEvent) void {
+    /// Apply one final compaction event. Increments `compaction_gen` exactly once
+    /// on success. On OOM leaves gen/summary unchanged so callers can fail the
+    /// turn without claiming a session update that did not stick (h-context-001).
+    pub fn noteCompaction(self: *Session, event: context_mod.CompactionEvent) error{OutOfMemory}!void {
         const arena = self.arena_impl.allocator();
-        const owned = arena.dupe(u8, event.summary) catch return;
+        const owned = try arena.dupe(u8, event.summary);
         self.compaction_summary = owned;
         self.compaction_gen += 1;
     }
@@ -409,9 +412,9 @@ pub const Agent = struct {
         return session.layers();
     }
 
-    fn onSessionCompaction(ctx: ?*anyopaque, event: context_mod.CompactionEvent) void {
+    fn onSessionCompaction(ctx: ?*anyopaque, event: context_mod.CompactionEvent) error{OutOfMemory}!void {
         const session: *Session = @ptrCast(@alignCast(ctx.?));
-        session.noteCompaction(event);
+        try session.noteCompaction(event);
     }
 
     fn onAgentEvent(ptr: ?*anyopaque, event: observer_mod.Event) void {
@@ -1466,4 +1469,375 @@ test "h-trace: provider failure after prior turn reports last_emitted_turn" {
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"turns\":") != null);
     // Terminal should not claim zero turns if a turn was emitted.
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"turns\":0") == null);
+}
+
+// ── h-context-001 integration fixtures ──────────────────────────────────────
+
+/// Mock that records the last provider view and returns a short text reply.
+const CaptureViewChat = struct {
+    calls: *u32,
+    /// Gpa-owned copy of last message roles+contents for assertions.
+    gpa: std.mem.Allocator,
+    last_roles: std.ArrayListUnmanaged(u8) = .empty,
+    last_contents: std.ArrayListUnmanaged([]const u8) = .empty,
+    last_view_len: usize = 0,
+
+    fn deinit(self: *CaptureViewChat) void {
+        for (self.last_contents.items) |c| self.gpa.free(c);
+        self.last_contents.deinit(self.gpa);
+        self.last_roles.deinit(self.gpa);
+    }
+
+    fn chat(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const message.Message,
+        _: []const tool.Definition,
+    ) provider_mod.ChatError!message.AssistantTurn {
+        const self: *CaptureViewChat = @ptrCast(@alignCast(ptr));
+        self.calls.* += 1;
+        // Reset previous capture.
+        for (self.last_contents.items) |c| self.gpa.free(c);
+        self.last_contents.clearRetainingCapacity();
+        self.last_roles.clearRetainingCapacity();
+        self.last_view_len = messages.len;
+        for (messages) |m| {
+            const role_ch: u8 = switch (m.role) {
+                .system => 'S',
+                .user => 'U',
+                .assistant => 'A',
+                .tool => 'T',
+            };
+            self.last_roles.append(self.gpa, role_ch) catch return error.OutOfMemory;
+            const owned = self.gpa.dupe(u8, m.content) catch return error.OutOfMemory;
+            self.last_contents.append(self.gpa, owned) catch {
+                self.gpa.free(owned);
+                return error.OutOfMemory;
+            };
+        }
+        return .{
+            .content = try arena.dupe(u8, "compacted-reply"),
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        };
+    }
+};
+
+fn parseCompactionFromTrace(gpa: std.mem.Allocator, buf: []const u8) !struct { dropped: usize, summary: []const u8 } {
+    var lines = std.mem.splitScalar(u8, buf, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (std.mem.indexOf(u8, line, "\"kind\":\"compaction\"") == null) continue;
+        var parsed = try std.json.parseFromSlice(std.json.Value, gpa, line, .{ .allocate = .alloc_always });
+        defer parsed.deinit();
+        const obj = parsed.value.object;
+        const dropped_v = obj.get("dropped") orelse return error.TestUnexpectedResult;
+        const summary_v = obj.get("summary") orelse return error.TestUnexpectedResult;
+        const dropped: usize = switch (dropped_v) {
+            .integer => |i| @intCast(i),
+            else => return error.TestUnexpectedResult,
+        };
+        const summary = try gpa.dupe(u8, summary_v.string);
+        return .{ .dropped = dropped, .summary = summary };
+    }
+    return error.TestUnexpectedResult;
+}
+
+test "h-context: session+trace same final dropped/summary; provider gets final view; save/resume gen" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-context-session";
+    const path = ".zag-test-h-context-session/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var gen_saved: u32 = 0;
+    var summary_saved: []u8 = undefined;
+
+    {
+        var calls: u32 = 0;
+        var capture: CaptureViewChat = .{ .calls = &calls, .gpa = gpa };
+        defer capture.deinit();
+
+        var agent = Agent.init(gpa, io, .{
+            .ptr = &capture,
+            .vtable = &.{ .chat = CaptureViewChat.chat },
+        }, .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .max_turns = 4,
+            // Force count-trim compaction on a long seeded transcript.
+            .context = .{
+                .max_tail_messages = 4,
+                .max_chars = 0,
+                .min_tail_messages = 2,
+                .summary_max_chars = 400,
+            },
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        // Seed a long body so the next view drops history.
+        const pad = "seed-msg-";
+        var n: usize = 0;
+        while (n < 12) : (n += 1) {
+            var buf: [32]u8 = undefined;
+            const label = try std.fmt.bufPrint(&buf, "{s}{d}", .{ pad, n });
+            if (n % 2 == 0) {
+                try session.transcript.appendUser(label);
+            } else {
+                try session.transcript.appendAssistantTurn(.{
+                    .content = label,
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                });
+            }
+        }
+
+        var roles_before: [64]u8 = undefined;
+        const items_before = session.transcript.items();
+        var rb: usize = 0;
+        for (items_before) |m| {
+            if (rb >= roles_before.len) break;
+            roles_before[rb] = switch (m.role) {
+                .system => 'S',
+                .user => 'U',
+                .assistant => 'A',
+                .tool => 'T',
+            };
+            rb += 1;
+        }
+        const len_before = items_before.len;
+        const first_content = try gpa.dupe(u8, items_before[0].content);
+        defer gpa.free(first_content);
+
+        const result = try agent.reply(&session, "please compact");
+        try std.testing.expectEqualStrings("compacted-reply", result.final_text);
+
+        // Transcript grew by user + assistant only; earlier rows unchanged.
+        const items_after = session.transcript.items();
+        try std.testing.expectEqual(len_before + 2, items_after.len);
+        try std.testing.expectEqualStrings(first_content, items_after[0].content);
+        var ra: usize = 0;
+        for (items_after[0..rb]) |m| {
+            const ch: u8 = switch (m.role) {
+                .system => 'S',
+                .user => 'U',
+                .assistant => 'A',
+                .tool => 'T',
+            };
+            try std.testing.expectEqual(roles_before[ra], ch);
+            ra += 1;
+        }
+
+        // Session received exactly one generation bump for this event.
+        try std.testing.expectEqual(@as(u32, 1), session.compaction_gen);
+        try std.testing.expect(session.compaction_summary != null);
+        const sess_summary = session.compaction_summary.?;
+
+        // Trace compaction event matches session (strict JSON).
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("compaction"));
+        const parsed = try parseCompactionFromTrace(gpa, tr.buf.items);
+        defer gpa.free(parsed.summary);
+        try std.testing.expectEqualStrings(sess_summary, parsed.summary);
+
+        // Header count in summary equals dropped.
+        var count_buf: [32]u8 = undefined;
+        const needle = try std.fmt.bufPrint(&count_buf, "{d} earlier", .{parsed.dropped});
+        try std.testing.expect(std.mem.indexOf(u8, sess_summary, needle) != null);
+        try std.testing.expect(parsed.dropped >= 2);
+
+        // Provider received the compacted final view (shorter than full transcript).
+        try std.testing.expect(capture.last_view_len < items_after.len);
+        try std.testing.expect(capture.last_view_len > 0);
+        // Session context layer present in provider view.
+        var saw_session_layer = false;
+        for (capture.last_contents.items) |c| {
+            if (std.mem.indexOf(u8, c, "Session context") != null) saw_session_layer = true;
+        }
+        try std.testing.expect(saw_session_layer);
+
+        // Persist; copy gen/summary out before session ends.
+        try session.save();
+        gen_saved = session.compaction_gen;
+        summary_saved = try gpa.dupe(u8, sess_summary);
+    }
+    defer gpa.free(summary_saved);
+
+    // Resume preserves gen and summary.
+    {
+        var resumed = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = false,
+        });
+        defer resumed.deinit();
+        try std.testing.expectEqual(gen_saved, resumed.compaction_gen);
+        try std.testing.expect(resumed.compaction_summary != null);
+        try std.testing.expectEqualStrings(summary_saved, resumed.compaction_summary.?);
+
+        // Second compaction bumps gen exactly once more and keeps lineage.
+        var calls2: u32 = 0;
+        var capture2: CaptureViewChat = .{ .calls = &calls2, .gpa = gpa };
+        defer capture2.deinit();
+        var agent2 = Agent.init(gpa, io, .{
+            .ptr = &capture2,
+            .vtable = &.{ .chat = CaptureViewChat.chat },
+        }, .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .max_turns = 4,
+            .context = .{
+                .max_tail_messages = 2,
+                .max_chars = 0,
+                .min_tail_messages = 2,
+                .summary_max_chars = 500,
+            },
+        });
+        defer agent2.deinit();
+        agent2.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+        const gen_before = resumed.compaction_gen;
+        _ = try agent2.reply(&resumed, "again");
+        try std.testing.expectEqual(gen_before + 1, resumed.compaction_gen);
+        try std.testing.expect(std.mem.indexOf(u8, resumed.compaction_summary.?, "Prior session context") != null);
+
+        // Trace for second run also carries matching summary.
+        const tr2 = if (agent2.trace) |*t| t else return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(u32, 1), tr2.countKind("compaction"));
+        const p2 = try parseCompactionFromTrace(gpa, tr2.buf.items);
+        defer gpa.free(p2.summary);
+        try std.testing.expectEqualStrings(resumed.compaction_summary.?, p2.summary);
+    }
+}
+
+test "h-context: noteCompaction OOM leaves gen and summary unchanged" {
+    const io = std.testing.io;
+
+    // Bound the session allocator so summary dupe can fail after start.
+    var storage: [32 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&storage);
+    const limited = fba.allocator();
+
+    var session = try Session.start(limited, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try std.testing.expectEqual(@as(u32, 0), session.compaction_gen);
+    try std.testing.expect(session.compaction_summary == null);
+
+    // Exhaust remaining arena capacity.
+    const arena = session.arena_impl.allocator();
+    while (arena.alloc(u8, 64)) |_| {} else |_| {}
+
+    const err = session.noteCompaction(.{
+        .dropped = 3,
+        .summary = "this-summary-must-not-be-applied-on-oom",
+    });
+    try std.testing.expectError(error.OutOfMemory, err);
+    try std.testing.expectEqual(@as(u32, 0), session.compaction_gen);
+    try std.testing.expect(session.compaction_summary == null);
+}
+
+test "h-context: on_compaction OOM aborts before trace compaction line" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Loop-level: sink returns OOM; trace must not receive compaction; run errors.
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "should-not-reach"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    const OomSink = struct {
+        fn onCompaction(ctx: ?*anyopaque, _: context_mod.CompactionEvent) error{OutOfMemory}!void {
+            const called: *bool = @ptrCast(@alignCast(ctx.?));
+            called.* = true;
+            return error.OutOfMemory;
+        }
+    };
+    var sink_called = false;
+
+    var tr = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    defer tr.deinit();
+    // Open a run so mid-run emit would be legal if reached (it must not be).
+    try tr.beginReply();
+    try tr.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "yolo",
+        .shell_policy = "protect",
+    });
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendSystem("sys");
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        try transcript.appendUser("u");
+        try transcript.appendAssistantTurn(.{
+            .content = "a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+    }
+
+    const result = loop.run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = io,
+            .cwd = Io.Dir.cwd(),
+        },
+        .options = .{
+            .max_turns = 2,
+            .permission_gate = .yolo(),
+            .layers = .{ .system = "base" },
+            .context = .{
+                .max_tail_messages = 2,
+                .max_chars = 0,
+                .min_tail_messages = 1,
+            },
+            .trace = &tr,
+            .on_compaction = OomSink.onCompaction,
+            .compaction_ctx = &sink_called,
+        },
+    }, &transcript);
+
+    try std.testing.expectError(error.OutOfMemory, result);
+    try std.testing.expect(sink_called);
+    try std.testing.expectEqual(@as(u32, 0), tr.countKind("compaction"));
+    // Provider must not have been called after sink failure.
+    // (Mock would have returned text; no assistant event expected from loop.)
+    try std.testing.expectEqual(@as(u32, 0), tr.countKind("assistant"));
 }

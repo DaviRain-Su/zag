@@ -55,7 +55,9 @@ pub const Options = struct {
     /// Cooperative cancel (SIGINT / tests). Checked between turns and tools.
     cancel: ?*cancel_mod.Flag = null,
     /// Optional sink when view compaction fires (summary is turn-arena owned — sink must dupe).
-    on_compaction: ?*const fn (ctx: ?*anyopaque, event: context_mod.CompactionEvent) void = null,
+    /// Must return `error.OutOfMemory` on failure so the loop does not emit a
+    /// compaction event to trace without a matching session update (h-context-001).
+    on_compaction: ?*const fn (ctx: ?*anyopaque, event: context_mod.CompactionEvent) error{OutOfMemory}!void = null,
     compaction_ctx: ?*anyopaque = null,
 };
 
@@ -180,9 +182,12 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             deps_run.options.context,
             layers,
         ) catch return error.OutOfMemory;
+        // Session sink first, then trace: OOM on session note aborts before any
+        // compaction line is written so session metadata and trace cannot
+        // silently diverge (h-context-001). Both receive the same final event.
         if (view.compaction) |ev| {
             if (deps_run.options.on_compaction) |cb| {
-                cb(deps_run.options.compaction_ctx, ev);
+                cb(deps_run.options.compaction_ctx, ev) catch return error.OutOfMemory;
             }
             if (deps_run.options.trace) |tr| {
                 tr.emitCompaction(ev.dropped, ev.summary) catch |err| return mapTraceEmit(err);

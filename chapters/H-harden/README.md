@@ -43,7 +43,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens + facade terminal（h-trace-001）；in-flight cancel open |
 | H2 Edit | [tools-edit](../../docs/modules/tools-edit.md) | search_replace/write under file+dir containment (h-workspace-001); Plan UX still open |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
-| H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2 landed；context accounting still open |
+| H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file symlink containment done (h-workspace-001); redact/doctor open → Safety L1+ |
 | H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage landed；deadline/cancel open |
 | H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle/schema/I/O L2；redaction/dashboard still open |

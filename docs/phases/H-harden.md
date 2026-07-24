@@ -122,13 +122,17 @@ Specs: [context-compaction](../modules/context-compaction.md), [session-store](.
 - session schema v1 and legacy parsing;
 - compaction metadata/trace event plumbing.
 
-### Remaining
+### Remaining (capability / C5)
 
-- P0 session explicit open, atomic save preservation, visible errors, exclusive writer;
-- P1 final-view compaction accounting and summary lineage;
-- persistence/trace integration fixtures.
+- repo map, session fork/tree, optional LLM summary (not H L2 blockers).
 
-H4 remains **L1+**, not closed L2. Repo map/fork/Memory stay C5.
+### Closed for H4 L2
+
+- P0 session explicit open, atomic save preservation, visible errors, exclusive writer (D-006);
+- P1 final-view compaction accounting and summary lineage (h-context-001);
+- session/trace integration fixtures for the same final event.
+
+H4 Context/Compaction is **L2** in [maturity](../maturity.md). Repo map/fork/Memory stay C5.
 
 ## H5 — Safety
 
