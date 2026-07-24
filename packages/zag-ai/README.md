@@ -128,9 +128,20 @@ Edit `data/models/<provider>.json`, then:
 
 ```bash
 python3 packages/zag-ai/scripts/generate_catalog.py
+python3 packages/zag-ai/scripts/generate_catalog.py --check
 ```
 
-This regenerates `data/catalog.json` and **`src/catalog_data.zig`** (compile-time `[]const ModelInfo`). Runtime does not parse JSON.
+This regenerates `data/catalog.json` and **`src/catalog_data.zig`** (compile-time `[]const ModelInfo`). Runtime hot path does not parse JSON.
+
+JSON inspect / roundtrip uses [comptime-serde](https://github.com/jiacai2050/comptime-serde) (library mirror under `packages/comptime-serde`):
+
+```zig
+const ai = @import("zag-ai");
+try ai.catalog_serde.serializeModel(&writer, model);
+var parsed = try ai.catalog_serde.parseCatalogJson(gpa, json_bytes);
+```
+
+See `catalog_serde.zig` tests: ModelInfo → JSON → back, and `data/catalog.json` vs frozen table.
 
 Cost rates (USD / 1M tokens) feed `ai.cost.Ledger` / `estimateModel`. See `data/README.md`.
 

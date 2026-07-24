@@ -55,6 +55,9 @@
             .hash = "curl-0.5.0-P4tT4e_-AABZBa1zBmiSKFQo7xV0DJ2cUxFfH4KiQKj2",
             .lazy = true,
         },
+        .comptime_serde = .{
+            .path = "packages/comptime-serde",
+        },
     },
     .paths = .{
         "build.zig",

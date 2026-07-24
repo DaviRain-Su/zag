@@ -24,6 +24,12 @@ pub fn build(b: *std.Build) void {
     });
     const types_mod = types_dep.module("zag-types");
 
+    const serde_dep = b.dependency("comptime_serde", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const serde_mod = serde_dep.module("comptime_serde");
+
     const ai_dep = b.dependency("zag_ai", .{
         .target = target,
         .optimize = optimize,
@@ -83,6 +89,7 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "openai_zig", .module = openai_mod },
             .{ .name = "zag-types", .module = types_mod },
+            .{ .name = "comptime_serde", .module = serde_mod },
         },
     });
     zag_ai_named.addOptions("build_options", http_opts);
@@ -170,6 +177,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "openai_zig", .module = openai_mod },
                 .{ .name = "zag-types", .module = types_mod },
+                .{ .name = "comptime_serde", .module = serde_mod },
             },
         }),
     });

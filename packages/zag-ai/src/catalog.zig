@@ -7,6 +7,9 @@
 //!
 //! `std.json` cannot allocate at Zig 0.16 comptime, so the generator freezes
 //! the table into a pure Zig `[]const ModelInfo`. Runtime: zero parse, zero heap.
+//!
+//! JSON inspect / roundtrip uses [comptime-serde](https://github.com/jiacai2050/comptime-serde)
+//! in `catalog_serde.zig` (type dispatch at comptime; parse still runtime).
 
 const std = @import("std");
 const data = @import("catalog_data.zig");

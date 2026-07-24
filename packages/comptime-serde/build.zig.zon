@@ -1,0 +1,14 @@
+.{
+    .name = .comptime_serde,
+    .fingerprint = 0xf93787381fe72637,
+    .version = "0.2.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}

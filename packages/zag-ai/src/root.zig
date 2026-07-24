@@ -17,6 +17,7 @@ pub const openai_compat = @import("openai_compat.zig");
 pub const anthropic_messages = @import("anthropic_messages.zig");
 pub const stream = @import("stream.zig");
 pub const catalog = @import("catalog.zig");
+pub const catalog_serde = @import("catalog_serde.zig");
 pub const cost = @import("cost.zig");
 pub const config_file = @import("config_file.zig");
 pub const wire = @import("wire.zig");
