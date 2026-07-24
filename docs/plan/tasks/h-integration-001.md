@@ -1,7 +1,7 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: blocked
+status: ready
 priority: P1
 depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001, h-shell-001]
 ---
@@ -22,11 +22,11 @@ Post-review hardening also landed: fail-loud cwd restore; exact `FileNotFound`; 
 
 This evidence closes the previously missing Agent product chains. It does **not** claim mid-flight Tool/shell preemption, SDK-ready, headless-ready, or Phase H L2 by itself.
 
-# blocker
+# shell dependency closed
 
-The Phase H exit audit found a previously omitted shell module gate. Independent shell review 01 then blocked the first package commit on policy command leakage, invalid UTF-8 representation, and real-runner boundary evidence. `h-shell-001` now carries the scoped review-fix package matrix (fixed deny, UTF-8/base64, scoped limits, N/N+1, direct-PID and parsed single-call trace); independent re-review and the main-branch Gate are not yet complete.
+The prior Phase H audit found a missing shell module gate, and independent shell review 01 exposed policy command leakage, invalid UTF-8 representation, and missing real-runner boundary evidence. [h-shell-001](./h-shell-001.md) fixed all three, passed independent re-review plus Oracle, and passed the ff-only merged main Gate (`384/384` default; `383/383` curl; supported macOS shell fixtures zero skip).
 
-[h-shell-001](./h-shell-001.md) still owns that blocker and remains **in-progress**. This task remains **blocked** until shell is `done`; then it returns to `ready` for the final main-branch std/curl Gate and sentence-by-sentence Phase H exit audit.
+Shell is now **done**. This task returns to **ready** for the final sentence-by-sentence Phase H audit. Ready does not mean Phase H L2, SDK-ready, or headless-ready has been declared.
 
 # context
 
@@ -61,7 +61,7 @@ The Phase H exit audit found a previously omitted shell module gate. Independent
    - the executed and pending calls retain exact original provider Tool-call IDs;
    - every pending call receives a machine-readable `cancelled` body without handler invocation;
    - API Result, transcript, persisted/resumed session, and one parsed trace terminal agree on `cancelled`.
-3. **Synchronous shell composition — review-fix package evidence landed in `h-shell-001`; re-review/Gate pending.** Fixed policy denial and each required shell-v1 runtime class, including real invalid UTF-8/base64, survive transcript/session/resume and a parsed single-call exact-one trace correlation, then recover through one truthful terminal. This task remains blocked until that evidence passes independent re-review/main Gate.
+3. **Synchronous shell composition — passed its module delivery Gate.** Fixed policy denial and each required shell-v1 runtime class, including real invalid UTF-8/base64, survive transcript/session/resume and a parsed single-call exact-one trace correlation, then recover through one truthful terminal. h-shell-001 passed independent/Oracle review and main std/curl.
 
 This task verifies only between-Tool cancellation. It must not claim that an already running Tool/shell process can be preempted; that process-ownership work is post-H.
 

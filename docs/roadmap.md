@@ -7,7 +7,7 @@
 | Track | Status | Meaning |
 |-------|--------|---------|
 | Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
-| Production Floor Phase H | ❌ **P0/P1 in progress** | 单用户 trusted-host L2；当前唯一主线 |
+| Production Floor Phase H | ❌ **final audit ready** | P0/P1 module Gates done；`h-integration-001` ready 决定 single-user trusted-host L2 |
 | Zig SDK-ready gate | ❌ 未达 | low-level composition 已证明；支持契约未闭合 |
 | Headless/process gate | ❌ 未达 | one-shot 存在；结构化协议/exit matrix 未闭合 |
 | Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
@@ -70,10 +70,10 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-provider-001](./plan/tasks/h-provider-001.md) | trace | enforced deadline/in-flight cancel/partial Tool safety |
 | [h-redact-001](./plan/tasks/h-redact-001.md) | session + trace | shared pre-persistence redaction |
 | [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | **done:** no-key readiness/control truth; no policy mutation or OS-sandbox claim |
-| [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **in-progress:** review-fix fixed-deny/encoding/scoped-limit/direct-PID/Agent evidence landed; re-review/main Gate pending |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 + doctor + shell | **blocked:** original Agent composition evidence passed independent/main Gate; final Phase H audit still waits for shell `done` |
+| [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **done:** fixed-deny/encoding/scoped-limit/direct-PID/Agent matrix passed re-review, Oracle, and main std/curl |
+| [h-integration-001](./plan/tasks/h-integration-001.md) | all module P0/P1 + doctor + shell | **ready:** retained Agent evidence plus final Phase H sentence audit/truth closeout |
 
-Phase H exits only after shell passes its isolated Gate, integration returns to ready for the sentence-by-sentence closeout, both backends pass again on main, and [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit) remains true.
+Phase H exits only after integration independently completes the sentence-by-sentence closeout and [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit) remains true. Shell completion alone is not the overall verdict.
 
 ## Post-H gates
 

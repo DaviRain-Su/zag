@@ -77,7 +77,7 @@ Post-module composition and exit audits found three planning omissions without c
 
 1. H5 already required a doctor/readiness report, but the task DAG had no owner. [h-doctor-001](../tasks/h-doctor-001.md) now owns a provider/API-key-independent, fixed/path-free control report and is complete.
 2. h-provider-001 delivered provider deadline/active cancellation and partial-stream Tool safety. It does **not** implement preemption of an already running Tool/shell handler. H integration verifies cancellation **between** accepted Tools; mid-flight handler/process ownership and process-tree cleanup remain explicit post-H process-supervisor work.
-3. After the original h-integration composition evidence passed independent review and both main backend suites, the sentence-by-sentence H exit audit found that synchronous shell timeout/output-limit/process outcomes, total result budget, direct-child cleanup evidence, and shell trace reconstruction still had no task owner. [h-shell-001](../tasks/h-shell-001.md) now owns that P1 gate. Integration retains its verified evidence but remains blocked for final closeout until shell lands.
+3. After the original h-integration composition evidence passed independent review and both main backend suites, the sentence-by-sentence H exit audit found that synchronous shell timeout/output-limit/process outcomes, total result budget, direct-child cleanup evidence, and shell trace reconstruction still had no task owner. [h-shell-001](../tasks/h-shell-001.md) was added to own that P1 gate; it is now done, so integration retains its verified evidence and is ready for final closeout.
 
 P1 does not authorize semver publication. SDK publication requires the independent gate in [packaging.md](../../packaging.md).
 

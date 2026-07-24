@@ -1,7 +1,7 @@
 ---
 id: h-shell-001
 scope: phase-h/shell-runtime-observability
-status: in-progress
+status: done
 priority: P1
 depends-on: [h-tool-runtime-001, h-trace-001]
 ---
@@ -12,15 +12,15 @@ Close the missed Phase H shell blocker without introducing a process supervisor:
 
 This task does **not** implement or claim mid-flight user cancellation of an already running Tool, process-group/tree ownership, background jobs, PTY, network/OS sandboxing, or detached-command supervision. Those remain post-H process-supervisor work.
 
-`h-integration-001` retains its independently verified and main-merged composition evidence but cannot close Phase H until this task lands and the full integration/main Gate runs again.
+`h-integration-001` retains its independently verified and main-merged composition evidence. This task is now landed; integration returns to `ready` for the separate final Phase H audit.
 
-# develop state
+# closeout
 
-Independent review 01 **blocked** the first package commit on three scoped gaps: policy denial echoed the command, invalid UTF-8 could fail trace/session recovery, and real-runner exactly-N/N+1 capture behavior lacked evidence. The docs-first fix is now implemented with a fixed generic policy body, whole-stream utf8/base64 representation, scoped capture/body-encoding limits, direct bounded final-body encoding, exact boundary fixtures, and real invalid-UTF-8 Agent composition. Core error codes and trace schema remain unchanged.
+Independent review 01 **blocked** the first package commit on three scoped gaps: policy denial echoed the command, invalid UTF-8 could fail trace/session recovery, and real-runner exactly-N/N+1 capture behavior lacked evidence. The docs-first fix landed with a fixed generic policy body, whole-stream utf8/base64 representation, scoped capture/body-encoding limits, direct bounded final-body encoding, exact boundary fixtures, and real invalid-UTF-8 Agent composition. Core error codes and trace schema remain unchanged.
 
-The task remains **in-progress** through independent re-review/main Gate. `h-integration-001` remains **blocked**, and Phase H remains below L2.
+Independent re-review 02 and Oracle both passed the fixed range. The ff-only merged main Gate then passed default `30/30` steps and `384/384` tests plus curl `32/32` steps and `383/383` tests. Focused coding-agent verification passed `104/104`; on the supported macOS host every real shell, signal, PID, N/N+1, and invalid-UTF-8 Agent fixture ran with **zero skips**. Docs lint/score remain `91/100` readability and `64/100` security.
 
-Review-fix isolated evidence passes: default backend `30/30` steps and `384/384` tests; curl backend `32/32` steps and `383/383` tests; focused coding-agent `104/104`. On the supported macOS host every real shell, signal, PID, N/N+1, and invalid-UTF-8 Agent fixture ran with **zero skips**. Docs lint/score remain `91/100` readability and `64/100` security.
+The task is **done**. `h-integration-001` is **ready**, while Phase H remains below L2 until its sentence-by-sentence final audit. The non-blocking shell-specific NUL/control durable-roundtrip suggestion is recorded in `docs/plan/backlog.md`.
 
 # contract source
 
@@ -116,5 +116,5 @@ Tests use no network. POSIX `/bin/sh`/signal fixtures may skip on unsupported pl
 - `zig build test --summary all`;
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
-- independent worktree review + main std/curl Gate pass;
-- only after this task is done may `h-integration-001` return to ready for the final Phase H exit audit.
+- independent worktree re-review + Oracle + main std/curl Gate pass;
+- `h-integration-001` returns to ready for the final Phase H exit audit; this task alone does not promote Phase H, edit rows, SDK, or headless.

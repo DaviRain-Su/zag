@@ -180,7 +180,7 @@ role=tool  content="error: code=permission_denied message=…"
 
 整文件 `write_file` + 全局 ask/yolo 只够 **Teaching** 演示编辑路径。
 **D-007 / h-tool-runtime-001 已补：** 强制 capabilities、instance-aware handler、Provider 只见 definitions；h-workspace-001 已补 symlink-aware file containment。
-**Review-fix package 已落地、Gate pending：** `h-shell-001` 的 fixed deny、UTF-8/base64、scoped limits、N/N+1、direct-PID/parsed single-call trace fixtures 已进入 suite，但独立 re-review/main Gate 与最终 Phase H audit 未完成。**仍不宣称：** mid-flight shell cancellation/process-tree ownership、一般 atomic write-fault guarantee、完整 Plan UX 与 path-domain 细策略。
+**h-shell-001 Gate 已通过：** fixed deny、UTF-8/base64、scoped limits、N/N+1、direct-PID/parsed single-call trace fixtures 已通过独立/Oracle/main std+curl。**仍不宣称：** overall Phase H（待 final audit）、mid-flight shell cancellation/process-tree ownership、一般 atomic write-fault guarantee、完整 Plan UX 与 path-domain 细策略。
 
 ---
 

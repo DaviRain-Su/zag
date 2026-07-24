@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | coding-agent `runtime/edit_tools.zig` (`run_shell`) + core `shell_policy` |
-| Current maturity | **L1** — review-fix package implementation/evidence landed; independent re-review/main Gate and final Phase H audit remain open |
+| Current maturity | **L2** — synchronous shell-v1 contract passed independent re-review, Oracle, and main std/curl; process-supervisor capabilities remain absent |
 | Target | L2 H synchronous correctness → L3 background/process supervisor |
 | Reference | Hyper background tasks; Codex sandbox shell; Zig 0.16 `std.process.run` |
 
@@ -107,11 +107,13 @@ Module fixtures cover success with both streams, exit 7, POSIX signal, short cap
 
 Tests use no network. POSIX shell/signal fixtures may skip on unsupported platforms, but supported macOS/Linux Gate hosts must prove that the real path ran.
 
-## Current delivery state
+## Delivery evidence
 
-Independent review 01 blocked the prior package evidence on command leakage in the policy Tool body, invalid UTF-8 representation, and unproved real-runner N/N+1 capture boundaries. The docs-first review fix is now implemented with a generic policy body, utf8/base64 encoding fields, `limit_scope=capture|body_encoding`, exact boundary fixtures, direct final-body encoding, and single-call exact-one trace correlation. The task remains in-progress through independent re-review/main Gate; this does not introduce a broader process supervisor.
+Independent review 01 blocked the first package evidence on command leakage in the policy Tool body, invalid UTF-8 representation, and unproved real-runner N/N+1 capture boundaries. The docs-first fix added a generic policy body, utf8/base64 encoding fields, `limit_scope=capture|body_encoding`, exact boundary fixtures, direct final-body encoding, and single-call exact-one trace correlation.
 
-Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**in-progress**). `h-integration-001` closeout and Phase H exit remain blocked until this task is `done`; package-local green tests do not promote maturity by themselves.
+Independent re-review 02 and Oracle passed the fixed range. After ff-only merge, main passed `384/384` default and `383/383` curl tests; focused coding-agent passed `104/104`, with every supported macOS shell/signal/PID/N/N+1/invalid-UTF8 fixture executed and zero skips.
+
+Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**done**). `h-integration-001` is ready for the final Phase H audit. Shell L2 does not imply process-tree ownership, OS sandbox, mid-flight cancellation, SDK-ready, or overall Phase H completion.
 
 ## L2 acceptance
 
@@ -123,7 +125,9 @@ Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**in-progress**). `h-integrat
 - [x] the longest realizable shell-v1 first line fits the trace Tool-result cap and survives parsed trace truncation.
 - [x] package shell policy and runtime results are reconstructable from transcript/session/trace with one truthful terminal; single-call trace correlation uses exact-one counts, not a result call ID.
 - [x] docs and behavior agree that mid-flight Tool cancellation, PTY, background jobs, process-tree ownership, and OS sandbox are absent.
-- [ ] independent re-review, main std/curl Gate, and final integration/Phase H audit pass.
+- [x] independent re-review, Oracle, and main std/curl Gate pass.
+
+The final integration/Phase H audit is a separate product-level Gate and does not reopen this module's synchronous L2 contract.
 
 ## L3
 

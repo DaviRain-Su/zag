@@ -1,7 +1,7 @@
 # Zag 架构
 
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
-> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）仍由 in-progress shell-v1 的独立/main Gate 与最终 exit audit 阻塞（package evidence 已落地）。
+> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）所有 module Gate 已通过，整体仍等待 ready h-integration-001 的最终 exit audit。
 > Grok Build / Pi / Oh My Pi 只作机制参照：借依赖纪律、生命周期与能力合同，不复制 crate 数或完整产品复杂度。
 
 ---
@@ -221,8 +221,8 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | Tool runtime | `zag-agent-core/src/tool.zig` + `zag-types` | L2；stateful handler + mandatory descriptor/capabilities fail-closed |
 | permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk (D-007)；不额外声称 canonical contained-path remember identity |
 | workspace | `zag-agent-core/src/workspace.zig` | L2 trusted-host file boundary；realpath/ancestor Guard + Agent composition；非 OS sandbox |
-| shell policy/runtime | `shell_policy.zig` + coding `runtime/edit_tools.zig` | L1（re-review/Gate pending）；fixed deny body、shell-v1 UTF-8/base64、scoped limits、30 KiB streams/checked body/direct-PID/Agent evidence 已落地；denylist 非 sandbox |
-| trace | `zag-agent-core/src/trace.zig` | L2；versioned、truthful unique terminal、atomic persistence、redaction；shell projection package fixture 已落地，Gate pending |
+| shell policy/runtime | `shell_policy.zig` + coding `runtime/edit_tools.zig` | L2 synchronous；fixed deny、UTF-8/base64、scoped limits、30 KiB streams/checked body/direct-PID/Agent evidence 通过独立/Oracle/main Gate；denylist 非 sandbox |
+| trace | `zag-agent-core/src/trace.zig` | L2；versioned、truthful unique terminal、atomic persistence、redaction；shell projection Gate passed |
 | context | `zag-agent-core/src/context.zig` | L2；fixed-point final-view accounting + strict Tool bundles |
 | read/search | `zag-coding-agent/src/runtime/*` | L1+；descriptor + containment + budgets 已落地；row promotion 单独审计 |
 | write/edit | `zag-coding-agent/src/runtime/edit_tools.zig` | L1+；anchor + containment 已落地；不声称一般 write-fault atomic/no-partial guarantee |
@@ -272,7 +272,7 @@ Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 | grep / glob | ✅ descriptor + budgets + symlink-aware walker containment | same independent row audit; shell remains separate |
 | search_replace | ✅ unique anchor + descriptor + containment | canonical permission-path identity and broader write-fault matrix are not claimed |
 | write_file | ✅ create/full write + descriptor + containment | no general atomic truncate-write/no-partial-fault claim; not default large-file edit path |
-| run_shell | ✅ permission + descriptor-selected policy + fixed deny + synchronous UTF-8/base64 shell-v1/scoped-budget/direct-PID/trace package evidence | `h-shell-001` independent re-review/main Gate pending；mid-flight cancel/process tree/OS sandbox remain post-H |
+| run_shell | ✅ permission + descriptor-selected policy + fixed deny + synchronous UTF-8/base64 shell-v1/scoped-budget/direct-PID/trace Gate passed | mid-flight cancel/process tree/background/PTY/OS sandbox remain post-H |
 
 ## 持久化
 

@@ -115,7 +115,7 @@ Every `run_start` includes `schema_version`, Zag `version`, `permission`, `shell
 
 Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`.
 
-### Shell result projection (`h-shell-001` package evidence landed; Gate pending)
+### Shell result projection (`h-shell-001` done)
 
 Shell policy denial emits `shell_deny` and a matching fixed generic Tool result without invoking the handler.
 Synchronous runtime outcomes emit ordinary `tool_result`; the stable `shell-v1` classification is the
@@ -128,8 +128,7 @@ The shell module owns outcome codes, encodings, capture/body limits, and direct-
 Trace owns only truthful projection and the unique run terminal. Each package shell trace fixture is
 single-call: exact-one `tool_call`/`tool_result` counts plus name/body correlate the result, and one
 same-object recovered `run_end` closes it. Trace `tool_result` has no call ID; exact ID pairing is
-transcript/session-owned. Fixtures infer neither process-tree cleanup nor mid-flight Tool cancellation
-from trace presence. Independent re-review/main Gate and final Phase H audit remain pending.
+transcript/session-owned. Fixtures infer neither process-tree cleanup nor mid-flight Tool cancellation from trace presence. Independent re-review, Oracle, and main std/curl passed; the separate final Phase H product audit remains ready.
 
 ### Compaction event (h-context-001)
 
