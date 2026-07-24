@@ -29,12 +29,14 @@ Make compaction accounting describe the final model view after every trimming st
 
 # implementation note (local)
 
-- Fixed-point `viewForModel`: count trim → char trim → build summary (+ prior lineage) → re-cost layers → further Tool-aligned trim → rebuild until stable; bound `body.len+1`.
-- `event.dropped` = final omitted body prefix; summary header count + highlights name that set; prior session text under `Prior session context`.
-- Soft budget / `min_tail`: honest stop when no legal further trim.
-- Loop: `on_compaction` returns `error{OutOfMemory}`; session sink before trace emit.
-- `Session.noteCompaction` no longer swallows OOM; gen increments once per success.
-- Fixtures: two-stage, multi-iteration, multi-tool, min_tail, lineage/UTF-8, agent session+trace+provider view, OOM sink, noteCompaction OOM.
+- Fixed-point `viewForModel`: validate tool bundles → count trim → legal align → char trim by atomic units → build summary (+ lineage) → re-cost → rebuild until stable; bound `body.len+1`; worst-case **O(n²)** documented.
+- Tool bundles: nonempty unique IDs; contiguous results in call order; orphan/unknown/duplicate/missing/ooo/incomplete → `InvalidContext` → terminal `invalid_context` (provider not called).
+- Atomic boundary: start inside results → carrier assistant; further trim skips assistant+all results together.
+- Lineage: exact prior when fit; else `prior_bytes`/`kept_bytes`/`digest=wyhash64`/`[LINEAGE_TRUNCATED]`; header always complete.
+- Shared `context.summary_cap` = 800; Options clamped; `trace.cap_compaction_summary` aliases it; `emitCompactionEvent`.
+- Invalid UTF-8 → U+FFFD sanitize (not OOM).
+- Soft budget / `min_tail`: honest stop; two-stage fixture requires final > intermediate.
+- Loop: sink before trace; Agent `fail_next_note_compaction` fixture for OOM terminal.
 - Status left **in-progress** for orchestrator close-out.
 
 # verification

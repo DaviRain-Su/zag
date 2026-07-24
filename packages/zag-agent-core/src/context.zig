@@ -13,34 +13,66 @@
 //!
 //! `viewForModel` uses a **deterministic fixed-point** over the absolute body
 //! start index:
-//! 1. Count-trim the tail, then align to a valid Tool boundary.
-//! 2. Soft char-trim with current layer cost (prior session layer if any).
-//! 3. Build a summary for the omitted body prefix (with prior-session lineage).
-//! 4. Re-cost layers with that summary as the session layer.
-//! 5. If over budget, advance the body start by a Tool-aligned step and
-//!    rebuild summary/accounting; repeat until stable.
-//! 6. Emit one final `CompactionEvent` whose `dropped` equals the final
+//! 1. Fail-closed validate body tool-call bundles (exact IDs, call order).
+//! 2. Count-trim the tail, then align to a legal Tool-bundle boundary.
+//! 3. Soft char-trim under current layer cost, advancing by atomic units
+//!    (assistant+all results, or a single non-bundle message).
+//! 4. Build a summary for the omitted body prefix (with prior-session lineage).
+//! 5. Re-cost layers with that summary as the session layer.
+//! 6. If over budget, advance by another legal unit and rebuild; repeat until
+//!    stable.
+//! 7. Emit one final `CompactionEvent` whose `dropped` equals the final
 //!    omitted body prefix length and whose summary describes that set.
 //!
 //! Soft budget / min-tail: when further trim would drop below
-//! `min_tail_messages` or no legal Tool-aligned advance exists, the loop
-//! **terminates honestly** even if still over `max_chars`. The returned view
-//! may exceed the soft budget; accounting still matches the returned view.
+//! `min_tail_messages` or no legal unit advance exists, the loop
+//! **terminates honestly** even if still over `max_chars`.
 //!
-//! Iteration is bounded by `body.len + 1` (each step advances the absolute
-//! start by ≥1 when progress is made) — no hidden unbounded O(n²) restarts
-//! beyond a single linear walk of the body with per-step cost scans.
+//! ## Complexity
 //!
-//! Generation semantics live on Session (`compaction_gen`): exactly one
-//! increment per successfully applied final event. Prior session summary text
-//! is preserved inside the new summary (lineage), not silently erased.
+//! Iteration is bounded by `body.len + 1` (each progress step advances the
+//! absolute start by ≥1 message). Each iteration may rescan the remaining
+//! tail for char estimates and rebuild a summary over the omitted prefix, so
+//! worst-case work is **O(n²)** in body length — bounded, not unbounded
+//! restart. Callers must not assume linear cost for pathological long bodies.
+//!
+//! ## Generation / lineage
+//!
+//! `Session.compaction_gen` increments once per **successfully accepted**
+//! final event (`noteCompaction` success). A new summary always accounts for
+//! the prior session summary: exact prior bytes when they fit under the shared
+//! cap residual; otherwise an explicit truncated lineage record (original
+//! length, kept length, wyhash64 digest, `LINEAGE_TRUNCATED` marker).
+//!
+//! ## Session vs trace equality
+//!
+//! On the **success path** (session note + trace emit both succeed), session
+//! meta and the trace compaction event carry the same final `dropped` and
+//! summary bytes (≤ `summary_cap`). Session note runs first; sink OOM aborts
+//! before any compaction line. If note succeeds and a later mid-run **trace
+//! emit** fails, the in-memory session may already hold the new gen/summary
+//! while the durable/trace compaction line is absent — that path is a run
+//! failure (`TraceFailed`/`OutOfMemory`), not a silent success. Equality is
+//! not claimed as transactional across that failure.
 
 const std = @import("std");
 const message = @import("message.zig");
 
-/// Default heuristic summary bound. Keep ≤ `trace.cap_compaction_summary` so
-/// the same final summary bytes can be verified in session meta and trace.
-pub const default_summary_max_chars: usize = 800;
+/// Shared hard cap for heuristic compaction summaries (session + trace + view).
+/// Built events never exceed this after clamp.
+pub const summary_cap: usize = 800;
+
+/// Default / alias for `Options.summary_max_chars` and trace field cap.
+pub const default_summary_max_chars: usize = summary_cap;
+
+/// Explicit truncation marker embedded in lineage records (never silent).
+pub const lineage_truncated_marker = "[LINEAGE_TRUNCATED]";
+
+pub const Error = error{
+    OutOfMemory,
+    /// Malformed tool-call/result history or other fail-closed context policy.
+    InvalidContext,
+};
 
 pub const Options = struct {
     /// Max non-system history messages kept from the tail (0 = unlimited count).
@@ -49,8 +81,15 @@ pub const Options = struct {
     max_chars: usize = 120_000,
     /// Never drop below this many history messages from the end.
     min_tail_messages: usize = 6,
-    /// Max chars kept in a heuristic compaction summary (UTF-8 bounded).
+    /// Requested max chars for the heuristic summary. Clamped to `summary_cap`.
+    /// `0` means use `summary_cap`. Tiny values still reserve room for the
+    /// dropped-count header (never lose the omitted-count line).
     summary_max_chars: usize = default_summary_max_chars,
+
+    /// Effective summary budget after clamp to the shared cap and header floor.
+    pub fn effectiveSummaryMax(self: Options, dropped_count: usize) usize {
+        return clampSummaryBudget(self.summary_max_chars, dropped_count);
+    }
 };
 
 /// Four prompt layers (H4). Empty slices are omitted from the view.
@@ -82,6 +121,7 @@ pub const CompactionEvent = struct {
     /// Number of non-system body messages omitted from the **final** returned view.
     dropped: usize,
     /// Arena-owned summary text suitable for session meta / session layer / trace.
+    /// Always valid UTF-8 and `len <= summary_cap`.
     summary: []const u8,
 };
 
@@ -92,17 +132,40 @@ pub const View = struct {
     compaction: ?CompactionEvent = null,
 };
 
+/// Clamp requested summary budget: 0 → full cap; always ≤ summary_cap; at least
+/// long enough for the dropped-count header for `dropped_count`.
+pub fn clampSummaryBudget(requested: usize, dropped_count: usize) usize {
+    const floor = droppedHeaderLen(dropped_count);
+    const base: usize = if (requested == 0) summary_cap else requested;
+    const capped = @min(base, summary_cap);
+    if (capped >= floor) return capped;
+    // Tiny request: still emit a complete header (fits in summary_cap for any usize).
+    return @min(floor, summary_cap);
+}
+
+fn droppedHeaderLen(dropped_count: usize) usize {
+    // "[compaction] {d} earlier messages omitted from the model view.\n"
+    var buf: [80]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "[compaction] {d} earlier messages omitted from the model view.\n", .{dropped_count}) catch {
+        return 64;
+    };
+    return s.len;
+}
+
 /// Build a model-facing view with four layers + history tail.
 /// Allocates synthetic system strings and the message slice on `arena`.
 ///
 /// When all layer strings are empty, falls back to keeping leading transcript
 /// `system` rows (compat with tests / callers that only seed the transcript).
+///
+/// Returns `error.InvalidContext` before any provider-facing view when body
+/// tool-call/result bundles are malformed (fail-closed).
 pub fn viewForModel(
     arena: std.mem.Allocator,
     full: []const message.Message,
     opts: Options,
     layers: Layers,
-) error{OutOfMemory}!View {
+) Error!View {
     const use_layers = layers.system.len > 0 or layers.project.len > 0 or
         layers.session.len > 0 or layers.ephemeral.len > 0;
 
@@ -111,12 +174,15 @@ pub fn viewForModel(
     const transcript_systems = full[0..hist_start];
     const body = full[hist_start..];
 
-    // --- Stage A: count trim + Tool-boundary align ---
+    // Fail closed on malformed tool bundles before any trim/provider path.
+    try validateBodyHistory(body);
+
+    // --- Stage A: count trim + legal Tool-bundle align ---
     var start: usize = 0;
     if (opts.max_tail_messages > 0 and body.len > opts.max_tail_messages) {
         start = body.len - opts.max_tail_messages;
     }
-    start = alignToolBoundary(body, start);
+    start = try alignToLegalStart(body, start);
 
     // Layer cost without a new compaction summary (prior session layer may exist).
     var layer_chars: usize = if (use_layers)
@@ -125,54 +191,47 @@ pub fn viewForModel(
         estimateChars(transcript_systems);
 
     // --- Stage B: soft char trim under current layer cost ---
-    start = charTrimStart(body, start, layer_chars, opts);
-
-    // Snapshot after initial stages — used by tests / docs to prove two-stage growth.
-    const initial_dropped = start;
+    start = try charTrimStart(body, start, layer_chars, opts);
 
     // --- Stage C: fixed-point — summary insertion may force further legal trims ---
     var compaction: ?CompactionEvent = null;
     var session_layer = layers.session;
 
     if (start > 0) {
-        // Bound iterations: each successful advance moves `start` forward by ≥1.
         const max_iters = body.len + 1;
         var iter: usize = 0;
         while (iter < max_iters) : (iter += 1) {
             const dropped = start;
+            const budget = opts.effectiveSummaryMax(dropped);
             const summary = try buildSummary(
                 arena,
                 body[0..dropped],
-                opts.summary_max_chars,
+                budget,
                 dropped,
                 layers.session,
             );
+            std.debug.assert(summary.len <= summary_cap);
 
             if (use_layers) {
                 layer_chars = layerEstimate(layers, summary);
             } else {
-                // Compat path adds a session-context note (~header overhead).
                 layer_chars = estimateChars(transcript_systems) + summary.len + 64;
             }
 
             const before = start;
-            start = charTrimStart(body, start, layer_chars, opts);
+            start = try charTrimStart(body, start, layer_chars, opts);
             if (start == before) {
-                // Stable final view.
                 compaction = .{ .dropped = dropped, .summary = summary };
                 session_layer = summary;
                 break;
             }
-            // Else: summary/layer growth forced more trim — rebuild accounting.
-            // Intermediate summary is abandoned (arena-owned; freed with turn).
         } else {
-            // Exhausted bound without stability (should not happen with ≥1 advance).
-            // Emit honest final accounting for the last start.
             const dropped = start;
+            const budget = opts.effectiveSummaryMax(dropped);
             const summary = try buildSummary(
                 arena,
                 body[0..dropped],
-                opts.summary_max_chars,
+                budget,
                 dropped,
                 layers.session,
             );
@@ -181,10 +240,9 @@ pub fn viewForModel(
         }
     }
 
-    // Silence unused when not debugging; available for tests via recompute.
-    _ = initial_dropped;
-
     const selected = body[start..];
+    // Selected tail starts at a legal boundary when body is valid.
+    if (selected.len > 0 and selected[0].role == .tool) return error.InvalidContext;
 
     if (use_layers) {
         const layer_msgs = try buildLayerMessages(arena, layers, session_layer);
@@ -195,7 +253,6 @@ pub fn viewForModel(
         return .{ .messages = out, .compaction = compaction };
     }
 
-    // Compat path: keep transcript systems + optional compaction note.
     const need_note = compaction != null;
     const out_len = transcript_systems.len + selected.len + @as(usize, if (need_note) 1 else 0);
     const out = try arena.alloc(message.Message, out_len);
@@ -220,56 +277,129 @@ pub fn viewForModel(
     return .{ .messages = out, .compaction = compaction };
 }
 
-/// Soft char-trim: advance absolute `start` while over budget, respecting
-/// `min_tail_messages` and Tool boundaries. Returns the new start (may equal
-/// input when no legal further trim exists — soft budget may still be exceeded).
+// ── Tool-bundle validation & legal boundaries ───────────────────────────────
+
+/// Fail-closed body policy (non-system history):
+/// - every assistant `tool_calls` bundle has nonempty **unique** call IDs;
+/// - immediately followed by **exactly one** contiguous `tool` result per call
+///   in **deterministic call-list order** (same order as `tool_calls`);
+/// - no unknown / duplicate / missing / empty IDs;
+/// - no orphan `tool` rows;
+/// - no partial/incomplete bundles at end of body.
+pub fn validateBodyHistory(body: []const message.Message) error{InvalidContext}!void {
+    var i: usize = 0;
+    while (i < body.len) {
+        switch (body[i].role) {
+            .system, .user => i += 1,
+            .assistant => {
+                if (body[i].tool_calls) |calls| {
+                    if (calls.len == 0) {
+                        i += 1;
+                        continue;
+                    }
+                    try validateCallIds(calls);
+                    if (i + 1 + calls.len > body.len) return error.InvalidContext;
+                    for (calls, 0..) |c, j| {
+                        const t = body[i + 1 + j];
+                        if (t.role != .tool) return error.InvalidContext;
+                        const tid = t.tool_call_id orelse return error.InvalidContext;
+                        if (tid.len == 0) return error.InvalidContext;
+                        if (!std.mem.eql(u8, tid, c.id)) return error.InvalidContext;
+                    }
+                    i += 1 + calls.len;
+                } else {
+                    i += 1;
+                }
+            },
+            .tool => return error.InvalidContext,
+        }
+    }
+}
+
+fn validateCallIds(calls: []const message.ToolCall) error{InvalidContext}!void {
+    for (calls, 0..) |c, ci| {
+        if (c.id.len == 0) return error.InvalidContext;
+        for (calls[0..ci]) |prev| {
+            if (std.mem.eql(u8, prev.id, c.id)) return error.InvalidContext;
+        }
+    }
+}
+
+/// If `start` lands inside tool results, walk back to the carrier assistant.
+/// Body must already pass `validateBodyHistory` (or this returns InvalidContext).
+pub fn alignToLegalStart(body: []const message.Message, start: usize) error{InvalidContext}!usize {
+    if (start >= body.len) return start;
+    if (body[start].role != .tool) return start;
+    var s = start;
+    while (s > 0 and body[s].role == .tool) s -= 1;
+    if (body[s].role != .assistant or body[s].tool_calls == null or body[s].tool_calls.?.len == 0) {
+        return error.InvalidContext;
+    }
+    return s;
+}
+
+/// Exclusive end index of the atomic unit starting at `start` (legal start).
+/// Assistant with N calls → assistant + N results; otherwise one message.
+pub fn unitEnd(body: []const message.Message, start: usize) usize {
+    if (start >= body.len) return start;
+    if (body[start].role == .assistant) {
+        if (body[start].tool_calls) |calls| {
+            if (calls.len > 0) return start + 1 + calls.len;
+        }
+    }
+    return start + 1;
+}
+
+/// Soft char-trim: advance absolute `start` by atomic legal units while over
+/// budget, respecting `min_tail_messages`.
 fn charTrimStart(
     body: []const message.Message,
     start_in: usize,
     layer_chars: usize,
     opts: Options,
-) usize {
+) error{InvalidContext}!usize {
     var start = start_in;
     if (opts.max_chars == 0) return start;
     while (body.len - start > opts.min_tail_messages) {
         const selected = body[start..];
         const total = layer_chars + estimateChars(selected);
         if (total <= opts.max_chars) break;
-        const next = alignToolBoundary(selected, 1);
-        if (next == 0 or next >= selected.len) break;
-        start += next;
+        const next = unitEnd(body, start);
+        if (next <= start or next > body.len) break;
+        // Keep min_tail messages; unit may span multiple messages.
+        if (body.len - next < opts.min_tail_messages) break;
+        start = next;
     }
     return start;
 }
 
-/// Compute the body start after count trim + Tool align only (no char/summary).
-/// Exposed for fixtures that prove two-stage growth vs the final fixed-point.
-pub fn initialCountTrimStart(body: []const message.Message, opts: Options) usize {
+/// Compute the body start after count trim + legal align only (no char/summary).
+pub fn initialCountTrimStart(body: []const message.Message, opts: Options) error{InvalidContext}!usize {
     var start: usize = 0;
     if (opts.max_tail_messages > 0 and body.len > opts.max_tail_messages) {
         start = body.len - opts.max_tail_messages;
     }
-    return alignToolBoundary(body, start);
+    return try alignToLegalStart(body, start);
 }
 
 /// Count-trim + first-pass char trim without summary re-cost (legacy intermediate).
-/// Used by tests to show the old intermediate `dropped` can under-count the final view.
 pub fn intermediateDroppedBeforeSummary(
     full: []const message.Message,
     opts: Options,
     layers: Layers,
-) usize {
+) error{InvalidContext}!usize {
     const use_layers = layers.system.len > 0 or layers.project.len > 0 or
         layers.session.len > 0 or layers.ephemeral.len > 0;
     var hist_start: usize = 0;
     while (hist_start < full.len and full[hist_start].role == .system) : (hist_start += 1) {}
     const body = full[hist_start..];
-    const start = initialCountTrimStart(body, opts);
+    try validateBodyHistory(body);
+    const start = try initialCountTrimStart(body, opts);
     const layer_chars: usize = if (use_layers)
         layerEstimate(layers, null)
     else
         estimateChars(full[0..hist_start]);
-    return charTrimStart(body, start, layer_chars, opts);
+    return try charTrimStart(body, start, layer_chars, opts);
 }
 
 fn layerEstimate(layers: Layers, session_override: ?[]const u8) usize {
@@ -330,9 +460,11 @@ fn buildLayerMessages(
     return out;
 }
 
+// ── Summary / lineage / UTF-8 ───────────────────────────────────────────────
+
 /// Build a bounded UTF-8-safe summary for the final omitted set.
-/// When `prior_session` is non-empty (previous compaction / session layer),
-/// its text is retained under a lineage section rather than silently dropped.
+/// Prior session bytes are preserved exactly when they fit; otherwise an
+/// explicit truncated lineage record is written (never silent truncation).
 fn buildSummary(
     arena: std.mem.Allocator,
     dropped_msgs: []const message.Message,
@@ -342,20 +474,16 @@ fn buildSummary(
 ) error{OutOfMemory}![]const u8 {
     var body: std.Io.Writer.Allocating = .init(arena);
     errdefer body.deinit();
+
+    // Header is always complete (budget floor guarantees room for this line).
     body.writer.print(
         "[compaction] {d} earlier messages omitted from the model view.\n",
         .{dropped_count},
     ) catch return error.OutOfMemory;
 
-    // Lineage first so repeated compaction cannot silently erase prior session
-    // context when highlights fill the bound.
-    if (prior_session.len > 0 and body.written().len < max_chars) {
-        body.writer.print("Prior session context:\n", .{}) catch return error.OutOfMemory;
-        const room = if (body.written().len < max_chars) max_chars - body.written().len else 0;
-        // Reserve roughly half the budget for lineage; leave room for highlights.
-        const prior_budget = @min(room, @max(max_chars / 3, @min(room, 120)));
-        const prior_snip = truncateUtf8(prior_session, prior_budget);
-        body.writer.print("{s}\n", .{prior_snip}) catch return error.OutOfMemory;
+    // Lineage before highlights so prior session is never silently erased.
+    if (prior_session.len > 0) {
+        try writeLineage(&body, arena, prior_session, max_chars);
     }
 
     if (body.written().len < max_chars) {
@@ -364,7 +492,8 @@ fn buildSummary(
     for (dropped_msgs) |m| {
         if (body.written().len >= max_chars) break;
         const role = m.role.jsonName();
-        const snippet = truncateUtf8(m.content, 120);
+        const sanitized = try sanitizeUtf8(arena, m.content);
+        const snippet = truncateUtf8(sanitized, 120);
         body.writer.print("- {s}: {s}\n", .{ role, snippet }) catch return error.OutOfMemory;
     }
     body.writer.flush() catch {};
@@ -376,15 +505,110 @@ fn buildSummary(
             owned = arena.realloc(owned, cut.len) catch return error.OutOfMemory;
         }
     }
-    // Final UTF-8 validity for session/trace consumers.
+    // Ensure we never exceed the shared hard cap either.
+    if (owned.len > summary_cap) {
+        const cut = truncateUtf8(owned, summary_cap);
+        owned = arena.realloc(owned, cut.len) catch return error.OutOfMemory;
+    }
     if (!std.unicode.utf8ValidateSlice(owned)) {
-        // Should not happen with valid inputs + codepoint truncation; fail closed.
-        return error.OutOfMemory;
+        // Sanitization path should prevent this; re-sanitize whole buffer.
+        const fixed = try sanitizeUtf8(arena, owned);
+        return fixed;
     }
     return owned;
 }
 
-/// Truncate on a UTF-8 codepoint boundary (keeps valid UTF-8 when input is valid).
+fn writeLineage(
+    body: *std.Io.Writer.Allocating,
+    arena: std.mem.Allocator,
+    prior_session: []const u8,
+    max_chars: usize,
+) error{OutOfMemory}!void {
+    const prior_clean = try sanitizeUtf8(arena, prior_session);
+    const prefix = "Prior session context:\n";
+    const room_after_prefix = if (body.written().len + prefix.len < max_chars)
+        max_chars - body.written().len - prefix.len
+    else
+        0;
+
+    // Exact prior when it fits entirely (plus trailing newline).
+    if (prior_clean.len + 1 <= room_after_prefix) {
+        body.writer.print("{s}{s}\n", .{ prefix, prior_clean }) catch return error.OutOfMemory;
+        return;
+    }
+
+    // Explicit truncated lineage record — never silent byte cut of prior alone.
+    const digest = std.hash.Wyhash.hash(0, prior_clean);
+    // Record lines (deterministic):
+    // Prior session context (truncated):
+    // prior_bytes=N kept_bytes=K digest=wyhash64:HEX
+    // kept:
+    // <prefix>
+    // [LINEAGE_TRUNCATED]
+    const record_hdr = "Prior session context (truncated):\n";
+    var meta_buf: [128]u8 = undefined;
+    // Reserve marker + newlines; compute kept budget from remaining room.
+    const marker_line_len = lineage_truncated_marker.len + 1;
+    const meta_probe = std.fmt.bufPrint(&meta_buf, "prior_bytes={d} kept_bytes={d} digest=wyhash64:{x}\nkept:\n", .{
+        prior_clean.len,
+        @as(usize, 0),
+        digest,
+    }) catch return error.OutOfMemory;
+
+    body.writer.print("{s}", .{record_hdr}) catch return error.OutOfMemory;
+    const room_for_rest = if (body.written().len < max_chars) max_chars - body.written().len else 0;
+    // meta (with real kept) + kept + marker
+    const meta_overhead = meta_probe.len + 8; // digit width slack for kept_bytes
+    if (room_for_rest <= meta_overhead + marker_line_len) {
+        // Extremely tight: emit marker-only lineage.
+        body.writer.print("prior_bytes={d} kept_bytes=0 digest=wyhash64:{x}\n{s}\n", .{
+            prior_clean.len,
+            digest,
+            lineage_truncated_marker,
+        }) catch return error.OutOfMemory;
+        return;
+    }
+    const kept_budget = room_for_rest - meta_overhead - marker_line_len;
+    const kept = truncateUtf8(prior_clean, kept_budget);
+    body.writer.print("prior_bytes={d} kept_bytes={d} digest=wyhash64:{x}\nkept:\n{s}\n{s}\n", .{
+        prior_clean.len,
+        kept.len,
+        digest,
+        kept,
+        lineage_truncated_marker,
+    }) catch return error.OutOfMemory;
+}
+
+/// Replace invalid UTF-8 sequences with U+FFFD. Valid input is returned as a
+/// dupe only when needed; callers may get a new allocation always for simplicity.
+fn sanitizeUtf8(arena: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]const u8 {
+    if (std.unicode.utf8ValidateSlice(s)) return s;
+    var list: std.ArrayList(u8) = .empty;
+    errdefer list.deinit(arena);
+    var i: usize = 0;
+    while (i < s.len) {
+        const seq_len = std.unicode.utf8ByteSequenceLength(s[i]) catch {
+            try list.appendSlice(arena, "\u{FFFD}");
+            i += 1;
+            continue;
+        };
+        if (i + seq_len > s.len) {
+            try list.appendSlice(arena, "\u{FFFD}");
+            i += 1;
+            continue;
+        }
+        _ = std.unicode.utf8Decode(s[i .. i + seq_len]) catch {
+            try list.appendSlice(arena, "\u{FFFD}");
+            i += 1;
+            continue;
+        };
+        try list.appendSlice(arena, s[i .. i + seq_len]);
+        i += seq_len;
+    }
+    return try list.toOwnedSlice(arena);
+}
+
+/// Truncate on a UTF-8 codepoint boundary (input must be valid UTF-8).
 fn truncateUtf8(s: []const u8, max: usize) []const u8 {
     if (s.len <= max) return s;
     var end = max;
@@ -400,17 +624,6 @@ fn estimateChars(msgs: []const message.Message) usize {
     return n;
 }
 
-/// If `start` lands on a tool result, walk back to the preceding assistant
-/// (tool_calls carrier) so the selected tail never orphans tool results.
-fn alignToolBoundary(body: []const message.Message, start: usize) usize {
-    var s = start;
-    while (s < body.len and body[s].role == .tool) {
-        if (s == 0) break;
-        s -= 1;
-    }
-    return s;
-}
-
 /// True when the first non-system history message in `view` is not an orphan tool.
 fn historyStartIsValid(msgs: []const message.Message) bool {
     var i: usize = 0;
@@ -419,7 +632,7 @@ fn historyStartIsValid(msgs: []const message.Message) bool {
     return msgs[i].role != .tool;
 }
 
-/// Snapshot roles/content for transcript-immutability checks.
+/// Snapshot roles for transcript-immutability checks.
 fn snapshotRoles(msgs: []const message.Message, buf: []u8) usize {
     var n: usize = 0;
     for (msgs) |m| {
@@ -466,7 +679,6 @@ test "view layers then history; skips transcript systems" {
     try std.testing.expectEqualStrings("base-sys", v.messages[0].content);
     try std.testing.expect(std.mem.indexOf(u8, v.messages[1].content, "use tabs") != null);
     try std.testing.expect(std.mem.indexOf(u8, v.messages[2].content, "hint") != null);
-    // History starts at u1 (old system skipped).
     try std.testing.expectEqualStrings("u1", v.messages[3].content);
     try std.testing.expectEqualStrings("a2", v.messages[v.messages.len - 1].content);
 }
@@ -507,7 +719,6 @@ test "view trims history and returns compaction without mutating transcript" {
     try std.testing.expect(v.compaction.?.dropped >= 2);
     try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "compaction") != null);
     try std.testing.expectEqualStrings("a3", v.messages[v.messages.len - 1].content);
-    // Session layer carries the summary.
     var saw_session = false;
     for (v.messages) |m| {
         if (m.role == .system and std.mem.indexOf(u8, m.content, "Session context") != null) {
@@ -554,13 +765,11 @@ test "view does not start on orphan tool message" {
 
 // ── h-context-001 fixtures ──────────────────────────────────────────────────
 
-test "h-context: two-stage trim final dropped equals omitted prefix and summary names them" {
+test "h-context: two-stage trim requires final > intermediate" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
-    // Long early messages force char trim; summary insertion then forces more.
-    // Each body message is large so layer+summary growth is measurable.
     const pad = "X" ** 80;
     const full = [_]message.Message{
         .system("sys"),
@@ -576,37 +785,32 @@ test "h-context: two-stage trim final dropped equals omitted prefix and summary 
         .assistantText("late-asst"),
     };
 
+    // Deep snapshot: roles + content pointers/bytes.
     var roles_before: [32]u8 = undefined;
     const nrb = snapshotRoles(&full, &roles_before);
+    var content_before: [11][]const u8 = undefined;
+    for (&content_before, 0..) |*slot, idx| slot.* = full[idx].content;
 
     const opts = Options{
-        .max_tail_messages = 0, // count unlimited — char budget drives trim
-        .max_chars = 420, // tight: forces multi-stage after summary insertion
+        .max_tail_messages = 0,
+        .max_chars = 420,
         .min_tail_messages = 2,
         .summary_max_chars = 400,
     };
     const layers = Layers{ .system = "base-system-prompt" };
 
-    const intermediate = intermediateDroppedBeforeSummary(&full, opts, layers);
+    const intermediate = try intermediateDroppedBeforeSummary(&full, opts, layers);
     try std.testing.expect(intermediate > 0);
 
     const v = try viewForModel(arena, &full, opts, layers);
     try std.testing.expect(v.compaction != null);
     const ev = v.compaction.?;
 
-    // Final dropped must be the full omitted body prefix (body starts after system).
-    const body = full[1..];
-    try std.testing.expect(ev.dropped > 0);
-    try std.testing.expect(ev.dropped >= intermediate);
-    // Prove the old intermediate under-count bug case when summary forces growth:
-    // when final > intermediate, the buggy algorithm would have reported intermediate.
-    // Construct so final exceeds intermediate when possible; always require exact match
-    // between final.dropped and actual omitted set.
-    const omitted = body[0..ev.dropped];
-    const kept = body[ev.dropped..];
-    try std.testing.expectEqual(kept.len, body.len - ev.dropped);
+    // Hard requirement: summary growth forces further trim (old bug under-count).
+    try std.testing.expect(ev.dropped > intermediate);
 
-    // View history (after system layers) equals kept tail.
+    const body = full[1..];
+    const kept = body[ev.dropped..];
     var hist_i: usize = 0;
     while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
     const view_hist = v.messages[hist_i..];
@@ -616,36 +820,25 @@ test "h-context: two-stage trim final dropped equals omitted prefix and summary 
         try std.testing.expectEqual(k.role, vm.role);
     }
 
-    // Summary header count matches final dropped; names at least the first omitted role snippets.
-    try std.testing.expect(std.mem.indexOf(u8, ev.summary, "compaction") != null);
     var count_buf: [32]u8 = undefined;
     const count_needle = try std.fmt.bufPrint(&count_buf, "{d} earlier", .{ev.dropped});
     try std.testing.expect(std.mem.indexOf(u8, ev.summary, count_needle) != null);
-    // First omitted message content appears (or its truncate) in highlights.
-    if (omitted.len > 0) {
-        const snip = omitSnippet(omitted[0].content, 20);
-        try std.testing.expect(std.mem.indexOf(u8, ev.summary, snip) != null);
-    }
+    try std.testing.expect(std.mem.indexOf(u8, ev.summary, "early-user-1") != null);
 
-    // Transcript immutable.
+    // Transcript deep-immutability.
     var roles_after: [32]u8 = undefined;
     const nra = snapshotRoles(&full, &roles_after);
     try std.testing.expectEqualStrings(roles_before[0..nrb], roles_after[0..nra]);
-    try std.testing.expectEqualStrings("early-user-1 " ++ pad, full[1].content);
+    for (content_before, 0..) |c, idx| {
+        try std.testing.expectEqualStrings(c, full[idx].content);
+    }
 }
 
-fn omitSnippet(s: []const u8, max: usize) []const u8 {
-    if (s.len <= max) return s;
-    return s[0..max];
-}
-
-test "h-context: summary growth triggers multiple fixed-point iterations" {
+test "h-context: summary growth multi-iteration fixed-point" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
-    // Many medium messages: initial char trim drops some; summary (~few hundred
-    // chars) then exceeds budget so more must drop; eventually stabilizes.
     const pad = "Y" ** 40;
     var msgs: [25]message.Message = undefined;
     msgs[0] = .system("sys");
@@ -663,36 +856,28 @@ test "h-context: summary growth triggers multiple fixed-point iterations" {
     };
     const layers = Layers{ .system = "S" };
 
-    const intermediate = intermediateDroppedBeforeSummary(&msgs, opts, layers);
+    const intermediate = try intermediateDroppedBeforeSummary(&msgs, opts, layers);
     const v = try viewForModel(arena, &msgs, opts, layers);
     try std.testing.expect(v.compaction != null);
     const final_dropped = v.compaction.?.dropped;
-
-    // Fixed-point advanced past the pre-summary intermediate in this fixture.
     try std.testing.expect(final_dropped > intermediate);
 
-    // Final accounting matches view.
     var hist_i: usize = 0;
     while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
-    const body_len = msgs.len - 1;
-    try std.testing.expectEqual(body_len - final_dropped, v.messages.len - hist_i);
-
-    var count_buf: [32]u8 = undefined;
-    const count_needle = try std.fmt.bufPrint(&count_buf, "{d} earlier", .{final_dropped});
-    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, count_needle) != null);
+    try std.testing.expectEqual(msgs.len - 1 - final_dropped, v.messages.len - hist_i);
 }
 
-test "h-context: multi-tool sequences never orphan tool results at selected start" {
+test "h-context: multi-tool exact IDs atomic align and advance" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
     const calls_a = [_]message.ToolCall{
-        .{ .id = "a1", .name = "list_dir", .arguments = "{}" },
+        .{ .id = "a1", .name = "list_dir", .arguments = "{\"path\":\".\"}" },
         .{ .id = "a2", .name = "read_file", .arguments = "{\"path\":\"x\"}" },
     };
     const calls_b = [_]message.ToolCall{
-        .{ .id = "b1", .name = "grep", .arguments = "{}" },
+        .{ .id = "b1", .name = "grep", .arguments = "{\"pattern\":\"z\"}" },
     };
     const full = [_]message.Message{
         .system("sys"),
@@ -709,85 +894,143 @@ test "h-context: multi-tool sequences never orphan tool results at selected star
         .assistantText("done"),
     };
 
-    // max_tail that would land inside tool results without alignment.
-    const opts = Options{
+    // Count trim that would land on a2 result → align back to carrier assistant.
+    const body = full[1..];
+    // Index of toolResult a2 within body: user, asst, user, asst_tools, a1, a2 → 5
+    const land_on_a2: usize = 5;
+    try std.testing.expect(body[land_on_a2].role == .tool);
+    try std.testing.expectEqualStrings("a2", body[land_on_a2].tool_call_id.?);
+    const aligned = try alignToLegalStart(body, land_on_a2);
+    try std.testing.expect(body[aligned].role == .assistant);
+    try std.testing.expect(body[aligned].tool_calls != null);
+    try std.testing.expectEqual(@as(usize, 2), body[aligned].tool_calls.?.len);
+
+    // Atomic unit end skips assistant + both results.
+    const end = unitEnd(body, aligned);
+    try std.testing.expectEqual(aligned + 3, end);
+
+    const v = try viewForModel(arena, &full, .{
         .max_tail_messages = 4,
         .max_chars = 0,
         .min_tail_messages = 1,
-    };
-    const v = try viewForModel(arena, &full, opts, .{ .system = "base" });
+    }, .{ .system = "base" });
     try std.testing.expect(historyStartIsValid(v.messages));
 
-    // Every tool in the view has a preceding assistant with tool_calls.
-    var last_assistant_tools = false;
+    // Valid multi-call order preserved when bundle kept.
+    var last_ids: ?[]const message.ToolCall = null;
+    var result_i: usize = 0;
     for (v.messages) |m| {
         switch (m.role) {
-            .assistant => last_assistant_tools = m.tool_calls != null,
-            .tool => try std.testing.expect(last_assistant_tools),
-            else => last_assistant_tools = false,
-        }
-    }
-
-    // Also force post-summary trim path with a tight char budget.
-    const pad = "Z" ** 60;
-    const full2 = [_]message.Message{
-        .system("sys"),
-        .user(pad),
-        .assistantText(pad),
-        .user("ask"),
-        .assistantToolCalls("t", &calls_a),
-        .toolResult("a1", pad),
-        .toolResult("a2", pad),
-        .user("tail-u"),
-        .assistantText("tail-a"),
-    };
-    const v2 = try viewForModel(arena, &full2, .{
-        .max_tail_messages = 0,
-        .max_chars = 280,
-        .min_tail_messages = 2,
-        .summary_max_chars = 200,
-    }, .{ .system = "base" });
-    try std.testing.expect(historyStartIsValid(v2.messages));
-    last_assistant_tools = false;
-    for (v2.messages) |m| {
-        switch (m.role) {
-            .assistant => last_assistant_tools = m.tool_calls != null,
-            .tool => try std.testing.expect(last_assistant_tools),
-            else => last_assistant_tools = false,
+            .assistant => {
+                last_ids = m.tool_calls;
+                result_i = 0;
+            },
+            .tool => {
+                try std.testing.expect(last_ids != null);
+                const calls = last_ids.?;
+                try std.testing.expect(result_i < calls.len);
+                try std.testing.expectEqualStrings(calls[result_i].id, m.tool_call_id.?);
+                result_i += 1;
+            },
+            else => {
+                last_ids = null;
+                result_i = 0;
+            },
         }
     }
 }
 
-test "h-context: min_tail soft budget terminates honestly without further legal trim" {
+test "h-context: malformed tool bundles return InvalidContext" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
-    // Two huge messages; min_tail=2 means we cannot drop either; soft budget
-    // remains exceeded but algorithm terminates with dropped=0 or only
-    // pre-min-tail omissions, never loops.
+    const calls = [_]message.ToolCall{
+        .{ .id = "a1", .name = "list_dir", .arguments = "{}" },
+        .{ .id = "a2", .name = "read_file", .arguments = "{}" },
+    };
+    const dup = [_]message.ToolCall{
+        .{ .id = "x", .name = "list_dir", .arguments = "{}" },
+        .{ .id = "x", .name = "read_file", .arguments = "{}" },
+    };
+    const empty_id = [_]message.ToolCall{
+        .{ .id = "", .name = "list_dir", .arguments = "{}" },
+    };
+
+    // Orphan tool.
+    const orphan = [_]message.Message{
+        .user("u"),
+        .toolResult("z", "nope"),
+    };
+    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&orphan));
+    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &orphan, .{}, .{ .system = "b" }));
+
+    // Unknown / wrong ID.
+    const wrong_id = [_]message.Message{
+        .user("u"),
+        .assistantToolCalls("", &calls),
+        .toolResult("a1", "ok"),
+        .toolResult("WRONG", "bad"),
+    };
+    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&wrong_id));
+
+    // Out of order.
+    const ooo = [_]message.Message{
+        .user("u"),
+        .assistantToolCalls("", &calls),
+        .toolResult("a2", "second-first"),
+        .toolResult("a1", "first-second"),
+    };
+    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&ooo));
+
+    // Missing result (incomplete).
+    const incomplete = [_]message.Message{
+        .user("u"),
+        .assistantToolCalls("", &calls),
+        .toolResult("a1", "only-one"),
+    };
+    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&incomplete));
+
+    // Duplicate IDs in calls.
+    const dups = [_]message.Message{
+        .user("u"),
+        .assistantToolCalls("", &dup),
+        .toolResult("x", "1"),
+        .toolResult("x", "2"),
+    };
+    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&dups));
+
+    // Empty call id.
+    const empty = [_]message.Message{
+        .user("u"),
+        .assistantToolCalls("", &empty_id),
+        .toolResult("", "x"),
+    };
+    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&empty));
+}
+
+test "h-context: min_tail soft budget terminates honestly" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
     const huge = "H" ** 500;
     const full = [_]message.Message{
         .system("sys"),
         .user(huge),
         .assistantText(huge),
     };
-    const opts = Options{
+    const v = try viewForModel(arena, &full, .{
         .max_tail_messages = 0,
-        .max_chars = 100, // far below content
+        .max_chars = 100,
         .min_tail_messages = 2,
         .summary_max_chars = 80,
-    };
-    const v = try viewForModel(arena, &full, opts, .{ .system = "base" });
-    // Cannot drop below min_tail=2 body messages.
+    }, .{ .system = "base" });
     var hist_i: usize = 0;
     while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
     try std.testing.expectEqual(@as(usize, 2), v.messages.len - hist_i);
-    // No compaction when nothing was dropped.
     try std.testing.expect(v.compaction == null);
 
-    // With older messages that can be dropped down to min_tail, stop at min_tail
-    // even if still over budget after summary.
     const full2 = [_]message.Message{
         .system("sys"),
         .user(huge),
@@ -808,64 +1051,123 @@ test "h-context: min_tail soft budget terminates honestly without further legal 
     try std.testing.expectEqual(@as(usize, 2), v2.compaction.?.dropped);
 }
 
-test "h-context: repeated compaction preserves prior summary lineage" {
+test "h-context: lineage exact fit and truncated record with digest" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
-    const pad = "L" ** 50;
     const full = [_]message.Message{
         .system("sys"),
-        .user("first-wave " ++ pad),
-        .assistantText("a1 " ++ pad),
-        .user("second-wave " ++ pad),
-        .assistantText("a2 " ++ pad),
-        .user("third-wave " ++ pad),
-        .assistantText("a3 " ++ pad),
+        .user("first-wave"),
+        .assistantText("a1"),
+        .user("second-wave"),
+        .assistantText("a2"),
+        .user("third-wave"),
+        .assistantText("a3"),
         .user("now"),
         .assistantText("here"),
     };
 
-    // First compaction.
-    const v1 = try viewForModel(arena, &full, .{
-        .max_tail_messages = 4,
-        .max_chars = 0,
-        .min_tail_messages = 2,
-        .summary_max_chars = 400,
-    }, .{ .system = "base" });
-    try std.testing.expect(v1.compaction != null);
-    const first_summary = try arena.dupe(u8, v1.compaction.?.summary);
-
-    // Second compaction with prior session lineage present.
-    const v2 = try viewForModel(arena, &full, .{
+    // Exact fit: small prior fully retained.
+    const small_prior = "PRIOR_EXACT_BYTES_OK";
+    const v_exact = try viewForModel(arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 2,
-        .summary_max_chars = 500,
-    }, .{
-        .system = "base",
-        .session = first_summary,
-    });
-    try std.testing.expect(v2.compaction != null);
-    try std.testing.expect(std.mem.indexOf(u8, v2.compaction.?.summary, "Prior session context") != null);
-    // Prior content should not be fully erased — at least a marker or snippet survives.
-    try std.testing.expect(std.mem.indexOf(u8, v2.compaction.?.summary, "compaction") != null);
-    try std.testing.expect(v2.compaction.?.dropped >= 2);
+        .summary_max_chars = 800,
+    }, .{ .system = "base", .session = small_prior });
+    try std.testing.expect(v_exact.compaction != null);
+    try std.testing.expect(std.mem.indexOf(u8, v_exact.compaction.?.summary, small_prior) != null);
+    try std.testing.expect(std.mem.indexOf(u8, v_exact.compaction.?.summary, lineage_truncated_marker) == null);
+
+    // 790–800 byte prior forces truncation under residual budget.
+    var prior_buf: [790]u8 = undefined;
+    @memset(&prior_buf, 'P');
+    // Make it valid UTF-8 ASCII.
+    const prior790 = prior_buf[0..];
+    try std.testing.expectEqual(@as(usize, 790), prior790.len);
+
+    const v_trunc = try viewForModel(arena, &full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summary_max_chars = 800,
+    }, .{ .system = "base", .session = prior790 });
+    try std.testing.expect(v_trunc.compaction != null);
+    const sum = v_trunc.compaction.?.summary;
+    try std.testing.expect(sum.len <= summary_cap);
+    try std.testing.expect(std.mem.indexOf(u8, sum, lineage_truncated_marker) != null);
+    try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=790") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sum, "digest=wyhash64:") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sum, "kept_bytes=") != null);
+    // Dropped header still complete.
+    try std.testing.expect(std.mem.indexOf(u8, sum, "earlier messages omitted") != null);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
+
+    // Digest matches full prior.
+    const digest = std.hash.Wyhash.hash(0, prior790);
+    var dig_buf: [48]u8 = undefined;
+    const dig_needle = try std.fmt.bufPrint(&dig_buf, "digest=wyhash64:{x}", .{digest});
+    try std.testing.expect(std.mem.indexOf(u8, sum, dig_needle) != null);
 }
 
-test "h-context: summary is UTF-8 safe when truncating multi-byte content" {
+test "h-context: shared summary_cap clamp and tiny budget keeps header" {
     var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_impl.deinit();
     const arena = arena_impl.allocator();
 
-    // Multi-byte UTF-8 (emoji / CJK) that would split under naive byte cut.
-    const uni = "用户请求：你好世界 🌍✨";
     const full = [_]message.Message{
         .system("sys"),
-        .user(uni),
-        .assistantText(uni),
-        .user(uni),
-        .assistantText(uni),
+        .user("u1"),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
+        .user("u3"),
+        .assistantText("a3"),
+    };
+
+    // > summary_cap request clamps.
+    try std.testing.expectEqual(@as(usize, summary_cap), clampSummaryBudget(5000, 3));
+    try std.testing.expectEqual(@as(usize, summary_cap), clampSummaryBudget(0, 3));
+
+    const v_over = try viewForModel(arena, &full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 1,
+        .summary_max_chars = 50_000,
+    }, .{ .system = "base" });
+    try std.testing.expect(v_over.compaction != null);
+    try std.testing.expect(v_over.compaction.?.summary.len <= summary_cap);
+
+    // Tiny budget still has complete dropped header.
+    const v_tiny = try viewForModel(arena, &full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 1,
+        .summary_max_chars = 8,
+    }, .{ .system = "base" });
+    try std.testing.expect(v_tiny.compaction != null);
+    const s = v_tiny.compaction.?.summary;
+    try std.testing.expect(std.mem.indexOf(u8, s, "earlier messages omitted") != null);
+    var count_buf: [32]u8 = undefined;
+    const needle = try std.fmt.bufPrint(&count_buf, "{d} earlier", .{v_tiny.compaction.?.dropped});
+    try std.testing.expect(std.mem.indexOf(u8, s, needle) != null);
+    try std.testing.expect(s.len <= summary_cap);
+}
+
+test "h-context: invalid UTF-8 sanitized to U+FFFD not OOM" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    // Invalid bytes mid-string and at potential truncate boundary.
+    const bad = [_]u8{ 'h', 'i', 0xFF, 0xFE, 'x' };
+    const full = [_]message.Message{
+        .system("sys"),
+        .user(&bad),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
         .user("tail"),
         .assistantText("ok"),
     };
@@ -873,8 +1175,83 @@ test "h-context: summary is UTF-8 safe when truncating multi-byte content" {
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
-        .summary_max_chars = 60,
+        .summary_max_chars = 120,
     }, .{ .system = "base" });
     try std.testing.expect(v.compaction != null);
     try std.testing.expect(std.unicode.utf8ValidateSlice(v.compaction.?.summary));
+    // Replacement character present (UTF-8 EF BF BD).
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "\u{FFFD}") != null);
+}
+
+test "h-context: identical inputs are deterministic" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u1"),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
+        .user("u3"),
+        .assistantText("a3"),
+        .user("u4"),
+        .assistantText("a4"),
+    };
+    const opts = Options{
+        .max_tail_messages = 3,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summary_max_chars = 400,
+    };
+    const layers = Layers{ .system = "base", .session = "prior-session-layer" };
+
+    const v1 = try viewForModel(arena, &full, opts, layers);
+    const v2 = try viewForModel(arena, &full, opts, layers);
+    try std.testing.expect(v1.compaction != null and v2.compaction != null);
+    try std.testing.expectEqual(v1.compaction.?.dropped, v2.compaction.?.dropped);
+    try std.testing.expectEqualStrings(v1.compaction.?.summary, v2.compaction.?.summary);
+    try std.testing.expectEqual(v1.messages.len, v2.messages.len);
+}
+
+test "h-context: deep transcript snapshot tool ids unchanged after view" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const calls = [_]message.ToolCall{
+        .{ .id = "keep-1", .name = "list_dir", .arguments = "{\"path\":\".\"}" },
+        .{ .id = "keep-2", .name = "read_file", .arguments = "{\"path\":\"a\"}" },
+    };
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("before"),
+        .assistantToolCalls("run", &calls),
+        .toolResult("keep-1", "out1"),
+        .toolResult("keep-2", "out2"),
+        .user("after"),
+        .assistantText("done"),
+    };
+
+    const id0 = full[2].tool_calls.?[0].id;
+    const name1 = full[2].tool_calls.?[1].name;
+    const args0 = full[2].tool_calls.?[0].arguments;
+    const rid0 = full[3].tool_call_id.?;
+    const rid1 = full[4].tool_call_id.?;
+
+    _ = try viewForModel(arena, &full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 1,
+    }, .{ .system = "base" });
+
+    try std.testing.expectEqualStrings("keep-1", full[2].tool_calls.?[0].id);
+    try std.testing.expectEqualStrings(id0, full[2].tool_calls.?[0].id);
+    try std.testing.expectEqualStrings(name1, full[2].tool_calls.?[1].name);
+    try std.testing.expectEqualStrings(args0, full[2].tool_calls.?[0].arguments);
+    try std.testing.expectEqualStrings(rid0, full[3].tool_call_id.?);
+    try std.testing.expectEqualStrings(rid1, full[4].tool_call_id.?);
+    try std.testing.expectEqualStrings("out1", full[3].content);
+    try std.testing.expectEqualStrings("out2", full[4].content);
 }

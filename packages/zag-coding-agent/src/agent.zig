@@ -95,6 +95,9 @@ pub const Session = struct {
     /// Latest compaction summary for the session layer / header (arena-owned).
     compaction_summary: ?[]const u8 = null,
     zag_version: []const u8 = "0.5.0",
+    /// Test-only: next `noteCompaction` returns OOM without mutating gen/summary.
+    fail_next_note_compaction: if (builtin.is_test) bool else void =
+        if (builtin.is_test) false else {},
 
     pub fn start(
         gpa: std.mem.Allocator,
@@ -263,6 +266,12 @@ pub const Session = struct {
     /// on success. On OOM leaves gen/summary unchanged so callers can fail the
     /// turn without claiming a session update that did not stick (h-context-001).
     pub fn noteCompaction(self: *Session, event: context_mod.CompactionEvent) error{OutOfMemory}!void {
+        if (builtin.is_test) {
+            if (self.fail_next_note_compaction) {
+                self.fail_next_note_compaction = false;
+                return error.OutOfMemory;
+            }
+        }
         const arena = self.arena_impl.allocator();
         const owned = try arena.dupe(u8, event.summary);
         self.compaction_summary = owned;
@@ -502,6 +511,7 @@ pub const Agent = struct {
             error.TraceFailed => .trace_error,
             error.OutOfMemory => .out_of_memory,
             error.InvalidToolset => .invalid_toolset,
+            error.InvalidContext => .invalid_context,
             error.MaxTurnsExceeded => .max_turns,
         };
     }
@@ -510,7 +520,7 @@ pub const Agent = struct {
         return switch (stop) {
             // Clean cooperative cancel is a normal Result, not a harness failure.
             .completed, .max_turns, .cancelled => true,
-            .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset => false,
+            .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset, .invalid_context => false,
         };
     }
 
@@ -1840,4 +1850,268 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
     // Provider must not have been called after sink failure.
     // (Mock would have returned text; no assistant event expected from loop.)
     try std.testing.expectEqual(@as(u32, 0), tr.countKind("assistant"));
+}
+
+test "h-context: Agent.reply malformed tools invalid_context provider=0" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    // Seed a malformed incomplete tool bundle into the authoritative transcript.
+    const calls_tc = try session.arena_impl.allocator().alloc(message.ToolCall, 2);
+    calls_tc[0] = .{
+        .id = try session.arena_impl.allocator().dupe(u8, "a1"),
+        .name = try session.arena_impl.allocator().dupe(u8, "list_dir"),
+        .arguments = try session.arena_impl.allocator().dupe(u8, "{}"),
+    };
+    calls_tc[1] = .{
+        .id = try session.arena_impl.allocator().dupe(u8, "a2"),
+        .name = try session.arena_impl.allocator().dupe(u8, "read_file"),
+        .arguments = try session.arena_impl.allocator().dupe(u8, "{}"),
+    };
+    try session.transcript.appendUser("ask");
+    try session.transcript.appendAssistantTurn(.{
+        .content = "tools",
+        .tool_calls = calls_tc,
+        .finish_reason = "tool_calls",
+    });
+    // Only one of two results — incomplete bundle.
+    try session.transcript.appendToolResult("a1", "partial");
+
+    const err = agent.reply(&session, "continue");
+    try std.testing.expectError(error.InvalidContext, err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "invalid_context");
+    try std.testing.expectEqual(@as(u32, 0), tr.countKind("compaction"));
+    try std.testing.expectEqual(@as(u32, 0), tr.countKind("assistant"));
+}
+
+test "h-context: Agent.reply noteCompaction OOM provider=0 one out_of_memory terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .context = .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 1,
+            .summary_max_chars = 400,
+        },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        try session.transcript.appendUser("u");
+        try session.transcript.appendAssistantTurn(.{
+            .content = "a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+    }
+
+    session.fail_next_note_compaction = true;
+    const gen_before = session.compaction_gen;
+    try std.testing.expect(session.compaction_summary == null);
+
+    const err = agent.reply(&session, "please compact");
+    try std.testing.expectError(error.OutOfMemory, err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+    try std.testing.expectEqual(gen_before, session.compaction_gen);
+    try std.testing.expect(session.compaction_summary == null);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "out_of_memory");
+    try std.testing.expectEqual(@as(u32, 0), tr.countKind("compaction"));
+    try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+}
+
+test "h-context: session layer summary and trace byte-equal under shared cap" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-context-cap";
+    const path = ".zag-test-h-context-cap/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var calls: u32 = 0;
+    var capture: CaptureViewChat = .{ .calls = &calls, .gpa = gpa };
+    defer capture.deinit();
+
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &capture,
+        .vtable = &.{ .chat = CaptureViewChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .context = .{
+            .max_tail_messages = 3,
+            .max_chars = 0,
+            .min_tail_messages = 2,
+            .summary_max_chars = 50_000, // over shared cap → clamp
+        },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    var n: usize = 0;
+    while (n < 12) : (n += 1) {
+        var buf: [32]u8 = undefined;
+        const label = try std.fmt.bufPrint(&buf, "seed-{d}", .{n});
+        if (n % 2 == 0) {
+            try session.transcript.appendUser(label);
+        } else {
+            try session.transcript.appendAssistantTurn(.{
+                .content = label,
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            });
+        }
+    }
+
+    _ = try agent.reply(&session, "go");
+    try std.testing.expect(session.compaction_summary != null);
+    const sess = session.compaction_summary.?;
+    try std.testing.expect(sess.len <= context_mod.summary_cap);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    const parsed = try parseCompactionFromTrace(gpa, tr.buf.items);
+    defer gpa.free(parsed.summary);
+    try std.testing.expectEqualStrings(sess, parsed.summary);
+    try std.testing.expect(parsed.summary.len <= context_mod.summary_cap);
+
+    // Provider session layer embeds the same summary text.
+    var found = false;
+    for (capture.last_contents.items) |c| {
+        if (std.mem.indexOf(u8, c, sess) != null) found = true;
+    }
+    try std.testing.expect(found);
+
+    try session.save();
+    // Header persists same summary.
+    var load_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer load_arena.deinit();
+    var loaded = transcript_mod.Transcript.init(load_arena.allocator());
+    const writer = if (session.writer) |*w| w else return error.TestUnexpectedResult;
+    const meta = try writer.load(&loaded);
+    try std.testing.expect(meta.compaction_summary != null);
+    try std.testing.expectEqualStrings(sess, meta.compaction_summary.?);
+    try std.testing.expectEqual(session.compaction_gen, meta.compaction_gen);
+}
+
+test "h-context: large prior lineage survives save/resume with marker or exact" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-context-lineage";
+    const path = ".zag-test-h-context-lineage/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var prior: [790]u8 = undefined;
+    @memset(&prior, 'Q');
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .context = .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 2,
+            .summary_max_chars = context_mod.summary_cap,
+        },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    // Install a large prior as if a previous compaction left it.
+    session.compaction_summary = try session.arena_impl.allocator().dupe(u8, &prior);
+    session.compaction_gen = 1;
+
+    var i: usize = 0;
+    while (i < 8) : (i += 1) {
+        try session.transcript.appendUser("u");
+        try session.transcript.appendAssistantTurn(.{
+            .content = "a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+    }
+
+    _ = try agent.reply(&session, "again");
+    try std.testing.expectEqual(@as(u32, 2), session.compaction_gen);
+    try std.testing.expect(session.compaction_summary != null);
+    const sum = session.compaction_summary.?;
+    try std.testing.expect(sum.len <= context_mod.summary_cap);
+    try std.testing.expect(std.mem.indexOf(u8, sum, context_mod.lineage_truncated_marker) != null);
+    try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=790") != null);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    const parsed = try parseCompactionFromTrace(gpa, tr.buf.items);
+    defer gpa.free(parsed.summary);
+    try std.testing.expectEqualStrings(sum, parsed.summary);
+
+    try session.save();
+    const gen_saved = session.compaction_gen;
+    const summary_saved = try gpa.dupe(u8, sum);
+    defer gpa.free(summary_saved);
+    session.deinit();
+
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    try std.testing.expectEqual(gen_saved, resumed.compaction_gen);
+    try std.testing.expectEqualStrings(summary_saved, resumed.compaction_summary.?);
 }

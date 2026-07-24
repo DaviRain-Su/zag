@@ -108,10 +108,11 @@ Session (full transcript, durable)
 
 - 四层 prompt：system → project → session → ephemeral，再加 history 尾部
 - 非 system **尾部最多 48 条**；**约 120k 字符** 软预算
-- Tool 边界对齐：选中起点不会落在「裸 tool」结果上
-- 启发式 summary（非 LLM）；**fixed-point**：summary 插入后若再超预算，继续合法裁切并**重建** `dropped`/summary
-- `CompactionEvent` 描述**最终** view；session `compaction_gen` + summary 与 trace 同事件
-- soft budget / `min_tail`：无法再合法裁切时诚实终止（可能仍略超预算）
+- Tool **bundle**（按 call ID 顺序成对）合法边界；畸形 history → `invalid_context`（不调模型）
+- 启发式 summary（非 LLM）；**fixed-point** 重建 `dropped`/summary；共享 cap **800**
+- 重复压缩 lineage：先验精确保留或显式截断记录（digest + `[LINEAGE_TRUNCATED]`）
+- `CompactionEvent` 描述**最终** view；成功路径 session 与 trace 同字节
+- soft budget / `min_tail`：无法再合法裁切时诚实终止
 
 坑（读完应能说）：
 

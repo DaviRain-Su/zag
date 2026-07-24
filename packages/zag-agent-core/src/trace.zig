@@ -24,6 +24,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const message = @import("message.zig");
 const workspace = @import("workspace.zig");
+const context_mod = @import("context.zig");
 
 /// Stable exported trace schema version written on every `run_start`.
 pub const current_schema_version: u32 = 1;
@@ -40,10 +41,8 @@ pub const max_stop_reason_len: usize = 48;
 pub const cap_tool_arguments: usize = 800;
 pub const cap_assistant_text: usize = 500;
 pub const cap_tool_result_body: usize = 500;
-/// Must hold a full context heuristic summary (`context.default_summary_max_chars`).
-/// Raised with h-context-001 so session meta and trace can verify the same
-/// final bounded summary without silent truncation divergence.
-pub const cap_compaction_summary: usize = 800;
+/// Shared with `context.summary_cap` so session meta / view / trace use one bound.
+pub const cap_compaction_summary: usize = context_mod.summary_cap;
 pub const cap_shell_command: usize = 200;
 pub const cap_jail_path: usize = 200;
 pub const cap_tool_id_name: usize = 64;
@@ -270,6 +269,11 @@ pub const Trace = struct {
             .dropped = dropped,
             .summary = try prepareTracedString(summary, cap_compaction_summary),
         }, .normal);
+    }
+
+    /// Emit a canonical context `CompactionEvent` (preferred over free-form fields).
+    pub fn emitCompactionEvent(self: *Trace, event: context_mod.CompactionEvent) Error!void {
+        try self.emitCompaction(event.dropped, event.summary);
     }
 
     pub const RunEndInfo = struct {

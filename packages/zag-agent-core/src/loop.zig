@@ -71,6 +71,9 @@ pub const RunError = error{
     /// Mid-run trace event emission failed (not a silent drop).
     /// Distinct from explicit-path flush failure (`trace.Error.TraceIoFailed`) owned by the facade.
     TraceFailed,
+    /// Malformed transcript history / context policy fail-closed (h-context-001).
+    /// Not a provider error — no model call for the failed turn.
+    InvalidContext,
 };
 
 pub const StopReason = enum {
@@ -86,6 +89,8 @@ pub const StopReason = enum {
     out_of_memory,
     /// Toolset failed closed validation (facade).
     invalid_toolset,
+    /// Malformed tool-call/result history or context policy (h-context-001).
+    invalid_context,
 
     pub fn name(self: StopReason) []const u8 {
         return switch (self) {
@@ -97,6 +102,7 @@ pub const StopReason = enum {
             .trace_error => "trace_error",
             .out_of_memory => "out_of_memory",
             .invalid_toolset => "invalid_toolset",
+            .invalid_context => "invalid_context",
         };
     }
 };
@@ -181,16 +187,22 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             transcript.items(),
             deps_run.options.context,
             layers,
-        ) catch return error.OutOfMemory;
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidContext => return error.InvalidContext,
+        };
         // Session sink first, then trace: OOM on session note aborts before any
         // compaction line is written so session metadata and trace cannot
-        // silently diverge (h-context-001). Both receive the same final event.
+        // silently diverge on the success path (h-context-001). Both receive
+        // the same final event when both succeed. If note succeeds and a later
+        // mid-run trace emit fails, session may already hold the new gen —
+        // that is a visible run failure, not silent equality.
         if (view.compaction) |ev| {
             if (deps_run.options.on_compaction) |cb| {
                 cb(deps_run.options.compaction_ctx, ev) catch return error.OutOfMemory;
             }
             if (deps_run.options.trace) |tr| {
-                tr.emitCompaction(ev.dropped, ev.summary) catch |err| return mapTraceEmit(err);
+                tr.emitCompactionEvent(ev) catch |err| return mapTraceEmit(err);
             }
         }
 

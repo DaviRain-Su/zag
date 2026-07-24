@@ -120,9 +120,11 @@ Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `
 | Field | Cap / rule |
 |-------|------------|
 | `dropped` | Final omitted body-prefix count (same as session event) |
-| `summary` | Bounded UTF-8; `cap_compaction_summary` = **800** (= `context.default_summary_max_chars`) so persisted trace can verify the same final bounded summary as session meta |
+| `summary` | Bounded UTF-8; `cap_compaction_summary` = `context.summary_cap` (**800**). Prefer `emitCompactionEvent(CompactionEvent)`. |
 
-Loop order: session `on_compaction` sink first; on sink OOM the run fails with `OutOfMemory` and **no** compaction line is written. Do not weaken exact-terminal / error behavior for other kinds.
+Loop order: session `on_compaction` sink first; on sink OOM the run fails with `OutOfMemory` and **no** compaction line is written. Success-path session meta and trace summary are byte-equal. Note-then-trace-emit failure is a visible run error (not silent success). Do not weaken exact-terminal / error behavior for other kinds.
+
+`invalid_context` is a truthful terminal when history tool bundles fail closed before the provider call.
 
 ## Public errors
 
