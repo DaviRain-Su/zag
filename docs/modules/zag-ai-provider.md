@@ -53,7 +53,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | `api_style` | ✅ presets + `ZAG_API_STYLE` / `ZAG_PROVIDER=anthropic` |
 | OpenAI Chat Completions + SSE | ✅ `openai_compat`（唯一 openai-zig chat 消费者） |
 | Anthropic Messages + SSE | ✅ `anthropic_messages` |
-| 共享 `Config` + `http.Client` | ✅ facade；默认 `std.http`，可选 zig-curl（D-005） |
+| 传输 | `openai-zig` / zag-ai `http` | 同一 `-Dhttp_backend=std\|curl`（D-005 Phase 2） |
 | 共享 `wire.Error` | ✅；`mapSdkError` 仅 OpenAI 适配器 |
 | `WireAdapter.embed` | ✅ OpenAI 实现；Anthropic → `NotSupported` |
 | presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning） |

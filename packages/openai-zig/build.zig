@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const HttpBackend = enum { std, curl };
+
 fn shouldRunExample(filter_csv: []const u8, example_name: []const u8) bool {
     if (filter_csv.len == 0) return true;
     var it = std.mem.splitScalar(u8, filter_csv, ',');
@@ -14,6 +16,24 @@ fn shouldRunExample(filter_csv: []const u8, example_name: []const u8) bool {
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const http_backend = b.option(
+        HttpBackend,
+        "http_backend",
+        "Outbound HTTP transport (std.http or zig-curl)",
+    ) orelse .std;
+
+    const opts = b.addOptions();
+    opts.addOption(HttpBackend, "http_backend", http_backend);
+    opts.addOption([]const u8, "package", "openai_zig");
+
+    var curl_dep: ?*std.Build.Dependency = null;
+    if (http_backend == .curl) {
+        curl_dep = b.lazyDependency("curl", .{
+            .target = target,
+            .optimize = optimize,
+            .link_vendor = false,
+        }) orelse return;
+    }
 
     const config_mod = b.createModule(.{
         .root_source_file = b.path("src/config.zig"),
@@ -31,6 +51,8 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
+    mod.addOptions("openai_build_options", opts);
+    if (curl_dep) |dep| attachCurl(mod, dep);
 
     const exe = b.addExecutable(.{
         .name = "openai_zig",
@@ -55,8 +77,14 @@ pub fn build(b: *std.Build) void {
     }
 
     const mod_tests = b.addTest(.{
-        .root_module = mod,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
+    mod_tests.root_module.addOptions("openai_build_options", opts);
+    if (curl_dep) |dep| attachCurl(mod_tests.root_module, dep);
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
     const exe_tests = b.addTest(.{
@@ -152,4 +180,10 @@ pub fn build(b: *std.Build) void {
             run_ex.dependOn(&run_ex_cmd.step);
         }
     }
+}
+
+fn attachCurl(mod: *std.Build.Module, curl_dep: *std.Build.Dependency) void {
+    mod.addImport("curl", curl_dep.module("curl"));
+    mod.link_libc = true;
+    mod.linkSystemLibrary("curl", .{});
 }

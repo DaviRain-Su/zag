@@ -4,7 +4,13 @@
     // Changing this has security and trust implications.
     .fingerprint = 0x8a2c729d40dc27c4,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .curl = .{
+            .url = "https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz",
+            .hash = "curl-0.5.0-P4tT4e_-AABZBa1zBmiSKFQo7xV0DJ2cUxFfH4KiQKj2",
+            .lazy = true,
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

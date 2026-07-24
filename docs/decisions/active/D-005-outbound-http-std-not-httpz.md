@@ -67,13 +67,26 @@ Evaluated 2026-07-24: [jiacai2050/zig-curl](https://github.com/jiacai2050/zig-cu
 | SSE / stream | Our writer path | `WRITEFUNCTION` callback in `http_curl.zig` |
 | Fit with tutorial “std-only” story | Strong | Hidden behind facade |
 
+## Libcurl route (phased)
+
+```text
+Phase 0  ✅  Evaluate zig-curl; reject httpz (server)
+Phase 1  ✅  zag-ai facade + -Dhttp_backend=curl (Anthropic / shared http.Client)
+Phase 2  →  openai-zig Transport same flag (OpenAI-compat / DeepSeek / …)
+Phase 3     Live bake-off (timeout / SSE cancel / proxy); consider default=curl
+Phase 4     Optional: extract packages/zag-http shared engine (dedupe std|curl)
+```
+
+**Now:** Phase 2 — one build flag covers the whole Model plane outbound stack.  
+**Not yet:** flip default; openai-zig proxy via curl; vendor mbedtls hermetic CI.
+
 ### Spike status (landed)
 
 - Build flag: **`-Dhttp_backend=std|curl`** (default **`std`**)
 - Facade: `packages/zag-ai/src/http.zig` → `http_std.zig` / `http_curl.zig`
-- Dependency: **URL** in `build.zig.zon` → [zig-curl v0.5.0](https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz) (not vendored in-tree)
-- Scope: **zag-ai** HTTP only (Anthropic path). `openai-zig` transport still `std.http`
-- Link mode: `link_vendor=false` (system libcurl) for fast iteration
+- openai-zig: `packages/openai-zig/src/transport/http.zig` → same flag (`http_std` / `http_curl`)
+- Dependency: **URL** in `build.zig.zon` → [zig-curl v0.5.0](https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz)
+- Link mode: `link_vendor=false` (system libcurl)
 
 If local `zig fetch` cannot reach GitHub, seed the cache then build:
 
@@ -84,9 +97,7 @@ zig fetch file:///tmp/zig-curl-0.5.0.tar.gz
 zig build test -Dhttp_backend=curl
 ```
 
-**Stance:** default stays std. Curl is an **opt-in** backend for comparison / unblock. Flip default only after live SSE + timeout bake-off and openai-zig parity (or shared transport).
-
-Until std.http actually blocks H6 (deadline / stream cancel / proxy), keep default wrappers; use `-Dhttp_backend=curl` to validate.
+**Stance:** default stays **std** until Phase 3 bake-off. Curl is opt-in for the full Model plane once Phase 2 lands.
 
 ## Consequences
 
