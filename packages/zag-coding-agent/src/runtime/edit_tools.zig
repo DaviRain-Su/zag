@@ -302,6 +302,29 @@ fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) 
     };
 }
 
+/// Test-only: after this many successful `replaceOwnedSlice` installs, the next
+/// call returns `error.OutOfMemory` before allocating (exercises ownership).
+var test_replace_fail_after: ?usize = null;
+var test_replace_success_count: usize = 0;
+
+/// Replace `slot` with a freshly owned copy of `bytes`.
+///
+/// Allocates **before** freeing the previous value so OOM leaves the old
+/// slice installed (defer cannot double-free an already-freed pointer).
+fn replaceOwnedSlice(
+    allocator: std.mem.Allocator,
+    slot: *?[]u8,
+    bytes: []const u8,
+) error{OutOfMemory}!void {
+    if (test_replace_fail_after) |limit| {
+        if (test_replace_success_count >= limit) return error.OutOfMemory;
+    }
+    const fresh = try allocator.dupe(u8, bytes);
+    if (slot.*) |old| allocator.free(old);
+    slot.* = fresh;
+    if (test_replace_fail_after != null) test_replace_success_count += 1;
+}
+
 /// Ensure parent directories exist without recreating existing symlink/dir parents.
 ///
 /// After Guard.checkCreate, existing prefixes are contained. If the full parent
@@ -347,8 +370,7 @@ fn ensureParentDirs(ctx: tool.Context, file_path: []const u8) !void {
         const partial = acc.items;
         if (ctx.cwd.statFile(ctx.io, partial, .{ .follow_symlinks = true })) |st| {
             if (st.kind != .directory) return error.NotDir;
-            if (openable_owned) |old| ctx.allocator.free(old);
-            openable_owned = try ctx.allocator.dupe(u8, partial);
+            try replaceOwnedSlice(ctx.allocator, &openable_owned, partial);
         } else |_| {
             saw_missing = true;
             try missing.append(ctx.allocator, part);
@@ -550,6 +572,82 @@ test "applyUniqueReplace not found and ambiguous" {
         error.AmbiguousAnchor,
         applyUniqueReplace(gpa, "aa aa", "aa", "b"),
     );
+}
+
+test "replaceOwnedSlice OOM leaves previous value (no double-free)" {
+    // Regression for ensureParentDirs openable update: free-then-dupe double-freed
+    // on OOM via outer defer. Ownership must be allocate → swap → free old.
+    const gpa = std.testing.allocator;
+
+    // --- real allocator OOM on first attempt (slot already set) ---
+    var slot: ?[]u8 = try gpa.dupe(u8, "first-prefix");
+    defer if (slot) |p| gpa.free(p);
+
+    var failing_state = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        replaceOwnedSlice(failing_state.allocator(), &slot, "second-prefix"),
+    );
+    try std.testing.expect(slot != null);
+    try std.testing.expectEqualStrings("first-prefix", slot.?);
+
+    // --- success path swaps cleanly ---
+    try replaceOwnedSlice(gpa, &slot, "second-prefix");
+    try std.testing.expectEqualStrings("second-prefix", slot.?);
+
+    // --- hook: fail after one successful install (mirrors openable walk) ---
+    test_replace_fail_after = 1;
+    test_replace_success_count = 0;
+    defer {
+        test_replace_fail_after = null;
+        test_replace_success_count = 0;
+    }
+
+    var slot2: ?[]u8 = null;
+    defer if (slot2) |p| gpa.free(p);
+    try replaceOwnedSlice(gpa, &slot2, "a");
+    try std.testing.expectEqualStrings("a", slot2.?);
+    try std.testing.expectError(error.OutOfMemory, replaceOwnedSlice(gpa, &slot2, "a/b"));
+    // Still owns "a" exactly once — gpa leak check + equal proves no double-free.
+    try std.testing.expectEqualStrings("a", slot2.?);
+}
+
+test "ensureParentDirs OOM after openable prefix: no leak, no create, no outside write" {
+    // Path a/b/c/file.txt with a and a/b existing: first openable install succeeds,
+    // second (a/b) hits test_replace_fail_after → OOM with first prefix still deferred.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws/a/b");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/marker.txt", .data = "OUT\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{ .access_sub_paths = true });
+    defer ws.close(io);
+
+    test_replace_fail_after = 1; // succeed once ("a"), fail on "a/b"
+    test_replace_success_count = 0;
+    defer {
+        test_replace_fail_after = null;
+        test_replace_success_count = 0;
+    }
+
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+    try std.testing.expectError(error.OutOfMemory, ensureParentDirs(ctx, "a/b/c/file.txt"));
+
+    // No partial create of missing suffix.
+    try std.testing.expectError(error.FileNotFound, ws.statFile(io, "a/b/c", .{}));
+    try std.testing.expectError(error.FileNotFound, ws.statFile(io, "a/b/c/file.txt", .{}));
+    // Existing prefixes intact.
+    const b_st = try ws.statFile(io, "a/b", .{});
+    try std.testing.expect(b_st.kind == .directory);
+    // Outside sibling untouched / not created into.
+    const marker = try parent.dir.readFileAlloc(io, "outside/marker.txt", gpa, .limited(16));
+    defer gpa.free(marker);
+    try std.testing.expectEqualStrings("OUT\n", marker);
+    try std.testing.expectError(error.FileNotFound, parent.dir.statFile(io, "outside/c", .{}));
 }
 
 test "search_replace write_file run_shell in tmp dir" {
