@@ -270,6 +270,31 @@ pub fn build(b: *std.Build) void {
     );
     docs_lint_step.dependOn(&docs_lint.step);
 
+    // D-005 Phase 3: live std vs curl bake-off (network; not in `test`).
+    const bakeoff_exe = b.addExecutable(.{
+        .name = "http-bakeoff",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-ai/src/bin/http_bakeoff.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zag-ai", .module = ai_mod },
+            },
+        }),
+    });
+    if (root_curl_dep) |dep| {
+        attachCurl(bakeoff_exe.root_module, dep);
+    }
+    const run_bakeoff = b.addRunArtifact(bakeoff_exe);
+    if (b.args) |args| {
+        run_bakeoff.addArgs(args);
+    }
+    const bakeoff_step = b.step(
+        "http-bakeoff",
+        "Live HTTP backend bake-off (needs network; -Dhttp_backend=std|curl)",
+    );
+    bakeoff_step.dependOn(&run_bakeoff.step);
+
     const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);

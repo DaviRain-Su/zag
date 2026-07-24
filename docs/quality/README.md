@@ -4,6 +4,7 @@
 |----------|--------|
 | [evals.md](./evals.md) | Hand-written eval / security bar |
 | [contracts.md](./contracts.md) | Provider / API contracts |
+| [http-backend-bakeoff.md](./http-backend-bakeoff.md) | D-005 Phase 3 live std vs curl |
 | [readability-report.md](./readability-report.md) | **Generated** by `scripts/score_docs.py` |
 | [security-report.md](./security-report.md) | **Generated** by `scripts/score_docs.py` |
 

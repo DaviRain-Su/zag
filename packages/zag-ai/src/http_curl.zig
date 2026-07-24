@@ -265,7 +265,7 @@ pub const Client = struct {
 
             const resp = easy.perform() catch {
                 if (stream_state.failed) return stream_state.err;
-                return error.HttpFailed;
+                return mapCurlDiag(easy.diagnostics);
             };
             if (stream_state.failed) return stream_state.err;
             return .{ .status = @intCast(resp.status_code), .body = &.{} };
@@ -274,7 +274,7 @@ pub const Client = struct {
         var body_writer: Io.Writer.Allocating = .init(self.allocator);
         errdefer body_writer.deinit();
         easy.setWriter(&body_writer.writer) catch return error.HttpFailed;
-        const resp = easy.perform() catch return error.HttpFailed;
+        const resp = easy.perform() catch return mapCurlDiag(easy.diagnostics);
         body_writer.writer.flush() catch {};
         const bytes = body_writer.toOwnedSlice() catch return error.OutOfMemory;
         return .{ .status = @intCast(resp.status_code), .body = bytes };
@@ -298,6 +298,18 @@ fn streamWrite(ptr: [*c]c_char, size: c_uint, nmemb: c_uint, user_data: *anyopaq
         return 0;
     };
     return real_size;
+}
+
+fn mapCurlDiag(diag: curl.Diagnostics) Error {
+    if (diag.error_code) |ec| {
+        switch (ec) {
+            .code => |code| {
+                if (code == curl.libcurl.CURLE_OPERATION_TIMEDOUT) return error.Timeout;
+            },
+            .m_code => {},
+        }
+    }
+    return error.HttpFailed;
 }
 
 fn isRetryableStatus(status: u16) bool {
