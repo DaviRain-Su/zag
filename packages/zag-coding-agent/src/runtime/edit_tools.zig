@@ -484,6 +484,22 @@ const ShellResultCode = enum {
 const stdout_section = "--- stdout ---\n";
 const stderr_section = "--- stderr ---\n";
 
+const ShellStreamEncoding = enum {
+    utf8,
+    base64,
+
+    fn name(self: ShellStreamEncoding) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const ShellStreamRepresentation = struct {
+    bytes: []const u8,
+    encoding: ShellStreamEncoding,
+    represented_len: usize,
+    needs_newline: bool,
+};
+
 const ShellFormatError = error{
     OutOfMemory,
     ShellEnvelopeTooLong,
@@ -546,7 +562,7 @@ fn shellRunError(
         ),
         error.StreamTooLong => ownShellHeader(
             gpa,
-            "error: code={s} format=shell-v1 stdout_limit_bytes={d} stderr_limit_bytes={d} exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
+            "error: code={s} format=shell-v1 limit_scope=capture stdout_limit_bytes={d} stderr_limit_bytes={d} exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
             .{
                 ShellResultCode.shell_output_limit.name(),
                 config.stdout_limit,
@@ -578,79 +594,172 @@ fn formatShellResult(
     stdout: []const u8,
     stderr: []const u8,
 ) ShellFormatError![]u8 {
+    const stdout_rep = try classifyShellStream(stdout);
+    const stderr_rep = try classifyShellStream(stderr);
+
     var header_buf: [trace.cap_tool_result_body]u8 = undefined;
-    const header = formatShellTermHeader(&header_buf, term, stdout.len, stderr.len) catch
+    const header = formatShellTermHeader(&header_buf, term, stdout_rep, stderr_rep) catch
         return error.ShellEnvelopeTooLong;
     std.debug.assert(std.mem.indexOfScalar(u8, header, '\n') == null);
 
-    const stdout_needs_newline = needsTrailingNewline(stdout);
-    const stderr_needs_newline = needsTrailingNewline(stderr);
-    const layout = try checkedShellBodyLayout(
+    const layout = checkedShellBodyLayout(
         header.len,
-        stdout.len,
-        stderr.len,
-        stdout_needs_newline,
-        stderr_needs_newline,
-    );
+        stdout_rep.represented_len,
+        stderr_rep.represented_len,
+        stdout_rep.needs_newline,
+        stderr_rep.needs_newline,
+    ) catch |err| switch (err) {
+        error.ShellBodyTooLong => return formatShellBodyEncodingLimit(gpa, stdout_rep, stderr_rep),
+        error.ShellEnvelopeTooLong => return error.ShellEnvelopeTooLong,
+        error.OutOfMemory => unreachable,
+    };
 
-    // Allocation and writes happen only after checked arithmetic proves both
-    // the 4 KiB envelope and shared 64 KiB Tool-result ceiling.
+    // The one allocation happens only after checked represented lengths prove
+    // both the 4 KiB envelope and shared 64 KiB Tool-result ceiling. Base64 is
+    // encoded directly into this final buffer; there is no intermediate copy.
     const body = try gpa.alloc(u8, layout.body_len);
     errdefer gpa.free(body);
-    var writer: Io.Writer = .fixed(body);
-    writeFixed(&writer, header);
-    writeFixed(&writer, "\n");
-    writeFixed(&writer, stdout_section);
-    writeFixed(&writer, stdout);
-    if (stdout_needs_newline) writeFixed(&writer, "\n");
-    writeFixed(&writer, stderr_section);
-    writeFixed(&writer, stderr);
-    if (stderr_needs_newline) writeFixed(&writer, "\n");
-    std.debug.assert(writer.buffered().len == layout.body_len);
+    var cursor: usize = 0;
+    appendBodyBytes(body, &cursor, header);
+    appendBodyBytes(body, &cursor, "\n");
+    appendBodyBytes(body, &cursor, stdout_section);
+    appendRepresentedStream(body, &cursor, stdout_rep);
+    if (stdout_rep.needs_newline) appendBodyBytes(body, &cursor, "\n");
+    appendBodyBytes(body, &cursor, stderr_section);
+    appendRepresentedStream(body, &cursor, stderr_rep);
+    if (stderr_rep.needs_newline) appendBodyBytes(body, &cursor, "\n");
+    std.debug.assert(cursor == layout.body_len);
     return body;
+}
+
+fn classifyShellStream(bytes: []const u8) ShellFormatError!ShellStreamRepresentation {
+    const encoding: ShellStreamEncoding = if (std.unicode.utf8ValidateSlice(bytes))
+        .utf8
+    else
+        .base64;
+    const represented_len = switch (encoding) {
+        .utf8 => bytes.len,
+        .base64 => try checkedBase64EncodedLen(bytes.len),
+    };
+    const needs_newline = represented_len > 0 and switch (encoding) {
+        .utf8 => bytes[bytes.len - 1] != '\n',
+        .base64 => true,
+    };
+    return .{
+        .bytes = bytes,
+        .encoding = encoding,
+        .represented_len = represented_len,
+        .needs_newline = needs_newline,
+    };
+}
+
+fn checkedBase64EncodedLen(raw_len: usize) error{ShellBodyTooLong}!usize {
+    const complete_groups = raw_len / 3;
+    var encoded_len = std.math.mul(usize, complete_groups, 4) catch
+        return error.ShellBodyTooLong;
+    if (raw_len % 3 != 0) {
+        encoded_len = std.math.add(usize, encoded_len, 4) catch
+            return error.ShellBodyTooLong;
+    }
+    return encoded_len;
 }
 
 fn formatShellTermHeader(
     buf: []u8,
     term: std.process.Child.Term,
-    stdout_len: usize,
-    stderr_len: usize,
+    stdout: ShellStreamRepresentation,
+    stderr: ShellStreamRepresentation,
 ) error{NoSpaceLeft}![]u8 {
     return switch (term) {
         .exited => |exit_code| if (exit_code == 0)
             std.fmt.bufPrint(
                 buf,
-                "ok: code={s} format=shell-v1 exit_code=0 stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
-                .{ ShellResultCode.shell_success.name(), stdout_len, stderr_len },
+                "ok: code={s} format=shell-v1 exit_code=0 stdout_bytes={d} stderr_bytes={d} stdout_encoding={s} stderr_encoding={s} stdout_truncated=false stderr_truncated=false",
+                .{
+                    ShellResultCode.shell_success.name(),
+                    stdout.bytes.len,
+                    stderr.bytes.len,
+                    stdout.encoding.name(),
+                    stderr.encoding.name(),
+                },
             )
         else
             std.fmt.bufPrint(
                 buf,
-                "error: code={s} format=shell-v1 exit_code={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
-                .{ ShellResultCode.shell_nonzero.name(), exit_code, stdout_len, stderr_len },
+                "error: code={s} format=shell-v1 exit_code={d} stdout_bytes={d} stderr_bytes={d} stdout_encoding={s} stderr_encoding={s} stdout_truncated=false stderr_truncated=false",
+                .{
+                    ShellResultCode.shell_nonzero.name(),
+                    exit_code,
+                    stdout.bytes.len,
+                    stderr.bytes.len,
+                    stdout.encoding.name(),
+                    stderr.encoding.name(),
+                },
             ),
         .signal => |signal| std.fmt.bufPrint(
             buf,
-            "error: code={s} format=shell-v1 signal={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
-            .{ ShellResultCode.shell_signal.name(), @intFromEnum(signal), stdout_len, stderr_len },
+            "error: code={s} format=shell-v1 signal={d} stdout_bytes={d} stderr_bytes={d} stdout_encoding={s} stderr_encoding={s} stdout_truncated=false stderr_truncated=false",
+            .{
+                ShellResultCode.shell_signal.name(),
+                @intFromEnum(signal),
+                stdout.bytes.len,
+                stderr.bytes.len,
+                stdout.encoding.name(),
+                stderr.encoding.name(),
+            },
         ),
         .stopped => |signal| std.fmt.bufPrint(
             buf,
-            "error: code={s} format=shell-v1 stage=term term=stopped signal={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
-            .{ ShellResultCode.shell_process_failure.name(), @intFromEnum(signal), stdout_len, stderr_len },
+            "error: code={s} format=shell-v1 stage=term term=stopped signal={d} stdout_bytes={d} stderr_bytes={d} stdout_encoding={s} stderr_encoding={s} stdout_truncated=false stderr_truncated=false",
+            .{
+                ShellResultCode.shell_process_failure.name(),
+                @intFromEnum(signal),
+                stdout.bytes.len,
+                stderr.bytes.len,
+                stdout.encoding.name(),
+                stderr.encoding.name(),
+            },
         ),
         .unknown => |status| std.fmt.bufPrint(
             buf,
-            "error: code={s} format=shell-v1 stage=term term=unknown status={d} stdout_bytes={d} stderr_bytes={d} stdout_truncated=false stderr_truncated=false",
-            .{ ShellResultCode.shell_process_failure.name(), status, stdout_len, stderr_len },
+            "error: code={s} format=shell-v1 stage=term term=unknown status={d} stdout_bytes={d} stderr_bytes={d} stdout_encoding={s} stderr_encoding={s} stdout_truncated=false stderr_truncated=false",
+            .{
+                ShellResultCode.shell_process_failure.name(),
+                status,
+                stdout.bytes.len,
+                stderr.bytes.len,
+                stdout.encoding.name(),
+                stderr.encoding.name(),
+            },
         ),
     };
 }
 
+fn formatShellBodyEncodingLimit(
+    gpa: std.mem.Allocator,
+    stdout: ShellStreamRepresentation,
+    stderr: ShellStreamRepresentation,
+) ShellFormatError![]u8 {
+    var header_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const header = std.fmt.bufPrint(
+        &header_buf,
+        "error: code={s} format=shell-v1 limit_scope=body_encoding stdout_bytes={d} stderr_bytes={d} stdout_encoding={s} stderr_encoding={s} body_limit_bytes={d} partial_output_available=false cleanup_scope=direct_child",
+        .{
+            ShellResultCode.shell_output_limit.name(),
+            stdout.bytes.len,
+            stderr.bytes.len,
+            stdout.encoding.name(),
+            stderr.encoding.name(),
+            tool.max_result_bytes,
+        },
+    ) catch return error.ShellEnvelopeTooLong;
+    return gpa.dupe(u8, header) catch return error.OutOfMemory;
+}
+
 fn checkedShellBodyLayout(
     header_len: usize,
-    stdout_len: usize,
-    stderr_len: usize,
+    stdout_represented_len: usize,
+    stderr_represented_len: usize,
     stdout_needs_newline: bool,
     stderr_needs_newline: bool,
 ) ShellFormatError!ShellBodyLayout {
@@ -673,7 +782,7 @@ fn checkedShellBodyLayout(
     }
     if (envelope_len > max_shell_envelope_bytes) return error.ShellEnvelopeTooLong;
 
-    var body_len = std.math.add(usize, stdout_len, stderr_len) catch
+    var body_len = std.math.add(usize, stdout_represented_len, stderr_represented_len) catch
         return error.ShellBodyTooLong;
     body_len = std.math.add(usize, body_len, envelope_len) catch
         return error.ShellBodyTooLong;
@@ -682,12 +791,29 @@ fn checkedShellBodyLayout(
     return .{ .envelope_len = envelope_len, .body_len = body_len };
 }
 
-fn needsTrailingNewline(bytes: []const u8) bool {
-    return bytes.len > 0 and bytes[bytes.len - 1] != '\n';
+fn appendBodyBytes(body: []u8, cursor: *usize, bytes: []const u8) void {
+    std.debug.assert(cursor.* <= body.len);
+    std.debug.assert(bytes.len <= body.len - cursor.*);
+    @memcpy(body[cursor.*..][0..bytes.len], bytes);
+    cursor.* += bytes.len;
 }
 
-fn writeFixed(writer: *Io.Writer, bytes: []const u8) void {
-    writer.writeAll(bytes) catch unreachable; // exact checked body_len capacity
+fn appendRepresentedStream(
+    body: []u8,
+    cursor: *usize,
+    stream: ShellStreamRepresentation,
+) void {
+    switch (stream.encoding) {
+        .utf8 => appendBodyBytes(body, cursor, stream.bytes),
+        .base64 => {
+            std.debug.assert(cursor.* <= body.len);
+            std.debug.assert(stream.represented_len <= body.len - cursor.*);
+            const dest = body[cursor.*..][0..stream.represented_len];
+            const encoded = std.base64.standard.Encoder.encode(dest, stream.bytes);
+            std.debug.assert(encoded.len == stream.represented_len);
+            cursor.* += stream.represented_len;
+        },
+    }
 }
 
 const path_write_caps: tool.ToolCapabilities = .{
@@ -888,8 +1014,9 @@ fn expectRecordedDirectChildGone(
     const pid = try std.fmt.parseInt(std.posix.pid_t, trimmed, 10);
     try std.testing.expect(pid > 0);
 
-    // Signal zero performs no mutation. `ProcessNotFound` immediately after
-    // handler return proves Zig's unwind has killed and reaped this direct PID.
+    // Signal zero performs no mutation. `ProcessNotFound` proves only that the
+    // recorded direct PID is absent after handler return. Pinned Zig 0.16
+    // source separately establishes the `defer child.kill(io)` mechanism.
     const signal_zero: std.posix.SIG = @enumFromInt(0);
     try std.testing.expectError(error.ProcessNotFound, std.posix.kill(pid, signal_zero));
 }
@@ -910,7 +1037,7 @@ test "shell-v1 success preserves exact stdout and stderr sections" {
     );
     defer gpa.free(body);
     try std.testing.expectEqualStrings(
-        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=3 stderr_bytes=3 stdout_truncated=false stderr_truncated=false\n" ++
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=3 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
             "--- stdout ---\nout\n--- stderr ---\nerr\n",
         body,
     );
@@ -932,7 +1059,7 @@ test "shell-v1 nonzero exit and POSIX signal retain exact terms" {
     );
     defer gpa.free(nonzero);
     try std.testing.expectEqualStrings(
-        "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=2 stderr_bytes=3 stdout_truncated=false stderr_truncated=false\n" ++
+        "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=2 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
             "--- stdout ---\nno\n--- stderr ---\nbad\n",
         nonzero,
     );
@@ -944,14 +1071,14 @@ test "shell-v1 nonzero exit and POSIX signal retain exact terms" {
     var expected: [512]u8 = undefined;
     const expected_body = try std.fmt.bufPrint(
         &expected,
-        "error: code=shell_signal format=shell-v1 signal={d} stdout_bytes=0 stderr_bytes=0 stdout_truncated=false stderr_truncated=false\n" ++
+        "error: code=shell_signal format=shell-v1 signal={d} stdout_bytes=0 stderr_bytes=0 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
             "--- stdout ---\n--- stderr ---\n",
         .{@intFromEnum(std.posix.SIG.TERM)},
     );
     try std.testing.expectEqualStrings(expected_body, signaled);
 }
 
-test "shell-v1 timeout returns after Zig std direct-child cleanup" {
+test "shell-v1 timeout return leaves recorded direct PID absent" {
     try requireRealPosixShellFixture();
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -976,7 +1103,7 @@ test "shell-v1 timeout returns after Zig std direct-child cleanup" {
     try expectRecordedDirectChildGone(gpa, io, tmp.dir, "timeout.pid");
 }
 
-test "shell-v1 output limit returns no fake partial and cleans direct child" {
+test "shell-v1 capture output limit has no partial and recorded direct PID is absent" {
     try requireRealPosixShellFixture();
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -992,7 +1119,7 @@ test "shell-v1 output limit returns no fake partial and cleans direct child" {
     );
     defer gpa.free(body);
     try std.testing.expectEqualStrings(
-        "error: code=shell_output_limit format=shell-v1 stdout_limit_bytes=16 stderr_limit_bytes=17 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
+        "error: code=shell_output_limit format=shell-v1 limit_scope=capture stdout_limit_bytes=16 stderr_limit_bytes=17 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
         body,
     );
     try std.testing.expect(std.mem.indexOf(u8, body, "RAW_OUTPUT_COMMAND_SECRET") == null);
@@ -1041,7 +1168,7 @@ test "shell-v1 stopped and unknown terms use fixed stage=term taxonomy" {
     var stopped_expected_buf: [512]u8 = undefined;
     const stopped_expected = try std.fmt.bufPrint(
         &stopped_expected_buf,
-        "error: code=shell_process_failure format=shell-v1 stage=term term=stopped signal={d} stdout_bytes=1 stderr_bytes=3 stdout_truncated=false stderr_truncated=false\n" ++
+        "error: code=shell_process_failure format=shell-v1 stage=term term=stopped signal={d} stdout_bytes=1 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
             "--- stdout ---\ns\n--- stderr ---\nee\n",
         .{@intFromEnum(std.posix.SIG.STOP)},
     );
@@ -1051,10 +1178,135 @@ test "shell-v1 stopped and unknown terms use fixed stage=term taxonomy" {
     const unknown = try formatShellResult(gpa, .{ .unknown = unknown_status }, "", "u");
     defer gpa.free(unknown);
     try std.testing.expectEqualStrings(
-        "error: code=shell_process_failure format=shell-v1 stage=term term=unknown status=4294967295 stdout_bytes=0 stderr_bytes=1 stdout_truncated=false stderr_truncated=false\n" ++
+        "error: code=shell_process_failure format=shell-v1 stage=term term=unknown status=4294967295 stdout_bytes=0 stderr_bytes=1 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
             "--- stdout ---\n--- stderr ---\nu\n",
         unknown,
     );
+}
+
+test "shell-v1 valid UTF-8 is exact and invalid whole streams use padded base64" {
+    const gpa = std.testing.allocator;
+
+    const valid_utf8 = "h\xc3\xa9\n";
+    const valid = try formatShellResult(gpa, .{ .exited = 0 }, valid_utf8, "err");
+    defer gpa.free(valid);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=4 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\nh\xc3\xa9\n--- stderr ---\nerr\n",
+        valid,
+    );
+
+    const invalid_only = [_]u8{0xff};
+    const encoded_only = try formatShellResult(gpa, .{ .exited = 0 }, &invalid_only, "");
+    defer gpa.free(encoded_only);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=1 stderr_bytes=0 stdout_encoding=base64 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\n/w==\n--- stderr ---\n",
+        encoded_only,
+    );
+    try std.testing.expect(std.unicode.utf8ValidateSlice(encoded_only));
+
+    const mixed_invalid = [_]u8{ 'o', 'k', 0xff, '!' };
+    const mixed = try formatShellResult(gpa, .{ .exited = 7 }, "plain", &mixed_invalid);
+    defer gpa.free(mixed);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=5 stderr_bytes=4 stdout_encoding=utf8 stderr_encoding=base64 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\nplain\n--- stderr ---\nb2v/IQ==\n",
+        mixed,
+    );
+    try std.testing.expect(std.unicode.utf8ValidateSlice(mixed));
+
+    // Exactly one successful allocation is the final body. A hypothetical
+    // second/base64-intermediate allocation would trip fail_index=1.
+    var one_allocation = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 1 });
+    const direct = try formatShellResult(one_allocation.allocator(), .{ .exited = 0 }, &invalid_only, "");
+    defer one_allocation.allocator().free(direct);
+    try std.testing.expect(!one_allocation.has_induced_failure);
+    try std.testing.expectEqual(@as(usize, 1), one_allocation.allocations);
+}
+
+test "shell-v1 base64 expansion over body budget is scoped soft output limit" {
+    const gpa = std.testing.allocator;
+    var stdout: [max_shell_stream_bytes]u8 = undefined;
+    var stderr: [max_shell_stream_bytes]u8 = undefined;
+    @memset(&stdout, 0xff);
+    @memset(&stderr, 0xfe);
+
+    const body = try formatShellResult(gpa, .{ .exited = 0 }, &stdout, &stderr);
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_output_limit format=shell-v1 limit_scope=body_encoding stdout_bytes=30720 stderr_bytes=30720 stdout_encoding=base64 stderr_encoding=base64 body_limit_bytes=65536 partial_output_available=false cleanup_scope=direct_child",
+        body,
+    );
+    try std.testing.expect(body.len <= tool.max_result_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, body, "--- stdout ---") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "--- stderr ---") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "code=tool_failed") == null);
+    try std.testing.expectError(
+        error.ShellBodyTooLong,
+        checkedBase64EncodedLen(std.math.maxInt(usize)),
+    );
+}
+
+test "shell-v1 real runner enforces exactly N and N+1 capture boundaries" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const limit: usize = 8;
+    testing.configure(production_shell_path, shell_capture_timeout_ms, limit, limit);
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const stdout_n = try runShell(ctx, null,
+        \\{"command":"printf 12345678"}
+    );
+    defer gpa.free(stdout_n);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=8 stderr_bytes=0 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\n12345678\n--- stderr ---\n",
+        stdout_n,
+    );
+
+    const stderr_n = try runShell(ctx, null,
+        \\{"command":"printf 12345678 >&2"}
+    );
+    defer gpa.free(stderr_n);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=0 stderr_bytes=8 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\n--- stderr ---\n12345678\n",
+        stderr_n,
+    );
+
+    const both_n = try runShell(ctx, null,
+        \\{"command":"printf 12345678; printf 87654321 >&2"}
+    );
+    defer gpa.free(both_n);
+    try std.testing.expectEqualStrings(
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=8 stderr_bytes=8 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n" ++
+            "--- stdout ---\n12345678\n--- stderr ---\n87654321\n",
+        both_n,
+    );
+
+    const capture_limit_header =
+        "error: code=shell_output_limit format=shell-v1 limit_scope=capture stdout_limit_bytes=8 stderr_limit_bytes=8 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child";
+    const stdout_n_plus_one = try runShell(ctx, null,
+        \\{"command":"printf 123456789"}
+    );
+    defer gpa.free(stdout_n_plus_one);
+    try std.testing.expectEqualStrings(capture_limit_header, stdout_n_plus_one);
+    try std.testing.expect(std.mem.indexOf(u8, stdout_n_plus_one, "--- stdout ---") == null);
+    try std.testing.expect(std.mem.indexOf(u8, stdout_n_plus_one, "--- stderr ---") == null);
+
+    const stderr_n_plus_one = try runShell(ctx, null,
+        \\{"command":"printf 123456789 >&2"}
+    );
+    defer gpa.free(stderr_n_plus_one);
+    try std.testing.expectEqualStrings(capture_limit_header, stderr_n_plus_one);
+    try std.testing.expect(std.mem.indexOf(u8, stderr_n_plus_one, "--- stdout ---") == null);
+    try std.testing.expect(std.mem.indexOf(u8, stderr_n_plus_one, "--- stderr ---") == null);
 }
 
 test "shell-v1 maximum formatter is checked before allocation and stays under 64 KiB" {
@@ -1070,7 +1322,7 @@ test "shell-v1 maximum formatter is checked before allocation and stays under 64
     try std.testing.expect(envelope_len <= max_shell_envelope_bytes);
     try std.testing.expect(body.len <= tool.max_result_bytes);
     try std.testing.expectEqualStrings(
-        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=30720 stderr_bytes=30720 stdout_truncated=false stderr_truncated=false",
+        "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=30720 stderr_bytes=30720 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false",
         firstLine(body),
     );
     try std.testing.expect(std.mem.indexOf(u8, body, stdout_section) != null);
@@ -1090,14 +1342,30 @@ test "shell-v1 maximum formatter is checked before allocation and stays under 64
     );
 }
 
-test "shell-v1 maximum header remains complete in parsed capped trace" {
+test "shell-v1 longest realizable header remains complete in parsed capped trace" {
     const gpa = std.testing.allocator;
-    const config: ShellConfig = .{
-        .stdout_limit = std.math.maxInt(usize),
-        .stderr_limit = std.math.maxInt(usize) - 1,
-    };
-    const header = try shellRunError(gpa, config, error.StreamTooLong);
+    var stdout: [max_shell_stream_bytes]u8 = undefined;
+    var stderr: [max_shell_stream_bytes]u8 = undefined;
+    @memset(&stdout, 0xff);
+    @memset(&stderr, 0xfe);
+
+    // Two maximum invalid streams realize the body_encoding-limit header. It
+    // is longer than the maximum term and production capture-limit variants.
+    const header = try formatShellResult(gpa, .{ .exited = 0 }, &stdout, &stderr);
     defer gpa.free(header);
+    const stdout_rep = try classifyShellStream(&stdout);
+    const stderr_rep = try classifyShellStream(&stderr);
+    var term_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const term_header = try formatShellTermHeader(
+        &term_buf,
+        .{ .unknown = std.math.maxInt(u32) },
+        stdout_rep,
+        stderr_rep,
+    );
+    const capture_header = try shellRunError(gpa, .{}, error.StreamTooLong);
+    defer gpa.free(capture_header);
+    try std.testing.expect(header.len > term_header.len);
+    try std.testing.expect(header.len > capture_header.len);
     try std.testing.expect(header.len <= trace.cap_tool_result_body);
     try std.testing.expectEqualStrings(header, firstLine(header));
 
@@ -1150,6 +1418,22 @@ test "shell-v1 OOM is hard typed for run error and formatter" {
         shellRunError(failing_header.allocator(), .{}, error.Timeout),
     );
     try std.testing.expect(failing_header.has_induced_failure);
+
+    var invalid_stdout: [max_shell_stream_bytes]u8 = undefined;
+    var invalid_stderr: [max_shell_stream_bytes]u8 = undefined;
+    @memset(&invalid_stdout, 0xff);
+    @memset(&invalid_stderr, 0xfe);
+    var failing_encoding_limit = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expectError(
+        error.OutOfMemory,
+        formatShellResult(
+            failing_encoding_limit.allocator(),
+            .{ .exited = 0 },
+            &invalid_stdout,
+            &invalid_stderr,
+        ),
+    );
+    try std.testing.expect(failing_encoding_limit.has_induced_failure);
 }
 
 test "symlink containment: write/search_replace cannot mutate outside" {

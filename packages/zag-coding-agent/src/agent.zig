@@ -3684,6 +3684,7 @@ fn expectUniqueStructuredRunEnd(
 
 const ShellTraceBodyExpect = union(enum) {
     first_line: []const u8,
+    exact: []const u8,
     code: tool_error.Code,
 };
 
@@ -3698,9 +3699,10 @@ fn bodyFirstLine(body: []const u8) []const u8 {
     return body[0..end];
 }
 
-/// Parse every trace line and bind one descriptor-selected shell decision to
-/// one call/result plus the same-object recovered terminal. Runtime shell-v1
-/// results have no shell_deny event; policy denial has exactly one.
+/// Parse one single-call trace and correlate its descriptor-selected shell
+/// decision by exact-one call/result counts plus name/body. `tool_result` has
+/// no call ID; exact ID pairing remains transcript/session-owned. Runtime
+/// shell-v1 results have no shell_deny event; policy denial has exactly one.
 fn expectStructuredShellTrace(
     gpa: std.mem.Allocator,
     buf: []const u8,
@@ -3769,6 +3771,9 @@ fn expectStructuredShellTrace(
                 .first_line => |header| {
                     if (!std.mem.eql(u8, bodyFirstLine(body_v.string), header))
                         return error.TestUnexpectedResult;
+                },
+                .exact => |body| {
+                    if (!std.mem.eql(u8, body_v.string, body)) return error.TestUnexpectedResult;
                 },
                 .code => |code| {
                     if (!tool_error.hasCode(body_v.string, code)) return error.TestUnexpectedResult;
@@ -4093,6 +4098,9 @@ const ShellRecoveryProvider = struct {
             .first_line => |header| {
                 if (!std.mem.eql(u8, bodyFirstLine(body), header)) return error.InvalidResponse;
             },
+            .exact => |expected| {
+                if (!std.mem.eql(u8, body, expected)) return error.InvalidResponse;
+            },
             .code => |code| {
                 if (!tool_error.hasCode(body, code)) return error.InvalidResponse;
             },
@@ -4104,6 +4112,10 @@ const ShellRecoveryProvider = struct {
         };
     }
 };
+
+const fixed_shell_deny_body =
+    "error: code=shell_deny message=shell command blocked by policy; use a safer command or ask the user to adjust policy";
+const shell_deny_command_sentinel = "rm -rf / # SHELL_DENY_COMMAND_SENTINEL";
 
 const ShellDenyProbe = struct {
     invocations: *u32,
@@ -4129,9 +4141,9 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
 
     var provider_state: ShellRecoveryProvider = .{
         .call_id = "shell-policy-1",
-        .command = "rm -rf /",
+        .command = shell_deny_command_sentinel,
         .recovery = "policy-deny-recovered",
-        .expected_body = .{ .code = .shell_deny },
+        .expected_body = .{ .exact = fixed_shell_deny_body },
     };
     var agent = try Agent.init(gpa, io, .{
         .ptr = &provider_state,
@@ -4154,8 +4166,6 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
     }};
     agent.test_tools = &deny_tools;
 
-    var expected_body: ?[]u8 = null;
-    defer if (expected_body) |body| gpa.free(body);
     {
         var session = try Session.start(gpa, io, .{
             .base_system = "sys",
@@ -4172,14 +4182,15 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
         try std.testing.expectEqual(@as(u32, 2), provider_state.step);
 
         const body = try expectPairedToolId(session.transcript.items(), "shell-policy-1");
+        try std.testing.expectEqualStrings(fixed_shell_deny_body, body);
         try std.testing.expect(tool_error.hasCode(body, .shell_deny));
+        try std.testing.expect(std.mem.indexOf(u8, body, "SHELL_DENY_COMMAND_SENTINEL") == null);
         try std.testing.expect(std.mem.indexOf(u8, body, "format=shell-v1") == null);
-        expected_body = try gpa.dupe(u8, body);
 
         const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
         try expectStructuredShellTrace(gpa, tr.buf.items, .{
             .call_id = "shell-policy-1",
-            .body = .{ .code = .shell_deny },
+            .body = .{ .exact = fixed_shell_deny_body },
             .shell_deny_count = 1,
         });
         try expectRunEnd(tr, true, "completed");
@@ -4188,7 +4199,7 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
             io,
             sess_path,
             "shell-policy-1",
-            .{ .exact = expected_body.? },
+            .{ .exact = fixed_shell_deny_body },
         );
     }
 
@@ -4200,7 +4211,8 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
     });
     defer resumed.deinit();
     const resumed_body = try expectPairedToolId(resumed.transcript.items(), "shell-policy-1");
-    try std.testing.expectEqualStrings(expected_body.?, resumed_body);
+    try std.testing.expectEqualStrings(fixed_shell_deny_body, resumed_body);
+    try std.testing.expect(std.mem.indexOf(u8, resumed_body, "SHELL_DENY_COMMAND_SENTINEL") == null);
     try std.testing.expectEqual(@as(u32, 0), handler_invocations);
 }
 
@@ -4213,6 +4225,7 @@ const AgentShellFixture = struct {
     stdout_limit: usize = 30 * 1024,
     stderr_limit: usize = 30 * 1024,
     expected_header: []const u8,
+    expected_body: ?[]const u8 = null,
     forbidden_result_bytes: []const []const u8 = &.{},
 };
 
@@ -4275,6 +4288,8 @@ fn runAgentShellFixture(fixture: AgentShellFixture) !void {
 
         const body = try expectPairedToolId(session.transcript.items(), fixture.call_id);
         try std.testing.expectEqualStrings(fixture.expected_header, bodyFirstLine(body));
+        if (fixture.expected_body) |exact| try std.testing.expectEqualStrings(exact, body);
+        try std.testing.expect(std.unicode.utf8ValidateSlice(body));
         try std.testing.expect(body.len <= tool.max_result_bytes);
         try std.testing.expect(std.mem.indexOf(u8, body, "code=shell_deny") == null);
         for (fixture.forbidden_result_bytes) |forbidden| {
@@ -4323,13 +4338,25 @@ test "h-shell: Agent success and nonzero compose transcript session resume trace
         .dir_name = ".zag-test-h-shell-agent-success",
         .call_id = "shell-success-1",
         .command = "printf agent-out; printf agent-err >&2",
-        .expected_header = "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=9 stderr_bytes=9 stdout_truncated=false stderr_truncated=false",
+        .expected_header = "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=9 stderr_bytes=9 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false",
     });
     try runAgentShellFixture(.{
         .dir_name = ".zag-test-h-shell-agent-nonzero",
         .call_id = "shell-nonzero-1",
         .command = "printf nz; printf bad >&2; exit 7",
-        .expected_header = "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=2 stderr_bytes=3 stdout_truncated=false stderr_truncated=false",
+        .expected_header = "error: code=shell_nonzero format=shell-v1 exit_code=7 stdout_bytes=2 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false",
+    });
+}
+
+test "h-shell: Agent invalid UTF-8 base64 roundtrips session resume parsed trace completed" {
+    try requireAgentRealShellFixture();
+    const header = "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=1 stderr_bytes=0 stdout_encoding=base64 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false";
+    try runAgentShellFixture(.{
+        .dir_name = ".zag-test-h-shell-agent-invalid-utf8",
+        .call_id = "shell-invalid-utf8-1",
+        .command = "printf '\\377'",
+        .expected_header = header,
+        .expected_body = header ++ "\n--- stdout ---\n/w==\n--- stderr ---\n",
     });
 }
 
@@ -4349,7 +4376,7 @@ test "h-shell: Agent timeout and output limit are soft recovered completed outco
         .command = ": AGENT_OUTPUT_COMMAND_SECRET; while :; do printf abcdefghijklmnop; done",
         .stdout_limit = 12,
         .stderr_limit = 13,
-        .expected_header = "error: code=shell_output_limit format=shell-v1 stdout_limit_bytes=12 stderr_limit_bytes=13 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
+        .expected_header = "error: code=shell_output_limit format=shell-v1 limit_scope=capture stdout_limit_bytes=12 stderr_limit_bytes=13 exceeded_stream=unknown partial_output_available=false cleanup_scope=direct_child",
         .forbidden_result_bytes = &.{ "AGENT_OUTPUT_COMMAND_SECRET", "--- stdout ---", "--- stderr ---" },
     });
 }

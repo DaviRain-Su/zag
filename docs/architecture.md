@@ -221,7 +221,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | Tool runtime | `zag-agent-core/src/tool.zig` + `zag-types` | L2；stateful handler + mandatory descriptor/capabilities fail-closed |
 | permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk (D-007)；不额外声称 canonical contained-path remember identity |
 | workspace | `zag-agent-core/src/workspace.zig` | L2 trusted-host file boundary；realpath/ancestor Guard + Agent composition；非 OS sandbox |
-| shell policy/runtime | `shell_policy.zig` + coding `runtime/edit_tools.zig` | L1（Gate pending）；shell-v1/30 KiB streams/checked body/direct-child/Agent evidence 已落地；denylist 非 sandbox |
+| shell policy/runtime | `shell_policy.zig` + coding `runtime/edit_tools.zig` | L1（re-review/Gate pending）；fixed deny body、shell-v1 UTF-8/base64、scoped limits、30 KiB streams/checked body/direct-PID/Agent evidence 已落地；denylist 非 sandbox |
 | trace | `zag-agent-core/src/trace.zig` | L2；versioned、truthful unique terminal、atomic persistence、redaction；shell projection package fixture 已落地，Gate pending |
 | context | `zag-agent-core/src/context.zig` | L2；fixed-point final-view accounting + strict Tool bundles |
 | read/search | `zag-coding-agent/src/runtime/*` | L1+；descriptor + containment + budgets 已落地；row promotion 单独审计 |
@@ -272,7 +272,7 @@ Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 | grep / glob | ✅ descriptor + budgets + symlink-aware walker containment | same independent row audit; shell remains separate |
 | search_replace | ✅ unique anchor + descriptor + containment | canonical permission-path identity and broader write-fault matrix are not claimed |
 | write_file | ✅ create/full write + descriptor + containment | no general atomic truncate-write/no-partial-fault claim; not default large-file edit path |
-| run_shell | ✅ permission + descriptor-selected policy + synchronous shell-v1/budget/direct-child/trace package evidence | `h-shell-001` independent/main Gate pending；mid-flight cancel/process tree/OS sandbox remain post-H |
+| run_shell | ✅ permission + descriptor-selected policy + fixed deny + synchronous UTF-8/base64 shell-v1/scoped-budget/direct-PID/trace package evidence | `h-shell-001` independent re-review/main Gate pending；mid-flight cancel/process tree/OS sandbox remain post-H |
 
 ## 持久化
 

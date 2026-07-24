@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **L1+** — descriptors and symlink-aware containment landed; write-fault claims remain conservative; shell package evidence landed but its Gate is pending |
+| Current maturity | **L1+** — descriptors and symlink-aware containment landed; write-fault claims remain conservative; shell review-fix package evidence landed but re-review/Gate is pending |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -32,7 +32,7 @@ D-007 descriptors and h-workspace-001 symlink-aware containment are complete for
 
 - canonical contained-path identity is not yet shared/proven for permission remember;
 - write/edit fault fixtures do not yet establish an atomic truncate-write or general no-partial-write guarantee;
-- the separate [`shell-v1` contract](./tools-shell.md) and Agent/trace package evidence have landed in `h-shell-001`, whose independent/main Gate is still pending.
+- the separate [`shell-v1` contract](./tools-shell.md) and review-fix Agent/trace package evidence have landed in `h-shell-001`, whose independent re-review/main Gate is still pending.
 
 Do not infer an atomic write guarantee merely from containment success. Read/search containment evidence may be promoted independently after its row is audited; it does not waive write/edit failure requirements.
 

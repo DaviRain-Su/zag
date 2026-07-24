@@ -24,7 +24,7 @@ This evidence closes the previously missing Agent product chains. It does **not*
 
 # blocker
 
-The Phase H exit audit found a previously omitted shell module gate. `h-shell-001` now has package implementation and permanent module/Agent evidence for stable timeout/output-limit/process outcomes, total body budget, direct-child cleanup, and parsed trace projection; its independent review and main-branch Gate are not yet complete.
+The Phase H exit audit found a previously omitted shell module gate. Independent shell review 01 then blocked the first package commit on policy command leakage, invalid UTF-8 representation, and real-runner boundary evidence. `h-shell-001` now carries the scoped review-fix package matrix (fixed deny, UTF-8/base64, scoped limits, N/N+1, direct-PID and parsed single-call trace); independent re-review and the main-branch Gate are not yet complete.
 
 [h-shell-001](./h-shell-001.md) still owns that blocker and remains **in-progress**. This task remains **blocked** until shell is `done`; then it returns to `ready` for the final main-branch std/curl Gate and sentence-by-sentence Phase H exit audit.
 
@@ -61,7 +61,7 @@ The Phase H exit audit found a previously omitted shell module gate. `h-shell-00
    - the executed and pending calls retain exact original provider Tool-call IDs;
    - every pending call receives a machine-readable `cancelled` body without handler invocation;
    - API Result, transcript, persisted/resumed session, and one parsed trace terminal agree on `cancelled`.
-3. **Synchronous shell composition — package evidence landed in `h-shell-001`; Gate pending.** Policy denial and each required shell-v1 runtime class now survive the matching transcript/session/resume/parsed-trace chain and recover through exactly one truthful terminal in package fixtures. This task remains blocked until that evidence passes the independent/main Gate.
+3. **Synchronous shell composition — review-fix package evidence landed in `h-shell-001`; re-review/Gate pending.** Fixed policy denial and each required shell-v1 runtime class, including real invalid UTF-8/base64, survive transcript/session/resume and a parsed single-call exact-one trace correlation, then recover through one truthful terminal. This task remains blocked until that evidence passes independent re-review/main Gate.
 
 This task verifies only between-Tool cancellation. It must not claim that an already running Tool/shell process can be preempted; that process-ownership work is post-H.
 

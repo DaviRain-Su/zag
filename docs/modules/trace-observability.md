@@ -117,9 +117,19 @@ Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `
 
 ### Shell result projection (`h-shell-001` package evidence landed; Gate pending)
 
-Shell policy denial emits `shell_deny` and a matching Tool result without invoking the handler. Synchronous runtime outcomes emit ordinary `tool_result`; the stable `shell-v1` classification is the first line of its bounded body so it survives trace body capping. Runtime `shell_timeout` is a recoverable Tool soft result and does **not** change the Agent terminal to provider `stop_reason=timeout`.
+Shell policy denial emits `shell_deny` and a matching fixed generic Tool result without invoking the handler.
+Synchronous runtime outcomes emit ordinary `tool_result`; the stable `shell-v1` classification is the
+first line of its bounded body, so trace body capping preserves it. Shell converts invalid whole streams
+to padded base64 before tracing. The Tool body is therefore valid UTF-8 without weakening Trace's
+general invalid-string rejection. Runtime `shell_timeout` remains a recoverable Tool soft result and does
+**not** change the Agent terminal to provider `stop_reason=timeout`.
 
-The shell module owns outcome codes, capture limits, and direct-child cleanup claims. Trace owns only truthful projection and the unique run terminal. Package Agent fixtures now parse the trace and bind each expected policy/runtime result to exactly one same-object recovered `run_end`; they do not infer process-tree cleanup or mid-flight Tool cancellation from trace presence. This package evidence is landed, while independent/main Gate and final Phase H audit remain pending.
+The shell module owns outcome codes, encodings, capture/body limits, and direct-child cleanup claims.
+Trace owns only truthful projection and the unique run terminal. Each package shell trace fixture is
+single-call: exact-one `tool_call`/`tool_result` counts plus name/body correlate the result, and one
+same-object recovered `run_end` closes it. Trace `tool_result` has no call ID; exact ID pairing is
+transcript/session-owned. Fixtures infer neither process-tree cleanup nor mid-flight Tool cancellation
+from trace presence. Independent re-review/main Gate and final Phase H audit remain pending.
 
 ### Compaction event (h-context-001)
 

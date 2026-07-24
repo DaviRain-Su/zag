@@ -91,12 +91,13 @@ These remain useful but do not cover the assessment blockers.
    - Independent review and main std/curl verification passed.
 6. default Agent policy denial and escaping-symlink containment denial agree across unchanged outside/target bytes, machine-readable Tool result, transcript, persisted/resumed session, permission/jail trace, and truthful terminal. ✅ h-integration-001 coding-agent `Agent.reply` fixtures (`h-integration: default Agent ask-deny write…`, `…yolo escaping-symlink jail_deny…`); independent verification and both main backend suites passed.
 7. cancel between accepted Tools preserves original IDs, skips pending handlers, writes cancelled bodies for every pending call, and agrees across Result/transcript/save-resume/one trace terminal. ✅ h-integration-001 (`h-integration: cancel between accepted Tools…`); independent verification and both main backend suites passed. This is not mid-flight Tool/shell preemption.
-8. synchronous shell-v1 matrix is stable and bounded. 🟨 h-shell-001 in-progress — package matrix landed; independent/main Gate pending:
-   - module: success with both streams, exit 7, POSIX signal, short absolute capture timeout, tiny per-stream output cap, invalid test shell path/process failure, direct stopped/unknown formatter cases, maximum 30 KiB + 30 KiB formatter, and OOM;
-   - first lines distinguish `shell_success | shell_nonzero | shell_signal | shell_timeout | shell_output_limit | shell_process_failure`; process failure fixes `stage=run|term` plus stopped/unknown fields; policy remains `shell_deny`;
-   - timeout/output-limit report no fake partial stream and return after Zig std direct-child kill/reap; no end-to-end wall-clock, process-tree, or mid-flight cancellation claim;
-   - Agent: policy denial plus required runtime outcomes retain exact Tool IDs through transcript/session/resume, appear in parsed trace, and recover through exactly one `completed` terminal without becoming provider timeout/error;
-   - checked arithmetic proves each Tool body is `<= 64 KiB`; the maximum first line is `<= trace.cap_tool_result_body` and survives parsed trace capping.
+8. synchronous shell-v1 matrix is stable and bounded. 🟨 h-shell-001 in-progress — review-fix package matrix landed; independent re-review/main Gate pending:
+   - module: success/exit 7/signal/timeout/process failure/stopped/unknown/OOM; valid UTF-8 exactness; invalid-only and mixed whole-stream padded standard base64; encoding-over-budget soft result; real `/bin/sh` stdout/stderr/both exactly N plus stdout/stderr N+1 capture controls;
+   - first lines distinguish `shell_success | shell_nonzero | shell_signal | shell_timeout | shell_output_limit | shell_process_failure`, declare stream encodings when available, and distinguish `shell_output_limit limit_scope=capture|body_encoding`; policy remains one fixed generic `shell_deny` body;
+   - timeout/capture-output-limit expose no fake partial stream. Their PID fixtures prove only recorded direct PID absence after return; pinned Zig source supplies the error-unwind kill/reap mechanism. Body-encoding limit occurs after normal wait/reap. No end-to-end wall-clock, process-tree, or mid-flight cancellation claim;
+   - Agent: matching policy Tool-result body exactly omits the command sentinel; required runtime outcomes include real invalid UTF-8 and retain exact Tool IDs through transcript/session/resume, appear in parsed trace, and recover through exactly one `completed` terminal without becoming provider timeout/error;
+   - parsed single-call trace fixtures correlate by exact-one call/result counts because result events have no call ID; transcript/session own exact ID pairing;
+   - checked represented-length arithmetic and direct final-body encoding prove each Tool body is `<= 64 KiB`; the longest realizable first line is `<= trace.cap_tool_result_body` and survives parsed trace capping.
 
 ## Independent post-H gate fixtures
 

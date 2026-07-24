@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — `h-shell-001` package evidence landed/Gate pending, integration closeout blocked** |
+| Status | **In progress; not L2 — `h-shell-001` review-fix package evidence landed/re-review Gate pending, integration closeout blocked** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
@@ -83,7 +83,7 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 
 ### Remaining
 
-- [h-shell-001](../plan/tasks/h-shell-001.md) (**in-progress**) has landed package `shell-v1` implementation/evidence: stable success/nonzero/signal/timeout/output-limit/process-failure headers, 30 KiB per-stream and 64 KiB total body bounds, honest no-partial overflow, direct-child timeout/output-limit cleanup fixtures, and Agent/session/trace composition; independent review and main std/curl Gate remain pending;
+- [h-shell-001](../plan/tasks/h-shell-001.md) (**in-progress**) has landed review-fix package evidence: fixed generic deny, UTF-8/base64 shell-v1 headers, scoped capture/body-encoding limits, real N/N+1 boundaries, 30 KiB per-stream and checked 64 KiB body, direct-PID fixtures, and Agent/session/parsed single-call trace composition; independent re-review and main std/curl Gate remain pending;
 - h-shell-001 does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline;
 - canonical permission-path identity and general write-fault atomic/no-partial-mutation guarantees remain unclaimed; C4 edit sharpness/change review remains post-H capability.
 
@@ -197,7 +197,7 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 
 ### Remaining
 
-- h-shell-001 package fixtures prove shell policy/runtime first-line classifications survive matching transcript/session/trace projection and end in one recovered terminal; independent/main Gate and final audit remain pending;
+- h-shell-001 review-fix fixtures prove fixed policy/runtime first lines (including invalid UTF-8/base64) survive transcript/session and parsed single-call exact-one trace projection, ending in one recovered terminal; independent re-review/main Gate and final audit remain pending;
 - external-consumer gates in CI;
 - dashboard / correlation (L3).
 
@@ -212,7 +212,7 @@ P0 session + Tool + workspace + trace
 Tool runtime + trace
          │
          ▼
-h-shell-001（package evidence landed；independent/main Gate pending）in-progress
+h-shell-001（review-fix package evidence landed；re-review/main Gate pending）in-progress
          │
          ▼
 h-integration-001（original Agent chains verified；final closeout blocked on shell）
