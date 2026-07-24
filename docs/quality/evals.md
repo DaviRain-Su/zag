@@ -85,7 +85,7 @@ These remain useful but do not cover the assessment blockers.
 3. timeout enforced on **curl**; **std** configured timeout → `unsupported_control` before network (default null = no timeout). ✅ h-provider-001 capability-truth
 4. stream requires protocol completion; incomplete tool args reject whole turn. ✅ h-provider-001
 5. doctor runs without provider/API key and reports fixed, path-free project/test/policy/containment/redaction/sandbox states before provider resolution. ✅ h-doctor-001:
-   - library: coding-agent `doctor.zig` candidate matrix, fail-closed format (`NoSpaceLeft` on tiny buffer), unresolvable root → `unavailable_fail_closed`, secret non-leak;
+   - library: coding-agent `doctor.zig` candidate matrix, fail-closed format (`NoSpaceLeft` on tiny buffer), shared obtain→map body with injected `ResolveFailed`/`OutOfMemory` → `unavailable_fail_closed` + full path-free format, secret non-leak;
    - **process fixture** `doctor_process_fixture` (root `zig build test`, both HTTP backends): spawns built `zag` with **empty env** (no API keys/config) under isolated cwd — default `--doctor` exit 0 + full fixed keys; `--yolo --shell-policy off --no-project --doctor`; legal `-s`/`--trace` + `--doctor` creates **no** session/trace files; absolute/`../` session + `--doctor` exit 2 with generic validation error and **no** path/secret echo.
    - Formal Workspace/Safety row acceptance still after independent review + h-integration-001.
 6. default Agent policy denial and escaping-symlink containment denial agree across unchanged outside/target bytes, machine-readable Tool result, transcript, persisted/resumed session, permission/jail trace, and truthful terminal. **Pending:** h-integration-001.

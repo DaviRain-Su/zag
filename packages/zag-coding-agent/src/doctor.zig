@@ -132,17 +132,46 @@ fn classifyResolvedRootPath(path: []const u8) RealContainment {
     return .ready;
 }
 
+/// Package-private resolver type for the shared obtain→map body.
+/// On success the returned `Root` is owned by the caller of the mapping body
+/// (always deinited there). Resolvers must not retain gpa-owned state.
+const RootResolver = *const fn (
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+) core.workspace.ContainError!core.workspace.Root;
+
+fn productionRootResolver(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+) core.workspace.ContainError!core.workspace.Root {
+    return core.workspace.Root.obtain(gpa, io, cwd, null);
+}
+
+/// Single catch/deinit mapping body used by production and tests.
+/// Any resolve error → `unavailable_fail_closed`; success + empty path same;
+/// never surfaces raw path or `@errorName`.
+fn probeRealContainmentWith(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    resolve: RootResolver,
+) RealContainment {
+    var root = resolve(gpa, io, cwd) catch {
+        return .unavailable_fail_closed;
+    };
+    defer root.deinit(gpa);
+    return classifyResolvedRootPath(root.path);
+}
+
 /// Resolve cwd root once; `ready` only when resolve succeeds.
 pub fn probeRealContainment(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
 ) RealContainment {
-    var root = core.workspace.Root.obtain(gpa, io, cwd, null) catch {
-        return .unavailable_fail_closed;
-    };
-    defer root.deinit(gpa);
-    return classifyResolvedRootPath(root.path);
+    return probeRealContainmentWith(gpa, io, cwd, productionRootResolver);
 }
 
 /// Collect the full typed report for `cwd` and selected options.
@@ -334,32 +363,87 @@ test "doctor explicit yolo/off selections reported without mutation semantics" {
     try std.testing.expect(std.mem.indexOf(u8, out, "shell_containment=not_path_contained") != null);
 }
 
+fn testResolveFailed(
+    _: std.mem.Allocator,
+    _: Io,
+    _: Io.Dir,
+) core.workspace.ContainError!core.workspace.Root {
+    return error.ResolveFailed;
+}
+
+fn testResolveOutOfMemory(
+    _: std.mem.Allocator,
+    _: Io,
+    _: Io.Dir,
+) core.workspace.ContainError!core.workspace.Root {
+    return error.OutOfMemory;
+}
+
+fn assertFailClosedDoctorText(out: []const u8) !void {
+    try std.testing.expect(std.mem.indexOf(u8, out, "real_file_containment=unavailable_fail_closed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "real_file_containment=ready") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "project_instructions=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "test_entry=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "permission=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell_policy=") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "lexical_file_jail=enforced") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "secret_redaction=enabled_on_agent_run") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "provider_key_redaction=deferred_until_provider_resolve") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "os_sandbox=not_implemented") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell_containment=not_path_contained") != null);
+    // No raw path, error names, env, or secret material.
+    try std.testing.expect(std.mem.indexOf(u8, out, "/tmp") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "/ws") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "var/") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "ResolveFailed") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "OutOfMemory") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "OutsideWorkspace") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "ZAG_API_KEY") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sk-") == null);
+}
+
 test "unresolvable workspace root maps to unavailable_fail_closed" {
-    // Private path classifier: empty → fail closed; non-empty → ready.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    _ = secret;
+
+    // Production-equivalent error mapping: same catch/deinit body as probeRealContainment,
+    // with deterministic resolvers (not classifyResolvedRootPath alone).
+    const from_resolve_failed = probeRealContainmentWith(gpa, io, Io.Dir.cwd(), testResolveFailed);
+    try std.testing.expectEqual(RealContainment.unavailable_fail_closed, from_resolve_failed);
+
+    const from_oom = probeRealContainmentWith(gpa, io, Io.Dir.cwd(), testResolveOutOfMemory);
+    try std.testing.expectEqual(RealContainment.unavailable_fail_closed, from_oom);
+
+    // Empty success path still fail-closed (success arm of the same body).
     try std.testing.expectEqual(RealContainment.unavailable_fail_closed, classifyResolvedRootPath(""));
     try std.testing.expectEqual(RealContainment.ready, classifyResolvedRootPath("/ws"));
 
-    // Obtain failure → fail closed (no raw path).
-    // Ordinary resolvable tmp cwd must be ready (positive control).
-    const gpa = std.testing.allocator;
-    const io = std.testing.io;
+    // Positive control: production resolver on resolvable tmp → ready.
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     try std.testing.expectEqual(RealContainment.ready, probeRealContainment(gpa, io, tmp.dir));
 
+    // Failure status → full fixed format (no path/error/secret leak).
     var buf: [report_buf_len]u8 = undefined;
-    const out = try formatReport(&buf, .{
+    const out_rf = try formatReport(&buf, .{
         .project_instructions = .enabled_missing,
         .test_entry = .none,
         .permission = .ask,
         .shell_policy = .protect,
-        .real_file_containment = .unavailable_fail_closed,
+        .real_file_containment = from_resolve_failed,
     });
-    try std.testing.expect(std.mem.indexOf(u8, out, "real_file_containment=unavailable_fail_closed") != null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "real_file_containment=ready") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "/tmp") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "/ws") == null);
-    try std.testing.expect(std.mem.indexOf(u8, out, "var/") == null);
+    try assertFailClosedDoctorText(out_rf);
+
+    const out_oom = try formatReport(&buf, .{
+        .project_instructions = .enabled_missing,
+        .test_entry = .none,
+        .permission = .ask,
+        .shell_policy = .protect,
+        .real_file_containment = from_oom,
+    });
+    try assertFailClosedDoctorText(out_oom);
 }
 
 test "formatReport tiny buffer is NoSpaceLeft not incomplete success" {
