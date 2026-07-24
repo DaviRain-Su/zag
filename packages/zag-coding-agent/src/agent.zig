@@ -3389,3 +3389,471 @@ test "h-redact: save/resume then new secret id avoids prior zag-rtid" {
         try std.testing.expect(std.mem.indexOf(u8, b2, secret) == null);
     }
 }
+
+// ── h-integration-001 Agent composition fixtures ────────────────────────────
+// Real product Agent.reply + default/policy/session/trace (not raw Registry).
+// Does not claim mid-flight Tool/shell preemption (post-H process work).
+
+const tool_error = core.tool_error;
+
+/// Scoped process-cwd switch for composition fixtures that need a real workspace
+/// root smaller than the monorepo (symlink escape). Always restore via defer.
+const ScopedCwd = struct {
+    io: Io,
+    saved: Io.Dir,
+
+    fn enter(io: Io, target: Io.Dir) !ScopedCwd {
+        // Open a durable handle to the current directory before switching.
+        const saved = try Io.Dir.cwd().openDir(io, ".", .{});
+        errdefer saved.close(io);
+        try std.process.setCurrentDir(io, target);
+        return .{ .io = io, .saved = saved };
+    }
+
+    fn leave(self: *ScopedCwd) void {
+        std.process.setCurrentDir(self.io, self.saved) catch {};
+        self.saved.close(self.io);
+        self.* = undefined;
+    }
+};
+
+fn toolBodyById(items: []const message.Message, id: []const u8) ?[]const u8 {
+    for (items) |m| {
+        if (m.role != .tool) continue;
+        if (m.tool_call_id) |tid| {
+            if (std.mem.eql(u8, tid, id)) return m.content;
+        }
+    }
+    return null;
+}
+
+fn assistantHasCallId(items: []const message.Message, id: []const u8) bool {
+    for (items) |m| {
+        if (m.role != .assistant) continue;
+        if (m.tool_calls) |calls| {
+            for (calls) |c| {
+                if (std.mem.eql(u8, c.id, id)) return true;
+            }
+        }
+    }
+    return false;
+}
+
+fn expectPairedToolId(items: []const message.Message, id: []const u8) ![]const u8 {
+    try std.testing.expect(assistantHasCallId(items, id));
+    const body = toolBodyById(items, id) orelse return error.TestUnexpectedResult;
+    return body;
+}
+
+test "h-integration: default Agent ask-deny write leaves target, permission_denied, save/resume+trace" {
+    // Goal: default built-in write_file through Agent.reply under ask/deny gate —
+    // no FS mutation, descriptor-derived permission_denied, original Tool-call ID
+    // paired in transcript + resumed session, permission trace event, soft-deny
+    // recovery ends with one completed terminal.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-int-policy-deny";
+    const sess_path = ".zag-test-h-int-policy-deny/s.jsonl";
+    const target = ".zag-test-h-int-policy-deny/must-not-write.txt";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const Mock = struct {
+        step: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "int-policy-write-1"),
+                    .name = try arena.dupe(u8, "write_file"),
+                    .arguments = try arena.dupe(
+                        u8,
+                        "{\"path\":\".zag-test-h-int-policy-deny/must-not-write.txt\",\"content\":\"MUST_NOT_PERSIST\"}",
+                    ),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "ok-denied-and-recovered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        // Default product policy surface: ask mode + deny gate (no stdin HITL).
+        .permission_mode = .ask,
+        .permission_gate = permissions.Gate.denyAllDangerous(),
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    // Memory-only product trace (same facade path as durable trace).
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        const result = try agent.reply(&session, "write the secret file");
+        try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+        try std.testing.expectEqualStrings("ok-denied-and-recovered", result.final_text);
+
+        const body = try expectPairedToolId(session.transcript.items(), "int-policy-write-1");
+        try std.testing.expect(tool_error.hasCode(body, .permission_denied));
+        try std.testing.expect(std.mem.indexOf(u8, body, "MUST_NOT_PERSIST") == null);
+
+        // Target must be absent (handler never ran / no mutation).
+        if (Io.Dir.cwd().access(io, target, .{})) |_| {
+            try std.testing.expect(false);
+        } else |_| {}
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try expectRunEnd(tr, true, "completed");
+        try std.testing.expect(tr.countKind("permission") >= 1);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"permission\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"allowed\":false") != null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"risk\":\"write\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "write_file") != null);
+        // Exactly one truthful terminal.
+        try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+    }
+
+    // Atomic save survived; resume preserves original non-secret Tool-call ID pairing.
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    const resumed_body = try expectPairedToolId(resumed.transcript.items(), "int-policy-write-1");
+    try std.testing.expect(tool_error.hasCode(resumed_body, .permission_denied));
+    if (Io.Dir.cwd().access(io, target, .{})) |_| {
+        try std.testing.expect(false);
+    } else |_| {}
+}
+
+test "h-integration: default Agent yolo escaping-symlink jail_deny, outside intact, save/resume+trace" {
+    // Goal: real default built-in read_file through Agent.reply under permissive
+    // gate; escaping workspace symlink does not expose outside bytes; jail_deny
+    // machine body + jail_deny trace; ID pairing survives save/resume; soft deny
+    // recovers to completed terminal.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    const outside_bytes = "OUTSIDE_SECRET_BYTES_v1\n";
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.txt", .data = outside_bytes });
+
+    var ws = try parent.dir.openDir(io, "ws", .{});
+    defer ws.close(io);
+    ws.symLink(io, "../outside/secret.txt", "escape_file", .{}) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => |e| return e,
+    };
+
+    var scoped = try ScopedCwd.enter(io, ws);
+    defer scoped.leave();
+
+    const sess_path = "s-h-int-jail.jsonl";
+
+    const Mock = struct {
+        step: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "int-jail-read-1"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"escape_file\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "ok-jailed-and-recovered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    // Trace cwd = workspace (process cwd after ScopedCwd).
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        const result = try agent.reply(&session, "read escape symlink");
+        try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+        try std.testing.expectEqualStrings("ok-jailed-and-recovered", result.final_text);
+
+        const body = try expectPairedToolId(session.transcript.items(), "int-jail-read-1");
+        try std.testing.expect(tool_error.hasCode(body, .jail_deny));
+        try std.testing.expect(std.mem.indexOf(u8, body, "OUTSIDE_SECRET") == null);
+
+        const after = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings(outside_bytes, after);
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try expectRunEnd(tr, true, "completed");
+        try std.testing.expect(tr.countKind("jail_deny") >= 1);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"jail_deny\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "read_file") != null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "OUTSIDE_SECRET") == null);
+        try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+    }
+
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    const resumed_body = try expectPairedToolId(resumed.transcript.items(), "int-jail-read-1");
+    try std.testing.expect(tool_error.hasCode(resumed_body, .jail_deny));
+    try std.testing.expect(std.mem.indexOf(u8, resumed_body, "OUTSIDE_SECRET") == null);
+    const after2 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+    defer gpa.free(after2);
+    try std.testing.expectEqualStrings(outside_bytes, after2);
+}
+
+/// Instance state for between-Tool cancel: first handler runs, then requests cancel.
+const BetweenCancelFirst = struct {
+    cancel: *cancel_mod.Flag,
+    ran: *u32,
+
+    fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+        const self: *BetweenCancelFirst = @ptrCast(@alignCast(instance.?));
+        self.ran.* += 1;
+        // Between-invocation only: flag is observed before the next call starts.
+        self.cancel.request();
+        return ctx.allocator.dupe(u8, "first-handler-done") catch return error.OutOfMemory;
+    }
+};
+
+const BetweenCancelSecond = struct {
+    ran: *u32,
+
+    fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+        const self: *BetweenCancelSecond = @ptrCast(@alignCast(instance.?));
+        self.ran.* += 1;
+        return ctx.allocator.dupe(u8, "second-must-not-run") catch return error.OutOfMemory;
+    }
+};
+
+test "h-integration: cancel between accepted Tools preserves IDs, skips pending, one cancelled terminal" {
+    // Goal: one complete provider turn with ≥2 accepted calls; first handler finishes
+    // and requests cancel; pending handlers never execute and get code=cancelled;
+    // original provider IDs pair across Result/transcript/session/trace; single
+    // cancelled terminal. Not mid-flight preemption of a running handler.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-int-between-cancel";
+    const sess_path = ".zag-test-h-int-between-cancel/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const Mock = struct {
+        step: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            // Single complete multi-tool turn (validated AssistantTurn).
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 3);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "provider-multi-1"),
+                    .name = try arena.dupe(u8, "first_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                tc[1] = .{
+                    .id = try arena.dupe(u8, "provider-multi-2"),
+                    .name = try arena.dupe(u8, "second_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                tc[2] = .{
+                    .id = try arena.dupe(u8, "provider-multi-3"),
+                    .name = try arena.dupe(u8, "second_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{ .content = "batch", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            // Must not be reached after between-tool cancel.
+            return .{
+                .content = try arena.dupe(u8, "unexpected-continue"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var first_ran: u32 = 0;
+    var second_ran: u32 = 0;
+    var first_state: BetweenCancelFirst = .{ .cancel = &agent.cancel, .ran = &first_ran };
+    var second_state: BetweenCancelSecond = .{ .ran = &second_ran };
+
+    // Test-only tool override (no production escape hatch): cancel state only.
+    const tools = [_]tool.Tool{
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "first_tool",
+                    .description = "runs then requests cancel",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .none,
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .instance = &first_state,
+            .handler = BetweenCancelFirst.handle,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "second_tool",
+                    .description = "must not run after cancel",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .none,
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .instance = &second_state,
+            .handler = BetweenCancelSecond.handle,
+        },
+    };
+    agent.test_tools = &tools;
+
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        const result = try agent.reply(&session, "run multi tools");
+        try std.testing.expectEqual(loop.StopReason.cancelled, result.stop_reason);
+        try std.testing.expectEqual(@as(u32, 1), first_ran);
+        try std.testing.expectEqual(@as(u32, 0), second_ran);
+        try std.testing.expectEqual(@as(u32, 1), mock.step);
+
+        const body1 = try expectPairedToolId(session.transcript.items(), "provider-multi-1");
+        try std.testing.expectEqualStrings("first-handler-done", body1);
+        try std.testing.expect(!tool_error.hasCode(body1, .cancelled));
+
+        const body2 = try expectPairedToolId(session.transcript.items(), "provider-multi-2");
+        try std.testing.expect(tool_error.hasCode(body2, .cancelled));
+        try std.testing.expect(std.mem.indexOf(u8, body2, "second-must-not-run") == null);
+
+        const body3 = try expectPairedToolId(session.transcript.items(), "provider-multi-3");
+        try std.testing.expect(tool_error.hasCode(body3, .cancelled));
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try expectRunEnd(tr, true, "cancelled");
+        try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+        // Executed call was traced with original provider id; pending calls get
+        // cancelled tool_result bodies (IDs live on transcript, not tool_result).
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "provider-multi-1") != null);
+        try std.testing.expect(tr.countKind("tool_call") >= 1);
+        try std.testing.expect(tr.countKind("tool_result") >= 3);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "code=cancelled") != null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "first-handler-done") != null);
+    }
+
+    // Resume pairing: executed + pending cancelled bodies keep provider IDs.
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    const r1 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-1");
+    try std.testing.expectEqualStrings("first-handler-done", r1);
+    const r2 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-2");
+    try std.testing.expect(tool_error.hasCode(r2, .cancelled));
+    const r3 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-3");
+    try std.testing.expect(tool_error.hasCode(r3, .cancelled));
+}

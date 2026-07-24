@@ -40,11 +40,11 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 
 | Slice | Spec | Current truth |
 |-------|------|---------------|
-| H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens + facade terminal；provider in-flight cancel/deadline（h-provider-001）；accepted multi-Tool between-call composition pending；mid-flight Tool preemption post-H |
+| H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens + facade terminal；provider in-flight cancel/deadline（h-provider-001）；accepted multi-Tool between-call composition evidence in h-integration-001（Gate 待 L2）；mid-flight Tool preemption post-H |
 | H2 Edit | [tools-edit](../../docs/modules/tools-edit.md) | search_replace/write under file+dir containment (h-workspace-001); Plan UX still open |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
-| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file containment + redaction + doctor/readiness done; Safety remains L1+ until h-integration-001 |
+| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | file containment + redaction + doctor/readiness done; Agent policy/containment composition evidence in h-integration-001; Safety remains L1+ until independent/main Gate |
 | H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage；deadline/cancel/partial Tool safety（h-provider-001）；log scrub helpers（h-redact-001） |
 | H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle + h-redact-001 redaction before serialize；dashboard still open |
 
@@ -59,7 +59,7 @@ P1 modules: h-context-001 · h-provider-001 · h-redact-001 ✅
   ↓
 h-doctor-001（provider/API-key-independent readiness report）✅
   ↓
-h-integration-001（two missing Agent composition chains + matrix audit）ready
+h-integration-001（two Agent composition chains — package evidence；Gate 待）in-progress
   ↓
 Phase H exit decision
   ↓

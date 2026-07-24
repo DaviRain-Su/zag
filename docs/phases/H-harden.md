@@ -64,7 +64,7 @@ Spec: [loop-turn](../modules/loop-turn.md).
 
 ### Remaining for H
 
-- h-integration-001 must prove a complete accepted multi-Tool turn cancelled **between** invocations remains ID-paired, save/resume-safe, and truthfully terminal across the Agent product path.
+- h-integration-001 Agent composition fixture proves a complete accepted multi-Tool turn cancelled **between** invocations remains ID-paired, save/resume-safe, and truthfully terminal across the Agent product path (**evidence in coding-agent suite; independent/main Gate still required before L2**).
 
 Provider in-flight cancel/deadline landed in h-provider-001. Preempting an already running Tool/shell handler requires process ownership and bounded cleanup; it remains explicit post-H shell/process work and is not assigned to h-provider-001. H1 remains **L1+** until the real-composition Gate passes, not because H claims mid-flight handler preemption.
 
@@ -108,7 +108,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, and doctor/readiness are complete (h-workspace-001, h-redact-001, h-doctor-001); Workspace/Safety stays **L1+** until h-integration-001.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, and doctor/readiness are complete (h-workspace-001, h-redact-001, h-doctor-001); default Agent policy/containment composition evidence is in h-integration-001 package fixtures. Workspace/Safety stays **L1+** until independent/main Gate.
 
 ## H4 — Context / Session
 
@@ -153,7 +153,7 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
 ### Remaining
 
-- default Agent policy/containment real-composition evidence: [h-integration-001](../plan/tasks/h-integration-001.md) (**ready**);
+- default Agent policy/containment real-composition evidence: [h-integration-001](../plan/tasks/h-integration-001.md) (**in-progress** — package fixtures landed; independent review + main std/curl Gate pending; not L2);
 - OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
 
 ## H6 — Provider
@@ -211,7 +211,7 @@ P0 session + Tool + workspace + trace
 h-doctor-001（provider-independent readiness truth）✅
          │
          ▼
-h-integration-001（two missing Agent composition chains + matrix audit）ready
+h-integration-001（two Agent composition chains — package evidence；Gate 待）in-progress
          │
          ▼
 Phase H L2 exit decision

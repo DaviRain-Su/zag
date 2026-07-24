@@ -1,7 +1,7 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001]
 ---
@@ -9,6 +9,15 @@ depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-
 # objective
 
 Close Phase H through real product composition, not duplicate module tests: add the two missing Agent-level failure chains (default Tool policy/containment and cancellation between accepted Tools), verify the existing P0/P1 matrix plus doctor through product composition, and update production-floor truth only if every exit condition passes.
+
+# progress (develop)
+
+- **Package evidence landed** in `packages/zag-coding-agent/src/agent.zig`:
+  1. `h-integration: default Agent ask-deny write leaves target, permission_denied, save/resume+trace`
+  2. `h-integration: default Agent yolo escaping-symlink jail_deny, outside intact, save/resume+trace`
+  3. `h-integration: cancel between accepted Tools preserves IDs, skips pending, one cancelled terminal`
+- Status stays **in-progress** (not done). Phase H / Workspace / Loop / Quality remain **L1+** until independent review + main-branch std/curl Gate.
+- Not claimed: mid-flight Tool/shell preemption, SDK-ready, headless, Phase H L2.
 
 # context
 

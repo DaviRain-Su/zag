@@ -39,7 +39,7 @@ Teaching 0  loop + 只读                 ✅ tutorial
 Teaching 1  write/shell + ask|yolo      ✅ tutorial
 Teaching 2  会话 / AGENTS.md / context  ✅ tutorial
 Teaching 3  jail / shell policy / trace ✅ tutorial（≠ 生产完成）
-Phase H     硬化到 maturity L2          ❌ h-doctor-001 ✅ → h-integration-001 ready
+Phase H     硬化到 maturity L2          ❌ h-doctor-001 ✅ → h-integration-001 in-progress（package evidence；Gate 待）
 C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
 ```
 

@@ -34,7 +34,8 @@ done: h-tool-runtime-001 + h-workspace-001 + h-redact-001
                               │
 all done P0/P1 module tasks ──┤
                               ▼
-                           ready: h-integration-001
+                           in-progress: h-integration-001
+                           (package composition evidence; Gate 待)
                               ├───────────────────► sdk-contract-001
                               └───────────────────► headless-001
 ```
@@ -55,7 +56,7 @@ Doctor has only the three dependencies shown above. Integration is the convergen
 | [h-provider-001](./tasks/h-provider-001.md) | P1 | done | Deadline/in-flight cancellation |
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | done | Secret redaction |
 | [h-doctor-001](./tasks/h-doctor-001.md) | P1 | done | Provider-independent readiness/control report |
-| [h-integration-001](./tasks/h-integration-001.md) | P1 | ready | Phase H real-composition/E2E closeout |
+| [h-integration-001](./tasks/h-integration-001.md) | P1 | in-progress | Phase H real-composition/E2E closeout (package evidence; Gate 待) |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
 

@@ -96,7 +96,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 |
 | ~~systematic secret redaction~~ | **done** Phase H P1 h-redact-001 (not DLP; `.zag/` still sensitive) |
 | ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (already-running Tool/shell preemption is separate post-H process work) |
-| ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001; Workspace/Safety still L1+ until h-integration-001 |
+| ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001; default Agent policy/containment composition evidence in h-integration-001; Workspace/Safety still L1+ until independent/main Gate |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |
 
@@ -109,4 +109,4 @@ A security/correctness fix must:
 3. implement the fix without weakening the default `ask` policy;
 4. update [maturity](./docs/maturity.md) and the relevant teaching chapter in the same delivery.
 
-[h-doctor-001](./docs/plan/tasks/h-doctor-001.md) implements `zag --doctor`: a provider-independent, path-free human-readable control report that runs **before** API-key/provider resolve, wire, Agent/session/trace, or network work. It reports fixed enum statuses only (project/test candidate presence, permission, shell policy, lexical jail, real file containment, redaction-on-run, `os_sandbox=not_implemented`, `shell_containment=not_path_contained`). Doctor never mutates policy and never claims an OS sandbox. It is not the stable JSON/exit protocol of headless-001. Workspace/Safety remains **L1+** until the integration Gate.
+[h-doctor-001](./docs/plan/tasks/h-doctor-001.md) implements `zag --doctor`: a provider-independent, path-free human-readable control report that runs **before** API-key/provider resolve, wire, Agent/session/trace, or network work. It reports fixed enum statuses only (project/test candidate presence, permission, shell policy, lexical jail, real file containment, redaction-on-run, `os_sandbox=not_implemented`, `shell_containment=not_path_contained`). Doctor never mutates policy and never claims an OS sandbox. It is not the stable JSON/exit protocol of headless-001. [h-integration-001](./docs/plan/tasks/h-integration-001.md) adds Agent.reply composition fixtures for default policy denial and escaping-symlink jail denial; Workspace/Safety remains **L1+** until independent review and main-branch Gate (not claimed L2 here).
