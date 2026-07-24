@@ -70,7 +70,7 @@ pub fn run(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             permission_mode = core.permissions.Mode.parse(args[i]) orelse {
-                std.log.err("unknown permission mode: {s}", .{args[i]});
+                std.log.err("unknown permission mode", .{});
                 std.process.exit(2);
             };
         } else if (std.mem.eql(u8, a, "--shell-policy")) {
@@ -80,7 +80,7 @@ pub fn run(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             shell_policy = core.shell_policy.Mode.parse(args[i]) orelse {
-                std.log.err("unknown shell policy: {s}", .{args[i]});
+                std.log.err("unknown shell policy", .{});
                 std.process.exit(2);
             };
         } else if (std.mem.eql(u8, a, "--session") or std.mem.eql(u8, a, "-s")) {
@@ -195,41 +195,22 @@ pub fn run(init: std.process.Init) !void {
     );
 
     if (verbose) {
-        std.log.info("provider id={s} name={s} model={s} key_from={s} stream={any} permission={s} session={s} remember={any} shell_policy={s}", .{
-            resolved.spec_id,
-            resolved.display_name,
-            resolved.config.model,
-            resolved.api_key_source,
-            use_stream,
-            permission_mode.name(),
-            session_kind.name(),
-            remember_writes,
-            shell_policy.name(),
-        });
-        if (resolve_result.model_info) |mi| {
-            std.log.info(
-                "catalog context_window={d} max_output={d} view_max_chars={d}",
-                .{ mi.context_window, mi.max_output_tokens, context_opts.max_chars },
-            );
-        } else {
-            std.log.info("catalog miss; view_max_chars={d}", .{context_opts.max_chars});
-        }
-        if (resolve_result.chat_options.temperature) |t| {
-            std.log.info("chat temperature={d}", .{t});
-        }
-        if (resolve_result.chat_options.max_tokens) |mt| {
-            std.log.info("chat max_tokens={d}", .{mt});
-        }
+        // h-redact-001: fixed/enum/numeric metadata only — no arbitrary model/provider text.
         std.log.info(
-            "wire={s} retries transport={d} chat={d} timeout_ms={any}",
+            "provider ready stream={any} permission={s} session_kind={s} remember={any} shell_policy={s} wire={s} transport_retries={d} chat_retries={d} timeout_ms={any} view_max_chars={d}",
             .{
+                use_stream,
+                permission_mode.name(),
+                session_kind.name(),
+                remember_writes,
+                shell_policy.name(),
                 resolved.api_style.jsonName(),
                 resolved.config.max_retries,
                 resolve_result.chat_retries,
                 resolved.config.timeout_ms,
+                context_opts.max_chars,
             },
         );
-        // h-redact-001: do not echo session/trace paths (may embed secrets).
         if (session_path != null) std.log.info("session: configured", .{});
         if (trace_path != null) std.log.info("trace: enabled", .{});
     }
@@ -415,19 +396,21 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
     try Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
+/// Verbose stream diagnostics: fixed/numeric events only (never raw chunk bytes;
+/// secrets may span SSE chunks so per-chunk redaction is insufficient).
 fn streamLogHandler(_: ?*anyopaque, event: ai.StreamEvent) anyerror!void {
     switch (event) {
         .content_delta => |d| {
-            if (d.len > 0) std.debug.print("{s}", .{d});
+            if (d.len > 0) std.log.info("stream content_delta bytes={d}", .{d.len});
         },
-        .finish_reason => |fr| {
-            if (fr.len > 0) std.log.info("stream finish_reason={s}", .{fr});
+        .finish_reason => {
+            std.log.info("stream finish_reason", .{});
         },
         .tool_call_delta => |tc| {
-            if (tc.name.len > 0) std.log.info("stream tool_call[{d}] {s}", .{ tc.index, tc.name });
+            std.log.info("stream tool_call_delta index={d}", .{tc.index});
         },
         .done => {
-            std.debug.print("\n", .{});
+            std.log.info("stream done", .{});
         },
     }
 }

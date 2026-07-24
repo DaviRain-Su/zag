@@ -141,7 +141,7 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
 - symlink-aware containment for all file Tools (P0 h-workspace-001);
 - fixed shell-policy matrix (denylist; not OS sandbox);
-- shared secret redaction before verbose/trace/session (P1 h-redact-001);
+- shared secret redaction before verbose/trace/session (P1 h-redact-001 branch; pending Gate);
 - explicit trusted-host/non-OS-sandbox threat model in SECURITY + module docs.
 
 ### Remaining
@@ -193,7 +193,7 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 P0 session + Tool + workspace + trace
   ├─► P1 context ✅
   ├─► P1 provider deadline/cancel ✅
-  └─► P1 redaction ✅
+  └─► P1 redaction (branch; pending Gate)
          │
          ▼
 h-integration-001（real product composition + failure matrix）

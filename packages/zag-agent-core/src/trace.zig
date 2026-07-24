@@ -335,9 +335,31 @@ pub const Trace = struct {
         completion_tokens: u64 = 0,
         total_tokens: u64 = 0,
         estimated_usd: ?f64 = null,
+        /// Public free-form stop_reason: always redacted when policy set.
         stop_reason: ?[]const u8 = null,
     };
 
+    /// Agent-controlled vocabulary (allocation-free terminal path; no redaction).
+    pub const ControlledStop = enum {
+        completed,
+        max_turns,
+        cancelled,
+        timeout,
+        unsupported_control,
+        provider_error,
+        session_error,
+        trace_error,
+        out_of_memory,
+        invalid_toolset,
+        invalid_context,
+
+        pub fn jsonName(self: ControlledStop) []const u8 {
+            return @tagName(self);
+        }
+    };
+
+    /// Public terminal: free-form stop_reason is redacted (full input then cap).
+    /// Redaction OOM → unique allocation-free `out_of_memory` terminal (not trace_error).
     pub fn emitRunEnd(self: *Trace, info: RunEndInfo) Error!void {
         if (!self.run_open or self.finished) return;
 
@@ -345,14 +367,16 @@ pub const Trace = struct {
         const snap_seq = self.event_count;
         const safe = sanitizeRunEndInfo(info);
 
-        // Intended terminal serialization — on failure, stay at snapshot and
-        // commit a minimal allocation-free `trace_error` terminal (never recurse into unsafe info).
-        self.appendRunEndLine(safe) catch |ser_err| {
+        self.appendRunEndLinePublic(safe) catch |ser_err| {
             self.buf.shrinkRetainingCapacity(snap_len);
             self.event_count = snap_seq;
-            try self.appendMinimalTraceErrorTerminal(safe.turns);
+            // Redaction OOM → out_of_memory; serialization → trace_error.
+            const stop: []const u8 = switch (ser_err) {
+                error.OutOfMemory => "out_of_memory",
+                else => "trace_error",
+            };
+            try self.appendMinimalFailureTerminal(safe.turns, stop);
             self.persistAtomic() catch |perr| {
-                // Minimal terminal remains in memory; prior durable bytes unchanged.
                 self.markTerminalCommitted();
                 return perr;
             };
@@ -361,23 +385,18 @@ pub const Trace = struct {
         };
 
         self.persistAtomic() catch |err| {
-            // Roll back intended terminal; prior durable bytes unchanged.
             self.buf.shrinkRetainingCapacity(snap_len);
             self.event_count = snap_seq;
-
-            // Preserve returned error category; in-memory terminal prefers the intended
-            // failure stop_reason when it was already a failure, else minimal trace_error.
             switch (err) {
                 error.OutOfMemory => {
                     self.appendMinimalFailureTerminal(safe.turns, "out_of_memory") catch |werr| return werr;
                 },
                 error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => {
                     if (safe.ok) {
-                        self.appendMinimalTraceErrorTerminal(safe.turns) catch |werr| return werr;
+                        self.appendMinimalFailureTerminal(safe.turns, "trace_error") catch |werr| return werr;
                     } else {
-                        // Keep primary failure category (e.g. provider_error) when serializable.
-                        self.appendRunEndLine(safe) catch {
-                            self.appendMinimalTraceErrorTerminal(safe.turns) catch |werr| return werr;
+                        self.appendRunEndLinePublic(safe) catch {
+                            self.appendMinimalFailureTerminal(safe.turns, "trace_error") catch |werr| return werr;
                         };
                     }
                 },
@@ -389,15 +408,64 @@ pub const Trace = struct {
         self.markTerminalCommitted();
     }
 
+    pub const ControlledUsage = struct {
+        prompt_tokens: u64 = 0,
+        completion_tokens: u64 = 0,
+        total_tokens: u64 = 0,
+        estimated_usd: ?f64 = null,
+    };
+
+    /// Agent-controlled terminal: no redaction, no heap for stop reason.
+    pub fn emitRunEndControlled(
+        self: *Trace,
+        turns: u32,
+        ok: bool,
+        stop: ControlledStop,
+        usage: ControlledUsage,
+    ) Error!void {
+        if (!self.run_open or self.finished) return;
+        const snap_len = self.buf.items.len;
+        const snap_seq = self.event_count;
+        self.appendRunEndLineControlled(turns, ok, stop.jsonName(), usage) catch |ser_err| {
+            self.buf.shrinkRetainingCapacity(snap_len);
+            self.event_count = snap_seq;
+            try self.appendMinimalFailureTerminal(turns, "trace_error");
+            self.persistAtomic() catch |perr| {
+                self.markTerminalCommitted();
+                return perr;
+            };
+            self.markTerminalCommitted();
+            return ser_err;
+        };
+        self.persistAtomic() catch |err| {
+            self.buf.shrinkRetainingCapacity(snap_len);
+            self.event_count = snap_seq;
+            switch (err) {
+                error.OutOfMemory => {
+                    self.appendMinimalFailureTerminal(turns, "out_of_memory") catch |werr| return werr;
+                },
+                else => {
+                    if (ok) {
+                        // Success path + persist fail → honest trace_error terminal.
+                        self.appendMinimalFailureTerminal(turns, "trace_error") catch |werr| return werr;
+                    } else {
+                        // Keep primary failure category (e.g. provider_error) in memory.
+                        self.appendRunEndLineControlled(turns, false, stop.jsonName(), usage) catch {
+                            self.appendMinimalFailureTerminal(turns, "trace_error") catch |werr| return werr;
+                        };
+                    }
+                },
+            }
+            self.markTerminalCommitted();
+            return err;
+        };
+        self.markTerminalCommitted();
+    }
+
     fn markTerminalCommitted(self: *Trace) void {
         self.run_open = false;
         self.finished = true;
         self.terminal_count = 1;
-    }
-
-    /// Minimal terminal: ASCII-only literals, no optional tokens/usd — always ≤ reserve.
-    fn appendMinimalTraceErrorTerminal(self: *Trace, turns: u32) Error!void {
-        try self.appendMinimalFailureTerminal(turns, "trace_error");
     }
 
     fn appendMinimalFailureTerminal(self: *Trace, turns: u32, stop: []const u8) Error!void {
@@ -409,38 +477,25 @@ pub const Trace = struct {
         }, .terminal);
     }
 
-    /// Agent-controlled stop reasons: no redaction, no heap (terminal reserve).
-    fn isInternalStopReason(s: []const u8) bool {
-        inline for (.{
-            "completed",       "max_turns",           "cancelled",
-            "timeout",         "unsupported_control", "provider_error",
-            "session_error",   "trace_error",         "out_of_memory",
-            "invalid_toolset", "invalid_context",
-        }) |name| {
-            if (std.mem.eql(u8, s, name)) return true;
-        }
-        return false;
-    }
-
-    fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
-        // Public stop_reason goes through redactor when set. Internal Agent
-        // vocabulary stays allocation-free (terminal_reserve). Redaction OOM
-        // returns OutOfMemory → emitRunEnd falls back to minimal terminal.
+    fn appendRunEndLinePublic(self: *Trace, info: RunEndInfo) Error!void {
+        // Free-form stop_reason: full-input redaction then cap (never skip policy).
         var reason_stack: [max_stop_reason_len]u8 = undefined;
         const reason: ?[]const u8 = if (info.stop_reason) |r| blk: {
-            if (!std.unicode.utf8ValidateSlice(r)) return error.TraceSerializationFailed;
-            const t = truncateUtf8(r, max_stop_reason_len);
-            if (isInternalStopReason(t) or self.redactor == null) break :blk t;
-            if (builtin.is_test and self.fail_next_redact) {
-                self.fail_next_redact = false;
-                return error.OutOfMemory;
+            if (self.redactor) |red| {
+                if (builtin.is_test and self.fail_next_redact) {
+                    self.fail_next_redact = false;
+                    return error.OutOfMemory;
+                }
+                const owned = red.redactAlloc(self.gpa, r) catch return error.OutOfMemory;
+                defer self.gpa.free(owned);
+                if (!std.unicode.utf8ValidateSlice(owned)) return error.TraceSerializationFailed;
+                const cut = truncateUtf8(owned, max_stop_reason_len);
+                if (cut.len > reason_stack.len) return error.TraceSerializationFailed;
+                @memcpy(reason_stack[0..cut.len], cut);
+                break :blk reason_stack[0..cut.len];
             }
-            const red = self.redactor.?.redactAlloc(self.gpa, t) catch return error.OutOfMemory;
-            defer self.gpa.free(red);
-            const cut = truncateUtf8(red, max_stop_reason_len);
-            if (cut.len > reason_stack.len) return error.TraceSerializationFailed;
-            @memcpy(reason_stack[0..cut.len], cut);
-            break :blk reason_stack[0..cut.len];
+            if (!std.unicode.utf8ValidateSlice(r)) return error.TraceSerializationFailed;
+            break :blk truncateUtf8(r, max_stop_reason_len);
         } else null;
         try self.writeObj(.{
             .kind = .run_end,
@@ -451,6 +506,25 @@ pub const Trace = struct {
             .total_tokens = if (info.total_tokens != 0) info.total_tokens else null,
             .estimated_usd = finiteUsd(info.estimated_usd),
             .stop_reason = reason,
+        }, .terminal);
+    }
+
+    fn appendRunEndLineControlled(
+        self: *Trace,
+        turns: u32,
+        ok: bool,
+        stop: []const u8,
+        usage: ControlledUsage,
+    ) Error!void {
+        try self.writeObj(.{
+            .kind = .run_end,
+            .turns = turns,
+            .ok = ok,
+            .prompt_tokens = if (usage.prompt_tokens != 0) usage.prompt_tokens else null,
+            .completion_tokens = if (usage.completion_tokens != 0) usage.completion_tokens else null,
+            .total_tokens = if (usage.total_tokens != 0) usage.total_tokens else null,
+            .estimated_usd = finiteUsd(usage.estimated_usd),
+            .stop_reason = stop,
         }, .terminal);
     }
 
@@ -613,35 +687,29 @@ fn freePrepared(self: *Trace, prep: PreparedString) void {
     if (prep.owned) self.gpa.free(prep.bytes);
 }
 
-/// Public string policy: require valid UTF-8 (fail `TraceSerializationFailed`);
-/// truncate on codepoint boundary; **redact before serialize** when redactor set.
-/// Redaction OOM → `OutOfMemory` (never fall back to raw). Never emit invalid
-/// JSONL. Zig's default stringify would render invalid UTF-8 as a number array —
-/// we fail closed so field types stay strings for strict consumers.
+/// Public string policy: **redact full input first**, then UTF-8-cap.
+/// Redaction OOM → `OutOfMemory` (never fall back to raw / never cap-first).
+/// Invalid UTF-8 after redaction → `TraceSerializationFailed`.
 fn prepareTracedString(self: *Trace, s: []const u8, max: usize) Error!PreparedString {
-    if (!std.unicode.utf8ValidateSlice(s)) return error.TraceSerializationFailed;
-    const t = truncateUtf8(s, max);
     if (builtin.is_test and self.fail_next_redact) {
         self.fail_next_redact = false;
         return error.OutOfMemory;
     }
     if (self.redactor) |r| {
-        const red = r.redactAlloc(self.gpa, t) catch return error.OutOfMemory;
-        // Re-truncate if redaction expanded past cap (marker vs short secret).
-        if (red.len > max) {
-            const cut = truncateUtf8(red, max);
-            if (cut.len != red.len) {
-                const again = self.gpa.dupe(u8, cut) catch {
-                    self.gpa.free(red);
-                    return error.OutOfMemory;
-                };
-                self.gpa.free(red);
-                return PreparedString.ownedAlloc(again);
-            }
+        // Full-input redaction before any truncation (prevents secret prefix leak).
+        const red = r.redactAlloc(self.gpa, s) catch return error.OutOfMemory;
+        errdefer self.gpa.free(red);
+        if (!std.unicode.utf8ValidateSlice(red)) return error.TraceSerializationFailed;
+        const cut = truncateUtf8(red, max);
+        if (cut.len != red.len) {
+            const again = self.gpa.dupe(u8, cut) catch return error.OutOfMemory;
+            self.gpa.free(red);
+            return PreparedString.ownedAlloc(again);
         }
         return PreparedString.ownedAlloc(red);
     }
-    return PreparedString.borrowed(t);
+    if (!std.unicode.utf8ValidateSlice(s)) return error.TraceSerializationFailed;
+    return PreparedString.borrowed(truncateUtf8(s, max));
 }
 
 /// Test-only fault/injection helpers. Empty in production builds (decls erased).
@@ -1400,4 +1468,61 @@ test "successful preflight then parent becomes escape: final recheck InvalidPath
         }
     }
     try std.testing.expectEqual(@as(usize, 1), files);
+}
+
+test "controlled terminal stays allocation-free with redactor" {
+    const gpa = std.testing.allocator;
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{redact_mod.testing.fake_api_key}, .patterns = true });
+    defer r.deinit();
+    var tr = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer tr.deinit();
+    tr.setRedactor(&r);
+    try tr.beginReply();
+    try tr.emitRunStart(.{ .version = "0.5.0", .permission = "ask", .shell_policy = "protect" });
+    testing.setFailNextRedact(&tr, true);
+    try tr.emitRunEndControlled(0, true, .completed, .{});
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expect(tr.fail_next_redact); // not consumed
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "completed") != null);
+}
+
+test "public emitRunEnd stop_reason always uses redaction policy" {
+    const gpa = std.testing.allocator;
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{redact_mod.testing.fake_api_key}, .patterns = false });
+    defer r.deinit();
+    var tr = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer tr.deinit();
+    tr.setRedactor(&r);
+    try tr.beginReply();
+    try tr.emitRunStart(.{ .version = "0.5.0", .permission = "ask", .shell_policy = "protect" });
+    testing.setFailNextRedact(&tr, true);
+    // Even the string "completed" is public free-form — redaction path runs.
+    const err = tr.emitRunEnd(.{ .turns = 0, .ok = true, .stop_reason = "completed" });
+    try std.testing.expectError(error.OutOfMemory, err);
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "out_of_memory") != null);
+}
+
+test "prepareTracedString redacts before cap (cross-cap secret)" {
+    const gpa = std.testing.allocator;
+    const secret = redact_mod.testing.fake_api_key;
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+    var tr = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer tr.deinit();
+    tr.setRedactor(&r);
+    try tr.beginReply();
+    try tr.emitRunStart(.{ .version = "0.5.0", .permission = "ask", .shell_policy = "protect" });
+    // Secret starts after a long prefix so naive cap-first would keep the secret prefix
+    // if it truncated before redaction. Full-input redaction removes the secret first.
+    var prefix: [cap_assistant_text]u8 = undefined;
+    @memset(&prefix, 'x');
+    // Put secret spanning the cap boundary: last 10 of cap + rest of secret after.
+    const start = cap_assistant_text - 10;
+    @memcpy(prefix[start..], secret[0..10]);
+    const full = try std.fmt.allocPrint(gpa, "{s}{s}", .{ prefix[0..], secret[10..] });
+    defer gpa.free(full);
+    try tr.emitAssistant(full);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, secret[0..10]) == null);
 }

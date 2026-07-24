@@ -611,28 +611,40 @@ test "containsSecret" {
     try std.testing.expect(!r.containsSecret("no secrets here"));
 }
 
-test "FailingAllocator sweep all allocation sites then succeed" {
+fn tryInitAddCloneRedact(fa: std.mem.Allocator, secret: []const u8) Error![]u8 {
+    var r = try Redactor.init(fa, .{ .secrets = &.{secret}, .patterns = true });
+    errdefer r.deinit();
+    const extra = try std.fmt.allocPrint(fa, "{s}-extra-suffix-zzzz", .{secret});
+    defer fa.free(extra);
+    try r.addSecret(extra);
+    var c = try r.clone(fa);
+    errdefer c.deinit();
+    const hay = try std.fmt.allocPrint(fa, "x{s}y", .{secret});
+    defer fa.free(hay);
+    const out = try c.redactAlloc(fa, hay);
+    c.deinit();
+    r.deinit();
+    return out;
+}
+
+test "FailingAllocator per-index helper covers init/add/clone/redact" {
     const gpa = std.testing.allocator;
     const secret = testing.fake_api_key;
-    // Sweep fail_index until init+redact both succeed without leak (GPA detects).
+    var saw_fail = false;
     var idx: usize = 0;
-    while (idx < 64) : (idx += 1) {
+    while (idx < 96) : (idx += 1) {
         var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
         const fa = failing.allocator();
-        var r = Redactor.init(fa, .{ .secrets = &.{secret}, .patterns = true }) catch {
-            continue; // expected OOM at this index
-        };
-        defer r.deinit();
-        const out = r.redactAlloc(fa, "x" ++ secret ++ "y") catch {
-            continue;
-        };
-        defer fa.free(out);
-        try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
-        // First full success ends the sweep.
-        break;
-    } else {
-        return error.TestUnexpectedResult;
+        if (tryInitAddCloneRedact(fa, secret)) |out| {
+            defer fa.free(out);
+            try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+            if (idx > 0) try std.testing.expect(saw_fail);
+            return;
+        } else |_| {
+            saw_fail = true;
+        }
     }
+    return error.TestUnexpectedResult;
 }
 
 test "pattern matrix: each family min boundary and max-run" {

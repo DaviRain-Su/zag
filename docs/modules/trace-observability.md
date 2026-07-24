@@ -147,7 +147,7 @@ Callbacks must not own borrowed event slices after return unless they copy them.
 - [x] per-reply latest-run file/buffer semantics + run-local ledger.
 - [x] transactional writeObj under allocator failure.
 - [x] fail-closed precedence when failure-terminal persist fails.
-- [x] secret redaction before write (`h-redact-001`).
+- [ ] secret redaction before write (`h-redact-001` — branch implemented, pending Gate).
 - [x] SECURITY links to this contract.
 
 ## L3

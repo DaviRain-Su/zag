@@ -89,7 +89,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~explicit Tool capabilities/fail-closed custom policy~~ | **done** Phase H P0 h-tool-runtime-001 |
 | ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
 | ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 |
-| ~~systematic secret redaction~~ | **done** Phase H P1 h-redact-001 (not DLP; `.zag/` still sensitive) |
+| systematic secret redaction | Phase H P1 h-redact-001 — **branch implemented, pending Gate** (not DLP; `.zag/` still sensitive) |
 | ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (tool/shell mid-flight cancel still open) |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |

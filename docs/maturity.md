@@ -27,7 +27,7 @@
 | Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff；create/write 经 Guard 祖先 walk；escape/dangling deny | containment 下 stale/ambiguous 可恢复且不误写 | hashline/apply_patch、hunk review |
 | Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox；policy 选 shell 靠 descriptor.shell 非名称 | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
 | Permissions | **L2** | D-007: Gate/Ask/plan/remember 消费 descriptor.risk；custom write/execute 与 built-in 同 gate；无 `riskOf(name)` | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
-| Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）+ **secret redaction**（h-redact-001）；descriptor 选 path/shell；shell 仍 denylist；**无** doctor → 整行未达 L2 | file containment ✅；redaction ✅；doctor、诚实 threat model 文档齐 | OS sandbox/network/worktree |
+| Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）+ **secret redaction**（h-redact-001）；descriptor 选 path/shell；shell 仍 denylist；**无** doctor → 整行未达 L2 | file containment ✅；redaction (branch; pending Gate)；doctor、诚实 threat model 文档齐 | OS sandbox/network/worktree |
 | Context / Compaction | **L2** | h-context-001: fixed-point final-view；ID 精确 tool bundle fail-closed→`invalid_context`；lineage 截断有 digest/marker；共享 summary_cap=800；UTF-8 sanitize；session/trace 成功路径 byte-equal；soft min_tail；OOM 不静默 | final returned view 与 dropped/summary/session/trace 一致 ✅ | repo map、智能选文件 |
 | Session / Resume | **L2** | D-006: create/resume distinct; open_or_create SDK-only; atomic save + per-Writer test fault preserves prior bytes; `Agent.reply` save IoFailed fixture; one active writer via reusable `{path}.lock`; strict header (version required on typed header); lexical session path; P0 fixtures (create-existing, resume missing/invalid/unsupported/general-I/O, fault-save, busy, stale sidecar, CLI open-mode). Not claimed: fsync/power-loss, symlink containment, hostile Writer-copy defense | explicit create/resume; atomic preservation; visible save errors; exclusive writer/conflict | fork/tree/journal as needed |
 | Provider / zag-ai | **L1+** | two wire styles、retry/usage/cost；**curl** active deadline/cancel；**std** ordinary OK + controlled lifecycle fail-closed `unsupported_control`；strict stream/tool atomic（h-provider-001）；HTTP 诊断仅 status+body length（h-redact-001） | capability-truth deadline/cancel ✅；redaction diagnostics ✅；contract matrix | fallback/multi-key/third protocol on demand |
@@ -48,10 +48,10 @@
 3. **Filesystem containment**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace（**file sub-capability done** h-workspace-001）；shell 边界单独诚实说明；整行 Safety 仍待 doctor。
 4. **Truthful lifecycle**：每个 started run 恰有一个 terminal；provider/save/trace 失败不得记为 completed success（h-trace-001 ✅；timeout/in-flight cancel h-provider-001 ✅）。
 5. **Context accounting**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致（h-context-001 ✅）。
-6. **Secrets**：fake configured key 不出现在 verbose、trace、session fixtures（h-redact-001 ✅）；`.zag/` 仍标敏感；无 zeroization/DLP 声称。
+6. **Secrets**：fake configured key 不出现在 verbose、trace、session fixtures（h-redact-001 branch; pending Gate）；`.zag/` 仍标敏感；无 zeroization/DLP 声称。
 7. **Deadline/cancel**：curl 真正执行 deadline/active cancel；std 配置 deadline 显式 `unsupported_control`（普通无超时仍可用）；半截 Tool call 不执行（h-provider-001 capability-truth ✅；tool/shell mid-flight 仍开）。
 8. **Editing/runtime**：search_replace/grep/glob 可用；shell exit/timeout/truncation/deny 为稳定机器可读形状。
-9. **Observability**：trace schema versioned ✅；permission/jail/shell/usage/stop reason 可复盘；显式 trace I/O failure 可见 ✅；secret redaction before write ✅。
+9. **Observability**：trace schema versioned ✅；permission/jail/shell/usage/stop reason 可复盘；显式 trace I/O failure 可见 ✅；secret redaction before write (branch; pending Gate)。
 10. **Regression evidence**：goldens + P0 fault fixtures + security/redaction + provider cancel contracts 均在 CI。
 11. **Documentation truth**：README、SECURITY、architecture、Phase H 与本表一致，不声称 OS sandbox 或 SDK-ready 已具备。
 

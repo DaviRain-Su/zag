@@ -236,11 +236,11 @@ pub const StdinPrompter = struct {
         const io = self.io;
         const risk = descriptor.capabilities.risk;
         const tool_name = descriptor.definition.name;
-        // h-redact-001: never print raw arguments_json (may contain secrets).
-        // Generic metadata only: risk + tool name + arg byte length.
+        // h-redact-001: no arbitrary tool name or args content — fixed risk + args_len only.
+        _ = tool_name;
         std.log.warn(
-            "permission: allow {s} tool `{s}`? (args_len={d}) [y]es / [N]o >",
-            .{ risk.label(), tool_name, arguments_json.len },
+            "permission: allow {s} operation? (args_len={d}) [y]es / [N]o >",
+            .{ risk.label(), arguments_json.len },
         );
 
         Io.File.stderr().writeStreamingAll(io, "  → type y + Enter to allow, anything else to deny: ") catch {};

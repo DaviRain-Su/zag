@@ -163,7 +163,7 @@ pub const Session = struct {
                 .patterns = opts.pattern_redaction,
             });
         }
-        const redactor_ptr: ?*const redact_mod.Redactor = if (owned_redactor) |*r| r else null;
+        const redactor_ref: *const redact_mod.Redactor = &owned_redactor.?;
 
         if (opts.path) |p| {
             switch (opts.open_mode) {
@@ -174,7 +174,7 @@ pub const Session = struct {
                         .zag_version = "0.5.0",
                         .compaction_gen = compaction_gen,
                         .compaction_summary = compaction_summary,
-                    }, redactor_ptr);
+                    }, redactor_ref);
                 },
                 .resume_existing => {
                     var meta: session_store.SessionMeta = .{};
@@ -199,7 +199,7 @@ pub const Session = struct {
                                 .zag_version = "0.5.0",
                                 .compaction_gen = compaction_gen,
                                 .compaction_summary = compaction_summary,
-                            }, redactor_ptr);
+                            }, redactor_ref);
                             // created path: project already seeded; not a resume.
                         },
                         else => |e| return e,
@@ -564,6 +564,22 @@ pub const Agent = struct {
 
     /// Commit exactly one terminal for the open run. No-op when tracing is off
     /// or the run already closed. Propagates persistence I/O as `TraceIoFailed`.
+    fn controlledStop(stop: loop.StopReason) trace_mod.Trace.ControlledStop {
+        return switch (stop) {
+            .completed => .completed,
+            .max_turns => .max_turns,
+            .cancelled => .cancelled,
+            .timeout => .timeout,
+            .unsupported_control => .unsupported_control,
+            .provider_error => .provider_error,
+            .session_error => .session_error,
+            .trace_error => .trace_error,
+            .out_of_memory => .out_of_memory,
+            .invalid_toolset => .invalid_toolset,
+            .invalid_context => .invalid_context,
+        };
+    }
+
     fn commitTerminal(
         self: *Agent,
         turns: u32,
@@ -573,15 +589,13 @@ pub const Agent = struct {
         const tr = if (self.trace) |*t| t else return;
         if (!tr.run_open or tr.finished) return;
         const usd: ?f64 = if (self.ledger.cost.known) self.ledger.cost.total else null;
-        try tr.emitRunEnd(.{
-            .turns = turns,
-            .ok = ok,
+        // Controlled vocabulary: allocation-free, no public free-form redaction path.
+        try tr.emitRunEndControlled(turns, ok, controlledStop(stop_reason), .{
             .prompt_tokens = self.ledger.prompt_tokens,
             .completion_tokens = self.ledger.completion_tokens,
             .total_tokens = self.ledger.total_tokens,
             .estimated_usd = usd,
-            .stop_reason = stop_reason.name(),
-        });
+        }); // ControlledUsage
     }
 
     /// Commit a failure terminal; never swallow commit errors.

@@ -214,34 +214,7 @@ fn acquireWriterLease(
     };
 }
 
-/// Explicit unredacted create (low-level bypass). Product path must use
-/// `createNewWithRedactor` so initial bytes never carry raw secrets.
-pub fn createNewUnredacted(
-    gpa: std.mem.Allocator,
-    io: Io,
-    cwd: Io.Dir,
-    path: []const u8,
-    messages: []const message.Message,
-    meta: SessionMeta,
-) Error!Writer {
-    return createNewWithRedactor(gpa, io, cwd, path, messages, meta, null);
-}
-
-/// @deprecated Prefer `createNewUnredacted` or `createNewWithRedactor`.
-/// Kept as an alias of the unredacted bypass for existing low-level tests.
-pub fn createNew(
-    gpa: std.mem.Allocator,
-    io: Io,
-    cwd: Io.Dir,
-    path: []const u8,
-    messages: []const message.Message,
-    meta: SessionMeta,
-) Error!Writer {
-    return createNewUnredacted(gpa, io, cwd, path, messages, meta);
-}
-
-/// Create with redaction applied to the initial write (redactor borrowed for the call only).
-pub fn createNewWithRedactor(
+fn createNewImpl(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
@@ -251,13 +224,11 @@ pub fn createNewWithRedactor(
     redactor: ?*const redact_mod.Redactor,
 ) Error!Writer {
     try validateSessionPath(path);
-    // Fast path: existing bytes must not be touched and need not take the lock.
     if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
 
     var lease = try acquireWriterLease(gpa, io, cwd, path);
     errdefer lease.release(gpa, io);
 
-    // Race: another writer may have materialized the file between access and lock.
     if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
 
     try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta, false, redactor, false);
@@ -270,6 +241,32 @@ pub fn createNewWithRedactor(
         .lock_path = lease.lock_path,
         .lock_file = lease.lock_file,
     };
+}
+
+/// Explicit unredacted create (low-level bypass). Product path must use
+/// `createNewWithRedactor` so initial bytes never carry raw secrets.
+pub fn createNewUnredacted(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+) Error!Writer {
+    return createNewImpl(gpa, io, cwd, path, messages, meta, null);
+}
+
+/// Create with required redaction policy (borrowed for the call only).
+pub fn createNewWithRedactor(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+    redactor: *const redact_mod.Redactor,
+) Error!Writer {
+    return createNewImpl(gpa, io, cwd, path, messages, meta, redactor);
 }
 
 /// Resume an existing persisted session. Fails if missing, invalid, unsupported,
@@ -305,10 +302,8 @@ pub fn resumeExisting(
     };
 }
 
-/// Convenience: resume if present, otherwise create a new session.
-/// Only `SessionNotFound` triggers creation; every other error propagates.
-/// Prefer explicit create/resume at CLI boundaries; this is an SDK helper.
-pub fn openOrCreate(
+/// Explicit unredacted open-or-create (low-level bypass).
+pub fn openOrCreateUnredacted(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
@@ -319,7 +314,25 @@ pub fn openOrCreate(
     out_meta: ?*SessionMeta,
 ) Error!Writer {
     return resumeExisting(gpa, io, cwd, path, transcript, out_meta) catch |err| switch (err) {
-        error.SessionNotFound => return createNew(gpa, io, cwd, path, messages, meta),
+        error.SessionNotFound => return createNewUnredacted(gpa, io, cwd, path, messages, meta),
+        else => |e| return e,
+    };
+}
+
+/// Open-or-create with required redactor on the create branch.
+pub fn openOrCreateWithRedactor(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+    transcript: *transcript_mod.Transcript,
+    out_meta: ?*SessionMeta,
+    redactor: *const redact_mod.Redactor,
+) Error!Writer {
+    return resumeExisting(gpa, io, cwd, path, transcript, out_meta) catch |err| switch (err) {
+        error.SessionNotFound => return createNewWithRedactor(gpa, io, cwd, path, messages, meta, redactor),
         else => |e| return e,
     };
 }
@@ -464,17 +477,6 @@ pub fn saveUnredacted(
     try saveWithMetaUnredacted(gpa, io, cwd, path, messages, .{});
 }
 
-/// @deprecated Alias of `saveUnredacted`.
-pub fn save(
-    gpa: std.mem.Allocator,
-    io: Io,
-    cwd: Io.Dir,
-    path: []const u8,
-    messages: []const message.Message,
-) Error!void {
-    try saveUnredacted(gpa, io, cwd, path, messages);
-}
-
 /// Explicit unredacted public save with meta (low-level bypass).
 pub fn saveWithMetaUnredacted(
     gpa: std.mem.Allocator,
@@ -487,18 +489,6 @@ pub fn saveWithMetaUnredacted(
     var lock = try acquireBriefLock(gpa, io, cwd, path);
     defer lock.deinit();
     try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta, false, null, false);
-}
-
-/// @deprecated Alias of `saveWithMetaUnredacted`.
-pub fn saveWithMeta(
-    gpa: std.mem.Allocator,
-    io: Io,
-    cwd: Io.Dir,
-    path: []const u8,
-    messages: []const message.Message,
-    meta: SessionMeta,
-) Error!void {
-    try saveWithMetaUnredacted(gpa, io, cwd, path, messages, meta);
 }
 
 /// Public save with required redactor (SDK convenience).
@@ -725,13 +715,15 @@ fn collectAllIds(
 }
 
 /// Allocate next collision-free `zag-rtid-<n>` not in `reserved` or `map.pseudo`.
+/// `start_n` overflow → typed `OutOfMemory` (no wrap in ReleaseFast).
 fn allocUniquePseudo(
     gpa: std.mem.Allocator,
-    reserved: *std.ArrayList([]const u8),
+    reserved: *const std.ArrayList([]const u8),
     map: *const ToolIdMap,
     start_n: *usize,
 ) Error![]u8 {
     while (true) {
+        if (start_n.* == std.math.maxInt(usize)) return error.OutOfMemory;
         const n = start_n.*;
         start_n.* += 1;
         const candidate = std.fmt.allocPrint(gpa, "{s}{d}", .{ tool_id_pseudo_prefix, n }) catch
@@ -750,6 +742,32 @@ fn allocUniquePseudo(
     }
 }
 
+/// Transactional map entry: all three parallel lists grow together or none.
+fn commitPseudoEntry(
+    g: std.mem.Allocator,
+    m: *ToolIdMap,
+    res: *std.ArrayList([]const u8),
+    raw_id: []const u8,
+    pseudo: []u8,
+) Error!void {
+    // Ensure capacity for all three before any mutation (single owner of `pseudo`).
+    m.raw.ensureUnusedCapacity(g, 1) catch {
+        g.free(pseudo);
+        return error.OutOfMemory;
+    };
+    m.pseudo.ensureUnusedCapacity(g, 1) catch {
+        g.free(pseudo);
+        return error.OutOfMemory;
+    };
+    res.ensureUnusedCapacity(g, 1) catch {
+        g.free(pseudo);
+        return error.OutOfMemory;
+    };
+    m.raw.appendAssumeCapacity(raw_id);
+    m.pseudo.appendAssumeCapacity(pseudo);
+    res.appendAssumeCapacity(pseudo);
+}
+
 fn buildToolIdMap(
     gpa: std.mem.Allocator,
     messages: []const message.Message,
@@ -759,12 +777,10 @@ fn buildToolIdMap(
     errdefer freeToolIdMap(gpa, &map);
     if (redactor == null) return map;
 
-    // Reserved: every ID already in the transcript that will NOT be remapped.
+    // Reserved: IDs that will NOT be remapped (incl. prior zag-rtid-*).
     var reserved = try collectAllIds(gpa, messages);
     defer reserved.deinit(gpa);
 
-    // Remove secret-bearing IDs from reserved (they get new names); keep others
-    // including prior zag-rtid-* so we never reuse them.
     var keep: std.ArrayList([]const u8) = .empty;
     defer keep.deinit(gpa);
     for (reserved.items) |id| {
@@ -772,39 +788,24 @@ fn buildToolIdMap(
             try keep.append(gpa, id);
         }
     }
-    // Replace reserved contents with keep (borrowed slices into messages).
     reserved.clearRetainingCapacity();
     try reserved.appendSlice(gpa, keep.items);
 
     var next_n: usize = 0;
-    const consider = struct {
-        fn call(
-            g: std.mem.Allocator,
-            m: *ToolIdMap,
-            res: *std.ArrayList([]const u8),
-            nn: *usize,
-            red: ?*const redact_mod.Redactor,
-            id: []const u8,
-        ) Error!void {
-            if (!idNeedsPseudonym(red, id)) return;
-            if (m.lookup(id) != null) return;
-            const pseudo = try allocUniquePseudo(g, res, m, nn);
-            errdefer g.free(pseudo);
-            try m.raw.append(g, id);
-            try m.pseudo.append(g, pseudo);
-            // Newly claimed name is reserved for subsequent allocations.
-            try res.append(g, pseudo);
-        }
-    }.call;
-
     for (messages) |msg| {
         if (msg.tool_calls) |calls| {
             for (calls) |c| {
-                try consider(gpa, &map, &reserved, &next_n, redactor, c.id);
+                if (!idNeedsPseudonym(redactor, c.id)) continue;
+                if (map.lookup(c.id) != null) continue;
+                const pseudo = try allocUniquePseudo(gpa, &reserved, &map, &next_n);
+                try commitPseudoEntry(gpa, &map, &reserved, c.id, pseudo);
             }
         }
         if (msg.tool_call_id) |tid| {
-            try consider(gpa, &map, &reserved, &next_n, redactor, tid);
+            if (!idNeedsPseudonym(redactor, tid)) continue;
+            if (map.lookup(tid) != null) continue;
+            const pseudo = try allocUniquePseudo(gpa, &reserved, &map, &next_n);
+            try commitPseudoEntry(gpa, &map, &reserved, tid, pseudo);
         }
     }
     return map;
@@ -1120,7 +1121,7 @@ test "Writer create-existing fails without changing the file" {
     var t = transcript_mod.Transcript.init(arena_impl.allocator());
     try t.appendSystem("sys");
 
-    const err = createNew(gpa, io, tmp.dir, "s.jsonl", t.items(), .{});
+    const err = createNewUnredacted(gpa, io, tmp.dir, "s.jsonl", t.items(), .{});
     try std.testing.expectError(error.SessionAlreadyExists, err);
 
     const raw = try tmp.dir.readFileAlloc(io, "s.jsonl", gpa, .limited(1024));
@@ -1286,7 +1287,7 @@ test "Writer conflict prevents second active writer" {
     try std.testing.expectError(error.SessionBusy, err);
 
     // Public save must also respect the active writer.
-    const save_err = save(gpa, io, tmp.dir, "s.jsonl", t2.items());
+    const save_err = saveUnredacted(gpa, io, tmp.dir, "s.jsonl", t2.items());
     try std.testing.expectError(error.SessionBusy, save_err);
 }
 
@@ -1310,7 +1311,7 @@ test "Writer resume general I/O is distinct from not-found; openOrCreate does no
     try std.testing.expectError(error.IoFailed, resume_err);
 
     var t2 = transcript_mod.Transcript.init(arena_impl.allocator());
-    const ooc_err = openOrCreate(gpa, io, tmp.dir, "as_dir.jsonl", t.items(), .{}, &t2, null);
+    const ooc_err = openOrCreateUnredacted(gpa, io, tmp.dir, "as_dir.jsonl", t.items(), .{}, &t2, null);
     try std.testing.expectError(error.IoFailed, ooc_err);
 
     // Path remains a directory (not overwritten by a session file).
@@ -1334,7 +1335,7 @@ test "stale lock sidecar is reusable after release" {
     try t1.appendSystem("sys");
     try t1.appendUser("hello");
 
-    var writer = try createNew(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{});
+    var writer = try createNewUnredacted(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{});
     writer.deinit();
 
     // Re-open after release (持锁重开 after unlock).
@@ -1359,7 +1360,7 @@ test "Writer create/resume/save roundtrip" {
     try t1.appendSystem("sys");
     try t1.appendUser("hello");
 
-    var writer = try createNew(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{
+    var writer = try createNewUnredacted(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{
         .zag_version = "0.5.0",
         .compaction_gen = 1,
     });
@@ -1512,13 +1513,13 @@ test "openOrCreate creates only on not-found" {
     var t = transcript_mod.Transcript.init(arena_impl.allocator());
     try t.appendUser("seed");
 
-    var w = try openOrCreate(gpa, io, tmp.dir, "o.jsonl", t.items(), .{}, &t, null);
+    var w = try openOrCreateUnredacted(gpa, io, tmp.dir, "o.jsonl", t.items(), .{}, &t, null);
     w.deinit();
 
     // Invalid existing file must not be replaced by openOrCreate.
     try tmp.dir.writeFile(io, .{ .sub_path = "bad.jsonl", .data = "not-json\n" });
     var t2 = transcript_mod.Transcript.init(arena_impl.allocator());
-    const err = openOrCreate(gpa, io, tmp.dir, "bad.jsonl", t.items(), .{}, &t2, null);
+    const err = openOrCreateUnredacted(gpa, io, tmp.dir, "bad.jsonl", t.items(), .{}, &t2, null);
     try std.testing.expectError(error.InvalidSession, err);
 }
 
@@ -1536,7 +1537,7 @@ test "save and load roundtrip" {
     try t1.appendUser("hello");
     try t1.appendAssistantTurn(.{ .content = "hi", .tool_calls = &.{} });
 
-    try save(gpa, io, tmp.dir, "s.jsonl", t1.items());
+    try saveUnredacted(gpa, io, tmp.dir, "s.jsonl", t1.items());
 
     var arena2: std.heap.ArenaAllocator = .init(gpa);
     defer arena2.deinit();
@@ -1569,7 +1570,7 @@ test "save load with tool_calls" {
     try t1.appendAssistantTurn(.{ .content = "", .tool_calls = &calls });
     try t1.appendToolResult("call1", "file\tfile\n");
 
-    try save(gpa, io, tmp.dir, "t.jsonl", t1.items());
+    try saveUnredacted(gpa, io, tmp.dir, "t.jsonl", t1.items());
 
     var arena2: std.heap.ArenaAllocator = .init(gpa);
     defer arena2.deinit();
@@ -1594,7 +1595,7 @@ test "saveWithMeta persists compaction fields" {
     try t1.appendSystem("sys");
     try t1.appendUser("hi");
 
-    try saveWithMeta(gpa, io, tmp.dir, "m.jsonl", t1.items(), .{
+    try saveWithMetaUnredacted(gpa, io, tmp.dir, "m.jsonl", t1.items(), .{
         .zag_version = "0.5.0",
         .compaction_gen = 2,
         .compaction_summary = "earlier: user asked about files",
@@ -1729,3 +1730,51 @@ test "tool id map skips reuse after prior zag-rtid present" {
     const pseudo = map.lookup(secret_id).?;
     try std.testing.expectEqualStrings("zag-rtid-1", pseudo);
 }
+
+test "buildToolIdMap allocation-index sweep no leak" {
+    const gpa = std.testing.allocator;
+    const secret = redact_mod.testing.fake_api_key;
+    // Many secret IDs + reserved names force growth paths.
+    var ids_buf: [24][]const u8 = undefined;
+    var calls_buf: [24]message.ToolCall = undefined;
+    var owned: [24][]u8 = undefined;
+    defer for (owned[0..24]) |s| gpa.free(s);
+    var i: usize = 0;
+    while (i < 24) : (i += 1) {
+        if (i < 4) {
+            owned[i] = try std.fmt.allocPrint(gpa, "zag-rtid-{d}", .{i});
+        } else {
+            owned[i] = try std.fmt.allocPrint(gpa, "id-{d}-{s}", .{ i, secret });
+        }
+        ids_buf[i] = owned[i];
+        calls_buf[i] = .{ .id = owned[i], .name = "list_dir", .arguments = "{}" };
+    }
+    const msgs = [_]message.Message{
+        .{ .role = .assistant, .content = "", .tool_calls = calls_buf[0..] },
+    };
+
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+
+    var idx: usize = 0;
+    var saw_fail = false;
+    while (idx < 128) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        if (buildToolIdMap(fa, &msgs, &r)) |map_val| {
+            var map = map_val;
+            defer freeToolIdMap(fa, &map);
+            try std.testing.expectEqual(map.raw.items.len, map.pseudo.items.len);
+            try std.testing.expect(map.raw.items.len >= 20);
+            for (map.pseudo.items) |p| {
+                try std.testing.expect(std.mem.startsWith(u8, p, tool_id_pseudo_prefix));
+                try std.testing.expect(std.mem.indexOf(u8, p, secret) == null);
+            }
+            if (idx > 0) try std.testing.expect(saw_fail);
+            break;
+        } else |_| {
+            saw_fail = true;
+        }
+    } else return error.TestUnexpectedResult;
+}
+

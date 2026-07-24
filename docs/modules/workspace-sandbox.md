@@ -80,7 +80,7 @@ Report project instructions/test entry, permission mode, shell policy, lexical/r
 ## Current gaps
 
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
-- ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
+- systematic redaction — **branch implemented, pending Gate** (known keys/patterns only; not DLP).
 - doctor is not implemented.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.

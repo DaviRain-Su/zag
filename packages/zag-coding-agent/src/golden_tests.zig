@@ -258,7 +258,7 @@ test "cancel then session save/load resumes" {
     ));
 
     // Persist via writer lease (single-writer path) so cancel pairs stay resume-safe.
-    var writer = try session_store.createNew(gpa, io, tmp.dir, "session.jsonl", transcript.items(), .{});
+    var writer = try session_store.createNewUnredacted(gpa, io, tmp.dir, "session.jsonl", transcript.items(), .{});
     writer.deinit();
 
     var loaded_arena: std.heap.ArenaAllocator = .init(gpa);

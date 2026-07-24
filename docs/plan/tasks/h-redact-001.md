@@ -12,7 +12,7 @@ Introduce one shared redaction boundary for configured secrets and common API-ke
 
 > Follow-up: collision-safe `zag-rtid-*` tool IDs; public stop_reason redaction +
 > Agent defer clear; explicit `*Unredacted` session APIs; permission/CLI no raw paths/args;
-> redactor allocator sweep + pattern matrix. Status **in-progress** for orchestrator.
+> redactor allocator sweep + pattern matrix. Status **in-progress** for orchestrator. Gate not closed; do not mark done until main reverify.
 
 # context
 
