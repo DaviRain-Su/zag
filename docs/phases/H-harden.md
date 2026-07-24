@@ -160,7 +160,7 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 - std/curl selectable transports;
 - curl active deadline/cancel; std capability-truth `unsupported_control` (h-provider-001);
 - incomplete Tool-call fragment discard; retry ownership;
-- HTTP never logs Authorization; `redact_log` exact/URL scrub for diagnostics (h-redact-001).
+- HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001).
 
 ### Remaining
 

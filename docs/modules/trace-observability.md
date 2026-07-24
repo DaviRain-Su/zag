@@ -19,7 +19,7 @@ Trace is a versioned audit channel for reconstructing run decisions. Observer is
 4. `run_end.ok=false` for harness failures, **deadline `timeout`**, and **`unsupported_control`**; clean cooperative `cancelled` and normal `max_turns` / `completed` use `ok=true`.
 5. Explicit path persistence is fail-closed: typed `TraceIoFailed` / `InvalidPath` (never OOM-mapped filesystem errors).
 6. **One reply = one run.** Explicit path atomically holds the **latest completed reply** only (not a lifetime accumulation).
-7. Redaction before serialize/persist (`h-redact-001`): when `Trace.redactor` is set (product Agent always attaches), every arbitrary string field is redacted **before** JSON serialization. Redaction OOM → `OutOfMemory` (fail closed; no raw line). Null redactor is a documented low-level bypass.
+7. Redaction before serialize/persist (`h-redact-001`): when `Trace.redactor` is set (product Agent attaches for the reply and **clears on every exit**), every arbitrary string field is redacted **before** JSON serialization. Public `stop_reason` is redacted; Agent-controlled vocabulary is allocation-free. Redaction OOM → `OutOfMemory` (fail closed; terminal path falls back to minimal internal reason). Null redactor is a low-level bypass.
 
 ## Lifecycle owner
 

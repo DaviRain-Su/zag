@@ -343,15 +343,16 @@ pub const Session = struct {
 
     /// Persist transcript if a path is configured.
     /// Redacts arbitrary fields into temporary buffers; does not mutate in-memory transcript.
-    /// Safe after Agent deinit (session owns its policy).
+    /// Safe after Agent deinit (session owns its policy). Requires owned redactor.
     pub fn save(self: *Session) session_store.Error!void {
         if (self.writer) |*w| {
+            const r = self.activeRedactor() orelse return error.OutOfMemory; // should not happen on product path
             try w.save(self.transcript.items(), .{
                 .schema_version = session_store.current_schema_version,
                 .zag_version = self.zag_version,
                 .compaction_gen = self.compaction_gen,
                 .compaction_summary = self.compaction_summary,
-            }, self.activeRedactor());
+            }, r);
         }
     }
 };
@@ -537,6 +538,10 @@ pub const Agent = struct {
         }
     }
 
+    fn clearTraceRedactor(self: *Agent) void {
+        if (self.trace) |*tr| tr.setRedactor(null);
+    }
+
     /// Per-reply prep: reset ledger + trace buffer, non-destructive preflight,
     /// then `run_start`. Lifecycle owner: facade (loop + session save + persist).
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
@@ -545,13 +550,15 @@ pub const Agent = struct {
         try self.ensureSessionRedactor(session);
         // Trace borrows session policy only for this synchronous reply.
         if (self.trace) |*tr| tr.setRedactor(session.activeRedactor());
+        errdefer self.clearTraceRedactor();
         const tr = if (self.trace) |*t| t else return;
         try tr.beginReply();
         try tr.emitRunStart(.{
             .version = self.options.version,
             .permission = self.options.permission_mode.name(),
             .shell_policy = self.options.shell_policy.name(),
-            .session = session.path,
+            // Do not put raw session path into trace (may contain secrets).
+            .session = if (session.path != null) "configured" else null,
         });
     }
 
@@ -595,7 +602,7 @@ pub const Agent = struct {
             @max(turns_hint, tr.last_emitted_turn)
         else
             turns_hint;
-        defer if (self.trace) |*tr| tr.setRedactor(null);
+        // Redactor clear is owned by reply()'s defer covering all exits.
         self.commitTerminal(turns, false, stop_reason) catch |terr| return terr;
         return primary;
     }
@@ -664,6 +671,8 @@ pub const Agent = struct {
     /// rather than silently keeping only the primary error.
     pub fn reply(self: *Agent, session: *Session, user_text: []const u8) ReplyError!loop.Result {
         try self.beginRun(session);
+        // Clear borrowed trace redactor on every exit (success, failRun, persist fault).
+        defer self.clearTraceRedactor();
         session.zag_version = self.options.version;
 
         session.transcript.appendUser(user_text) catch |err| {
@@ -681,7 +690,6 @@ pub const Agent = struct {
 
         // Final persist on success path: TraceIoFailed (no audited success).
         try self.commitTerminal(result.turns, resultOk(result.stop_reason), result.stop_reason);
-        if (self.trace) |*tr| tr.setRedactor(null);
         return result;
     }
 
@@ -2959,11 +2967,11 @@ test "h-redact: multi-tool secret IDs get unique pseudonyms on save/resume" {
         defer gpa.free(bytes);
         try std.testing.expect(std.mem.indexOf(u8, bytes, s1) == null);
         try std.testing.expect(std.mem.indexOf(u8, bytes, s2) == null);
-        try std.testing.expect(std.mem.indexOf(u8, bytes, "redacted-tool-call-0") != null);
-        try std.testing.expect(std.mem.indexOf(u8, bytes, "redacted-tool-call-1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "zag-rtid-0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "zag-rtid-1") != null);
         // Distinct pseudonyms.
-        try std.testing.expect(std.mem.indexOf(u8, bytes, "redacted-tool-call-0") !=
-            std.mem.indexOf(u8, bytes, "redacted-tool-call-1"));
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "zag-rtid-0") !=
+            std.mem.indexOf(u8, bytes, "zag-rtid-1"));
     }
 
     // Resume: tool pairs still coherent under pseudonyms.
@@ -2980,13 +2988,13 @@ test "h-redact: multi-tool secret IDs get unique pseudonyms on save/resume" {
     for (resumed.transcript.items()) |m| {
         if (m.tool_calls) |calls| {
             for (calls) |c| {
-                if (std.mem.eql(u8, c.id, "redacted-tool-call-0")) saw0 = true;
-                if (std.mem.eql(u8, c.id, "redacted-tool-call-1")) saw1 = true;
+                if (std.mem.eql(u8, c.id, "zag-rtid-0")) saw0 = true;
+                if (std.mem.eql(u8, c.id, "zag-rtid-1")) saw1 = true;
             }
         }
         if (m.tool_call_id) |tid| {
-            if (std.mem.eql(u8, tid, "redacted-tool-call-0")) saw0 = true;
-            if (std.mem.eql(u8, tid, "redacted-tool-call-1")) saw1 = true;
+            if (std.mem.eql(u8, tid, "zag-rtid-0")) saw0 = true;
+            if (std.mem.eql(u8, tid, "zag-rtid-1")) saw1 = true;
         }
     }
     try std.testing.expect(saw0 and saw1);
@@ -3040,4 +3048,111 @@ test "h-redact: mid-trace redaction OOM still one out_of_memory terminal" {
     try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "out_of_memory") != null);
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, secret) == null);
+}
+
+test "h-redact: reply clears trace redactor on success and failure" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-xx", .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{ .permission_mode = .yolo, .pattern_redaction = true });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    _ = try agent.reply(&session, "hi");
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try std.testing.expect(tr.redactor == null);
+
+    // Failure path
+    const FailChat = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return error.AuthenticationFailed;
+        }
+    };
+    var fail: FailChat = .{};
+    agent.provider = .{ .ptr = &fail, .vtable = &.{ .chat = FailChat.chat } };
+    try std.testing.expectError(error.ProviderFailed, agent.reply(&session, "again"));
+    try std.testing.expect(tr.redactor == null);
+}
+
+test "h-redact: save/resume then new secret id avoids prior zag-rtid" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+    const dir_name = ".zag-test-h-redact-rtid-reuse";
+    const sess_path = ".zag-test-h-redact-rtid-reuse/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const slots = [_][]const u8{secret};
+    {
+        var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = EchoSecretChat.chat },
+        }, .{ .permission_mode = .yolo, .secrets = &slots });
+        defer agent.deinit();
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+            .redactor = agent.activeRedactor(),
+        });
+        defer session.deinit();
+        const id = try std.fmt.allocPrint(session.arena_impl.allocator(), "c-{s}", .{secret});
+        const calls = try session.arena_impl.allocator().alloc(message.ToolCall, 1);
+        calls[0] = .{ .id = id, .name = "list_dir", .arguments = "{}" };
+        try session.transcript.appendAssistantTurn(.{ .content = "", .tool_calls = calls, .finish_reason = "tool_calls" });
+        try session.transcript.appendToolResult(id, "ok");
+        try session.save();
+        const b1 = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(1024 * 1024));
+        defer gpa.free(b1);
+        try std.testing.expect(std.mem.indexOf(u8, b1, "zag-rtid-0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, b1, secret) == null);
+    }
+    // Resume and add another secret-bearing id — must not reuse zag-rtid-0.
+    {
+        var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = EchoSecretChat.chat },
+        }, .{ .permission_mode = .yolo, .secrets = &slots });
+        defer agent.deinit();
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = false,
+            .redactor = agent.activeRedactor(),
+        });
+        defer session.deinit();
+        const id2 = try std.fmt.allocPrint(session.arena_impl.allocator(), "d-{s}", .{secret});
+        const calls2 = try session.arena_impl.allocator().alloc(message.ToolCall, 1);
+        calls2[0] = .{ .id = id2, .name = "list_dir", .arguments = "{}" };
+        try session.transcript.appendAssistantTurn(.{ .content = "", .tool_calls = calls2, .finish_reason = "tool_calls" });
+        try session.transcript.appendToolResult(id2, "ok2");
+        try session.save();
+        const b2 = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(1024 * 1024));
+        defer gpa.free(b2);
+        try std.testing.expect(std.mem.indexOf(u8, b2, "zag-rtid-0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, b2, "zag-rtid-1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, b2, secret) == null);
+    }
 }

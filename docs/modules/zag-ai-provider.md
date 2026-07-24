@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `openai-zig`（OpenAI）/ `std.http`（Anthropic） |
-| 成熟度 | **L1+**；deadline/cancel/partial Tool safety（h-provider-001）+ log scrub helpers（h-redact-001）；L2 仍欠更多 contract matrix |
+| 成熟度 | **L1+**；deadline/cancel/partial Tool safety（h-provider-001）+ HTTP diagnostics status/length only（h-redact-001）；L2 仍欠更多 contract matrix |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
 ## 包内分层

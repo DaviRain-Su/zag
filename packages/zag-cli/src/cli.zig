@@ -229,8 +229,9 @@ pub fn run(init: std.process.Init) !void {
                 resolved.config.timeout_ms,
             },
         );
-        if (session_path) |sp| std.log.info("session path={s}", .{sp});
-        if (trace_path) |tp| std.log.info("trace path={s}", .{tp});
+        // h-redact-001: do not echo session/trace paths (may embed secrets).
+        if (session_path != null) std.log.info("session: configured", .{});
+        if (trace_path != null) std.log.info("trace: enabled", .{});
     }
 
     const wire = resolved.createWire(gpa, io) catch |err| {
@@ -352,10 +353,9 @@ fn runRepl(
     try writeStdout(io, "zag (jail + policy + trace, permission=");
     try writeStdout(io, mode.name());
     try writeStdout(io, "). Empty line or Ctrl-D to exit.\n");
-    if (session_path) |sp| {
-        try writeStdout(io, "session: ");
-        try writeStdout(io, sp);
-        try writeStdout(io, "\n");
+    // h-redact-001: generic session/project status only (no raw paths).
+    if (session_path != null) {
+        try writeStdout(io, "session: configured\n");
     }
 
     var session = coding.Session.start(agent.gpa, io, .{
@@ -370,10 +370,8 @@ fn runRepl(
     };
     defer session.deinit();
 
-    if (session.project_source) |src| {
-        try writeStdout(io, "project instructions: ");
-        try writeStdout(io, src);
-        try writeStdout(io, "\n");
+    if (session.project_source != null) {
+        try writeStdout(io, "project instructions: loaded\n");
     }
 
     var stdin_buf: [4096]u8 = undefined;

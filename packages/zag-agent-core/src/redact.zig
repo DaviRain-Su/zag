@@ -610,3 +610,84 @@ test "containsSecret" {
     try std.testing.expect(r.containsSecret("a" ++ testing.fake_api_key ++ "b"));
     try std.testing.expect(!r.containsSecret("no secrets here"));
 }
+
+test "FailingAllocator sweep all allocation sites then succeed" {
+    const gpa = std.testing.allocator;
+    const secret = testing.fake_api_key;
+    // Sweep fail_index until init+redact both succeed without leak (GPA detects).
+    var idx: usize = 0;
+    while (idx < 64) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        var r = Redactor.init(fa, .{ .secrets = &.{secret}, .patterns = true }) catch {
+            continue; // expected OOM at this index
+        };
+        defer r.deinit();
+        const out = r.redactAlloc(fa, "x" ++ secret ++ "y") catch {
+            continue;
+        };
+        defer fa.free(out);
+        try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+        // First full success ends the sweep.
+        break;
+    } else {
+        return error.TestUnexpectedResult;
+    }
+}
+
+test "pattern matrix: each family min boundary and max-run" {
+    const gpa = std.testing.allocator;
+    var r = try Redactor.init(gpa, .{ .secrets = &.{}, .patterns = true });
+    defer r.deinit();
+
+    const Case = struct { raw: []const u8, expect_redact: bool };
+    const cases = [_]Case{
+        // sk-
+        .{ .raw = "sk-" ++ "a" ** (min_sk_token_len - 1), .expect_redact = false },
+        .{ .raw = "sk-" ++ "a" ** min_sk_token_len, .expect_redact = true },
+        .{ .raw = "pre" ++ ("sk-" ++ "a" ** min_sk_token_len), .expect_redact = false }, // mid-ident
+        .{ .raw = " " ++ ("sk-" ++ "a" ** min_sk_token_len), .expect_redact = true },
+        // sk-ant- (body short enough that generic sk- also misses)
+        .{ .raw = "sk-ant-" ++ "b" ** 12, .expect_redact = false },
+        .{ .raw = "sk-ant-" ++ "b" ** min_ant_token_len, .expect_redact = true },
+        // xai-
+        .{ .raw = "xai-" ++ "c" ** (min_xai_token_len - 1), .expect_redact = false },
+        .{ .raw = "xai-" ++ "c" ** min_xai_token_len, .expect_redact = true },
+        // ghp_
+        .{ .raw = "ghp_" ++ "d" ** (min_github_pat_len - 1), .expect_redact = false },
+        .{ .raw = "ghp_" ++ "d" ** min_github_pat_len, .expect_redact = true },
+        // github_pat_
+        .{ .raw = "github_pat_" ++ "e" ** (min_github_fine_len - 1), .expect_redact = false },
+        .{ .raw = "github_pat_" ++ "e" ** min_github_fine_len, .expect_redact = true },
+        // Bearer
+        .{ .raw = "Bearer " ++ "f" ** (min_bearer_token_len - 1), .expect_redact = false },
+        .{ .raw = "Bearer " ++ "f" ** min_bearer_token_len, .expect_redact = true },
+        // AWS
+        .{ .raw = "AKIA" ++ "A" ** 15, .expect_redact = false },
+        .{ .raw = "AKIA" ++ "A" ** 16, .expect_redact = true },
+        .{ .raw = "AKIA" ++ "A" ** 17, .expect_redact = false },
+    };
+    for (cases) |c| {
+        const out = try r.redactAlloc(gpa, c.raw);
+        defer gpa.free(out);
+        if (c.expect_redact) {
+            try std.testing.expect(std.mem.indexOf(u8, out, marker) != null);
+            // Secret body should not remain fully.
+            if (c.raw.len > 8) {
+                try std.testing.expect(std.mem.indexOf(u8, out, c.raw) == null);
+            }
+        } else {
+            try std.testing.expectEqualStrings(c.raw, out);
+        }
+    }
+}
+
+test "short configured secret never matches" {
+    const gpa = std.testing.allocator;
+    var r = try Redactor.init(gpa, .{ .secrets = &.{"shorty"}, .patterns = false });
+    defer r.deinit();
+    try std.testing.expectEqual(@as(usize, 0), r.secrets.items.len);
+    const out = try r.redactAlloc(gpa, "shorty shorty");
+    defer gpa.free(out);
+    try std.testing.expectEqualStrings("shorty shorty", out);
+}

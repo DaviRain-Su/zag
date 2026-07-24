@@ -23,7 +23,7 @@ The Session owner holds transcript memory, path, metadata, and the active-writer
 6. L2 has at most one active writer per persisted session; last-writer-wins is forbidden.
 7. Session files may contain code, command output, and residual secrets; `.zag/` remains sensitive local state even after redaction.
 8. Session paths are **lexical** relative-workspace paths only (absolute/`..` rejected). This is not symlink containment.
-9. **Redaction (h-redact-001):** when `Writer.redactor` is set, every arbitrary string field (message content, tool args/ids, content parts/URLs, compaction summary) is redacted into temporary buffers **before** atomic serialize. In-memory transcript is not mutated. Redaction OOM → `OutOfMemory` with prior file bytes preserved. Null redactor is a documented low-level bypass; product Session/Agent attaches policy.
+9. **Redaction (h-redact-001):** product `Writer.save` requires a `*const Redactor` (borrowed for the call only — not retained). Every arbitrary string field is redacted into temporary buffers **before** atomic serialize. Secret-bearing tool-call IDs map to collision-safe `zag-rtid-<n>` (skips IDs already present, including prior resume). In-memory transcript is not mutated. Redaction OOM → `OutOfMemory` with prior file bytes preserved. Explicit unredacted bypasses: `createNewUnredacted` / `saveUnredacted` / `saveWithMetaUnredacted` / `Writer.saveUnredacted`.
 
 ## Schema v1 (current format)
 

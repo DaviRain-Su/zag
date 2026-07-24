@@ -236,21 +236,13 @@ pub const StdinPrompter = struct {
         const io = self.io;
         const risk = descriptor.capabilities.risk;
         const tool_name = descriptor.definition.name;
-
-        // Preview args (truncated) on stderr via std.log.
-        const preview_len = @min(arguments_json.len, 400);
+        // h-redact-001: never print raw arguments_json (may contain secrets).
+        // Generic metadata only: risk + tool name + arg byte length.
         std.log.warn(
-            \\permission: allow {s} tool `{s}`?
-            \\  args: {s}{s}
-            \\  [y]es / [N]o >
-        , .{
-            risk.label(),
-            tool_name,
-            arguments_json[0..preview_len],
-            if (arguments_json.len > preview_len) "…" else "",
-        });
+            "permission: allow {s} tool `{s}`? (args_len={d}) [y]es / [N]o >",
+            .{ risk.label(), tool_name, arguments_json.len },
+        );
 
-        // Also print a short prompt to stdout so the user sees it in REPL.
         Io.File.stderr().writeStreamingAll(io, "  → type y + Enter to allow, anything else to deny: ") catch {};
 
         var buf: [64]u8 = undefined;

@@ -89,19 +89,28 @@ pub const Writer = struct {
         self.* = undefined;
     }
 
-    /// Persist transcript atomically, preserving the prior file on failure.
-    /// `redactor` is borrowed **only for this call** (not retained). Null = low-level bypass.
+    /// Persist with mandatory redaction policy (borrowed **only for this call**).
     /// Redacts into temporary buffers only; does not mutate `messages`.
     pub fn save(
         self: *Writer,
         messages: []const message.Message,
         meta: SessionMeta,
-        redactor: ?*const redact_mod.Redactor,
+        redactor: *const redact_mod.Redactor,
     ) Error!void {
         const fault = if (builtin.is_test) self.fail_before_replace else false;
         const redact_fault = if (builtin.is_test) self.fail_next_redact else false;
         if (builtin.is_test and self.fail_next_redact) self.fail_next_redact = false;
         try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault, redactor, redact_fault);
+    }
+
+    /// Explicit unredacted save (low-level bypass). Prefer `save` on product paths.
+    pub fn saveUnredacted(
+        self: *Writer,
+        messages: []const message.Message,
+        meta: SessionMeta,
+    ) Error!void {
+        const fault = if (builtin.is_test) self.fail_before_replace else false;
+        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault, null, false);
     }
 
     /// Load the current session file into `transcript` and return header meta.
@@ -205,10 +214,9 @@ fn acquireWriterLease(
     };
 }
 
-/// Create a new persisted session. Fails if the session file already exists.
-/// `redactor` is stored on the Writer for subsequent saves and applied to the
-/// initial create write (null = low-level bypass).
-pub fn createNew(
+/// Explicit unredacted create (low-level bypass). Product path must use
+/// `createNewWithRedactor` so initial bytes never carry raw secrets.
+pub fn createNewUnredacted(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
@@ -219,6 +227,20 @@ pub fn createNew(
     return createNewWithRedactor(gpa, io, cwd, path, messages, meta, null);
 }
 
+/// @deprecated Prefer `createNewUnredacted` or `createNewWithRedactor`.
+/// Kept as an alias of the unredacted bypass for existing low-level tests.
+pub fn createNew(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+) Error!Writer {
+    return createNewUnredacted(gpa, io, cwd, path, messages, meta);
+}
+
+/// Create with redaction applied to the initial write (redactor borrowed for the call only).
 pub fn createNewWithRedactor(
     gpa: std.mem.Allocator,
     io: Io,
@@ -431,8 +453,18 @@ fn mapCreateAtomicErr(err: anyerror) Error {
     };
 }
 
-/// Public save: acquires the writer lock for the call so it cannot bypass single-writer.
-/// Low-level: no redactor (product Session.Writer path attaches policy).
+/// Explicit unredacted public save (low-level bypass). Product path: `Writer.save` + redactor.
+pub fn saveUnredacted(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+) Error!void {
+    try saveWithMetaUnredacted(gpa, io, cwd, path, messages, .{});
+}
+
+/// @deprecated Alias of `saveUnredacted`.
 pub fn save(
     gpa: std.mem.Allocator,
     io: Io,
@@ -440,12 +472,11 @@ pub fn save(
     path: []const u8,
     messages: []const message.Message,
 ) Error!void {
-    try saveWithMeta(gpa, io, cwd, path, messages, .{});
+    try saveUnredacted(gpa, io, cwd, path, messages);
 }
 
-/// Public save with meta: acquires the writer lock for the call so it cannot bypass single-writer.
-/// Low-level: no redactor. Prefer `Writer.save` with an explicit redactor on the product path.
-pub fn saveWithMeta(
+/// Explicit unredacted public save with meta (low-level bypass).
+pub fn saveWithMetaUnredacted(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
@@ -458,7 +489,19 @@ pub fn saveWithMeta(
     try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta, false, null, false);
 }
 
-/// Public save with optional redactor (SDK convenience).
+/// @deprecated Alias of `saveWithMetaUnredacted`.
+pub fn saveWithMeta(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+) Error!void {
+    try saveWithMetaUnredacted(gpa, io, cwd, path, messages, meta);
+}
+
+/// Public save with required redactor (SDK convenience).
 pub fn saveWithMetaRedacted(
     gpa: std.mem.Allocator,
     io: Io,
@@ -466,7 +509,7 @@ pub fn saveWithMetaRedacted(
     path: []const u8,
     messages: []const message.Message,
     meta: SessionMeta,
-    redactor: ?*const redact_mod.Redactor,
+    redactor: *const redact_mod.Redactor,
 ) Error!void {
     var lock = try acquireBriefLock(gpa, io, cwd, path);
     defer lock.deinit();
@@ -620,10 +663,14 @@ fn redactField(
     return redact_mod.redactOptional(redactor, gpa, value);
 }
 
+/// Reserved prefix for secret-bearing tool-call ID pseudonyms.
+/// Collision-safe: generated names avoid every ID already present in the message set.
+pub const tool_id_pseudo_prefix: []const u8 = "zag-rtid-";
+
 /// Per-save map: original tool-call id → pseudonym (only when id contains secrets).
-/// Unchanged IDs are not entered. Order of first appearance assigns ordinals.
+/// Unchanged IDs are not entered. Pseudonyms are unique vs all IDs in context
+/// (including prior `zag-rtid-*` from resume) and do not embed secret material.
 const ToolIdMap = struct {
-    /// Parallel arrays: raw ids that need remapping → owned pseudonym strings.
     raw: std.ArrayList([]const u8) = .empty,
     pseudo: std.ArrayList([]u8) = .empty,
 
@@ -647,6 +694,62 @@ fn idNeedsPseudonym(redactor: ?*const redact_mod.Redactor, id: []const u8) bool 
     return r.containsSecret(id);
 }
 
+fn idInList(list: []const []const u8, id: []const u8) bool {
+    for (list) |x| {
+        if (std.mem.eql(u8, x, id)) return true;
+    }
+    return false;
+}
+
+fn collectAllIds(
+    gpa: std.mem.Allocator,
+    messages: []const message.Message,
+) Error!std.ArrayList([]const u8) {
+    var all: std.ArrayList([]const u8) = .empty;
+    errdefer all.deinit(gpa);
+    for (messages) |msg| {
+        if (msg.tool_calls) |calls| {
+            for (calls) |c| {
+                if (!idInList(all.items, c.id)) {
+                    try all.append(gpa, c.id);
+                }
+            }
+        }
+        if (msg.tool_call_id) |tid| {
+            if (!idInList(all.items, tid)) {
+                try all.append(gpa, tid);
+            }
+        }
+    }
+    return all;
+}
+
+/// Allocate next collision-free `zag-rtid-<n>` not in `reserved` or `map.pseudo`.
+fn allocUniquePseudo(
+    gpa: std.mem.Allocator,
+    reserved: *std.ArrayList([]const u8),
+    map: *const ToolIdMap,
+    start_n: *usize,
+) Error![]u8 {
+    while (true) {
+        const n = start_n.*;
+        start_n.* += 1;
+        const candidate = std.fmt.allocPrint(gpa, "{s}{d}", .{ tool_id_pseudo_prefix, n }) catch
+            return error.OutOfMemory;
+        var clash = idInList(reserved.items, candidate);
+        if (!clash) {
+            for (map.pseudo.items) |p| {
+                if (std.mem.eql(u8, p, candidate)) {
+                    clash = true;
+                    break;
+                }
+            }
+        }
+        if (!clash) return candidate;
+        gpa.free(candidate);
+    }
+}
+
 fn buildToolIdMap(
     gpa: std.mem.Allocator,
     messages: []const message.Message,
@@ -656,29 +759,52 @@ fn buildToolIdMap(
     errdefer freeToolIdMap(gpa, &map);
     if (redactor == null) return map;
 
-    var ordinal: usize = 0;
+    // Reserved: every ID already in the transcript that will NOT be remapped.
+    var reserved = try collectAllIds(gpa, messages);
+    defer reserved.deinit(gpa);
+
+    // Remove secret-bearing IDs from reserved (they get new names); keep others
+    // including prior zag-rtid-* so we never reuse them.
+    var keep: std.ArrayList([]const u8) = .empty;
+    defer keep.deinit(gpa);
+    for (reserved.items) |id| {
+        if (!idNeedsPseudonym(redactor, id)) {
+            try keep.append(gpa, id);
+        }
+    }
+    // Replace reserved contents with keep (borrowed slices into messages).
+    reserved.clearRetainingCapacity();
+    try reserved.appendSlice(gpa, keep.items);
+
+    var next_n: usize = 0;
+    const consider = struct {
+        fn call(
+            g: std.mem.Allocator,
+            m: *ToolIdMap,
+            res: *std.ArrayList([]const u8),
+            nn: *usize,
+            red: ?*const redact_mod.Redactor,
+            id: []const u8,
+        ) Error!void {
+            if (!idNeedsPseudonym(red, id)) return;
+            if (m.lookup(id) != null) return;
+            const pseudo = try allocUniquePseudo(g, res, m, nn);
+            errdefer g.free(pseudo);
+            try m.raw.append(g, id);
+            try m.pseudo.append(g, pseudo);
+            // Newly claimed name is reserved for subsequent allocations.
+            try res.append(g, pseudo);
+        }
+    }.call;
+
     for (messages) |msg| {
         if (msg.tool_calls) |calls| {
             for (calls) |c| {
-                if (!idNeedsPseudonym(redactor, c.id)) continue;
-                if (map.lookup(c.id) != null) continue;
-                const pseudo = std.fmt.allocPrint(gpa, "redacted-tool-call-{d}", .{ordinal}) catch
-                    return error.OutOfMemory;
-                errdefer gpa.free(pseudo);
-                try map.raw.append(gpa, c.id);
-                try map.pseudo.append(gpa, pseudo);
-                ordinal += 1;
+                try consider(gpa, &map, &reserved, &next_n, redactor, c.id);
             }
         }
         if (msg.tool_call_id) |tid| {
-            if (!idNeedsPseudonym(redactor, tid)) continue;
-            if (map.lookup(tid) != null) continue;
-            const pseudo = std.fmt.allocPrint(gpa, "redacted-tool-call-{d}", .{ordinal}) catch
-                return error.OutOfMemory;
-            errdefer gpa.free(pseudo);
-            try map.raw.append(gpa, tid);
-            try map.pseudo.append(gpa, pseudo);
-            ordinal += 1;
+            try consider(gpa, &map, &reserved, &next_n, redactor, tid);
         }
     }
     return map;
@@ -1086,7 +1212,7 @@ test "Writer save failpoint preserves prior bytes and reloads" {
     testing.setFailBeforeReplace(&writer, true);
     defer testing.setFailBeforeReplace(&writer, false);
 
-    const err = writer.save(t.items(), .{}, null);
+    const err = writer.saveUnredacted(t.items(), .{});
     try std.testing.expectError(error.IoFailed, err);
 
     const raw = try tmp.dir.readFileAlloc(io, "s.jsonl", gpa, .limited(1024));
@@ -1239,10 +1365,10 @@ test "Writer create/resume/save roundtrip" {
     });
 
     try t1.appendAssistantTurn(.{ .content = "hi", .tool_calls = &.{} });
-    try writer.save(t1.items(), .{
+    try writer.saveUnredacted(t1.items(), .{
         .zag_version = "0.5.0",
         .compaction_gen = 1,
-    }, null);
+    });
     writer.deinit();
 
     var arena2: std.heap.ArenaAllocator = .init(gpa);
@@ -1543,4 +1669,63 @@ test "headerless file still loads as v1" {
     const meta = try loadWithMeta(gpa, io, tmp.dir, "bare.jsonl", &t);
     try std.testing.expectEqual(current_schema_version, meta.schema_version);
     try std.testing.expectEqual(@as(usize, 1), t.items().len);
+}
+
+test "tool id pseudonym collision-safe vs legitimate zag-rtid id" {
+    const gpa = std.testing.allocator;
+    const secret = redact_mod.testing.fake_api_key;
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+
+    // Legitimate ID already uses reserved prefix; secret-bearing id must get a free slot.
+    const legit = "zag-rtid-0";
+    const secret_id = try std.fmt.allocPrint(gpa, "call-{s}", .{secret});
+    defer gpa.free(secret_id);
+
+    const msgs = [_]message.Message{
+        .{
+            .role = .assistant,
+            .content = "x",
+            .tool_calls = &[_]message.ToolCall{
+                .{ .id = legit, .name = "list_dir", .arguments = "{}" },
+                .{ .id = secret_id, .name = "list_dir", .arguments = "{}" },
+            },
+        },
+        .{ .role = .tool, .content = "a", .tool_call_id = legit },
+        .{ .role = .tool, .content = "b", .tool_call_id = secret_id },
+    };
+
+    var map = try buildToolIdMap(gpa, &msgs, &r);
+    defer freeToolIdMap(gpa, &map);
+
+    try std.testing.expect(map.lookup(legit) == null); // unchanged
+    const pseudo = map.lookup(secret_id) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(!std.mem.eql(u8, pseudo, legit));
+    try std.testing.expect(std.mem.startsWith(u8, pseudo, tool_id_pseudo_prefix));
+    try std.testing.expect(std.mem.indexOf(u8, pseudo, secret) == null);
+}
+
+test "tool id map skips reuse after prior zag-rtid present" {
+    const gpa = std.testing.allocator;
+    const secret = redact_mod.testing.fake_api_key;
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+
+    const prior = "zag-rtid-0";
+    const secret_id = try std.fmt.allocPrint(gpa, "x-{s}", .{secret});
+    defer gpa.free(secret_id);
+    const msgs = [_]message.Message{
+        .{
+            .role = .assistant,
+            .content = "",
+            .tool_calls = &[_]message.ToolCall{
+                .{ .id = prior, .name = "list_dir", .arguments = "{}" },
+                .{ .id = secret_id, .name = "list_dir", .arguments = "{}" },
+            },
+        },
+    };
+    var map = try buildToolIdMap(gpa, &msgs, &r);
+    defer freeToolIdMap(gpa, &map);
+    const pseudo = map.lookup(secret_id).?;
+    try std.testing.expectEqualStrings("zag-rtid-1", pseudo);
 }

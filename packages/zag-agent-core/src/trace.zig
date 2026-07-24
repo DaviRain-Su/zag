@@ -409,17 +409,39 @@ pub const Trace = struct {
         }, .terminal);
     }
 
-    fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
-        // stop_reason is a controlled vocabulary (completed/out_of_memory/…).
-        // Never allocate or redact it — preserves terminal_reserve no-alloc guarantee
-        // after mid-event redaction OOM (failRun still commits one truthful terminal).
-        const reason: ?[]const u8 = if (info.stop_reason) |r|
-            truncateUtf8(r, max_stop_reason_len)
-        else
-            null;
-        if (reason) |rr| {
-            if (!std.unicode.utf8ValidateSlice(rr)) return error.TraceSerializationFailed;
+    /// Agent-controlled stop reasons: no redaction, no heap (terminal reserve).
+    fn isInternalStopReason(s: []const u8) bool {
+        inline for (.{
+            "completed",       "max_turns",           "cancelled",
+            "timeout",         "unsupported_control", "provider_error",
+            "session_error",   "trace_error",         "out_of_memory",
+            "invalid_toolset", "invalid_context",
+        }) |name| {
+            if (std.mem.eql(u8, s, name)) return true;
         }
+        return false;
+    }
+
+    fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
+        // Public stop_reason goes through redactor when set. Internal Agent
+        // vocabulary stays allocation-free (terminal_reserve). Redaction OOM
+        // returns OutOfMemory → emitRunEnd falls back to minimal terminal.
+        var reason_stack: [max_stop_reason_len]u8 = undefined;
+        const reason: ?[]const u8 = if (info.stop_reason) |r| blk: {
+            if (!std.unicode.utf8ValidateSlice(r)) return error.TraceSerializationFailed;
+            const t = truncateUtf8(r, max_stop_reason_len);
+            if (isInternalStopReason(t) or self.redactor == null) break :blk t;
+            if (builtin.is_test and self.fail_next_redact) {
+                self.fail_next_redact = false;
+                return error.OutOfMemory;
+            }
+            const red = self.redactor.?.redactAlloc(self.gpa, t) catch return error.OutOfMemory;
+            defer self.gpa.free(red);
+            const cut = truncateUtf8(red, max_stop_reason_len);
+            if (cut.len > reason_stack.len) return error.TraceSerializationFailed;
+            @memcpy(reason_stack[0..cut.len], cut);
+            break :blk reason_stack[0..cut.len];
+        } else null;
         try self.writeObj(.{
             .kind = .run_end,
             .turns = info.turns,

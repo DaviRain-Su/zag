@@ -52,7 +52,10 @@ Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/termi
 - **Redaction (h-redact-001):** the shared `redact.Redactor` in `zag-agent-core` scrubs exact configured secrets (CLI wires the resolved provider API key without logging it) and a conservative set of common API-key/token shapes before **verbose observer logs**, **trace JSONL serialize**, and **session atomic persist**. In-memory transcript and provider request bytes may remain raw; only outward copies are redacted.
 - Marker is deterministic (`[REDACTED]`). Empty/too-short configured secrets are ignored. Redaction OOM is fail-closed (no raw fallback; prior session/trace bytes preserved). Mid-trace redaction OOM still yields one allocation-free `out_of_memory` terminal.
 - Matching: global longest among exact+patterns; pattern token boundaries; AWS fixed 20-byte form; complexity O(input × secret material + pattern scan).
-- Session owns a cloned redactor at `Session.start` (create writes redacted); safe to `save` after Agent deinit. Tool-call IDs that contain secrets map to per-file pseudonyms (`redacted-tool-call-<n>`), not a collapsed marker.
+- Session owns a cloned redactor at `Session.start` (create writes redacted); safe to `save` after Agent deinit. Tool-call IDs that contain secrets map to collision-safe `zag-rtid-<n>` pseudonyms (skip reserved IDs already in context / prior resume); never collapse multiple IDs to one marker; no secret material in the name.
+- Trace `stop_reason`: Agent vocabulary is allocation-free; arbitrary public stop_reason is redacted (OOM → minimal terminal). Agent clears `trace.redactor` on every reply exit.
+- Low-level unredacted session APIs are explicitly named (`createNewUnredacted` / `saveUnredacted` / …); product path always uses redaction.
+- Ask-mode permission prompt logs risk + tool name + args_len only (never raw arguments). CLI verbose/REPL do not echo session/trace/project paths.
 - Model-plane / openai-zig HTTP diagnostics print **status + body length only** — never Authorization, body text, or hex dumps.
 - Shell/jail loop warnings are generic (no raw command/path).
 - **Not claimed:** zeroization of freed secret buffers, DLP over arbitrary tool/file content, or proof that `.zag/` is secret-free.
