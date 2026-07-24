@@ -254,12 +254,15 @@ test "cancel then session save/load resumes" {
         .cancelled,
     ));
 
-    try session_store.save(gpa, io, tmp.dir, "session.jsonl", transcript.items());
+    // Persist via writer lease (single-writer path) so cancel pairs stay resume-safe.
+    var writer = try session_store.createNew(gpa, io, tmp.dir, "session.jsonl", transcript.items(), .{});
+    writer.deinit();
 
     var loaded_arena: std.heap.ArenaAllocator = .init(gpa);
     defer loaded_arena.deinit();
     var loaded = core.transcript.Transcript.init(loaded_arena.allocator());
-    try session_store.load(gpa, io, tmp.dir, "session.jsonl", &loaded);
+    var resume_writer = try session_store.resumeExisting(gpa, io, tmp.dir, "session.jsonl", &loaded, null);
+    defer resume_writer.deinit();
     try std.testing.expect(loaded.items().len >= 3);
     var found_cancelled = false;
     for (loaded.items()) |m| {

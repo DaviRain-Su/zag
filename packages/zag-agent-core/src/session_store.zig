@@ -9,23 +9,40 @@
 //! {"role":"tool","tool_call_id":"...","content":"..."}
 //! ```
 //!
-//! `schema_version` (or legacy `v`) must be 1. Unknown versions → `UnsupportedSchema`.
+//! `schema_version` (or legacy `v`) must be integer 1. Unknown versions → `UnsupportedSchema`.
 //! Header-less legacy files still load (implied v1).
+//!
+//! D-006 contract:
+//! - Create, resume, and open_or_create are distinct operations.
+//! - Invalid/unsupported/general I/O failures never seed a fresh transcript on the same path.
+//! - Save writes a temporary file and atomically replaces the target; failure preserves the prior file.
+//! - At most one active writer per persisted session (advisory lock on `{path}.lock`).
+//! - Software-crash preservation only; power-loss/fsync durability is not claimed.
+//! - Session path is lexical relative-workspace only (not symlink containment).
 
 const std = @import("std");
 const Io = std.Io;
 const message = @import("message.zig");
 const transcript_mod = @import("transcript.zig");
+const workspace = @import("workspace.zig");
 
 pub const Error = error{
     OutOfMemory,
     IoFailed,
     InvalidSession,
     UnsupportedSchema,
+    SessionNotFound,
+    SessionAlreadyExists,
+    SessionBusy,
+    InvalidPath,
 };
 
 pub const header_type = "zag_session";
 pub const current_schema_version: u32 = 1;
+
+/// Test-only: when true, atomic save fails after the temp write and before replace.
+/// Production code must leave this false.
+var failpoint_before_replace: bool = false;
 
 /// Metadata written on the session header line (H4).
 pub const SessionMeta = struct {
@@ -37,7 +54,317 @@ pub const SessionMeta = struct {
     compaction_summary: ?[]const u8 = null,
 };
 
-/// Write full transcript to `path` (creates parent dirs). Overwrites existing file.
+/// Owned writer lease for one persisted session.
+/// Holds an exclusive advisory lock on `{path}.lock` for its lifetime.
+pub const Writer = struct {
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    /// Owned copy of session path.
+    path: []const u8,
+    /// Owned copy of lock file path.
+    lock_path: []const u8,
+    /// Held open for the lifetime of the writer.
+    lock_file: Io.File,
+
+    pub fn deinit(self: *Writer) void {
+        self.lock_file.close(self.io);
+        self.gpa.free(self.lock_path);
+        self.gpa.free(self.path);
+        self.* = undefined;
+    }
+
+    /// Persist transcript atomically, preserving the prior file on failure.
+    pub fn save(self: *Writer, messages: []const message.Message, meta: SessionMeta) Error!void {
+        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta);
+    }
+
+    /// Load the current session file into `transcript` and return header meta.
+    pub fn load(self: *Writer, transcript: *transcript_mod.Transcript) Error!SessionMeta {
+        return loadWithMeta(self.gpa, self.io, self.cwd, self.path, transcript);
+    }
+};
+
+/// Lexical relative-workspace check for session paths (no symlink resolution).
+pub fn validateSessionPath(path: []const u8) Error!void {
+    workspace.checkToolPath(path) catch return error.InvalidPath;
+}
+
+fn lockPathFor(gpa: std.mem.Allocator, path: []const u8) std.mem.Allocator.Error![]u8 {
+    return std.fmt.allocPrint(gpa, "{s}.lock", .{path});
+}
+
+fn ensureParentDir(cwd: Io.Dir, io: Io, path: []const u8) Error!void {
+    if (std.fs.path.dirname(path)) |dir_path| {
+        if (dir_path.len > 0) {
+            cwd.createDirPath(io, dir_path) catch return error.IoFailed;
+        }
+    }
+}
+
+fn mapAllocErr(err: std.mem.Allocator.Error) Error {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+    };
+}
+
+/// Open/create the lock sidecar and take a non-blocking exclusive advisory lock.
+/// Stale sidecars (file present, no holder) are reusable. An active holder → `SessionBusy`.
+fn acquireLockFile(cwd: Io.Dir, io: Io, lock_path: []const u8) Error!Io.File {
+    return cwd.createFile(io, lock_path, .{
+        .read = true,
+        .exclusive = false,
+        .truncate = false,
+        .lock = .exclusive,
+        .lock_nonblocking = true,
+    }) catch |err| switch (err) {
+        error.WouldBlock => error.SessionBusy,
+        else => error.IoFailed,
+    };
+}
+
+fn sessionFileExists(cwd: Io.Dir, io: Io, path: []const u8) Error!bool {
+    cwd.access(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return error.IoFailed,
+    };
+    return true;
+}
+
+const Acquired = struct {
+    path_owned: []u8,
+    lock_path: []u8,
+    lock_file: Io.File,
+
+    fn release(self: *Acquired, gpa: std.mem.Allocator, io: Io) void {
+        self.lock_file.close(io);
+        gpa.free(self.lock_path);
+        gpa.free(self.path_owned);
+        self.* = undefined;
+    }
+};
+
+fn acquireWriterLease(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+) Error!Acquired {
+    try validateSessionPath(path);
+
+    const path_owned = gpa.dupe(u8, path) catch return error.OutOfMemory;
+    errdefer gpa.free(path_owned);
+
+    const lock_path = lockPathFor(gpa, path) catch |err| return mapAllocErr(err);
+    errdefer gpa.free(lock_path);
+
+    try ensureParentDir(cwd, io, path);
+
+    const lock_file = try acquireLockFile(cwd, io, lock_path);
+    errdefer lock_file.close(io);
+
+    return .{
+        .path_owned = path_owned,
+        .lock_path = lock_path,
+        .lock_file = lock_file,
+    };
+}
+
+/// Create a new persisted session. Fails if the session file already exists.
+pub fn createNew(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+) Error!Writer {
+    try validateSessionPath(path);
+    // Fast path: existing bytes must not be touched and need not take the lock.
+    if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
+
+    var lease = try acquireWriterLease(gpa, io, cwd, path);
+    errdefer lease.release(gpa, io);
+
+    // Race: another writer may have materialized the file between access and lock.
+    if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
+
+    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta);
+
+    return .{
+        .gpa = gpa,
+        .io = io,
+        .cwd = cwd,
+        .path = lease.path_owned,
+        .lock_path = lease.lock_path,
+        .lock_file = lease.lock_file,
+    };
+}
+
+/// Resume an existing persisted session. Fails if missing, invalid, unsupported,
+/// or already locked by another active writer.
+pub fn resumeExisting(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    transcript: *transcript_mod.Transcript,
+    out_meta: ?*SessionMeta,
+) Error!Writer {
+    try validateSessionPath(path);
+
+    if (!try sessionFileExists(cwd, io, path)) return error.SessionNotFound;
+
+    var lease = try acquireWriterLease(gpa, io, cwd, path);
+    errdefer lease.release(gpa, io);
+
+    // Race: file may have been deleted after access but before lock.
+    if (!try sessionFileExists(cwd, io, path)) return error.SessionNotFound;
+
+    const meta = try loadWithMeta(gpa, io, cwd, path, transcript);
+    if (out_meta) |m| m.* = meta;
+
+    return .{
+        .gpa = gpa,
+        .io = io,
+        .cwd = cwd,
+        .path = lease.path_owned,
+        .lock_path = lease.lock_path,
+        .lock_file = lease.lock_file,
+    };
+}
+
+/// Convenience: resume if present, otherwise create a new session.
+/// Only `SessionNotFound` triggers creation; every other error propagates.
+/// Prefer explicit create/resume at CLI boundaries; this is an SDK helper.
+pub fn openOrCreate(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+    transcript: *transcript_mod.Transcript,
+    out_meta: ?*SessionMeta,
+) Error!Writer {
+    return resumeExisting(gpa, io, cwd, path, transcript, out_meta) catch |err| switch (err) {
+        error.SessionNotFound => return createNew(gpa, io, cwd, path, messages, meta),
+        else => |e| return e,
+    };
+}
+
+/// Brief exclusive lease used by public save helpers so they cannot bypass single-writer.
+const BriefLock = struct {
+    gpa: std.mem.Allocator,
+    io: Io,
+    lock_path: []u8,
+    lock_file: Io.File,
+
+    fn deinit(self: *BriefLock) void {
+        self.lock_file.close(self.io);
+        self.gpa.free(self.lock_path);
+        self.* = undefined;
+    }
+};
+
+fn acquireBriefLock(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+) Error!BriefLock {
+    try validateSessionPath(path);
+    const lock_path = lockPathFor(gpa, path) catch |err| return mapAllocErr(err);
+    errdefer gpa.free(lock_path);
+    try ensureParentDir(cwd, io, path);
+    const lock_file = try acquireLockFile(cwd, io, lock_path);
+    return .{
+        .gpa = gpa,
+        .io = io,
+        .lock_path = lock_path,
+        .lock_file = lock_file,
+    };
+}
+
+/// State-saving helper: write full bytes to a temporary file and atomically replace.
+fn saveWithMetaAtomic(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+) Error!void {
+    var body: Io.Writer.Allocating = .init(gpa);
+    defer body.deinit();
+
+    writeHeader(&body.writer, meta) catch return error.OutOfMemory;
+    for (messages) |msg| {
+        writeMessage(&body.writer, msg) catch return error.OutOfMemory;
+    }
+
+    var atomic = cwd.createFileAtomic(io, path, .{
+        .make_path = true,
+        .replace = true,
+    }) catch |err| return mapCreateAtomicErr(err);
+    defer atomic.deinit(io);
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = atomic.file.writer(io, &buffer);
+    const w = &file_writer.interface;
+    w.writeAll(body.written()) catch return error.IoFailed;
+    file_writer.flush() catch return error.IoFailed;
+
+    if (failpoint_before_replace) return error.IoFailed;
+
+    atomic.replace(io) catch return error.IoFailed;
+}
+
+/// Like saveWithMetaAtomic but fails if the target already exists.
+fn saveWithMetaAtomicCreate(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+) Error!void {
+    var body: Io.Writer.Allocating = .init(gpa);
+    defer body.deinit();
+
+    writeHeader(&body.writer, meta) catch return error.OutOfMemory;
+    for (messages) |msg| {
+        writeMessage(&body.writer, msg) catch return error.OutOfMemory;
+    }
+
+    var atomic = cwd.createFileAtomic(io, path, .{
+        .make_path = true,
+        .replace = false,
+    }) catch |err| return mapCreateAtomicErr(err);
+    defer atomic.deinit(io);
+
+    var buffer: [4096]u8 = undefined;
+    var file_writer = atomic.file.writer(io, &buffer);
+    const w = &file_writer.interface;
+    w.writeAll(body.written()) catch return error.IoFailed;
+    file_writer.flush() catch return error.IoFailed;
+
+    if (failpoint_before_replace) return error.IoFailed;
+
+    atomic.link(io) catch |err| switch (err) {
+        error.PathAlreadyExists => return error.SessionAlreadyExists,
+        else => return error.IoFailed,
+    };
+}
+
+fn mapCreateAtomicErr(err: anyerror) Error {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        else => error.IoFailed,
+    };
+}
+
+/// Public save: acquires the writer lock for the call so it cannot bypass single-writer.
 pub fn save(
     gpa: std.mem.Allocator,
     io: Io,
@@ -48,6 +375,7 @@ pub fn save(
     try saveWithMeta(gpa, io, cwd, path, messages, .{});
 }
 
+/// Public save with meta: acquires the writer lock for the call so it cannot bypass single-writer.
 pub fn saveWithMeta(
     gpa: std.mem.Allocator,
     io: Io,
@@ -56,25 +384,9 @@ pub fn saveWithMeta(
     messages: []const message.Message,
     meta: SessionMeta,
 ) Error!void {
-    if (std.fs.path.dirname(path)) |dir_path| {
-        if (dir_path.len > 0) {
-            cwd.createDirPath(io, dir_path) catch return error.IoFailed;
-        }
-    }
-
-    var body: Io.Writer.Allocating = .init(gpa);
-    defer body.deinit();
-
-    writeHeader(&body.writer, meta) catch return error.OutOfMemory;
-    for (messages) |msg| {
-        writeMessage(&body.writer, msg) catch return error.OutOfMemory;
-    }
-
-    cwd.writeFile(io, .{
-        .sub_path = path,
-        .data = body.written(),
-        .flags = .{ .truncate = true },
-    }) catch return error.IoFailed;
+    var lock = try acquireBriefLock(gpa, io, cwd, path);
+    defer lock.deinit();
+    try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta);
 }
 
 /// Load jsonl into an empty transcript (messages are arena-owned via transcript).
@@ -97,12 +409,24 @@ pub fn loadWithMeta(
     path: []const u8,
     transcript: *transcript_mod.Transcript,
 ) Error!SessionMeta {
+    try validateSessionPath(path);
+
     const raw = cwd.readFileAlloc(io, path, gpa, .limited(8 * 1024 * 1024)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
+        error.FileNotFound => return error.SessionNotFound,
         else => return error.IoFailed,
     };
     defer gpa.free(raw);
 
+    return parseSessionBytes(gpa, transcript, raw);
+}
+
+/// Parse session file bytes (exported for tests of the strict header contract).
+pub fn parseSessionBytes(
+    gpa: std.mem.Allocator,
+    transcript: *transcript_mod.Transcript,
+    raw: []const u8,
+) Error!SessionMeta {
     var meta: SessionMeta = .{};
     var saw_header = false;
     var saw_message = false;
@@ -114,13 +438,21 @@ pub fn loadWithMeta(
         line_start += nl + 1;
         if (line.len == 0) continue;
 
-        if (isHeaderLine(line)) {
-            meta = try parseHeaderLine(gpa, transcript.arena, line);
+        const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
+            return error.InvalidSession;
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.InvalidSession;
+        const obj = parsed.value.object;
+
+        if (objectIsSessionHeader(obj)) {
+            // Header only on the first content line; duplicates / mid-stream headers rejected.
+            if (saw_header or saw_message) return error.InvalidSession;
+            meta = try parseHeaderObject(gpa, transcript.arena, obj);
             saw_header = true;
             continue;
         }
 
-        try appendMessageFromJson(gpa, transcript, line);
+        try appendMessageFromObject(gpa, transcript, obj);
         saw_message = true;
     }
 
@@ -132,31 +464,19 @@ pub fn loadWithMeta(
     return meta;
 }
 
-fn isHeaderLine(line: []const u8) bool {
-    return std.mem.indexOf(u8, line, "\"type\"") != null and
-        std.mem.indexOf(u8, line, header_type) != null;
+fn objectIsSessionHeader(obj: std.json.ObjectMap) bool {
+    const t = obj.get("type") orelse return false;
+    return t == .string and std.mem.eql(u8, t.string, header_type);
 }
 
-fn parseHeaderLine(
+fn parseHeaderObject(
     gpa: std.mem.Allocator,
     arena: std.mem.Allocator,
-    line: []const u8,
+    obj: std.json.ObjectMap,
 ) Error!SessionMeta {
-    const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
-        return error.InvalidSession;
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidSession;
-    const obj = parsed.value.object;
-
-    const version = blk: {
-        if (obj.get("schema_version")) |sv| {
-            break :blk try jsonInt(sv);
-        }
-        if (obj.get("v")) |v| {
-            break :blk try jsonInt(v);
-        }
-        break :blk current_schema_version;
-    };
+    _ = gpa;
+    // Exact type already checked by caller.
+    const version = try resolveHeaderVersion(obj);
     if (version != current_schema_version) return error.UnsupportedSchema;
 
     var meta: SessionMeta = .{
@@ -164,30 +484,43 @@ fn parseHeaderLine(
         .compaction_gen = 0,
     };
     if (obj.get("compaction_gen")) |cg| {
-        meta.compaction_gen = @intCast(try jsonInt(cg));
+        meta.compaction_gen = try jsonInt(cg);
     }
     if (obj.get("zag_version")) |zv| {
         if (zv == .string) {
             meta.zag_version = arena.dupe(u8, zv.string) catch return error.OutOfMemory;
+        } else if (zv != .null) {
+            return error.InvalidSession;
         }
     }
     if (obj.get("compaction_summary")) |cs| {
         if (cs == .string) {
             meta.compaction_summary = arena.dupe(u8, cs.string) catch return error.OutOfMemory;
+        } else if (cs != .null) {
+            return error.InvalidSession;
         }
     }
     return meta;
 }
 
+fn resolveHeaderVersion(obj: std.json.ObjectMap) Error!u32 {
+    const sv = obj.get("schema_version");
+    const v = obj.get("v");
+    if (sv == null and v == null) return current_schema_version;
+
+    const sv_int: ?u32 = if (sv) |x| try jsonInt(x) else null;
+    const v_int: ?u32 = if (v) |x| try jsonInt(x) else null;
+
+    if (sv_int != null and v_int != null and sv_int.? != v_int.?) return error.InvalidSession;
+    return sv_int orelse v_int.?;
+}
+
+/// Integer-only version fields; floats/strings rejected.
 fn jsonInt(v: std.json.Value) Error!u32 {
     return switch (v) {
         .integer => |i| blk: {
             if (i < 0 or i > std.math.maxInt(u32)) return error.InvalidSession;
             break :blk @intCast(i);
-        },
-        .float => |f| blk: {
-            if (f < 0 or f > @as(f64, @floatFromInt(std.math.maxInt(u32)))) return error.InvalidSession;
-            break :blk @intFromFloat(f);
         },
         else => error.InvalidSession,
     };
@@ -259,17 +592,11 @@ fn writeMessage(w: *Io.Writer, msg: message.Message) Io.Writer.Error!void {
     try w.writeAll("\n");
 }
 
-fn appendMessageFromJson(
+fn appendMessageFromObject(
     gpa: std.mem.Allocator,
     transcript: *transcript_mod.Transcript,
-    line: []const u8,
+    obj: std.json.ObjectMap,
 ) Error!void {
-    const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
-        return error.InvalidSession;
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidSession;
-    const obj = parsed.value.object;
-
     const role_v = obj.get("role") orelse return error.InvalidSession;
     if (role_v != .string) return error.InvalidSession;
     const role = parseRole(role_v.string) orelse return error.InvalidSession;
@@ -338,6 +665,384 @@ fn parseRole(s: []const u8) ?message.Role {
     if (std.mem.eql(u8, s, "assistant")) return .assistant;
     if (std.mem.eql(u8, s, "tool")) return .tool;
     return null;
+}
+
+// ── D-006 contract tests ────────────────────────────────────────────────────
+
+test "Writer create-existing fails without changing the file" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const content =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"original"}
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "s.jsonl", .data = content });
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t.appendSystem("sys");
+
+    const err = createNew(gpa, io, tmp.dir, "s.jsonl", t.items(), .{});
+    try std.testing.expectError(error.SessionAlreadyExists, err);
+
+    const raw = try tmp.dir.readFileAlloc(io, "s.jsonl", gpa, .limited(1024));
+    defer gpa.free(raw);
+    try std.testing.expectEqualStrings(content, raw);
+}
+
+test "Writer resume missing returns not-found" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+
+    const err = resumeExisting(gpa, io, tmp.dir, "missing.jsonl", &t, null);
+    try std.testing.expectError(error.SessionNotFound, err);
+}
+
+test "Writer resume invalid returns invalid" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const bad = "not json\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.jsonl", .data = bad });
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+
+    const err = resumeExisting(gpa, io, tmp.dir, "bad.jsonl", &t, null);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "Writer resume unsupported returns unsupported" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const bad =
+        \\{"schema_version":99,"type":"zag_session"}
+        \\{"role":"user","content":"x"}
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.jsonl", .data = bad });
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+
+    const err = resumeExisting(gpa, io, tmp.dir, "bad.jsonl", &t, null);
+    try std.testing.expectError(error.UnsupportedSchema, err);
+}
+
+test "Writer save failpoint preserves prior bytes and reloads" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const original =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"keep"}
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "s.jsonl", .data = original });
+
+    var resume_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer resume_arena.deinit();
+    var resume_t = transcript_mod.Transcript.init(resume_arena.allocator());
+    var writer = try resumeExisting(gpa, io, tmp.dir, "s.jsonl", &resume_t, null);
+    defer writer.deinit();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t.appendSystem("sys");
+    try t.appendUser("overwrite");
+
+    failpoint_before_replace = true;
+    defer failpoint_before_replace = false;
+
+    const err = writer.save(t.items(), .{});
+    try std.testing.expectError(error.IoFailed, err);
+
+    const raw = try tmp.dir.readFileAlloc(io, "s.jsonl", gpa, .limited(1024));
+    defer gpa.free(raw);
+    try std.testing.expectEqualStrings(original, raw);
+
+    // Prior bytes remain loadable as a session.
+    var load_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer load_arena.deinit();
+    var loaded = transcript_mod.Transcript.init(load_arena.allocator());
+    const meta = try loadWithMeta(gpa, io, tmp.dir, "s.jsonl", &loaded);
+    try std.testing.expectEqual(current_schema_version, meta.schema_version);
+    try std.testing.expectEqual(@as(usize, 1), loaded.items().len);
+    try std.testing.expectEqualStrings("keep", loaded.items()[0].content);
+}
+
+test "Writer conflict prevents second active writer" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const content =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"locked"}
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "s.jsonl", .data = content });
+
+    // Hold the lock in a child process (same-process flock may not conflict on all hosts).
+    const script =
+        \\import fcntl, sys, os, time
+        \\f = open("s.jsonl.lock", "a+")
+        \\fcntl.flock(f, fcntl.LOCK_EX)
+        \\# Signal readiness without holding parent on stdin forever.
+        \\sys.stdout.write("ready\n")
+        \\sys.stdout.flush()
+        \\# Stay alive until killed; short sleep loop so kill is responsive.
+        \\while True:
+        \\    time.sleep(0.05)
+    ;
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "python3", "-c", script },
+        .cwd = .{ .dir = tmp.dir },
+        .stdout = .pipe,
+    });
+    defer {
+        // Close our end of the pipe before kill (kill asserts pipes are cleaned).
+        if (child.stdout) |f| {
+            f.close(io);
+            child.stdout = null;
+        }
+        child.kill(io);
+    }
+
+    // Wait for the child to report the lock is held.
+    var stdout_buf: [64]u8 = undefined;
+    var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
+    const line = stdout_reader.interface.takeDelimiterExclusive('\n') catch return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("ready", line);
+
+    var arena2: std.heap.ArenaAllocator = .init(gpa);
+    defer arena2.deinit();
+    var t2 = transcript_mod.Transcript.init(arena2.allocator());
+    const err = resumeExisting(gpa, io, tmp.dir, "s.jsonl", &t2, null);
+    try std.testing.expectError(error.SessionBusy, err);
+
+    // Public save must also respect the active writer.
+    const save_err = save(gpa, io, tmp.dir, "s.jsonl", t2.items());
+    try std.testing.expectError(error.SessionBusy, save_err);
+}
+
+test "stale lock sidecar is reusable after release" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Pre-create a stale sidecar with no holder.
+    try tmp.dir.writeFile(io, .{ .sub_path = "s.jsonl.lock", .data = "stale" });
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t1 = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t1.appendSystem("sys");
+    try t1.appendUser("hello");
+
+    var writer = try createNew(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{});
+    writer.deinit();
+
+    // Re-open after release (持锁重开 after unlock).
+    var arena2: std.heap.ArenaAllocator = .init(gpa);
+    defer arena2.deinit();
+    var t2 = transcript_mod.Transcript.init(arena2.allocator());
+    var writer2 = try resumeExisting(gpa, io, tmp.dir, "s.jsonl", &t2, null);
+    defer writer2.deinit();
+    try std.testing.expectEqual(@as(usize, 2), t2.items().len);
+}
+
+test "Writer create/resume/save roundtrip" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t1 = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t1.appendSystem("sys");
+    try t1.appendUser("hello");
+
+    var writer = try createNew(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{
+        .zag_version = "0.5.0",
+        .compaction_gen = 1,
+    });
+
+    try t1.appendAssistantTurn(.{ .content = "hi", .tool_calls = &.{} });
+    try writer.save(t1.items(), .{
+        .zag_version = "0.5.0",
+        .compaction_gen = 1,
+    });
+    writer.deinit();
+
+    var arena2: std.heap.ArenaAllocator = .init(gpa);
+    defer arena2.deinit();
+    var t2 = transcript_mod.Transcript.init(arena2.allocator());
+    var writer2 = try resumeExisting(gpa, io, tmp.dir, "s.jsonl", &t2, null);
+    defer writer2.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), t2.items().len);
+}
+
+test "session path rejects absolute and escape" {
+    try std.testing.expectError(error.InvalidPath, validateSessionPath("/etc/passwd"));
+    try std.testing.expectError(error.InvalidPath, validateSessionPath("../secret.jsonl"));
+    try std.testing.expectError(error.InvalidPath, validateSessionPath(""));
+    try validateSessionPath(".zag/sessions/default.jsonl");
+}
+
+test "load FileNotFound maps to SessionNotFound" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const err = loadWithMeta(gpa, io, tmp.dir, "gone.jsonl", &t);
+    try std.testing.expectError(error.SessionNotFound, err);
+}
+
+test "strict header: float version rejected" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"schema_version":1.5,"type":"zag_session"}
+        \\{"role":"user","content":"x"}
+        \\
+    ;
+    const err = parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "strict header: conflicting schema_version and v rejected" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"schema_version":1,"v":2,"type":"zag_session"}
+        \\{"role":"user","content":"x"}
+        \\
+    ;
+    const err = parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "strict header: mid-stream header rejected" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"role":"user","content":"first"}
+        \\{"schema_version":1,"type":"zag_session"}
+        \\
+    ;
+    const err = parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "strict header: duplicate header rejected" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"x"}
+        \\
+    ;
+    const err = parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "strict header: ordinary content mentioning zag_session is not a header" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"role":"user","content":"type zag_session is cool"}
+        \\
+    ;
+    const meta = try parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectEqual(current_schema_version, meta.schema_version);
+    try std.testing.expectEqual(@as(usize, 1), t.items().len);
+    try std.testing.expectEqualStrings("type zag_session is cool", t.items()[0].content);
+}
+
+test "strict header: wrong type value is not a session header" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    // type present but not zag_session → must not parse as header; lacks role → invalid message.
+    const raw =
+        \\{"type":"other","schema_version":1}
+        \\{"role":"user","content":"x"}
+        \\
+    ;
+    const err = parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "openOrCreate creates only on not-found" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t.appendUser("seed");
+
+    var w = try openOrCreate(gpa, io, tmp.dir, "o.jsonl", t.items(), .{}, &t, null);
+    w.deinit();
+
+    // Invalid existing file must not be replaced by openOrCreate.
+    try tmp.dir.writeFile(io, .{ .sub_path = "bad.jsonl", .data = "not-json\n" });
+    var t2 = transcript_mod.Transcript.init(arena_impl.allocator());
+    const err = openOrCreate(gpa, io, tmp.dir, "bad.jsonl", t.items(), .{}, &t2, null);
+    try std.testing.expectError(error.InvalidSession, err);
 }
 
 test "save and load roundtrip" {

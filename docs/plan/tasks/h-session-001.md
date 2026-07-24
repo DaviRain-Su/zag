@@ -1,7 +1,7 @@
 ---
 id: h-session-001
 scope: phase-h/session
-status: ready
+status: in-progress
 priority: P0
 depends-on: []
 ---

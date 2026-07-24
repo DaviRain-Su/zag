@@ -38,6 +38,7 @@ pub const Adapter = wire_provider.Adapter;
 pub const Agent = agent.Agent;
 pub const Session = agent.Session;
 pub const Options = agent.Options;
+pub const OpenMode = agent.OpenMode;
 
 pub const version = "0.5.0";
 

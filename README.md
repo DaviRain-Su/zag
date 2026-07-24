@@ -62,7 +62,8 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 |------|------|
 | `--ask` / `--yolo` | 人工权限（默认 ask；生产勿默认 yolo） |
 | `--shell-policy protect\|off` | 命令策略（默认 protect） |
-| `-c` / `--session` | 会话 JSONL |
+| `-s PATH` / `--session PATH` | 创建会话 JSONL（已存在则失败；相对路径） |
+| `-c` / `--continue` | 续聊（默认 `.zag/sessions/default.jsonl`） |
 | `--trace` / `--trace=PATH` | 审计 JSONL（默认 `.zag/traces/latest.jsonl`；裸词不当路径） |
 | `--no-project` | 不注入 AGENTS.md |
 

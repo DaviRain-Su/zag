@@ -139,8 +139,13 @@ pub fn run(init: std.process.Init) !void {
         return;
     }
 
-    if (session_path != null and !continue_session and prompt_parts.items.len == 0) {
-        continue_session = true;
+    // D-006: -s PATH → create_new; -c → resume_existing.
+    // open_or_create is SDK-only and is not selected by CLI flags.
+    if (session_path) |sp| {
+        core.session_store.validateSessionPath(sp) catch {
+            std.log.err("session path must be a relative workspace path (no absolute/'..'): {s}", .{sp});
+            std.process.exit(2);
+        };
     }
 
     if (enable_trace and trace_path == null) {
@@ -261,13 +266,16 @@ pub fn run(init: std.process.Init) !void {
     defer agent.deinit();
     core.cancel.installSigInt(&agent.cancel);
 
+    // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
+    const open_mode: coding.OpenMode = if (continue_session) .resume_existing else .create_new;
+
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShot(&agent, prompt, verbose, session_path, continue_session, !no_project);
+        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project);
         return;
     }
 
-    try runRepl(&agent, io, permission_mode, session_path, continue_session, !no_project);
+    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project);
 }
 
 fn runOneShot(
@@ -275,12 +283,12 @@ fn runOneShot(
     prompt: []const u8,
     verbose: bool,
     session_path: ?[]const u8,
-    continue_existing: bool,
+    open_mode: coding.OpenMode,
     load_project: bool,
 ) !void {
     const result = agent.completeWithSession(default_system, prompt, .{
         .path = session_path,
-        .continue_existing = continue_existing or session_path != null,
+        .open_mode = open_mode,
         .load_project_instructions = load_project,
     }) catch |err| {
         std.log.err("agent failed: {s}", .{@errorName(err)});
@@ -312,7 +320,7 @@ fn runRepl(
     io: Io,
     mode: core.permissions.Mode,
     session_path: ?[]const u8,
-    continue_existing: bool,
+    open_mode: coding.OpenMode,
     load_project: bool,
 ) !void {
     try writeStdout(io, "zag (jail + policy + trace, permission=");
@@ -327,7 +335,7 @@ fn runRepl(
     var session = coding.Session.start(agent.gpa, io, .{
         .base_system = default_system,
         .path = session_path,
-        .continue_existing = continue_existing or session_path != null,
+        .open_mode = open_mode,
         .load_project_instructions = load_project,
     }) catch |err| {
         std.log.err("session failed: {s}", .{@errorName(err)});
@@ -415,8 +423,8 @@ fn printUsage() !void {
         \\  --plan                     plan session: read + plan.md only (H3 stub)
         \\  --no-remember              re-prompt every write path in ask mode
         \\  --shell-policy MODE        protect (default) | off
-        \\  -s, --session PATH         session JSONL
-        \\  -c, --continue             resume session
+        \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
+        \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
         \\  --trace                    write run trace (.zag/traces/latest.jsonl)
         \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)

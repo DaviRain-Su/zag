@@ -43,7 +43,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens landed；terminal/in-flight cancel open |
 | H2 Edit | [tools-edit](../../docs/modules/tools-edit.md) | search_replace/grep/glob landed；real containment still P0 |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | built-in matrix landed；custom capability fail-open P0 |
-| H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | layers/schema landed；safe open/save/accounting open |
+| H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2 landed；context accounting still open |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | symlink containment/redact/doctor open |
 | H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage landed；deadline/cancel open |
 | H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | events/tests landed；truth/schema/fault matrix open |
