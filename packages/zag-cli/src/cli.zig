@@ -87,9 +87,18 @@ pub fn run(init: std.process.Init) !void {
             if (session_path == null) session_path = ".zag/sessions/default.jsonl";
         } else if (std.mem.eql(u8, a, "--no-project")) {
             no_project = true;
+        } else if (std.mem.startsWith(u8, a, "--trace=")) {
+            enable_trace = true;
+            const p = a["--trace=".len..];
+            if (p.len == 0) {
+                std.log.err("--trace= requires a path", .{});
+                std.process.exit(2);
+            }
+            trace_path = p;
         } else if (std.mem.eql(u8, a, "--trace")) {
             enable_trace = true;
-            if (i + 1 < args.len and args[i + 1][0] != '-') {
+            // Only consume the next argv when it looks like a path — never a prompt.
+            if (i + 1 < args.len and looksLikeTracePath(args[i + 1])) {
                 i += 1;
                 trace_path = args[i];
             }
@@ -163,10 +172,14 @@ pub fn run(init: std.process.Init) !void {
     const resolved = resolve_result.resolved;
     const use_stream = want_stream or resolve_result.stream;
 
-    const context_opts = core.context.optionsForModel(resolve_result.model_info, .{
-        .max_chars = resolve_result.context_max_chars,
-        .max_tail_messages = resolve_result.context_max_tail_messages,
-    });
+    const context_defaults = core.context.Options{};
+    const context_opts = core.context.optionsFromBudget(
+        resolve_result.contextCharBudget(context_defaults.max_chars),
+        .{
+            .max_chars = resolve_result.context_max_chars,
+            .max_tail_messages = resolve_result.context_max_tail_messages,
+        },
+    );
 
     if (verbose) {
         std.log.info("provider id={s} name={s} model={s} key_from={s} stream={any} permission={s} shell_policy={s}", .{
@@ -373,8 +386,9 @@ fn printUsage() !void {
         \\  -s, --session PATH         session JSONL
         \\  -c, --continue             resume session
         \\  --no-project               skip AGENTS.md injection
-        \\  --trace [PATH]             write structured run trace JSONL
-        \\                             (default .zag/traces/latest.jsonl)
+        \\  --trace                    write run trace (.zag/traces/latest.jsonl)
+        \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)
+        \\                             (bare words after --trace are treated as prompt)
         \\  --stream                   SSE streaming completions
         \\  --config PATH              JSON config (.zag/config.json also auto-loaded)
         \\
@@ -390,9 +404,33 @@ fn printUsage() !void {
         \\  Anthropic example:
         \\    ANTHROPIC_API_KEY=…  ZAG_PROVIDER=anthropic
         \\
-        \\Packages: zag-cli → coding-agent → agent-core → zag-ai → openai-zig
+        \\Packages: zag-cli → coding-agent → agent-core → zag-types
+        \\                       ↘ zag-ai → openai-zig
         \\
     ;
     const io = std.Io.Threaded.global_single_threaded.io();
     try writeStdout(io, usage);
+}
+
+/// True when `s` is safe to treat as an optional `--trace` path argument
+/// (not a natural-language prompt).
+pub fn looksLikeTracePath(s: []const u8) bool {
+    if (s.len == 0 or s[0] == '-') return false;
+    if (std.mem.endsWith(u8, s, ".jsonl")) return true;
+    if (std.mem.indexOfScalar(u8, s, '/') != null) return true;
+    // Relative hidden paths like `.zag/traces/x` (also matched by `/` above)
+    // or `.trace.jsonl` already covered; bare `.foo` without slash:
+    if (s[0] == '.' and s.len > 1) return true;
+    return false;
+}
+
+test "looksLikeTracePath" {
+    try std.testing.expect(looksLikeTracePath(".zag/traces/latest.jsonl"));
+    try std.testing.expect(looksLikeTracePath("out/run.jsonl"));
+    try std.testing.expect(looksLikeTracePath("trace.jsonl"));
+    try std.testing.expect(looksLikeTracePath("./t.jsonl"));
+    try std.testing.expect(!looksLikeTracePath("list_dir ."));
+    try std.testing.expect(!looksLikeTracePath("list_dir"));
+    try std.testing.expect(!looksLikeTracePath("--yolo"));
+    try std.testing.expect(!looksLikeTracePath("hello world"));
 }

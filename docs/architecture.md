@@ -46,7 +46,7 @@
 | **L4 Kernel（SDK 入口）** | xai-grok-shell | 单 agent **Loop**、session、权限、context、trace；可选 Graph | **H** 硬化 Loop；**C6** Graph |
 | **L3 agent 定义** | xai-grok-agent | 工具 + 采样 + hooks 组合 | C6 拆出 |
 | **Memory Core（端口）** | grok-memory 抽象 | 跨 session 记忆；默认关闭实现 | 接口可早留；**C5** 实现 |
-| **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、**canonical→wire 适配**、stream、错误 | H6；多协议适配后置 |
+| **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、**WireAdapter**、stream、错误 | **H6 大半完成**（OpenAI + Anthropic）；收口项见 module 页 |
 | **L2 Runtime / 领域包** | tools / workspace / sandbox | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
 | **L0 契约** | tool-types / tool-protocol | 无 IO 领域类型；SDK 最稳面 | H 期间归目录，C 轨 zon 化 |
 
@@ -105,32 +105,28 @@
 
 ```text
 Agent Core
-  Message / AssistantTurn / ToolCall   ← canonical（zag-ai types）
+  Message / AssistantTurn / ToolCall   ← canonical（zag-types / zag-ai types）
         │
-        │  Provider 端口（agent/provider.zig）
+        │  Provider 端口（zag-agent-core/provider.zig）
         ▼
-  zag-ai
-        │  transformContext 等价：context.viewForModel（在 agent）
-        │  convertToLlm：WireAdapter（规划）
+  zag-coding-agent WireProvider
+        │
         ▼
-  ┌─────────────┬──────────────────┐
-  │ OpenAI-compat│ Anthropic …     │  ← 适配器；**现状仅左列实现**
-  │ (openai-zig) │ （预留）         │
-  └─────────────┴──────────────────┘
+  zag-ai WireAdapter (factory.createWire)
+        │
+  ┌─────┴──────────────┐
+  ▼                    ▼
+ openai_compat     anthropic_messages
+ (openai-zig)      (std.http only)
 ```
 
-### 设计钉死（实现分两步）
+| 现状 | 禁止 |
+|------|------|
+| Canonical 消息 + `WireAdapter` vtable | `loop` 里 `if (anthropic)` |
+| `api_style` / `createWire` | Agent Core import openai-zig |
+| OpenAI + Anthropic SSE | — |
 
-| 现在（文档 + 后续 zag-ai 改造） | 现在不做 |
-|--------------------------------|----------|
-| Canonical 消息类型稳定在 `zag-ai/types` | 实现 Anthropic HTTP 客户端 |
-| 规划 **WireAdapter** 接口：`toWire` / `fromWire` / stream map | 在 `loop.zig` 里 `if (anthropic)` |
-| `ProviderSpec` 可增 `api_style`（enum；现状仅 `openai_compat`） | Phase H 以「多协议跑通」为出门条件 |
-| Harness 只依赖 `Provider.chat` + canonical turn | Agent 依赖 OpenAI JSON 字段名 |
-
-**实现顺序（用户确认）：** 先本文档 → 再改 **zag-ai** 做成可插拔 Provider 适配（OpenAI 为第一个 adapter）→ Anthropic 等需要时再加实现。
-
-详见 [modules/zag-ai-provider.md](./modules/zag-ai-provider.md#wire-adapter预留)。
+详见 [modules/zag-ai-provider.md](./modules/zag-ai-provider.md)。
 
 ---
 
@@ -184,10 +180,11 @@ src/main.zig  (thin entry)
 
 | 包 / 目录 | 职责 | 可依赖 | **禁止**依赖 |
 |-----------|------|--------|----------------|
+| `zag-types` | Canonical messages、`ChatError` | std | IO / vendors |
 | `openai-zig` | HTTP / OpenAPI | std | 上层 agent 包 |
-| `zag-ai` | Model plane + WireAdapter | openai-zig | agent / cli 包 |
-| `zag-agent-core` | Loop、**纯 Provider**、session、permissions | zag-ai（types/retry/catalog only） | `Client`、Wire 组装、产品 toolset |
-| `zag-coding-agent` | 产品 Agent、`WireProvider`、默认 tools | core + zag-ai | openai-zig 细节 |
+| `zag-ai` | Model plane + WireAdapter | zag-types + openai-zig | agent / cli 包 |
+| `zag-agent-core` | Loop、纯 Provider、session、permissions | **zag-types only** | Client、Wire 组装、zag-ai、产品 toolset |
+| `zag-coding-agent` | 产品 Agent、WireProvider、默认 tools | core + zag-ai | openai-zig 细节 |
 | `zag-cli` | 产品壳（args/REPL/one-shot） | coding-agent + core + zag-ai | loop 业务 |
 | `src/main` | 进程入口 → `zag_cli.run` | zag-cli | 逻辑 |
 | `src/root` | umbrella 再导出 | 各 packages | — |
@@ -208,9 +205,11 @@ zag-coding-agent  ★ 产品 harness
     ↓
 zag-agent-core  ★ 纯 loop / Provider 端口
     ↓
-zag-ai  WireAdapter (openai_compat 默认)
+zag-types  ★ L0 canonical + ChatError
+    ↑
+zag-ai  WireAdapter (openai_compat | anthropic_messages)
     ↓
-openai-zig
+openai-zig / std.http
 ```
 
 ### 工具执行三道门（已有）
@@ -229,15 +228,15 @@ permission (HITL) → workspace jail → shell policy → execute
 | trace | `agent/trace.zig` | L1 JSONL（usage / retry 雏形） |
 | context | `agent/context.zig` | L1 截断 view + catalog 预算 |
 | edit | `runtime/edit_tools.zig` | L1 整文件 write |
-| provider | `agent/provider.zig` + zag-ai | L1+；**WireAdapter 显式化待做** |
+| provider | `zag-agent-core/provider` + zag-ai WireAdapter | L1+；OpenAI + Anthropic 已落地 |
 
 ## 目标能力与阶段
 
 | 能力 | 位置 | 阶段 |
 |------|------|------|
 | 单 Loop 生产底线 | Agent Core | **Phase H** |
-| WireAdapter（OpenAI 实现） | zag-ai | 文档后 **zag-ai 改造**（可与 H6 并行） |
-| Anthropic 等协议实现 | zag-ai adapter | 需要时；非 H 出门 |
+| WireAdapter（OpenAI + Anthropic） | zag-ai | **已落地**；H6 收口见 module 页 |
+| 第三协议 / Responses | zag-ai adapter | 按需；非 H 出门 |
 | 可靠编辑 | runtime + toolset | **H2** → C4 |
 | Memory Core + Repo | agent 端口 + 后端 | **C5** |
 | Graph / Subagent / Oracle | Agent Core 编排 | **C6** |
@@ -249,20 +248,20 @@ permission (HITL) → workspace jail → shell policy → execute
 
 ```zig
 var resolve_result = try zag_ai.resolve(gpa, io, env, config_path);
-var client = Client.init(gpa, io, resolve_result.resolved.config);
-var adapter = Adapter.init(client, stream);
-adapter.chat_options = resolve_result.chat_options;
+var wire = try resolve_result.resolved.createWire(gpa, io);
+var bridge = coding.WireProvider.init(wire, stream, true);
+bridge.chat_options = resolve_result.chat_options;
 
-var agent = Agent.init(gpa, io, adapter.provider(), .{
+var agent = coding.Agent.init(gpa, io, bridge.asProvider(), .{
     .permission_mode = .ask,
     .shell_policy = .protect,
-    .context = context.optionsForModel(resolve_result.model_info, .{}),
+    .context = core.context.optionsForModel(resolve_result.model_info, .{}),
     .chat_retries = resolve_result.chat_retries,
     .trace_path = ".zag/traces/latest.jsonl",
 });
 ```
 
-目标形态（改造后）：shell 拿到 `Provider` 实现（某 WireAdapter），Agent Core 不感知 openai-zig。
+Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 
 ## 工具（现状 vs H2 目标）
 

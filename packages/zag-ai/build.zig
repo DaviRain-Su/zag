@@ -10,11 +10,18 @@ pub fn build(b: *std.Build) void {
     });
     const openai_mod = openai_dep.module("openai_zig");
 
+    const types_dep = b.dependency("zag_types", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const types_mod = types_dep.module("zag-types");
+
     const mod = b.addModule("zag-ai", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .imports = &.{
             .{ .name = "openai_zig", .module = openai_mod },
+            .{ .name = "zag-types", .module = types_mod },
         },
     });
 
@@ -25,6 +32,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "openai_zig", .module = openai_mod },
+                .{ .name = "zag-types", .module = types_mod },
             },
         }),
     });

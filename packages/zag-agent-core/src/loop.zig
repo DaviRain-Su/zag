@@ -13,7 +13,7 @@
 //! ```
 
 const std = @import("std");
-const ai = @import("zag-ai");
+const zt = @import("zag-types");
 const message = @import("message.zig");
 const tool = @import("tool.zig");
 const transcript_mod = @import("transcript.zig");
@@ -175,7 +175,7 @@ fn chatWithRetry(
         if (result) |turn| {
             return turn;
         } else |err| {
-            const retryable = ai.isRetryableError(err);
+            const retryable = zt.isRetryableError(err);
             const more = attempt + 1 < max_attempts;
             if (!retryable or !more) return error.ProviderFailed;
 

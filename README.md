@@ -51,6 +51,7 @@ export DEEPSEEK_API_KEY=sk-...
 
 zig build test
 zig build run -- --yolo -v --trace "list_dir ."
+# or: zig build run -- --yolo -v --trace -- "list_dir ."
 
 # 应被 jail 拒绝：
 zig build run -- --yolo -v "read_file /etc/passwd"
@@ -61,7 +62,7 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 | `--ask` / `--yolo` | 人工权限（默认 ask；生产勿默认 yolo） |
 | `--shell-policy protect\|off` | 命令策略（默认 protect） |
 | `-c` / `--session` | 会话 JSONL |
-| `--trace [PATH]` | 审计 JSONL |
+| `--trace` / `--trace=PATH` | 审计 JSONL（默认 `.zag/traces/latest.jsonl`；裸词不当路径） |
 | `--no-project` | 不注入 AGENTS.md |
 
 ```text

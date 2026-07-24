@@ -2,6 +2,7 @@
 //!
 //! ```
 //! packages/openai-zig         wire transport + OpenAPI
+//! packages/zag-types          L0 canonical messages + ChatError
 //! packages/zag-ai             model plane (WireAdapter)
 //! packages/zag-agent-core     loop / pure Provider
 //! packages/zag-coding-agent   coding tools + Agent facade + wire bridge
@@ -10,10 +11,13 @@
 //! ```
 
 const std = @import("std");
+const zt = @import("zag-types");
 const ai = @import("zag-ai");
 const core = @import("zag-agent-core");
 const coding = @import("zag-coding-agent");
 const cli = @import("zag-cli");
+
+pub const zag_types = zt;
 
 // --- Agent Core ---
 pub const message = core.message;

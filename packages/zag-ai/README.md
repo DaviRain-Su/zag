@@ -68,12 +68,14 @@ defer client.deinit();
 
 `ai.Client` remains an alias of `OpenAiClient` for back-compat.
 
-## Wire styles
+## Wire styles (only two)
 
-| Style | How to select | Endpoint |
-|-------|----------------|----------|
-| `openai_compat` | default presets, `ZAG_API_STYLE=openai` | `/chat/completions` |
-| `anthropic_messages` | `ZAG_PROVIDER=anthropic` or `ZAG_API_STYLE=anthropic` | `/v1/messages` |
+| Style | Endpoint | Notes |
+|-------|----------|--------|
+| `openai_compat` | `/chat/completions` | Default; most hosts |
+| `anthropic_messages` | `/v1/messages` | Anthropic + MiniMax / Kimi Coding / Vercel Gateway |
+
+**Not in scope for now:** Google Generative AI, Mistral-native, Bedrock, OAuth, OpenAI Responses (planned), image generation (planned).
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -81,12 +83,62 @@ export ZAG_PROVIDER=anthropic
 zig build run -- --stream -v "hello"
 ```
 
+## Built-in providers
+
+Table-driven (`presets.zig`). Auto-detect: first preset whose env key is set wins.  
+Same key for regional twins → **global first** (set `ZAG_PROVIDER` for CN).
+
+### openai_compat
+
+| id | Env | Default model |
+|----|-----|---------------|
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-v4-flash` |
+| `xai` | `XAI_API_KEY` | `grok-4-latest` |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| `openrouter` | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` |
+| `together` | `TOGETHER_API_KEY` | Llama 3.1 8B Turbo |
+| `groq` | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| `cerebras` | `CEREBRAS_API_KEY` | `llama-3.3-70b` |
+| `nvidia` | `NVIDIA_API_KEY` | `meta/llama-3.3-70b-instruct` |
+| `fireworks` | `FIREWORKS_API_KEY` | Fireworks Llama 3.3 70B |
+| `huggingface` | `HF_TOKEN` | Llama 3.1 8B |
+| `moonshotai` | `MOONSHOT_API_KEY` | `kimi-k2.5` |
+| `moonshotai-cn` | `MOONSHOT_API_KEY` | `kimi-k2.5` (CN base URL) |
+| `zai` | `ZAI_API_KEY` | `glm-4.7` |
+| `zai-coding-cn` | `ZAI_CODING_CN_API_KEY` | `glm-4.7` |
+| `xiaomi` | `XIAOMI_API_KEY` | `mimo-v2-flash` |
+
+### anthropic_messages
+
+| id | Env | Default model |
+|----|-----|---------------|
+| `anthropic` | `ANTHROPIC_API_KEY` | `claude-sonnet-4-20250514` |
+| `kimi-coding` | `KIMI_API_KEY` | `kimi-for-coding` |
+| `minimax` | `MINIMAX_API_KEY` | `MiniMax-M2.5` |
+| `minimax-cn` | `MINIMAX_CN_API_KEY` | `MiniMax-M2.5` |
+| `vercel-ai-gateway` | `AI_GATEWAY_API_KEY` | `anthropic/claude-sonnet-4` |
+
+Custom endpoint: set `ZAG_BASE_URL` + `ZAG_API_KEY` + optional `ZAG_API_STYLE`.
+
+Catalog (`catalog.zig`) is **curated** (context window / max out / vision / reasoning flags) for budgets — not a full vendor dump. Any model id still works if the host accepts it.
+
 ## Errors
 
 Shared `wire.Error` / `ai.WireError`.  
 `openai_compat.mapSdkError` maps **openai-zig** names only.
 
 `ai.isRetryableError(err)` for loop policy.
+
+## Deferred (not missing by accident)
+
+| Item | Why deferred |
+|------|----------------|
+| OpenAI Responses wire | Planned next wire; chat completions still covers agent loop |
+| Image generation surface | Separate from chat; add when product needs it |
+| Google / Mistral-native / Bedrock | Low agent traffic vs OpenAI+Anthropic; skip |
+| Full Pi catalog generator | Hundreds of auto-synced model rows; curated table is enough |
+| Cost ledger ($/token) | Turn-level `Usage` tokens exist; dollar math not needed yet |
+| OAuth (Codex / Copilot) | Explicit non-goal for H |
 
 ## Tests
 

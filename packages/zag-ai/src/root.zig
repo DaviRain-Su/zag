@@ -53,7 +53,7 @@ pub const isRetryableError = types.isRetryableError;
 pub const createWire = factory.createWire;
 pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 
-pub const version = "0.5.2";
+pub const version = "0.5.3";
 
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {

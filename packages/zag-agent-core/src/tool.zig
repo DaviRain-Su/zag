@@ -5,12 +5,12 @@
 
 const std = @import("std");
 const Io = std.Io;
-const ai = @import("zag-ai");
+const zt = @import("zag-types");
 
 pub const max_result_bytes: usize = 64 * 1024;
 
-/// OpenAI-style function tool definition (from zag-ai).
-pub const Definition = ai.ToolDefinition;
+/// Function tool definition (canonical; from zag-types).
+pub const Definition = zt.ToolDefinition;
 
 pub const HandlerError = error{
     InvalidArguments,

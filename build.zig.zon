@@ -35,6 +35,9 @@
         .openai_zig = .{
             .path = "packages/openai-zig",
         },
+        .zag_types = .{
+            .path = "packages/zag-types",
+        },
         .zag_ai = .{
             .path = "packages/zag-ai",
         },

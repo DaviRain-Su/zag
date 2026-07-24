@@ -143,8 +143,9 @@ C5（H 之后）      repo map → Memory Repo MVP（默认关）
 
 | 阶段 | Packaging 动作 | 状态 |
 |------|----------------|------|
-| 骨架拆分 | `zag-agent-core`（kernel）+ `zag-coding-agent`（产品 harness）+ `zag-cli`（产品壳）；main 薄入口 | ✅ 0.5.0（`8c5f543`/`076183e`） |
-| **Phase H（下一步）** | 抽 **`zag-types`**：canonical 类型 + 中性 ChatError 下沉 L0，解开 core→zag-ai 依赖（packaging §2.1） | ⏳ |
+| 骨架拆分 | `zag-agent-core` + `zag-coding-agent` + `zag-cli`；main 薄入口 | ✅ |
+| **zag-types** | L0 canonical + 中性 ChatError；解开 core→zag-ai | ✅ |
+| **Phase H（下一步）** | 修 `--trace` 歧义；推进 H1–H5/H7 生产底线（非再拆包） | ⏳ |
 | C4–C5 | H2/H5 出门后拆 `zag-tools`（自 coding-agent/runtime）/ `zag-workspace`（自 core） | 排期 |
 | C9 | `zag-tui` / `zag-acp` 产品面成包；`zag` bin 只组装 | 排期 |
 | 发布 | 满足 packaging §3 四条标准的包 mirror 拆 repo（首个候选 `openai-zig`） | 排期 |

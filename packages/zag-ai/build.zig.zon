@@ -7,6 +7,9 @@
         .openai_zig = .{
             .path = "../openai-zig",
         },
+        .zag_types = .{
+            .path = "../zag-types",
+        },
     },
     .paths = .{
         "build.zig",

@@ -27,15 +27,18 @@
 |----|-------------------|------|
 | `openai-zig` | `Client`、resources、transport | generated OpenAPI |
 | `zag-ai` | `resolve`、`WireAdapter`、`ChatOptions`、catalog | openai_compat |
-| `zag-agent-core` | `loop`、**纯 `Provider` 端口**、session、permissions | 无 `Client` / 无 toolset 产品 |
+| `zag-types` | Message / ToolDefinition / ChatError | — |
+| `zag-agent-core` | `loop`、**纯 `Provider` 端口**、session、permissions | 无 `Client` / 无 toolset 产品 / 无 zag-ai |
 | `zag-coding-agent` | `Agent`、`WireProvider`、toolset、runtime tools | 组装 core + wire |
-| `src/main` | CLI | 产品壳 |
+| `zag-cli` | flags / REPL / one-shot | 产品壳 |
+| `src/main` | 进程入口 → `zag_cli.run` | 薄 |
 
 依赖单向：
 
 ```text
-main → coding-agent → agent-core → zag-ai → openai-zig
-                  ↘───────────→ zag-ai
+main → zag-cli → coding-agent → agent-core → zag-types
+                      ↘───────────→ zag-ai → zag-types
+                                       └→ openai-zig
 ```
 
 详见 [architecture.md](../architecture.md#monorepo-包边界强制)。

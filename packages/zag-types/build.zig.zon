@@ -1,13 +1,9 @@
 .{
-    .name = .zag_agent_core,
+    .name = .zag_types,
     .version = "0.5.0",
-    .fingerprint = 0xa896e87df8bd960e,
+    .fingerprint = 0xb31e4ba4f978d637,
     .minimum_zig_version = "0.16.0",
-    .dependencies = .{
-        .zag_types = .{
-            .path = "../zag-types",
-        },
-    },
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",

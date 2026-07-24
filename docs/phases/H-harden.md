@@ -17,8 +17,8 @@
 
 | 问题 | 位置 | 说明 |
 |------|------|------|
-| `--trace` 可选参吞 prompt | `zag-cli` | `zig build run -- --yolo --trace "list_dir ."` 会把 prompt 当 trace 路径，写出名为 `list_dir .` 的垃圾文件。改为 `--trace=PATH` 或仅当下一参数以 `.jsonl`/路径形态出现才消费（含测试） |
-| core → zag-ai 依赖残留 | `zag-agent-core` | canonical 类型与 `ChatError` 借自 zag-ai；**H 内抽 `zag-types`** 解开（[packaging §2.1](../packaging.md#21-已知残留core-仍依赖-zag-ai下一步要解)） |  
+| ~~`--trace` 可选参吞 prompt~~ | `zag-cli` | ✅ 已修：仅 path-like / `--trace=PATH` 才消费下一参数 |
+| ~~core → zag-ai 依赖残留~~ | `zag-agent-core` | ✅ 已抽 `zag-types`；core 仅依赖 L0 |  
 4. **不做** Memory Repo / repo map / subagent / MCP（属 C 轨；见 [memory.md](../modules/memory.md)）。
 
 ---

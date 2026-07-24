@@ -3,10 +3,10 @@
 //! Full history stays in Session (for resume / audit). Before each `provider.chat`,
 //! build a **view**: keep system messages + a recent tail under size limits.
 //! Phase 2 is deliberately rough (drop oldest, no LLM summary yet).
-//! Catalog-aware budgets come from `zag-ai.catalog.contextBudgetChars`.
+//! Char budgets are computed by the product shell (via zag-ai catalog) and
+//! passed in — core does not depend on zag-ai.
 
 const std = @import("std");
-const ai = @import("zag-ai");
 const message = @import("message.zig");
 
 pub const Options = struct {
@@ -18,9 +18,10 @@ pub const Options = struct {
     min_tail_messages: usize = 6,
 };
 
-/// Build context options from catalog model info + optional file overrides.
-pub fn optionsForModel(
-    model_info: ?ai.ModelInfo,
+/// Build context options from a char budget + optional file overrides.
+/// Shell typically passes `resolve_result.contextCharBudget(defaults.max_chars)`.
+pub fn optionsFromBudget(
+    budget_chars: ?usize,
     overrides: struct {
         max_chars: ?usize = null,
         max_tail_messages: ?usize = null,
@@ -29,7 +30,7 @@ pub fn optionsForModel(
 ) Options {
     const defaults = Options{};
     return .{
-        .max_chars = overrides.max_chars orelse ai.catalog.contextBudgetChars(model_info, defaults.max_chars),
+        .max_chars = overrides.max_chars orelse (budget_chars orelse defaults.max_chars),
         .max_tail_messages = overrides.max_tail_messages orelse defaults.max_tail_messages,
         .min_tail_messages = overrides.min_tail_messages orelse defaults.min_tail_messages,
     };

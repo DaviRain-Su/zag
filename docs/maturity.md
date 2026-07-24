@@ -32,12 +32,12 @@
 | Workspace / Sandbox | L1 | `workspace.zig` + `shell_policy.zig` | jail + denylist + **secret redact** + `/doctor` 最小；SECURITY 诚实 | OS sandbox（seatbelt/bwrap） | Hyper sandbox；Codex |
 | Context / Compaction | L1 | `context.zig`（截断 + catalog 预算） | 四层 prompt；超限 compaction（摘要+最近 N）落盘可解释 | repo map；智能选文件；**Memory 挂载点** | Pi；Aider；Hyper |
 | Session / Resume | L1 | `session_store.zig` | schema 版本 + 迁移；transcript≠view 边界写死 | session 树 / fork / 旁支 | Pi；Nanocodex fork |
-| Provider / zag-ai | L1+ | `packages/zag-ai/`、`provider.zig`；retry/usage/ChatOptions/contract_tests 已接；流式取消与 session 账本未齐 | 错误分类+重试成文；usage 进 session/trace；流式取消规格；contract 目录约定 | fallback / multi-key；多协议 | Hyper models；omp |
+| Provider / zag-ai | L1+ | `packages/zag-ai/`：WireAdapter + `createWire`；openai_compat + anthropic_messages；shared http/Config；embed on vtable；retry/usage/contract_tests。欠：session 账本、流式取消测试、redact 联动 | H6 收口项勾满 → L2（见 [zag-ai-provider](./modules/zag-ai-provider.md)） | fallback / multi-key；第三协议 | Hyper models；omp |
 | Trace / Observability | L1+ | `trace.zig`（usage / provider_retry 事件） | schema 版本化；能复盘 permission/jail/shell/usage | dashboard；费用透视 | Hyper dashboard |
 | Memory Repo | L0 | 规格 [modules/memory.md](./modules/memory.md) | （H 不做）C5：默认关；可审可删；注入 ephemeral | embed 检索可选 | Hyper memory |
 | Subagents / Oracle | L0 | — | （H 不做）C6：typed 子代理 + Oracle pin + 对话点名触发 | Advisor；worktree fan-out | Amp；Hyper design-oracle |
 | Extensions | L0 | — | （H 不做）C8：Skills 目录可加载 | Hooks + MCP + plugin 包 | Pi；goose；Hyper |
-| UX | L1 | `packages/zag-cli/src/cli.zig`（main 为薄入口）；**已知 bug：`--trace` 可选参会吞掉 prompt**（`--trace "list_dir ."` 把 prompt 当路径） | headless 友好 exit code + **稳定 flag（修 `--trace` 歧义）**；文档与行为一致 | TUI；ACP | Hyper pager；Codex |
+| UX | L1 | `packages/zag-cli/src/cli.zig`（main 为薄入口）；`--trace` 仅消费 path-like / `--trace=` | headless 友好 exit code + 稳定 flag；文档与行为一致 | TUI；ACP | Hyper pager；Codex |
 | Quality / Evals | L0 | 包测 + 少量 harness 单测 | H 起：golden + security eval 可 CI | edit eval；cost 基线 | Nanocodex contracts |
 
 ---

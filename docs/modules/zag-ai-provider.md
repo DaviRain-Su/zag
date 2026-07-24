@@ -2,8 +2,8 @@
 
 | 项 | 内容 |
 |----|------|
-| 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `packages/openai-zig/` |
-| 成熟度 | L1 → **L1+ partial H6** → **L2（H6 收口）** → L3（fallback/multi-key） |
+| 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `openai-zig`（OpenAI）/ `std.http`（Anthropic） |
+| 成熟度 | **H6 大半完成（L1+）**；L2 出门尚欠 session 账本 / 流式取消测试 / redact 联动 |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
 ## 包内分层
@@ -12,69 +12,58 @@
 zag-agent-core/provider.Provider     ← 纯端口（无 Client）
         ↑
 zag-coding-agent/wire_provider       ← WireAdapter → Provider 桥
-        → zag-ai WireAdapter
-             resolve · catalog · ChatOptions
-                → openai-zig（默认实现）
-                → （预留）anthropic / 其他
+        → zag-ai
+             factory.createWire · resolve · catalog · ChatOptions
+                ├─ openai_compat → openai-zig
+                └─ anthropic_messages → std.http only
 ```
 
 | 层 | 路径 | 职责 |
 |----|------|------|
 | 纯端口 | `packages/zag-agent-core/src/provider.zig` | `Provider` vtable only |
 | 组装桥 | `packages/zag-coding-agent/src/wire_provider.zig` | stream / options / ownership |
-| Model plane | `packages/zag-ai` | WireAdapter、resolve、contract |
-| 协议实现 | `packages/openai-zig` 等 | HTTP / SSE / 厂商 schema |
+| Model plane | `packages/zag-ai` | WireAdapter、factory、resolve、contract |
+| 协议实现 | `openai_compat` / `anthropic_messages` | 厂商 schema + SSE |
 
 Harness **禁止**依赖 openai-zig 类型。总图见 [architecture.md](../architecture.md#目标分层总图钉死)。
 
-## Wire Adapter（预留）
+## Wire Adapter（已落地）
 
 对齐 Pi：`convertToLlm` + stream 事件映回统一形状。
-
-### 目标形状（实现时落代码，本文先钉）
 
 ```text
 canonical: types.Message / ToolDefinition / ChatOptions
                 │
                 ▼
-        WireAdapter (trait / vtable)
-          · name / api_style
-          · chat(arena, messages, tools, opts) → AssistantTurn
-          · chatStream(...) → 同一 turn 或事件回调
+        WireAdapter (vtable)
+          · api_style / name / deinit
+          · chat / chatStream → AssistantTurn
+          · embed → EmbeddingResult | NotSupported
                 │
-        ┌───────┴────────┐
-        ▼                ▼
-  OpenAICompatAdapter   AnthropicAdapter（后置）
-        │
-        ▼
-  openai-zig Client
+        ┌───────┴────────────────┐
+        ▼                        ▼
+  openai_compat              anthropic_messages
+  (openai-zig resources)     (std.http only)
 ```
 
-| 项 | 现状 | 目标 |
-|----|------|------|
-| Canonical 消息 | ✅ `types.Message` 等 | 保持稳定；agent 只依赖此 |
-| convert 逻辑 | 🟡 埋在 `openai_compat.toChatMessages` | 收进 **OpenAICompatAdapter** |
-| `api_style` | ❌ | `ProviderSpec` / resolve 可选字段；默认 `openai_compat` |
-| 第二协议 | ❌ | 需要时新 adapter；**不改** Agent Core |
-| Agent `if` 厂商 | 禁止 | 禁止 |
-
-### 实现节奏
-
-1. **文档** — 本页 + architecture。  
-2. **WireAdapter** — `wire.zig`；**`factory.createWire`** / `Resolved.createWire`。  
-3. **openai_compat** — Chat Completions + SSE（默认 style；唯一依赖 openai-zig resources）。  
-4. **anthropic_messages** — Messages API + 真 SSE（http only）。  
-5. **config.Config + http.Client** — 共享配置；`http` 仅 `std.http`。  
-6. **wire.Error** — 全适配器共用；`mapSdkError` 仅 openai 适配器用。  
-7. **根导出** — 优先 `createWire` / `OpenAiClient`；`Client` 为 OpenAI 别名（兼容）。  
-8. **embed** — `WireAdapter.embed` + `supportsEmbed`；OpenAI 走 `/embeddings`；Anthropic `NotSupported`。
+| 项 | 现状 |
+|----|------|
+| Canonical 消息 | ✅ `types.Message` 等 |
+| `factory.createWire` / `Resolved.createWire` | ✅ |
+| `api_style` | ✅ presets + `ZAG_API_STYLE` / `ZAG_PROVIDER=anthropic` |
+| OpenAI Chat Completions + SSE | ✅ `openai_compat`（唯一 openai-zig chat 消费者） |
+| Anthropic Messages + SSE | ✅ `anthropic_messages` |
+| 共享 `Config` + `http.Client` | ✅ `http` 仅 `std.http` |
+| 共享 `wire.Error` | ✅；`mapSdkError` 仅 OpenAI 适配器 |
+| `WireAdapter.embed` | ✅ OpenAI 实现；Anthropic → `NotSupported` |
+| Agent `if` 厂商 | 禁止（保持） |
 
 ### 不变式（适配层）
 
 1. Agent Core / `loop` **永不** import 厂商 wire 类型。  
 2. 错误分类在 adapter 边界映到统一 `Error` + `isRetryableError`。  
 3. Usage / finish_reason / tool_calls 在 canonical `AssistantTurn` 上对齐。  
-4. 流式：wire 增量 → 统一 `StreamEvent` 或组装后的 turn（与 H6 流式取消规格一致）。
+4. 流式：wire 增量 → 统一 `StreamEvent` 或组装后的 turn（流式**取消**测试仍属 H6 收口）。
 
 ## 不变式
 
@@ -83,20 +72,22 @@ canonical: types.Message / ToolDefinition / ChatOptions
 3. 可重试错误与不可重试错误分类稳定，供 loop 使用（`isRetryableError`）。  
 4. 配置密钥不进 trace/session 明文（与 H5 redact 对齐；H6 配合）。
 
-## 已落地（L1+，勿重复劳动）
+## 已落地（勿重复劳动）
 
 | 能力 | 证据 |
 |------|------|
-| 错误分类 | `zag-ai` `openai_compat.Error` + `types.isRetryableError` |
-| 传输层重试 | openai-zig transport `max_retries` / backoff |
+| WireAdapter + factory | `wire.zig`、`factory.zig` |
+| 双协议 | `openai_compat`、`anthropic_messages` |
+| 错误分类 | `wire.Error` + `types.isRetryableError` |
+| 传输层重试 | openai-zig / http `max_retries` / backoff |
 | Loop 层重试 | `loop.chatWithRetry` + `chat_retries`；trace `provider_retry` |
 | ChatOptions | temperature / max_tokens / tool_choice…；config + env |
 | Usage | `AssistantTurn.usage`；trace `usage` 事件；verbose 日志 |
 | Catalog 预算 | `catalog.contextBudgetChars` → `context.optionsForModel` |
 | Contract 雏形 | `packages/zag-ai/src/contract_tests.zig`（无网络） |
-| Multimodal / embed | `ContentPart`；`WireAdapter.embed`（OpenAI 实现；Anthropic → `NotSupported`） |
+| Multimodal / embed | `ContentPart`；`WireAdapter.embed` |
 
-## 错误与重试（L2 政策 = 代码）
+## 错误与重试（政策 = 代码）
 
 | Error | 重试？ |
 |-------|--------|
@@ -107,22 +98,23 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | HttpFailed | yes（loop 层） |
 | BadRequest | no |
 | InvalidResponse | no |
+| NotSupported | no |
 
 政策：transport `max_retries` + loop `chat_retries` + `retry_base_delay_ms` 可配置（文件 / env）。
 
-## Usage（L2）
+## Usage
 
 - ✅ turn 级 usage（供应商返回时）  
 - ✅ trace 事件  
 - ❌ 尚未：session 级聚合账本、费用估算  
 
-## 流式（L2 规格 — 未齐）
+## 流式
 
-- `--stream` 可取消（与 loop cancel 对齐）— **待 H1/H6**  
-- 不完整 tool_call 增量：组装完成前不执行 tool；取消则丢弃部分组装  
-- 合同测试覆盖「最终 tool_calls 形状」  
+- ✅ OpenAI / Anthropic SSE 组装为 turn  
+- ❌ `--stream` 可取消（与 loop cancel 对齐）— **待 H1/H6 收口**  
+- ❌ 取消时丢弃不完整 tool_call 的 CI 断言  
 
-## Contract tests（L2）
+## Contract tests
 
 见 [quality/contracts.md](../quality/contracts.md)。
 
@@ -131,20 +123,20 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 ## L2 验收（H6 出门）
 
-- [x] 重试政策文档 = 代码（本页 + isRetryableError + loop）  
+- [x] WireAdapter + 至少两家 style  
+- [x] 重试政策文档 = 代码  
 - [x] usage 出现在 trace（turn 级）  
 - [ ] usage 可选进入 session 元数据 / 聚合  
 - [ ] 流式取消规格有测试或明确 TODO 绑定 CI  
 - [ ] contract 目录约定落地并进 CI 说明  
 - [ ] 与 H5：密钥不出现在 verbose/trace  
 
-**结论：** H6 **部分完成**；未全部勾选前 maturity 保持 **L1**（或文档写 L1+），不宣称 Provider L2。
+**结论：** 多协议 Model plane **已可用**；maturity Provider 行保持 **L1+**，勾满上表后升 **L2**。
 
 ## L3
 
 - provider fallback 链、multi-key  
-- **第二 WireAdapter**（Anthropic Messages 等）  
-- 非 Chat Completions 协议（Responses 等）按需  
+- 第三 WireAdapter / Responses 等按需  
 - Memory / RAG 用 embed 仅作可选后端，见 [memory.md](./memory.md)  
 
 ## 非目标（H）

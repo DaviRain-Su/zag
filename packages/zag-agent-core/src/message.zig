@@ -1,10 +1,10 @@
-//! Agent transcript messages — re-exported from monorepo package `zag-ai`.
+//! Agent transcript messages — re-exported from L0 `zag-types`.
 
-const ai = @import("zag-ai");
+const zt = @import("zag-types");
 
-pub const Role = ai.types.Role;
-pub const ToolCall = ai.types.ToolCall;
-pub const ContentPart = ai.types.ContentPart;
-pub const Message = ai.types.Message;
-pub const AssistantTurn = ai.types.AssistantTurn;
-pub const Usage = ai.types.Usage;
+pub const Role = zt.Role;
+pub const ToolCall = zt.ToolCall;
+pub const ContentPart = zt.ContentPart;
+pub const Message = zt.Message;
+pub const AssistantTurn = zt.AssistantTurn;
+pub const Usage = zt.Usage;

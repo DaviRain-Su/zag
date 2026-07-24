@@ -1,15 +1,15 @@
 //! Provider port — pure Agent Core surface over any model backend.
 //!
 //! Core never imports wire clients (`openai_compat.Client`, etc.).
-//! Coding-agent / shell bind a `zag-ai.WireAdapter` via `providerFromWire`.
+//! Coding-agent / shell bind a `zag-ai.WireAdapter` via WireProvider.
 
 const std = @import("std");
-const ai = @import("zag-ai");
+const zt = @import("zag-types");
 const message = @import("message.zig");
 const tool = @import("tool.zig");
 
-/// Neutral error set for chat (matches `zag-ai.wire.Error`).
-pub const ChatError = ai.wire.Error;
+/// Neutral error set (L0) — adapters map vendor errors here.
+pub const ChatError = zt.ChatError;
 
 pub const VTable = struct {
     chat: *const fn (

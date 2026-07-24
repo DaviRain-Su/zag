@@ -13,24 +13,8 @@
 const std = @import("std");
 const types = @import("types.zig");
 
-/// Shared error set for all wire backends (OpenAI, Anthropic, …).
-pub const Error = error{
-    HttpFailed,
-    BadStatus,
-    InvalidResponse,
-    OutOfMemory,
-    WriteFailed,
-    Unexpected,
-    StreamFailed,
-    AuthenticationFailed,
-    PermissionDenied,
-    RateLimited,
-    Timeout,
-    ServerError,
-    BadRequest,
-    /// Capability not available on this wire (e.g. embeddings on Anthropic).
-    NotSupported,
-};
+/// Shared error set for all wire backends — alias of L0 `zag-types.ChatError`.
+pub const Error = types.ChatError;
 
 pub const ChatOptions = types.ChatOptions;
 pub const EmbedOptions = types.EmbedOptions;
