@@ -75,7 +75,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 - [x] stable machine-readable Tool errors for built-in paths.
 - [x] serial Tool order is tested.
 - [x] module-level cancel between calls fills pending Tool results and remains resume-safe.
-- [x] Agent-level accepted multi-Tool cancel preserves IDs and agrees across persisted resume + one terminal (h-integration-001 package evidence; Gate pending).
+- [ ] Agent-level accepted multi-Tool cancel preserves IDs and agrees across persisted resume + one terminal (**package evidence landed** in h-integration-001; **Gate pending** — do not check until independent review + main std/curl).
 - [x] at least two golden transcripts exist.
 - [x] every normal/error path has one matching terminal state across API and trace (facade owner; h-trace-001).
 - [x] in-flight provider cancellation/deadline is contract-tested (h-provider-001).

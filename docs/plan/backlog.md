@@ -15,3 +15,6 @@ Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/
 | 2026-07-24 | Assessment | P2 | Measure startup/size/cross-build before making Zig performance claims. |
 | 2026-07-24 | Packaging | P2 | Repo split/C ABI/dynamic plugin ABI deferred until SDK gate plus a second consumer/release channel. |
 | 2026-07-25 | h-doctor-001 N1 | P2 | `--doctor` silently ignores other legal product flags/prompt (`--stream`, `--config`, `--plan`, `-v`, free-text). Report-only surface still correct; optional reject-or-document UX later. |
+| 2026-07-25 | h-integration-001 review | P2 | Jail composition still uses process-global `ScopedCwd` (restore is fail-loud). Prefer Dir-scoped Agent/tool workspace injection for future parallel isolation when product API allows. |
+| 2026-07-25 | h-integration-001 review | P3 | Trace `tool_result` has no call-id field; pending cancelled pairing is transcript/session-owned (schema-true; optional future id on tool_result). |
+| 2026-07-25 | h-integration-001 review | P3 | Jail fixture `SkipZigTest` on Windows / symlink `AccessDenied` — document CI hosts without symlink support skip rather than fail closed. |

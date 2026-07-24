@@ -3393,11 +3393,20 @@ test "h-redact: save/resume then new secret id avoids prior zag-rtid" {
 // ── h-integration-001 Agent composition fixtures ────────────────────────────
 // Real product Agent.reply + default/policy/session/trace (not raw Registry).
 // Does not claim mid-flight Tool/shell preemption (post-H process work).
+//
+// Trace schema notes (locked by loop/trace contract, not guessed):
+// - executeOneTool always emits tool_call then (after work) tool_result.
+// - finishRemainingCancelled only emits tool_result (no tool_call, no id field).
+// - permission / jail_deny emit once per gated call when denied at that gate.
+// - tool_result lines carry name+body only; pairing IDs live on transcript/session.
 
 const tool_error = core.tool_error;
 
 /// Scoped process-cwd switch for composition fixtures that need a real workspace
 /// root smaller than the monorepo (symlink escape). Always restore via defer.
+///
+/// Process-global cwd is hygiene debt (hostile to future parallel tests); restore
+/// is fail-loud. Prefer Dir-scoped Agent/tool cwd when product API allows (P2 backlog).
 const ScopedCwd = struct {
     io: Io,
     saved: Io.Dir,
@@ -3410,12 +3419,24 @@ const ScopedCwd = struct {
         return .{ .io = io, .saved = saved };
     }
 
+    /// Always closes the saved handle. Restore failure panics with a fixed
+    /// message (no path leak) so later tests cannot run under a wrong cwd.
     fn leave(self: *ScopedCwd) void {
-        std.process.setCurrentDir(self.io, self.saved) catch {};
+        const restore_err = std.process.setCurrentDir(self.io, self.saved);
         self.saved.close(self.io);
         self.* = undefined;
+        restore_err catch @panic("h-integration: process cwd restore failed");
     }
 };
+
+/// Target must be absent: only `FileNotFound` is success; other access errors fail.
+fn expectPathAbsent(io: Io, path: []const u8) !void {
+    Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => |e| return e,
+    };
+    return error.TestUnexpectedResult;
+}
 
 fn toolBodyById(items: []const message.Message, id: []const u8) ?[]const u8 {
     for (items) |m| {
@@ -3443,6 +3464,25 @@ fn expectPairedToolId(items: []const message.Message, id: []const u8) ![]const u
     try std.testing.expect(assistantHasCallId(items, id));
     const body = toolBodyById(items, id) orelse return error.TestUnexpectedResult;
     return body;
+}
+
+/// Strengthen durability evidence: on-disk session JSONL carries non-secret id
+/// + expected code token and must not contain a forbidden needle (if any).
+fn expectSessionFileHasIdAndCode(
+    gpa: std.mem.Allocator,
+    io: Io,
+    path: []const u8,
+    id: []const u8,
+    code_token: []const u8,
+    forbidden: ?[]const u8,
+) !void {
+    const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+    defer gpa.free(raw);
+    try std.testing.expect(std.mem.indexOf(u8, raw, id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, code_token) != null);
+    if (forbidden) |f| {
+        try std.testing.expect(std.mem.indexOf(u8, raw, f) == null);
+    }
 }
 
 test "h-integration: default Agent ask-deny write leaves target, permission_denied, save/resume+trace" {
@@ -3524,19 +3564,30 @@ test "h-integration: default Agent ask-deny write leaves target, permission_deni
         try std.testing.expect(std.mem.indexOf(u8, body, "MUST_NOT_PERSIST") == null);
 
         // Target must be absent (handler never ran / no mutation).
-        if (Io.Dir.cwd().access(io, target, .{})) |_| {
-            try std.testing.expect(false);
-        } else |_| {}
+        try expectPathAbsent(io, target);
 
         const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
         try expectRunEnd(tr, true, "completed");
-        try std.testing.expect(tr.countKind("permission") >= 1);
+        // One gated write denial: exactly one permission event (+ tool_call/result).
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("permission"));
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_result"));
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"permission\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"allowed\":false") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"risk\":\"write\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "write_file") != null);
         // Exactly one truthful terminal.
         try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+
+        // Args may still mention intended content; durable bytes must pair id + deny code.
+        try expectSessionFileHasIdAndCode(
+            gpa,
+            io,
+            sess_path,
+            "int-policy-write-1",
+            "code=permission_denied",
+            null,
+        );
     }
 
     // Atomic save survived; resume preserves original non-secret Tool-call ID pairing.
@@ -3549,9 +3600,15 @@ test "h-integration: default Agent ask-deny write leaves target, permission_deni
     defer resumed.deinit();
     const resumed_body = try expectPairedToolId(resumed.transcript.items(), "int-policy-write-1");
     try std.testing.expect(tool_error.hasCode(resumed_body, .permission_denied));
-    if (Io.Dir.cwd().access(io, target, .{})) |_| {
-        try std.testing.expect(false);
-    } else |_| {}
+    try expectPathAbsent(io, target);
+    try expectSessionFileHasIdAndCode(
+        gpa,
+        io,
+        sess_path,
+        "int-policy-write-1",
+        "code=permission_denied",
+        null,
+    );
 }
 
 test "h-integration: default Agent yolo escaping-symlink jail_deny, outside intact, save/resume+trace" {
@@ -3559,6 +3616,8 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
     // gate; escaping workspace symlink does not expose outside bytes; jail_deny
     // machine body + jail_deny trace; ID pairing survives save/resume; soft deny
     // recovers to completed terminal.
+    // Platform: Windows lacks portable symlink fixtures here (SkipZigTest only);
+    // AccessDenied on symlink create also skips — not a false green on hosts that support links.
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const gpa = std.testing.allocator;
@@ -3647,11 +3706,23 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
 
         const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
         try expectRunEnd(tr, true, "completed");
-        try std.testing.expect(tr.countKind("jail_deny") >= 1);
+        // One escaping read: exactly one jail_deny (+ tool_call/result).
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("jail_deny"));
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_result"));
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"jail_deny\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "read_file") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "OUTSIDE_SECRET") == null);
         try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+
+        try expectSessionFileHasIdAndCode(
+            gpa,
+            io,
+            sess_path,
+            "int-jail-read-1",
+            "code=jail_deny",
+            "OUTSIDE_SECRET",
+        );
     }
 
     var resumed = try Session.start(gpa, io, .{
@@ -3667,6 +3738,14 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
     const after2 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
     defer gpa.free(after2);
     try std.testing.expectEqualStrings(outside_bytes, after2);
+    try expectSessionFileHasIdAndCode(
+        gpa,
+        io,
+        sess_path,
+        "int-jail-read-1",
+        "code=jail_deny",
+        "OUTSIDE_SECRET",
+    );
 }
 
 /// Instance state for between-Tool cancel: first handler runs, then requests cancel.
@@ -3833,13 +3912,40 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
         try expectRunEnd(tr, true, "cancelled");
         try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
         try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
-        // Executed call was traced with original provider id; pending calls get
-        // cancelled tool_result bodies (IDs live on transcript, not tool_result).
+        // Between-call cancel: only the executed call emits tool_call; every
+        // accepted call (executed + pending cancelled) emits tool_result.
+        // Pending tool_result has no id field (schema); IDs pair on transcript.
+        try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
+        try std.testing.expectEqual(@as(u32, 3), tr.countKind("tool_result"));
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "provider-multi-1") != null);
-        try std.testing.expect(tr.countKind("tool_call") >= 1);
-        try std.testing.expect(tr.countKind("tool_result") >= 3);
+        // Pending ids are not required on tool_result lines (schema has name+body only).
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "code=cancelled") != null);
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "first-handler-done") != null);
+
+        try expectSessionFileHasIdAndCode(
+            gpa,
+            io,
+            sess_path,
+            "provider-multi-1",
+            "code=cancelled",
+            null,
+        );
+        try expectSessionFileHasIdAndCode(
+            gpa,
+            io,
+            sess_path,
+            "provider-multi-2",
+            "code=cancelled",
+            null,
+        );
+        try expectSessionFileHasIdAndCode(
+            gpa,
+            io,
+            sess_path,
+            "provider-multi-3",
+            "code=cancelled",
+            null,
+        );
     }
 
     // Resume pairing: executed + pending cancelled bodies keep provider IDs.
@@ -3856,4 +3962,12 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
     try std.testing.expect(tool_error.hasCode(r2, .cancelled));
     const r3 = try expectPairedToolId(resumed.transcript.items(), "provider-multi-3");
     try std.testing.expect(tool_error.hasCode(r3, .cancelled));
+    try expectSessionFileHasIdAndCode(
+        gpa,
+        io,
+        sess_path,
+        "provider-multi-2",
+        "code=cancelled",
+        null,
+    );
 }
