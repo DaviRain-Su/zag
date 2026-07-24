@@ -11,16 +11,11 @@
             .path = "../zag-types",
         },
         .curl = .{
-            // jiacai2050/zig-curl v0.5.0 — seed local cache if zig fetch fails:
-            //   curl -fsSL -o /tmp/zig-curl-0.5.0.tar.gz <url>
-            //   zig fetch file:///tmp/zig-curl-0.5.0.tar.gz
-            .url = "https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz",
-            .hash = "curl-0.5.0-P4tT4e_-AABZBa1zBmiSKFQo7xV0DJ2cUxFfH4KiQKj2",
+            .path = "../third_party/zig-curl",
             .lazy = true,
         },
         .comptime_serde = .{
-            // Library-only mirror of jiacai2050/comptime-serde v0.2.0 (no zigcli).
-            .path = "../comptime-serde",
+            .path = "../third_party/comptime-serde",
         },
     },
     .paths = .{

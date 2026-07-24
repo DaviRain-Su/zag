@@ -1,0 +1,18 @@
+.{
+    .name = .curl,
+    .fingerprint = 0x3e01b4de1538b3f,
+    .version = "0.5.0",
+    .minimum_zig_version = "0.16.0",
+    // Zag vendors this under packages/third_party and always builds with
+    // link_vendor=false (system libcurl). Upstream's curl/zlib/mbedtls URL
+    // deps are omitted so `zig build` stays offline-friendly.
+    .paths = .{
+        "src",
+        "libs",
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "README.md",
+    },
+    .dependencies = .{},
+}

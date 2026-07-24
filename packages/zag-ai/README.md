@@ -29,7 +29,7 @@ agent-core / coding-agent / cli
               └─ anthropic_messages → zag-ai http (std | curl)
 ```
 
-Build: `zig build -Dhttp_backend=curl` (needs system libcurl + zig-curl via `build.zig.zon` URL; see [D-005](../../docs/decisions/complete/D-005-outbound-http-std-not-httpz.md)). Prefer curl when `timeout_ms` must be real; bake-off: [http-backend-bakeoff](../../docs/quality/http-backend-bakeoff.md).
+Build: `zig build -Dhttp_backend=curl` (needs system libcurl; zig-curl is path-vendored under `packages/third_party/zig-curl`; see [D-005](../../docs/decisions/complete/D-005-outbound-http-std-not-httpz.md)). Prefer curl when `timeout_ms` must be real; bake-off: [http-backend-bakeoff](../../docs/quality/http-backend-bakeoff.md).
 
 ## Preferred API
 
@@ -133,7 +133,7 @@ python3 packages/zag-ai/scripts/generate_catalog.py --check
 
 This regenerates `data/catalog.json` and **`src/catalog_data.zig`** (compile-time `[]const ModelInfo`). Runtime hot path does not parse JSON.
 
-JSON inspect / roundtrip uses [comptime-serde](https://github.com/jiacai2050/comptime-serde) (library mirror under `packages/comptime-serde`):
+JSON inspect / roundtrip uses [comptime-serde](https://github.com/jiacai2050/comptime-serde) (mirror under `packages/third_party/comptime-serde`):
 
 ```zig
 const ai = @import("zag-ai");

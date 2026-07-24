@@ -50,17 +50,13 @@ zig build http-bakeoff -Dhttp_backend=curl -- https://httpbingo.org
 ./scripts/http_backend_bakeoff.sh
 ```
 
-Dependency: URL in `build.zig.zon` → [zig-curl v0.5.0](https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz), `link_vendor=false`.
-
-If local `zig fetch` cannot reach GitHub:
+Dependency: path-vendored [zig-curl v0.5.0](https://github.com/jiacai2050/zig-curl) under [`packages/third_party/zig-curl`](../../../packages/third_party/zig-curl/), `link_vendor=false` (system libcurl). See [`packages/third_party/README.md`](../../../packages/third_party/README.md).
 
 ```bash
-curl -fsSL -o /tmp/zig-curl-0.5.0.tar.gz \
-  https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz
-zig fetch file:///tmp/zig-curl-0.5.0.tar.gz
+zig build test -Dhttp_backend=curl
 ```
 
-### Stance (post Phase 3)
+### Stance (post Phase 3)### Stance (post Phase 3)
 
 | Audience | Backend |
 |----------|---------|

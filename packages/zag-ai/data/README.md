@@ -15,7 +15,7 @@ catalog.json   src/catalog_data.zig  ← frozen []const ModelInfo
 
 Why not `@embedFile` + `std.json` at comptime? Zig 0.16 JSON parsing needs an allocator that is not comptime-safe. Generation freezes the same data into pure Zig constants — still compile-time data, JSON remains the maintainable store.
 
-For **serialize / deserialize** of the same shapes (tooling, roundtrip tests), use `catalog_serde.zig` + [comptime-serde](https://github.com/jiacai2050/comptime-serde) (Zag mirrors the library under `packages/comptime-serde`, no CLI). Type dispatch is comptime; parse still runs with an allocator.
+For **serialize / deserialize** of the same shapes (tooling, roundtrip tests), use `catalog_serde.zig` + [comptime-serde](https://github.com/jiacai2050/comptime-serde) (Zag mirrors the library under `packages/third_party/comptime-serde`, no CLI). Type dispatch is comptime; parse still runs with an allocator.
 
 ## Schema (`models/<provider>.json`)
 
