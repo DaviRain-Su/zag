@@ -47,7 +47,7 @@ all module P0/P1 tasks ─► h-integration-001
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
-| [h-session-001](./tasks/h-session-001.md) | P0 | ready | Session open/save/concurrency |
+| [h-session-001](./tasks/h-session-001.md) | P0 | in-progress | Session open/save/concurrency |
 | [h-tool-runtime-001](./tasks/h-tool-runtime-001.md) | P0 | ready | Tool descriptor + permission |
 | [h-workspace-001](./tasks/h-workspace-001.md) | P0 | pending | Filesystem containment after Tool descriptor |
 | [h-trace-001](./tasks/h-trace-001.md) | P0 | ready | Trace/run terminal lifecycle |

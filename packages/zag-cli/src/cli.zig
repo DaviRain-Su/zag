@@ -267,7 +267,7 @@ pub fn run(init: std.process.Init) !void {
     core.cancel.installSigInt(&agent.cancel);
 
     // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
-    const open_mode: coding.OpenMode = if (continue_session) .resume_existing else .create_new;
+    const open_mode = selectOpenMode(continue_session);
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
@@ -276,6 +276,20 @@ pub fn run(init: std.process.Init) !void {
     }
 
     try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project);
+}
+
+/// Pure open-mode decision for CLI flags.
+/// `-c` / `--continue` → resume_existing; otherwise create_new (`-s PATH` create, or ephemeral).
+/// `open_or_create` is never selected by CLI flags (SDK convenience only).
+pub fn selectOpenMode(continue_session: bool) coding.OpenMode {
+    return if (continue_session) .resume_existing else .create_new;
+}
+
+test "CLI selectOpenMode: -s is create_new, -c is resume_existing" {
+    // -s PATH alone (or no session flags) → create_new
+    try std.testing.expectEqual(coding.OpenMode.create_new, selectOpenMode(false));
+    // -c / --continue → resume_existing
+    try std.testing.expectEqual(coding.OpenMode.resume_existing, selectOpenMode(true));
 }
 
 fn runOneShot(

@@ -21,6 +21,7 @@
 //! - Session path is lexical relative-workspace only (not symlink containment).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const message = @import("message.zig");
 const transcript_mod = @import("transcript.zig");
@@ -40,10 +41,6 @@ pub const Error = error{
 pub const header_type = "zag_session";
 pub const current_schema_version: u32 = 1;
 
-/// Test-only: when true, atomic save fails after the temp write and before replace.
-/// Production code must leave this false.
-var failpoint_before_replace: bool = false;
-
 /// Metadata written on the session header line (H4).
 pub const SessionMeta = struct {
     schema_version: u32 = current_schema_version,
@@ -55,6 +52,13 @@ pub const SessionMeta = struct {
 };
 
 /// Owned writer lease for one persisted session.
+///
+/// **Ownership (move-only by convention):** obtain only via `createNew` /
+/// `resumeExisting` / `openOrCreate`. The lease owns the lock FD, path strings,
+/// and must be `deinit`ed exactly once. Zig resource types cannot prevent a
+/// hostile by-value copy of this struct; callers must not copy/forge a Writer.
+/// That is not part of the multi-process lock contract.
+///
 /// Holds an exclusive advisory lock on `{path}.lock` for its lifetime.
 pub const Writer = struct {
     gpa: std.mem.Allocator,
@@ -66,6 +70,8 @@ pub const Writer = struct {
     lock_path: []const u8,
     /// Held open for the lifetime of the writer.
     lock_file: Io.File,
+    /// Test builds only: fail after temp write, before atomic replace/link.
+    fail_before_replace: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
 
     pub fn deinit(self: *Writer) void {
         self.lock_file.close(self.io);
@@ -76,7 +82,8 @@ pub const Writer = struct {
 
     /// Persist transcript atomically, preserving the prior file on failure.
     pub fn save(self: *Writer, messages: []const message.Message, meta: SessionMeta) Error!void {
-        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta);
+        const fault = if (builtin.is_test) self.fail_before_replace else false;
+        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault);
     }
 
     /// Load the current session file into `transcript` and return header meta.
@@ -84,6 +91,13 @@ pub const Writer = struct {
         return loadWithMeta(self.gpa, self.io, self.cwd, self.path, transcript);
     }
 };
+
+/// Test-only helpers. Production code has no entry that enables save faults.
+pub const testing = if (builtin.is_test) struct {
+    pub fn setFailBeforeReplace(writer: *Writer, enabled: bool) void {
+        writer.fail_before_replace = enabled;
+    }
+} else struct {};
 
 /// Lexical relative-workspace check for session paths (no symlink resolution).
 pub fn validateSessionPath(path: []const u8) Error!void {
@@ -189,7 +203,7 @@ pub fn createNew(
     // Race: another writer may have materialized the file between access and lock.
     if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
 
-    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta);
+    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta, false);
 
     return .{
         .gpa = gpa,
@@ -287,6 +301,7 @@ fn acquireBriefLock(
 }
 
 /// State-saving helper: write full bytes to a temporary file and atomically replace.
+/// `fail_before_replace` is production-false; only test Writers pass true via testing helper.
 fn saveWithMetaAtomic(
     gpa: std.mem.Allocator,
     io: Io,
@@ -294,6 +309,7 @@ fn saveWithMetaAtomic(
     path: []const u8,
     messages: []const message.Message,
     meta: SessionMeta,
+    fail_before_replace: bool,
 ) Error!void {
     var body: Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
@@ -315,7 +331,7 @@ fn saveWithMetaAtomic(
     w.writeAll(body.written()) catch return error.IoFailed;
     file_writer.flush() catch return error.IoFailed;
 
-    if (failpoint_before_replace) return error.IoFailed;
+    if (fail_before_replace) return error.IoFailed;
 
     atomic.replace(io) catch return error.IoFailed;
 }
@@ -328,6 +344,7 @@ fn saveWithMetaAtomicCreate(
     path: []const u8,
     messages: []const message.Message,
     meta: SessionMeta,
+    fail_before_replace: bool,
 ) Error!void {
     var body: Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
@@ -349,7 +366,7 @@ fn saveWithMetaAtomicCreate(
     w.writeAll(body.written()) catch return error.IoFailed;
     file_writer.flush() catch return error.IoFailed;
 
-    if (failpoint_before_replace) return error.IoFailed;
+    if (fail_before_replace) return error.IoFailed;
 
     atomic.link(io) catch |err| switch (err) {
         error.PathAlreadyExists => return error.SessionAlreadyExists,
@@ -386,7 +403,7 @@ pub fn saveWithMeta(
 ) Error!void {
     var lock = try acquireBriefLock(gpa, io, cwd, path);
     defer lock.deinit();
-    try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta);
+    try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta, false);
 }
 
 /// Load jsonl into an empty transcript (messages are arena-owned via transcript).
@@ -504,9 +521,11 @@ fn parseHeaderObject(
 }
 
 fn resolveHeaderVersion(obj: std.json.ObjectMap) Error!u32 {
+    // A typed header (`type=zag_session`) must declare an integer version field.
+    // Header-less legacy message files never reach this path (implied v1).
     const sv = obj.get("schema_version");
     const v = obj.get("v");
-    if (sv == null and v == null) return current_schema_version;
+    if (sv == null and v == null) return error.InvalidSession;
 
     const sv_int: ?u32 = if (sv) |x| try jsonInt(x) else null;
     const v_int: ?u32 = if (v) |x| try jsonInt(x) else null;
@@ -777,8 +796,8 @@ test "Writer save failpoint preserves prior bytes and reloads" {
     try t.appendSystem("sys");
     try t.appendUser("overwrite");
 
-    failpoint_before_replace = true;
-    defer failpoint_before_replace = false;
+    testing.setFailBeforeReplace(&writer, true);
+    defer testing.setFailBeforeReplace(&writer, false);
 
     const err = writer.save(t.items(), .{});
     try std.testing.expectError(error.IoFailed, err);
@@ -811,17 +830,17 @@ test "Writer conflict prevents second active writer" {
     ;
     try tmp.dir.writeFile(io, .{ .sub_path = "s.jsonl", .data = content });
 
-    // Hold the lock in a child process (same-process flock may not conflict on all hosts).
+    // Cross-process holder: same-process flock may not conflict on all hosts.
+    // Child is bounded (SIGALRM) so a parent read cannot hang forever if the child dies.
     const script =
-        \\import fcntl, sys, os, time
+        \\import fcntl, signal, sys, time
+        \\signal.alarm(8)
         \\f = open("s.jsonl.lock", "a+")
         \\fcntl.flock(f, fcntl.LOCK_EX)
-        \\# Signal readiness without holding parent on stdin forever.
         \\sys.stdout.write("ready\n")
         \\sys.stdout.flush()
-        \\# Stay alive until killed; short sleep loop so kill is responsive.
-        \\while True:
-        \\    time.sleep(0.05)
+        \\# Hold until parent kills us or alarm fires.
+        \\time.sleep(30)
     ;
 
     var child = try std.process.spawn(io, .{
@@ -838,10 +857,13 @@ test "Writer conflict prevents second active writer" {
         child.kill(io);
     }
 
-    // Wait for the child to report the lock is held.
+    // Wait for the child to report the lock is held (EOF if child dies → fail, not hang).
     var stdout_buf: [64]u8 = undefined;
     var stdout_reader = child.stdout.?.reader(io, &stdout_buf);
-    const line = stdout_reader.interface.takeDelimiterExclusive('\n') catch return error.TestUnexpectedResult;
+    const line = stdout_reader.interface.takeDelimiterExclusive('\n') catch |err| switch (err) {
+        error.EndOfStream => return error.TestUnexpectedResult,
+        else => return err,
+    };
     try std.testing.expectEqualStrings("ready", line);
 
     var arena2: std.heap.ArenaAllocator = .init(gpa);
@@ -853,6 +875,34 @@ test "Writer conflict prevents second active writer" {
     // Public save must also respect the active writer.
     const save_err = save(gpa, io, tmp.dir, "s.jsonl", t2.items());
     try std.testing.expectError(error.SessionBusy, save_err);
+}
+
+test "Writer resume general I/O is distinct from not-found; openOrCreate does not create" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // Session path is a directory: access may succeed, but reading as a file → IoFailed
+    // (not SessionNotFound). openOrCreate must propagate, not create-over.
+    try tmp.dir.createDirPath(io, "as_dir.jsonl");
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t.appendUser("seed");
+
+    const resume_err = resumeExisting(gpa, io, tmp.dir, "as_dir.jsonl", &t, null);
+    try std.testing.expectError(error.IoFailed, resume_err);
+
+    var t2 = transcript_mod.Transcript.init(arena_impl.allocator());
+    const ooc_err = openOrCreate(gpa, io, tmp.dir, "as_dir.jsonl", t.items(), .{}, &t2, null);
+    try std.testing.expectError(error.IoFailed, ooc_err);
+
+    // Path remains a directory (not overwritten by a session file).
+    var dir = try tmp.dir.openDir(io, "as_dir.jsonl", .{});
+    dir.close(io);
 }
 
 test "stale lock sidecar is reusable after release" {
@@ -944,6 +994,20 @@ test "strict header: float version rejected" {
     var t = transcript_mod.Transcript.init(arena_impl.allocator());
     const raw =
         \\{"schema_version":1.5,"type":"zag_session"}
+        \\{"role":"user","content":"x"}
+        \\
+    ;
+    const err = parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectError(error.InvalidSession, err);
+}
+
+test "strict header: type without version fields is InvalidSession" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"type":"zag_session"}
         \\{"role":"user","content":"x"}
         \\
     ;

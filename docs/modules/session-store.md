@@ -30,7 +30,7 @@ JSONL header plus message lines:
 
 | Field | Meaning |
 |-------|---------|
-| `schema_version` | Integer, current `1` (legacy `v` accepted; float rejected) |
+| `schema_version` | Integer, current `1` (legacy `v` accepted; float rejected; required on typed header) |
 | `type` | Exact string `zag_session` (only first content line may be a header) |
 | `zag_version` | Optional writer package version |
 | `compaction_gen` | Compaction generation |
@@ -93,24 +93,27 @@ None for the D-006 L2 contract. Honest limits that remain out of scope:
 Implementation notes:
 
 - `createNew` / `resumeExisting` / `openOrCreate` live in `session_store.zig` and are surfaced through `coding.OpenMode`.
+- **Writer ownership:** move-only by convention — obtain only from create/resume/open_or_create and `deinit` once. Do not copy or forge a Writer; Zig cannot enforce this against hostile callers (not a lock-contract guarantee).
 - The active writer holds an exclusive advisory lock on `{path}.lock` for its lifetime; the session file itself is not locked.
-- Save serializes to a same-filesystem temporary file and atomically replaces the target via `createFileAtomic`; failure (including deterministic failpoint before replace) leaves the prior bytes intact and loadable.
-- Final read `FileNotFound` maps to `SessionNotFound`.
+- Save serializes to a same-filesystem temporary file and atomically replaces the target via `createFileAtomic`. Test builds may inject a per-Writer before-replace fault via `session_store.testing` (absent as an enablement path in production); failure leaves the prior bytes intact and loadable.
+- Typed header lines require integer `schema_version` and/or legacy `v` (missing both → `InvalidSession`); header-less message files still load as implied v1.
+- Final read `FileNotFound` maps to `SessionNotFound`; other read/access failures map to `IoFailed` (e.g. path component is a regular file).
 - `Session.save` errors propagate through `Agent.reply` and `Agent.complete`; the CLI exits with a non-zero status and a logged error.
 - `Session.start` releases a partially acquired writer on error (`errdefer`) and only treats a successful resume as `resumed` for project-layer reload.
 
 ## L2 acceptance
 
 - [x] v1 header, legacy `v`, header-less legacy, and unsupported-schema parsing tests exist.
-- [x] Strict header tests: float version, conflicting v/schema_version, mid-stream/duplicate header, content not misclassified.
+- [x] Strict header tests: float version, missing version on typed header, conflicting v/schema_version, mid-stream/duplicate header, content not misclassified.
 - [x] create-existing fails without modifying bytes.
-- [x] resume missing/invalid/unsupported/general I/O failures are stable and distinct.
-- [x] fault-injected save (failpoint before replace) preserves prior bytes and returns failure; prior file remains loadable.
-- [x] a second active writer receives busy/conflict; public save also respects the lock.
+- [x] resume missing/invalid/unsupported/general I/O (path-component file) are stable and distinct; openOrCreate does not create on IoFailed.
+- [x] per-Writer test fault before replace preserves prior bytes and returns failure; prior file remains loadable.
+- [x] a second active writer receives busy/conflict; public save also respects the lock (bounded cross-process holder).
 - [x] stale lock sidecar is reusable after release.
-- [x] facade/headless never reports unqualified success after a requested save fails.
+- [x] `Agent.reply` returns `IoFailed` on save fault with prior session bytes unchanged (facade fixture).
 - [x] cancel/tool-pair roundtrip remains resume-safe under the new persistence path.
 - [x] session path lexical validation rejects absolute/`..`.
+- [x] CLI `selectOpenMode`: continue → resume_existing; else create_new.
 
 ## L3 (C5)
 

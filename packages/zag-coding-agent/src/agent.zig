@@ -634,7 +634,7 @@ test "Session.start open_or_create creates then resumes" {
     try std.testing.expect(s2.transcript.items().len >= 2);
 }
 
-test "Session.save is no-op without writer; reply surfaces save errors via writer path" {
+test "Session.save is no-op for ephemeral session without writer" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var s = try Session.start(gpa, io, .{
@@ -642,6 +642,75 @@ test "Session.save is no-op without writer; reply surfaces save errors via write
         .load_project_instructions = false,
     });
     defer s.deinit();
-    // Ephemeral: save is a silent no-op (no path / no writer).
     try s.save();
+}
+
+test "Agent.reply save failure returns IoFailed and preserves session bytes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-session-reply-save";
+    const path = ".zag-test-session-reply-save/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const original = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(original);
+    try std.testing.expect(original.len > 0);
+
+    // Per-Writer test-only fault: fail after temp write, before replace.
+    const writer = &(session.writer orelse return error.TestUnexpectedResult);
+    session_store.testing.setFailBeforeReplace(writer, true);
+
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Tool,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var agent = Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+    });
+    defer agent.deinit();
+
+    const reply_err = agent.reply(&session, "hello");
+    try std.testing.expectError(error.IoFailed, reply_err);
+
+    const after = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(original, after);
+
+    // Prior bytes remain loadable as a session (without the active writer).
+    session_store.testing.setFailBeforeReplace(writer, false);
+    var load_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer load_arena.deinit();
+    var loaded = transcript_mod.Transcript.init(load_arena.allocator());
+    // Public load would take a brief lock while Session still holds the writer → Busy.
+    // Parse the preserved bytes directly.
+    const meta = try session_store.parseSessionBytes(gpa, &loaded, after);
+    try std.testing.expectEqual(session_store.current_schema_version, meta.schema_version);
+    try std.testing.expect(loaded.items().len >= 1);
 }
