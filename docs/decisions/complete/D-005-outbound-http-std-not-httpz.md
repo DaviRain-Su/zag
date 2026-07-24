@@ -56,7 +56,7 @@ Dependency: path-vendored [zig-curl v0.5.0](https://github.com/jiacai2050/zig-cu
 zig build test -Dhttp_backend=curl
 ```
 
-### Stance (post Phase 3)### Stance (post Phase 3)
+### Stance (post Phase 3)
 
 | Audience | Backend |
 |----------|---------|
