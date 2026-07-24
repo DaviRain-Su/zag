@@ -1,0 +1,13 @@
+{
+  "provider": "minimax-cn",
+  "models": [
+    {
+      "id": "MiniMax-M2.5",
+      "name": "MiniMax M2.5 (CN)",
+      "context_window": 200000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false
+    }
+  ]
+}

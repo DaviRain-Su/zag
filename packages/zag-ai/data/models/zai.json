@@ -1,0 +1,13 @@
+{
+  "provider": "zai",
+  "models": [
+    {
+      "id": "glm-4.7",
+      "name": "GLM-4.7",
+      "context_window": 200000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false
+    }
+  ]
+}

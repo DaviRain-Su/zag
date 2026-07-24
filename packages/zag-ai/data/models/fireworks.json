@@ -1,0 +1,33 @@
+{
+  "provider": "fireworks",
+  "models": [
+    {
+      "id": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+      "name": "Llama 3.3 70B (Fireworks)",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.9,
+        "output": 0.9,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v3p1",
+      "name": "DeepSeek V3.1 (Fireworks)",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.56,
+        "output": 1.68,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    }
+  ]
+}

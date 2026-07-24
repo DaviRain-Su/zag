@@ -120,7 +120,17 @@ Same key for regional twins → **global first** (set `ZAG_PROVIDER` for CN).
 
 Custom endpoint: set `ZAG_BASE_URL` + `ZAG_API_KEY` + optional `ZAG_API_STYLE`.
 
-Catalog (`catalog.zig`) is **curated** (context window / max out / vision / reasoning flags) for budgets — not a full vendor dump. Any model id still works if the host accepts it.
+### Model catalog (JSON → comptime)
+
+Edit `data/models/<provider>.json`, then:
+
+```bash
+python3 packages/zag-ai/scripts/generate_catalog.py
+```
+
+This regenerates `data/catalog.json` and **`src/catalog_data.zig`** (compile-time `[]const ModelInfo`). Runtime does not parse JSON.
+
+Cost rates (USD / 1M tokens) feed `ai.cost.Ledger` / `estimateModel`. See `data/README.md`.
 
 ## Errors
 
@@ -136,8 +146,8 @@ Shared `wire.Error` / `ai.WireError`.
 | OpenAI Responses wire | Planned next wire; chat completions still covers agent loop |
 | Image generation surface | Separate from chat; add when product needs it |
 | Google / Mistral-native / Bedrock | Low agent traffic vs OpenAI+Anthropic; skip |
-| Full Pi catalog generator | Hundreds of auto-synced model rows; curated table is enough |
-| Cost ledger ($/token) | Turn-level `Usage` tokens exist; dollar math not needed yet |
+| Full Pi catalog generator | `scripts/generate_catalog.py --from-pi` (optional import); curated JSON is default |
+| Cost ledger ($/token) | `cost.zig` + optional rates on model rows |
 | OAuth (Codex / Copilot) | Explicit non-goal for H |
 
 ## Tests

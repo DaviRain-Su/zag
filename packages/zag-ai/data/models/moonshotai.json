@@ -1,0 +1,21 @@
+{
+  "provider": "moonshotai",
+  "models": [
+    {
+      "id": "kimi-k2.5",
+      "name": "Kimi K2.5",
+      "context_window": 256000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "kimi-k2-thinking",
+      "name": "Kimi K2 Thinking",
+      "context_window": 256000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false
+    }
+  ]
+}

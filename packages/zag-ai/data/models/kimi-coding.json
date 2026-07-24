@@ -1,0 +1,13 @@
+{
+  "provider": "kimi-coding",
+  "models": [
+    {
+      "id": "kimi-for-coding",
+      "name": "Kimi For Coding",
+      "context_window": 256000,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "provider": "xai",
+  "models": [
+    {
+      "id": "grok-4-latest",
+      "name": "Grok 4 Latest",
+      "context_window": 256000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.75,
+        "cache_write": 3.0
+      }
+    },
+    {
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "context_window": 256000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.75,
+        "cache_write": 3.0
+      }
+    },
+    {
+      "id": "grok-3",
+      "name": "Grok 3",
+      "context_window": 131072,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.75,
+        "cache_write": 3.0
+      }
+    }
+  ]
+}

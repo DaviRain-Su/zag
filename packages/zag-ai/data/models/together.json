@@ -1,0 +1,33 @@
+{
+  "provider": "together",
+  "models": [
+    {
+      "id": "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      "name": "Llama 3.1 8B Turbo",
+      "context_window": 131072,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.18,
+        "output": 0.18,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
+      "name": "Llama 3.1 70B Turbo",
+      "context_window": 131072,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.88,
+        "output": 0.88,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    }
+  ]
+}

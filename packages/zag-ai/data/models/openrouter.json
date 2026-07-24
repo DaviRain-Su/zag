@@ -1,0 +1,47 @@
+{
+  "provider": "openrouter",
+  "models": [
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o mini (OpenRouter)",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.075,
+        "cache_write": 0.15
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash (OpenRouter)",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.014,
+        "cache_write": 0.28
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4",
+      "name": "Claude Sonnet 4 (OpenRouter)",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    }
+  ]
+}

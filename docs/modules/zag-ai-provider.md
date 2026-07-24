@@ -65,7 +65,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 |----|----------------|
 | `openai_compat` + `anthropic_messages` | Google / Mistral-native / Bedrock / Vertex |
 | env key 预设（OpenAI/Anthropic 系 + 兼容网关） | OAuth（Codex / Copilot） |
-| curated model 表 + 预算 | 全量镜像 Pi `generate-models` + $/token 账本 |
+| JSON 模型表 → comptime `catalog_data.zig` + `cost.Ledger` | 运行时解析 JSON（不用） |
 | （规划）OpenAI Responses、图像生成 | 绑死单一云 |
 
 ### 不变式（适配层）
@@ -95,6 +95,8 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | Usage | `AssistantTurn.usage`；trace `usage` 事件；verbose 日志 |
 | Catalog 预算 | `catalog.contextBudgetChars` → `context.optionsForModel` |
 | 多厂商 preset | `presets.builtin`（openai_compat + anthropic_messages only） |
+| JSON catalog → comptime | `data/models/*.json` + `scripts/generate_catalog.py` → `catalog_data.zig` |
+| Cost 账本 | `cost.zig`（USD/1M tokens × Usage） |
 | Contract 雏形 | `packages/zag-ai/src/contract_tests.zig`（无网络） |
 | Multimodal / embed | `ContentPart`；`WireAdapter.embed` |
 

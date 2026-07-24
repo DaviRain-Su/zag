@@ -1,0 +1,61 @@
+{
+  "provider": "anthropic",
+  "models": [
+    {
+      "id": "claude-sonnet-4-20250514",
+      "name": "Claude Sonnet 4",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-opus-4-20250514",
+      "name": "Claude Opus 4",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_write": 18.75
+      }
+    },
+    {
+      "id": "claude-haiku-4-5-20251001",
+      "name": "Claude Haiku 4.5",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      }
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    }
+  ]
+}

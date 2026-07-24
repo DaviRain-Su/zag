@@ -17,6 +17,7 @@ pub const openai_compat = @import("openai_compat.zig");
 pub const anthropic_messages = @import("anthropic_messages.zig");
 pub const stream = @import("stream.zig");
 pub const catalog = @import("catalog.zig");
+pub const cost = @import("cost.zig");
 pub const config_file = @import("config_file.zig");
 pub const wire = @import("wire.zig");
 pub const config = @import("config.zig");
@@ -36,6 +37,9 @@ pub const ToolChoice = types.ToolChoice;
 pub const Config = config.Config;
 pub const ProviderSpec = presets.ProviderSpec;
 pub const ModelInfo = catalog.ModelInfo;
+pub const CostRates = catalog.CostRates;
+pub const CostBreakdown = cost.CostBreakdown;
+pub const CostLedger = cost.Ledger;
 pub const FileConfig = config_file.FileConfig;
 pub const WireAdapter = wire.WireAdapter;
 pub const ApiStyle = wire.ApiStyle;
@@ -53,7 +57,7 @@ pub const isRetryableError = types.isRetryableError;
 pub const createWire = factory.createWire;
 pub const openAiCompatFromClient = openai_compat.openAiCompatFromClient;
 
-pub const version = "0.5.3";
+pub const version = "0.5.4";
 
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {

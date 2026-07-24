@@ -1,0 +1,33 @@
+{
+  "provider": "cerebras",
+  "models": [
+    {
+      "id": "llama-3.3-70b",
+      "name": "Llama 3.3 70B (Cerebras)",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.85,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "qwen-3-32b",
+      "name": "Qwen 3 32B (Cerebras)",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.4,
+        "output": 0.8,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    }
+  ]
+}

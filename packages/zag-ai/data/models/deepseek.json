@@ -1,0 +1,47 @@
+{
+  "provider": "deepseek",
+  "models": [
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.014,
+        "cache_write": 0.28
+      }
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 2.0,
+        "cache_read": 0.1,
+        "cache_write": 2.0
+      }
+    },
+    {
+      "id": "deepseek-chat",
+      "name": "DeepSeek Chat (legacy)",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.27,
+        "output": 1.1,
+        "cache_read": 0.07,
+        "cache_write": 1.1
+      }
+    }
+  ]
+}

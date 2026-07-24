@@ -1,0 +1,19 @@
+{
+  "provider": "vercel-ai-gateway",
+  "models": [
+    {
+      "id": "anthropic/claude-sonnet-4",
+      "name": "Claude Sonnet 4 (Vercel)",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    }
+  ]
+}

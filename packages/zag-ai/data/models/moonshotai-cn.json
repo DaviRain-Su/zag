@@ -1,0 +1,13 @@
+{
+  "provider": "moonshotai-cn",
+  "models": [
+    {
+      "id": "kimi-k2.5",
+      "name": "Kimi K2.5 (CN)",
+      "context_window": 256000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false
+    }
+  ]
+}
