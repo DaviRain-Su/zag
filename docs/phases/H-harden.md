@@ -46,9 +46,9 @@
 
 **规格：** [modules/permissions.md](../modules/permissions.md)
 
-- 按 tool 类别矩阵：read / write / shell  
-- 会话内 remember：同 path 二次写可跳过确认（可关）  
-- plan 模式**产品语义**占位：只读 + 允许写 plan 文件；完整实现可落 C6，H 必须写清不变式  
+**已有（勿重做）：** 类别矩阵 read / write / shell（`Risk`）；会话内 write-path remember（可 `--no-remember`）；trace `remembered`；`SessionKind.plan` stub（只读 + `plan.md` / `.zag/plan.md`；CLI `--plan`）。Jail / shell_policy 仍在权限门之后。
+
+**H3 出门：** 本切片收口完成。完整 plan UX → C6。
 
 ## H4 — Context / Session
 

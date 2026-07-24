@@ -28,7 +28,7 @@
 | Tools · write/edit | L1+ | `edit_tools.zig`：`search_replace`（唯一内容锚点）+ `write_file`；写后可选 `git diff` | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
 | Tools · search | L1+ | `fs_tools.zig`：`grep`（字面量）+ `glob`（`*`/`**`）；jail + result budget | `grep` + `glob` 在 jail 内，结果有 budget | AST / codebase-graph | Hyper；Aider |
 | Tools · shell | L1 | `edit_tools.zig` `run_shell` | 超时/截断/exit code 统一形状；policy 测试矩阵绿 | 后台 job + monitor | Hyper background |
-| Permissions | L1 | `packages/zag-agent-core/src/permissions.zig` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
+| Permissions | L2 | `permissions.zig`：read/write/shell 矩阵；会话 remember；`SessionKind.plan` stub；CLI `--plan` / `--no-remember`；trace `remembered` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
 | Workspace / Sandbox | L1 | `workspace.zig` + `shell_policy.zig` | jail + denylist + **secret redact** + `/doctor` 最小；SECURITY 诚实 | OS sandbox（seatbelt/bwrap） | Hyper sandbox；Codex |
 | Context / Compaction | L1 | `context.zig`（截断 + catalog 预算） | 四层 prompt；超限 compaction（摘要+最近 N）落盘可解释 | repo map；智能选文件；**Memory 挂载点** | Pi；Aider；Hyper |
 | Session / Resume | L1 | `session_store.zig` | schema 版本 + 迁移；transcript≠view 边界写死 | session 树 / fork / 旁支 | Pi；Nanocodex fork |

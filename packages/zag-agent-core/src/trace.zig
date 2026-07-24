@@ -112,8 +112,18 @@ pub const Trace = struct {
         });
     }
 
-    pub fn emitPermission(self: *Trace, tool_name: []const u8, allowed: bool) std.mem.Allocator.Error!void {
-        try self.writeObj(.{ .kind = .permission, .name = tool_name, .allowed = allowed });
+    pub fn emitPermission(
+        self: *Trace,
+        tool_name: []const u8,
+        allowed: bool,
+        remembered: bool,
+    ) std.mem.Allocator.Error!void {
+        try self.writeObj(.{
+            .kind = .permission,
+            .name = tool_name,
+            .allowed = allowed,
+            .remembered = remembered,
+        });
     }
 
     pub fn emitJailDeny(self: *Trace, tool_name: []const u8, path: []const u8) std.mem.Allocator.Error!void {

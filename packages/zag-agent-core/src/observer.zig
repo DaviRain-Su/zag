@@ -15,6 +15,7 @@ pub const Event = union(enum) {
     permission: struct {
         tool_name: []const u8,
         allowed: bool,
+        remembered: bool = false,
     },
 };
 
@@ -63,7 +64,11 @@ fn logToStderr(_: ?*anyopaque, event: Event) void {
         },
         .permission => |p| {
             if (p.allowed) {
-                std.log.info("permission allow {s}", .{p.tool_name});
+                if (p.remembered) {
+                    std.log.info("permission allow {s} (remembered)", .{p.tool_name});
+                } else {
+                    std.log.info("permission allow {s}", .{p.tool_name});
+                }
             } else {
                 std.log.warn("permission deny {s}", .{p.tool_name});
             }

@@ -213,18 +213,32 @@ fn executeOneTool(
         tr.emitToolCall(call) catch {};
     }
 
-    const decision = deps.options.permission_gate.decide(call.name, call.arguments);
-    const allowed = decision == .allow;
+    const path_for_perm = if (workspace.toolUsesPath(call.name))
+        try workspace.pathArgument(deps.tool_ctx.allocator, call.arguments)
+    else
+        null;
+    defer if (path_for_perm) |p| deps.tool_ctx.allocator.free(p);
+
+    const outcome = deps.options.permission_gate.check(call.name, call.arguments, path_for_perm);
+    const allowed = outcome.decision == .allow;
     deps.options.observer.emit(.{
-        .permission = .{ .tool_name = call.name, .allowed = allowed },
+        .permission = .{
+            .tool_name = call.name,
+            .allowed = allowed,
+            .remembered = outcome.remembered,
+        },
     });
     if (deps.options.trace) |tr| {
-        tr.emitPermission(call.name, allowed) catch {};
+        tr.emitPermission(call.name, allowed, outcome.remembered) catch {};
     }
 
     if (!allowed) {
-        const denied = permissions.deniedMessage(deps.tool_ctx.allocator, call.name) catch
-            return error.OutOfMemory;
+        const denied = if (outcome.plan_blocked)
+            permissions.deniedMessageWithReason(deps.tool_ctx.allocator, call.name, .plan_mode) catch
+                return error.OutOfMemory
+        else
+            permissions.deniedMessage(deps.tool_ctx.allocator, call.name) catch
+                return error.OutOfMemory;
         defer deps.tool_ctx.allocator.free(denied);
         try finishTool(deps, transcript, call, denied);
         return;

@@ -32,6 +32,10 @@ pub const Options = struct {
     verbose: bool = false,
     permission_mode: permissions.Mode = .ask,
     permission_gate: ?permissions.Gate = null,
+    /// Session overlay: `plan` blocks general write/shell (H3 stub).
+    session_kind: permissions.SessionKind = .agent,
+    /// When true (default), approved write paths skip re-prompt in ask mode.
+    remember_writes: bool = true,
     context: context_mod.Options = .{},
     shell_policy: shell_policy.Mode = .protect,
     /// Relative path for JSONL run trace; null disables.
@@ -165,6 +169,7 @@ pub const Agent = struct {
     options: Options,
     stdin_prompter: permissions.StdinPrompter,
     permission_gate: permissions.Gate,
+    remember_store: permissions.Remember,
     /// Owned when options.trace_path is set.
     trace: ?trace_mod.Trace = null,
     /// Session/run cost accumulator (updated on each provider usage event).
@@ -186,6 +191,7 @@ pub const Agent = struct {
             .options = options,
             .stdin_prompter = .{ .io = io },
             .permission_gate = .yolo(),
+            .remember_store = .init(gpa, options.remember_writes),
             .trace = null,
             .ledger = .{},
             .cancel = .{},
@@ -198,6 +204,7 @@ pub const Agent = struct {
     }
 
     pub fn deinit(self: *Agent) void {
+        self.remember_store.deinit();
         if (self.trace) |*tr| {
             if (!tr.finished and tr.event_count > 0) {
                 self.emitRunEnd(tr, 0, true, .completed);
@@ -217,11 +224,18 @@ pub const Agent = struct {
     }
 
     fn resolveGate(self: *Agent) permissions.Gate {
-        if (self.options.permission_gate) |g| return g;
-        return switch (self.options.permission_mode) {
+        var gate: permissions.Gate = if (self.options.permission_gate) |g|
+            g
+        else switch (self.options.permission_mode) {
             .yolo => permissions.Gate.yolo(),
             .ask => self.stdin_prompter.gate(),
         };
+        gate.session_kind = self.options.session_kind;
+        self.remember_store.enabled = self.options.remember_writes;
+        if (gate.remember == null) {
+            gate.remember = &self.remember_store;
+        }
+        return gate;
     }
 
     fn deps(self: *Agent) loop.Deps {

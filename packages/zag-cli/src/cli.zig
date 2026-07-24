@@ -37,6 +37,8 @@ pub fn run(init: std.process.Init) !void {
     var verbose = false;
     var show_help = false;
     var permission_mode: core.permissions.Mode = .ask;
+    var session_kind: core.permissions.SessionKind = .agent;
+    var remember_writes = true;
     var shell_policy: core.shell_policy.Mode = .protect;
     var session_path: ?[]const u8 = null;
     var continue_session = false;
@@ -57,6 +59,10 @@ pub fn run(init: std.process.Init) !void {
             permission_mode = .yolo;
         } else if (std.mem.eql(u8, a, "--ask")) {
             permission_mode = .ask;
+        } else if (std.mem.eql(u8, a, "--plan")) {
+            session_kind = .plan;
+        } else if (std.mem.eql(u8, a, "--no-remember")) {
+            remember_writes = false;
         } else if (std.mem.eql(u8, a, "--permission") or std.mem.eql(u8, a, "-p")) {
             i += 1;
             if (i >= args.len) {
@@ -184,13 +190,15 @@ pub fn run(init: std.process.Init) !void {
     );
 
     if (verbose) {
-        std.log.info("provider id={s} name={s} model={s} key_from={s} stream={any} permission={s} shell_policy={s}", .{
+        std.log.info("provider id={s} name={s} model={s} key_from={s} stream={any} permission={s} session={s} remember={any} shell_policy={s}", .{
             resolved.spec_id,
             resolved.display_name,
             resolved.config.model,
             resolved.api_key_source,
             use_stream,
             permission_mode.name(),
+            session_kind.name(),
+            remember_writes,
             shell_policy.name(),
         });
         if (resolve_result.model_info) |mi| {
@@ -235,6 +243,8 @@ pub fn run(init: std.process.Init) !void {
     var agent_opts: coding.agent.Options = .{
         .verbose = verbose,
         .permission_mode = permission_mode,
+        .session_kind = session_kind,
+        .remember_writes = remember_writes,
         .shell_policy = shell_policy,
         .trace_path = trace_path,
         .version = coding.version,
@@ -402,6 +412,8 @@ fn printUsage() !void {
         \\  -v, --verbose              stderr tool / permission log
         \\  --ask / --yolo             human permission mode (default ask)
         \\  -p, --permission MODE      ask | yolo
+        \\  --plan                     plan session: read + plan.md only (H3 stub)
+        \\  --no-remember              re-prompt every write path in ask mode
         \\  --shell-policy MODE        protect (default) | off
         \\  -s, --session PATH         session JSONL
         \\  -c, --continue             resume session
