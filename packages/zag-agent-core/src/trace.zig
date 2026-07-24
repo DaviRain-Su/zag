@@ -28,20 +28,35 @@ const workspace = @import("workspace.zig");
 /// Stable exported trace schema version written on every `run_start`.
 pub const current_schema_version: u32 = 1;
 
-/// Stack buffer for one event JSON line (fields are truncated to fit).
-const event_stack_size: usize = 2048;
+/// Stack buffer for one event JSON line. Sized for worst-case JSON escaping of
+/// current raw truncation caps (e.g. 800-byte args × ~6 for `\u00XX` + object overhead).
+pub const event_stack_size: usize = 8 * 1024;
 /// Pre-reserved free capacity for a failure/success `run_end` (no post-start alloc).
-pub const terminal_reserve: usize = 384;
+pub const terminal_reserve: usize = 1024;
 /// Bound stop_reason so terminal line is provably ≤ terminal_reserve.
-const max_stop_reason_len: usize = 48;
+pub const max_stop_reason_len: usize = 48;
+
+/// Public raw field truncation caps (pre-JSON-escape).
+pub const cap_tool_arguments: usize = 800;
+pub const cap_assistant_text: usize = 500;
+pub const cap_tool_result_body: usize = 500;
+pub const cap_compaction_summary: usize = 500;
+pub const cap_shell_command: usize = 200;
+pub const cap_jail_path: usize = 200;
+pub const cap_tool_id_name: usize = 64;
+pub const cap_version: usize = 64;
+pub const cap_session: usize = 200;
 
 /// Public trace errors. Filesystem failures are **not** mapped to OutOfMemory.
+/// Fixed-writer / event-too-large failures are **not** mapped to OutOfMemory.
 pub const Error = error{
     OutOfMemory,
     /// Explicit path create/write/flush/replace failed (or parent unwritable).
     TraceIoFailed,
     /// Path absolute/escape/symlink-escape/dangling/resolve-fail (fail-closed).
     InvalidPath,
+    /// Fixed stack serialize exhausted, event too large, or terminal reserve invariant broken.
+    TraceSerializationFailed,
 };
 
 pub const EventKind = enum {
@@ -159,10 +174,10 @@ pub const Trace = struct {
         try self.writeObj(.{
             .kind = .run_start,
             .schema_version = current_schema_version,
-            .version = truncate(meta.version, 64),
+            .version = truncate(meta.version, cap_version),
             .permission = truncate(meta.permission, 16),
             .shell_policy = truncate(meta.shell_policy, 16),
-            .session = if (meta.session) |s| truncate(s, 200) else null,
+            .session = if (meta.session) |s| truncate(s, cap_session) else null,
         }, .normal);
         self.run_open = true;
         self.finished = false;
@@ -174,7 +189,7 @@ pub const Trace = struct {
     }
 
     pub fn emitAssistant(self: *Trace, text: []const u8) Error!void {
-        try self.writeObj(.{ .kind = .assistant, .text = truncate(text, 500) }, .normal);
+        try self.writeObj(.{ .kind = .assistant, .text = truncate(text, cap_assistant_text) }, .normal);
     }
 
     pub fn emitUsage(self: *Trace, usage: message.AssistantTurn) Error!void {
@@ -199,9 +214,9 @@ pub const Trace = struct {
     pub fn emitToolCall(self: *Trace, call: message.ToolCall) Error!void {
         try self.writeObj(.{
             .kind = .tool_call,
-            .id = truncate(call.id, 64),
-            .name = truncate(call.name, 64),
-            .arguments = truncate(call.arguments, 800),
+            .id = truncate(call.id, cap_tool_id_name),
+            .name = truncate(call.name, cap_tool_id_name),
+            .arguments = truncate(call.arguments, cap_tool_arguments),
         }, .normal);
     }
 
@@ -214,7 +229,7 @@ pub const Trace = struct {
     ) Error!void {
         try self.writeObj(.{
             .kind = .permission,
-            .name = truncate(tool_name, 64),
+            .name = truncate(tool_name, cap_tool_id_name),
             .risk = truncate(risk, 16),
             .allowed = allowed,
             .remembered = remembered,
@@ -224,23 +239,23 @@ pub const Trace = struct {
     pub fn emitJailDeny(self: *Trace, tool_name: []const u8, path: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .jail_deny,
-            .name = truncate(tool_name, 64),
-            .path = truncate(path, 200),
+            .name = truncate(tool_name, cap_tool_id_name),
+            .path = truncate(path, cap_jail_path),
         }, .normal);
     }
 
     pub fn emitShellDeny(self: *Trace, command: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .shell_deny,
-            .command = truncate(command, 200),
+            .command = truncate(command, cap_shell_command),
         }, .normal);
     }
 
     pub fn emitToolResult(self: *Trace, name: []const u8, body: []const u8) Error!void {
         try self.writeObj(.{
             .kind = .tool_result,
-            .name = truncate(name, 64),
-            .body = truncate(body, 500),
+            .name = truncate(name, cap_tool_id_name),
+            .body = truncate(body, cap_tool_result_body),
         }, .normal);
     }
 
@@ -248,7 +263,7 @@ pub const Trace = struct {
         try self.writeObj(.{
             .kind = .compaction,
             .dropped = dropped,
-            .summary = truncate(summary, 500),
+            .summary = truncate(summary, cap_compaction_summary),
         }, .normal);
     }
 
@@ -270,23 +285,36 @@ pub const Trace = struct {
 
         try self.appendRunEndLine(info);
 
-        self.persistAtomic() catch {
+        self.persistAtomic() catch |err| {
+            // Roll back intended terminal; prior durable bytes unchanged.
             self.buf.shrinkRetainingCapacity(snap_len);
             self.event_count = snap_seq;
 
-            const mem_info: RunEndInfo = if (info.ok) .{
-                .turns = info.turns,
-                .ok = false,
-                .prompt_tokens = info.prompt_tokens,
-                .completion_tokens = info.completion_tokens,
-                .total_tokens = info.total_tokens,
-                .estimated_usd = info.estimated_usd,
-                .stop_reason = "trace_error",
-            } else info;
+            // Preserve error category: never collapse Guard OOM / InvalidPath / serialization into I/O.
+            const mem_info: RunEndInfo = switch (err) {
+                error.OutOfMemory => .{
+                    .turns = info.turns,
+                    .ok = false,
+                    .prompt_tokens = info.prompt_tokens,
+                    .completion_tokens = info.completion_tokens,
+                    .total_tokens = info.total_tokens,
+                    .estimated_usd = info.estimated_usd,
+                    .stop_reason = "out_of_memory",
+                },
+                error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => if (info.ok) .{
+                    .turns = info.turns,
+                    .ok = false,
+                    .prompt_tokens = info.prompt_tokens,
+                    .completion_tokens = info.completion_tokens,
+                    .total_tokens = info.total_tokens,
+                    .estimated_usd = info.estimated_usd,
+                    .stop_reason = "trace_error",
+                } else info,
+            };
 
             self.appendRunEndLine(mem_info) catch |werr| return werr;
             self.markTerminalCommitted();
-            return error.TraceIoFailed;
+            return err;
         };
 
         self.markTerminalCommitted();
@@ -312,7 +340,8 @@ pub const Trace = struct {
         }, .terminal);
     }
 
-    /// Re-check Guard, then atomic write+replace. Destination unchanged on failure.
+    /// Re-check Guard at entry and immediately before replace, then atomic write+replace.
+    /// Destination unchanged on failure. Residual TOCTOU after the last check remains (trusted-host).
     pub fn persistAtomic(self: *Trace) Error!void {
         const p = self.path orelse return;
         try self.assertPathContained(p);
@@ -330,6 +359,9 @@ pub const Trace = struct {
         file_writer.flush() catch return error.TraceIoFailed;
 
         if (builtin.is_test and self.fail_before_replace) return error.TraceIoFailed;
+
+        // Second containment check immediately before replace (still not OS-sandbox / TOCTOU-proof).
+        try self.assertPathContained(p);
 
         atomic.replace(self.io) catch return error.TraceIoFailed;
     }
@@ -355,37 +387,39 @@ pub const Trace = struct {
 
     /// Stack-serialize a complete line, then capacity-check, then mutate.
     /// On failure: buffer length and `event_count` unchanged.
+    /// Fixed-writer exhaustion → `TraceSerializationFailed` (never OOM).
+    /// Only `buf.ensureUnusedCapacity` may return `OutOfMemory`.
     fn writeObj(self: *Trace, fields: anytype, mode: WriteMode) Error!void {
         var stack: [event_stack_size]u8 = undefined;
         var w: Io.Writer = .fixed(&stack);
         var s: std.json.Stringify = .{ .writer = &w };
 
         const seq = self.event_count;
-        s.beginObject() catch return error.OutOfMemory;
-        s.objectField("seq") catch return error.OutOfMemory;
-        s.write(seq) catch return error.OutOfMemory;
+        s.beginObject() catch return error.TraceSerializationFailed;
+        s.objectField("seq") catch return error.TraceSerializationFailed;
+        s.write(seq) catch return error.TraceSerializationFailed;
 
         inline for (@typeInfo(@TypeOf(fields)).@"struct".fields) |f| {
             const value = @field(fields, f.name);
             if (comptime std.mem.eql(u8, f.name, "kind")) {
                 const kind: EventKind = value;
-                s.objectField("kind") catch return error.OutOfMemory;
-                s.write(kind.jsonName()) catch return error.OutOfMemory;
+                s.objectField("kind") catch return error.TraceSerializationFailed;
+                s.write(kind.jsonName()) catch return error.TraceSerializationFailed;
                 continue;
             }
             const T = @TypeOf(value);
             if (@typeInfo(T) == .optional) {
                 if (value) |v| {
-                    s.objectField(f.name) catch return error.OutOfMemory;
-                    s.write(v) catch return error.OutOfMemory;
+                    s.objectField(f.name) catch return error.TraceSerializationFailed;
+                    s.write(v) catch return error.TraceSerializationFailed;
                 }
             } else {
-                s.objectField(f.name) catch return error.OutOfMemory;
-                s.write(value) catch return error.OutOfMemory;
+                s.objectField(f.name) catch return error.TraceSerializationFailed;
+                s.write(value) catch return error.TraceSerializationFailed;
             }
         }
-        s.endObject() catch return error.OutOfMemory;
-        w.writeAll("\n") catch return error.OutOfMemory;
+        s.endObject() catch return error.TraceSerializationFailed;
+        w.writeAll("\n") catch return error.TraceSerializationFailed;
 
         const line = w.buffered();
 
@@ -398,9 +432,10 @@ pub const Trace = struct {
             },
             .terminal => {
                 // No allocation: only use capacity already reserved.
-                if (line.len > terminal_reserve) return error.OutOfMemory;
+                // Invariant failure is serialization/event-size, not OOM.
+                if (line.len > terminal_reserve) return error.TraceSerializationFailed;
                 const free = self.buf.capacity - self.buf.items.len;
-                if (free < line.len) return error.OutOfMemory;
+                if (free < line.len) return error.TraceSerializationFailed;
                 self.buf.appendSliceAssumeCapacity(line);
             },
         }
@@ -425,7 +460,26 @@ pub const testing = struct {
     pub fn setFailBeforeReplace(t: *Trace, enabled: bool) void {
         if (builtin.is_test) t.fail_before_replace = enabled;
     }
+
+    /// Private uncapped assistant text for intentional oversize serialization tests.
+    pub fn emitUntruncatedAssistant(t: *Trace, text: []const u8) Error!void {
+        try t.writeObj(.{ .kind = .assistant, .text = text }, .normal);
+    }
 };
+
+/// Fill `buf` with `len` control bytes (0x01) for worst-case JSON escape tests.
+fn fillControl(buf: []u8, byte: u8) void {
+    @memset(buf, byte);
+}
+
+fn parseStrictLine(gpa: std.mem.Allocator, line: []const u8) !void {
+    const trimmed = std.mem.trimEnd(u8, line, "\n");
+    var parsed = try std.json.parseFromSlice(std.json.Value, gpa, trimmed, .{
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .object);
+}
 
 // ── Unit tests ──────────────────────────────────────────────────────────────
 
@@ -762,4 +816,200 @@ test "resetForReply clears buffer for latest-run semantics" {
 
 test "current_schema_version is stable exported constant" {
     try std.testing.expectEqual(@as(u32, 1), current_schema_version);
+}
+
+test "worst-case control-byte fields serialize under stack bound and parse strictly" {
+    const gpa = std.testing.allocator;
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+
+    var args: [cap_tool_arguments]u8 = undefined;
+    fillControl(&args, 0x01);
+    var id: [cap_tool_id_name]u8 = undefined;
+    fillControl(&id, 0x01);
+    var name: [cap_tool_id_name]u8 = undefined;
+    fillControl(&name, 0x02);
+    var assistant: [cap_assistant_text]u8 = undefined;
+    fillControl(&assistant, 0x03);
+    var body: [cap_tool_result_body]u8 = undefined;
+    fillControl(&body, 0x04);
+    var summary: [cap_compaction_summary]u8 = undefined;
+    fillControl(&summary, 0x05);
+    var cmd: [cap_shell_command]u8 = undefined;
+    fillControl(&cmd, 0x06);
+    var jpath: [cap_jail_path]u8 = undefined;
+    fillControl(&jpath, 0x07);
+    var version: [cap_version]u8 = undefined;
+    fillControl(&version, 0x08);
+    var session: [cap_session]u8 = undefined;
+    fillControl(&session, 0x09);
+
+    try t.emitRunStart(.{
+        .version = &version,
+        .permission = "ask",
+        .shell_policy = "protect",
+        .session = &session,
+    });
+    try t.emitAssistant(&assistant);
+    try t.emitToolCall(.{ .id = &id, .name = &name, .arguments = &args });
+    try t.emitToolResult(&name, &body);
+    try t.emitCompaction(3, &summary);
+    try t.emitShellDeny(&cmd);
+    try t.emitJailDeny(&name, &jpath);
+
+    var reason: [max_stop_reason_len]u8 = undefined;
+    fillControl(&reason, 0x0a);
+    try t.emitRunEnd(.{
+        .turns = 9,
+        .ok = false,
+        .prompt_tokens = std.math.maxInt(u64),
+        .completion_tokens = std.math.maxInt(u64),
+        .total_tokens = std.math.maxInt(u64),
+        .estimated_usd = 1.23456789e100,
+        .stop_reason = &reason,
+    });
+
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expectEqual(@as(u32, 1), t.countKind("run_end"));
+
+    // Every JSONL line parses strictly; terminal encoded length ≤ reserve.
+    var lines = std.mem.splitScalar(u8, t.buf.items, '\n');
+    var terminal_line: ?[]const u8 = null;
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        try parseStrictLine(gpa, line);
+        if (std.mem.indexOf(u8, line, "\"kind\":\"run_end\"") != null) {
+            terminal_line = line;
+            // include trailing newline as written
+            const with_nl = if (line.len < t.buf.items.len) line.len + 1 else line.len;
+            try std.testing.expect(with_nl <= terminal_reserve);
+        }
+    }
+    try std.testing.expect(terminal_line != null);
+}
+
+test "uncapped oversize serialization returns TraceSerializationFailed not OOM" {
+    const gpa = std.testing.allocator;
+    var t = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    const len_before = t.buf.items.len;
+    const seq_before = t.event_count;
+
+    // 2500 control bytes → ~15k JSON escapes, exceeds 8 KiB stack.
+    var huge: [2500]u8 = undefined;
+    fillControl(&huge, 0x01);
+    try std.testing.expectError(
+        error.TraceSerializationFailed,
+        testing.emitUntruncatedAssistant(&t, &huge),
+    );
+    try std.testing.expectEqual(len_before, t.buf.items.len);
+    try std.testing.expectEqual(seq_before, t.event_count);
+
+    // Then a truthful terminal (trace_error), not out_of_memory.
+    try t.emitRunEnd(.{ .turns = 0, .ok = false, .stop_reason = "trace_error" });
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "trace_error") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "out_of_memory") == null);
+}
+
+test "persistAtomic Guard OOM preserves OutOfMemory category and memory terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-trace-guard-oom";
+    const path = ".zag-test-trace-guard-oom/run.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var t = Trace.init(gpa, io, path, Io.Dir.cwd());
+    defer t.deinit();
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+
+    // First persist check allocates via Guard; fail that allocation.
+    var failing_state = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const prev = t.gpa;
+    t.gpa = failing_state.allocator();
+    const err = t.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" });
+    t.gpa = prev;
+
+    try std.testing.expectError(error.OutOfMemory, err);
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "out_of_memory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":true") == null);
+
+    // Durable path still empty / preflight-empty, not success payload.
+    const raw = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024)) catch null;
+    if (raw) |r| {
+        defer gpa.free(r);
+        try std.testing.expect(std.mem.indexOf(u8, r, "\"ok\":true") == null);
+    }
+}
+
+test "successful preflight then parent becomes escape: final recheck InvalidPath" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws/nested");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.jsonl", .data = "KEEP\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{});
+    defer ws.close(io);
+
+    var t = Trace.init(gpa, io, "nested/run.jsonl", ws);
+    defer t.deinit();
+    try t.beginReply(); // preflight OK under real nested/
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+
+    // After start: replace nested with symlink escape outside workspace.
+    try ws.deleteTree(io, "nested");
+    ws.symLink(io, "../outside", "nested", .{ .is_directory = true }) catch |err| switch (err) {
+        error.AccessDenied, error.PermissionDenied => return error.SkipZigTest,
+        else => |e| return e,
+    };
+
+    try std.testing.expectError(
+        error.InvalidPath,
+        t.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" }),
+    );
+    try std.testing.expectEqual(@as(u32, 1), t.terminal_count);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "\"ok\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, t.buf.items, "trace_error") != null);
+
+    const after = try parent.dir.readFileAlloc(io, "outside/secret.jsonl", gpa, .limited(32));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings("KEEP\n", after);
+
+    // No trace file materialised under outside.
+    var outside = try parent.dir.openDir(io, "outside", .{ .iterate = true });
+    defer outside.close(io);
+    var it = outside.iterate();
+    var files: usize = 0;
+    while (try it.next(io)) |entry| {
+        if (entry.kind == .file) {
+            files += 1;
+            try std.testing.expectEqualStrings("secret.jsonl", entry.name);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), files);
 }

@@ -74,11 +74,23 @@ Serialize a complete JSON line first, then `ensureUnusedCapacity`, then append a
 
 ### Allocator / terminal reserve (real post-start guarantee)
 
-- Event JSON is serialized on a **stack fixed buffer** (no heap for stringify).
-- Nonterminal appends call `ensureUnusedCapacity(line.len + terminal_reserve)` so free capacity always leaves room for a terminal.
-- Terminal appends use only pre-reserved free capacity (no `gpa` grow).
-- `stop_reason` is truncated to a fixed max so a terminal line is provably ≤ `terminal_reserve` (384 bytes).
-- **Contract-tested:** after `run_start`, forcing nonterminal growth OOM still allows `emitRunEnd(ok=false, out_of_memory)` under a FailingAllocator with exactly one terminal.
+- Event JSON is serialized on a **stack fixed buffer** (`event_stack_size` = 8 KiB) sized for worst-case JSON escaping of public truncation caps (e.g. 800-byte tool args).
+- Fixed-writer / event-too-large / terminal-reserve invariant failures → **`TraceSerializationFailed`** (never OOM).
+- Only real allocator failures (`Trace.buf` grow, Guard allocator) return **`OutOfMemory`**.
+- Nonterminal appends: `ensureUnusedCapacity(line.len + terminal_reserve)` (`terminal_reserve` = 1 KiB).
+- Terminal appends use only pre-reserved free capacity; `stop_reason` truncated to 48 bytes.
+- **Contract-tested:** max control-byte fields parse strictly under stack bound; post-start nonterminal OOM still commits `out_of_memory` terminal; intentional uncapped oversize → `TraceSerializationFailed` then `trace_error` terminal.
+
+### Persist error categories (`emitRunEnd`)
+
+| `persistAtomic` error | In-memory terminal after rollback | Returned error |
+|----------------------|-----------------------------------|----------------|
+| `TraceIoFailed` | `ok=false, stop_reason=trace_error` if intended was ok; else keep failure reason | `TraceIoFailed` |
+| `OutOfMemory` (Guard) | `ok=false, out_of_memory` | `OutOfMemory` |
+| `InvalidPath` (final recheck) | `ok=false, trace_error` if intended was ok | `InvalidPath` |
+| `TraceSerializationFailed` | as above / keep category | `TraceSerializationFailed` |
+
+Guard is re-checked at persist entry **and** immediately before `atomic.replace`. Residual TOCTOU after the last check remains (trusted-host).
 
 ## Schema (L2)
 
@@ -97,10 +109,10 @@ Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `
 ## Public errors
 
 ```text
-trace.Error = OutOfMemory | TraceIoFailed | InvalidPath
+trace.Error = OutOfMemory | TraceIoFailed | InvalidPath | TraceSerializationFailed
 ```
 
-Facade `ReplyError` includes `trace.Error` so session `IoFailed` stays distinct from `TraceIoFailed`.
+Facade `ReplyError` includes `trace.Error`. Loop maps mid-run `TraceSerializationFailed` / I/O / path to `TraceFailed` (terminal `trace_error`); pure `OutOfMemory` stays `OutOfMemory`.
 
 ## Observer contract
 

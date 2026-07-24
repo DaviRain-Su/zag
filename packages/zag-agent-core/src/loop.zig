@@ -103,7 +103,7 @@ pub const StopReason = enum {
 fn mapTraceEmit(err: trace_mod.Error) RunError {
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
-        error.TraceIoFailed, error.InvalidPath => error.TraceFailed,
+        error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => error.TraceFailed,
     };
 }
 
