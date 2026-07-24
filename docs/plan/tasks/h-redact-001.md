@@ -1,7 +1,7 @@
 ---
 id: h-redact-001
 scope: phase-h/security-redaction
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-session-001, h-trace-001]
 ---

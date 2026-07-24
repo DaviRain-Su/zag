@@ -1,7 +1,7 @@
 ---
 id: h-provider-001
 scope: phase-h/provider-deadline-cancel
-status: in-progress
+status: done
 priority: P1
 depends-on: [h-trace-001]
 ---
@@ -17,7 +17,7 @@ Define and implement enforced provider deadlines and in-flight cancellation acro
 - `docs/quality/contracts.md`
 - `docs/decisions/complete/D-005-outbound-http-std-not-httpz.md`
 
-# implementation note (Oracle follow-up; status remains in-progress)
+# completion
 
 ## Capability truth (not universal active-cancel L2)
 
@@ -52,4 +52,4 @@ TIMEOUT_MS / NOPROGRESS / XFERINFODATA / XFERINFOFUNCTION results checked; failu
 
 ## Tests
 
-std+curl dual suites; loopback curl timeout/cancel; std unsupported before network; agent unsupported/timeout stop_reason; tool validation fixtures.
+Merged to `main`; Debug/ReleaseSafe/ReleaseFast std+curl builds and dual suites pass. Permanent fixtures cover curl timeout/cancel, std pre-network unsupported control, exact facade terminals, strict SSE completion, and atomic Tool validation.
