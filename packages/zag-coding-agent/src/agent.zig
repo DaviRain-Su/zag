@@ -675,7 +675,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
             _: *anyopaque,
             arena: std.mem.Allocator,
             _: []const message.Message,
-            _: []const tool.Tool,
+            _: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "ok"),

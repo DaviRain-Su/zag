@@ -157,10 +157,94 @@ pub const AssistantTurn = struct {
     }
 };
 
+/// Model-visible tool schema only. Never carries local security metadata.
 pub const ToolDefinition = struct {
     name: []const u8,
     description: []const u8,
     parameters_json: []const u8,
+};
+
+/// Local execution risk class. Required on every registered tool — no default-to-read.
+pub const ToolRisk = enum {
+    read,
+    write,
+    execute,
+
+    pub fn needsConfirmation(self: ToolRisk) bool {
+        return self != .read;
+    }
+
+    /// Human-facing category (shell for execute).
+    pub fn label(self: ToolRisk) []const u8 {
+        return switch (self) {
+            .read => "read",
+            .write => "write",
+            .execute => "shell",
+        };
+    }
+
+    pub fn name(self: ToolRisk) []const u8 {
+        return switch (self) {
+            .read => "read",
+            .write => "write",
+            .execute => "execute",
+        };
+    }
+};
+
+/// Whether the tool claims a workspace path argument for containment.
+/// `none` means no path claim — not unrestricted filesystem access.
+pub const WorkspaceAccess = union(enum) {
+    none,
+    /// JSON object field name holding a relative path (typically `"path"`).
+    path_field: []const u8,
+
+    pub fn usesPath(self: WorkspaceAccess) bool {
+        return self != .none;
+    }
+
+    pub fn pathField(self: WorkspaceAccess) ?[]const u8 {
+        return switch (self) {
+            .none => null,
+            .path_field => |f| f,
+        };
+    }
+};
+
+/// Whether the handler observes cooperative cancel / deadline mid-invocation.
+pub const CancellationCapability = enum {
+    none,
+    cooperative,
+};
+
+/// Whether shell command policy applies (not inferred from tool name).
+pub const ShellPolicyKind = enum {
+    none,
+    /// Parse JSON field `"command"` and run shell_policy before execute.
+    command_argument,
+};
+
+/// Mandatory local runtime capabilities (never sent to providers).
+/// All fields are explicit — no implicit read/default safety.
+pub const ToolCapabilities = struct {
+    risk: ToolRisk,
+    workspace: WorkspaceAccess,
+    cancellation: CancellationCapability,
+    shell: ShellPolicyKind,
+};
+
+/// Local runtime descriptor: model definition + mandatory capabilities.
+pub const ToolDescriptor = struct {
+    definition: ToolDefinition,
+    capabilities: ToolCapabilities,
+
+    pub fn name(self: ToolDescriptor) []const u8 {
+        return self.definition.name;
+    }
+
+    pub fn risk(self: ToolDescriptor) ToolRisk {
+        return self.capabilities.risk;
+    }
 };
 
 pub const ToolChoice = union(enum) {

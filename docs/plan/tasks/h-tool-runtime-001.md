@@ -1,7 +1,7 @@
 ---
 id: h-tool-runtime-001
 scope: phase-h/tool-runtime-permissions
-status: ready
+status: in-progress
 priority: P0
 depends-on: []
 ---

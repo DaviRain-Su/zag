@@ -16,6 +16,8 @@ pub const Event = union(enum) {
         tool_name: []const u8,
         allowed: bool,
         remembered: bool = false,
+        /// Descriptor-derived risk name (`read` / `write` / `execute`), when known.
+        risk: ?[]const u8 = null,
     },
 };
 
@@ -63,14 +65,15 @@ fn logToStderr(_: ?*anyopaque, event: Event) void {
             });
         },
         .permission => |p| {
+            const risk = p.risk orelse "?";
             if (p.allowed) {
                 if (p.remembered) {
-                    std.log.info("permission allow {s} (remembered)", .{p.tool_name});
+                    std.log.info("permission allow {s} risk={s} (remembered)", .{ p.tool_name, risk });
                 } else {
-                    std.log.info("permission allow {s}", .{p.tool_name});
+                    std.log.info("permission allow {s} risk={s}", .{ p.tool_name, risk });
                 }
             } else {
-                std.log.warn("permission deny {s}", .{p.tool_name});
+                std.log.warn("permission deny {s} risk={s}", .{ p.tool_name, risk });
             }
         },
     }

@@ -1,6 +1,7 @@
 //! Binds `zag-ai.WireAdapter` to Agent Core's pure `Provider` port.
 //!
 //! Lives in coding-agent (assembly), not in agent-core.
+//! Receives only model-visible `ToolDefinition` slices from the loop.
 
 const std = @import("std");
 const ai = @import("zag-ai");
@@ -55,24 +56,21 @@ pub const WireProvider = struct {
         ptr: *anyopaque,
         arena: std.mem.Allocator,
         messages: []const message.Message,
-        tools: []const tool.Tool,
+        tools: []const tool.Definition,
     ) ChatError!message.AssistantTurn {
         const self: *WireProvider = @ptrCast(@alignCast(ptr));
-        const defs = try arena.alloc(ai.ToolDefinition, tools.len);
-        for (tools, 0..) |t, i| {
-            defs[i] = t.definition;
-        }
+        // Provider plane: definitions only — never Tool/descriptor/capabilities.
         if (self.stream) {
             return self.wire.chatStream(
                 arena,
                 messages,
-                defs,
+                tools,
                 self.on_event,
                 self.on_event_ctx,
                 self.chat_options,
             );
         }
-        return self.wire.chat(arena, messages, defs, self.chat_options);
+        return self.wire.chat(arena, messages, tools, self.chat_options);
     }
 };
 

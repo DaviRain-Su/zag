@@ -19,7 +19,7 @@
 | ~~无写后 diff~~ | — | ✅ 可选短 `git diff`（失败省略） |
 | ~~built-in 权限仅两档全局~~ | — | ✅ write-path remember + `--no-remember` |
 | ~~无 plan 模式语义~~ | — | ✅ `SessionKind.plan` stub；完整 UX → C6 |
-| custom Tool risk 按名称且 unknown→read | 第三方写/执行 Tool 可绕过确认 | P0 [tool-runtime](../modules/tool-runtime.md) / `h-tool-runtime-001` |
+| ~~custom Tool risk 按名称且 unknown→read~~ | **closed** D-007 / h-tool-runtime-001：descriptor risk fail-closed | done |
 | file Tool 仅 lexical jail | symlink 可越界 | P0 [workspace-sandbox](../modules/workspace-sandbox.md) |
 | shell 错误/deadline/cancel 形状未闭合 | exit/timeout/policy/cancel 难统一审计 | H P1 · [tools-shell](../modules/tools-shell.md) |
 | edit/failure golden matrix | 端到端回归需覆盖 custom deny/containment | H Quality |

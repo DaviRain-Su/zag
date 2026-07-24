@@ -117,12 +117,14 @@ pub const Trace = struct {
     pub fn emitPermission(
         self: *Trace,
         tool_name: []const u8,
+        risk: []const u8,
         allowed: bool,
         remembered: bool,
     ) std.mem.Allocator.Error!void {
         try self.writeObj(.{
             .kind = .permission,
             .name = tool_name,
+            .risk = risk,
             .allowed = allowed,
             .remembered = remembered,
         });

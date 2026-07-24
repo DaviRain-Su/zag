@@ -1,7 +1,9 @@
-//! Permission gate — HITL by tool category (Phase H3).
+//! Permission gate — HITL by tool risk from validated descriptors (D-007).
 //!
 //! ```
-//! tool_call ──► session_kind=plan? ──► non-plan write/shell → deny
+//! tool_call ──► descriptor.risk
+//!                  │
+//!                  session_kind=plan? ──► non-plan write/shell → deny
 //!                  │
 //!                  └── risk
 //!                       read  → allow
@@ -10,11 +12,13 @@
 //!                       shell → ask / yolo
 //! ```
 //!
-//! Denied tools still return a **tool result string** so the model can adapt;
-//! the loop does not crash. Jail / shell_policy are applied after this gate.
+//! Risk is never inferred from tool names. Missing metadata fails at
+//! registration (see `tool.buildTool`), not by defaulting to read.
+//! Denied tools still return a **tool result string** so the model can adapt.
 
 const std = @import("std");
 const Io = std.Io;
+const zt = @import("zag-types");
 const message = @import("message.zig");
 
 /// Max distinct write paths remembered per agent session (Tiger-style bound).
@@ -60,35 +64,8 @@ pub const SessionKind = enum {
     }
 };
 
-/// Tool category matrix (docs: read / write / shell).
-pub const Risk = enum {
-    /// list_dir, read_file, grep, glob — no confirmation in ask mode.
-    read,
-    /// write_file, search_replace
-    write,
-    /// run_shell (docs call this "shell")
-    execute,
-
-    pub fn needsConfirmation(self: Risk) bool {
-        return self != .read;
-    }
-
-    pub fn label(self: Risk) []const u8 {
-        return switch (self) {
-            .read => "read",
-            .write => "write",
-            .execute => "shell",
-        };
-    }
-};
-
-/// Classify a tool by name (built-ins).
-pub fn riskOf(tool_name: []const u8) Risk {
-    if (std.mem.eql(u8, tool_name, "write_file") or
-        std.mem.eql(u8, tool_name, "search_replace")) return .write;
-    if (std.mem.eql(u8, tool_name, "run_shell")) return .execute;
-    return .read;
-}
+/// Risk class (L0). Prefer descriptor.capabilities.risk over any name map.
+pub const Risk = zt.ToolRisk;
 
 /// Paths that remain writable under `SessionKind.plan`.
 pub fn isPlanWritePath(path: []const u8) bool {
@@ -109,10 +86,10 @@ pub const Outcome = struct {
     plan_blocked: bool = false,
 };
 
-/// Callback: return true to allow the tool call.
+/// Callback: return true to allow the tool call. Receives the full descriptor.
 pub const AskFn = *const fn (
     ptr: ?*anyopaque,
-    tool_name: []const u8,
+    descriptor: zt.ToolDescriptor,
     arguments_json: []const u8,
 ) Decision;
 
@@ -181,20 +158,21 @@ pub const Gate = struct {
     /// Convenience: Decision only (tests / callers that ignore remember metadata).
     pub fn decide(
         self: Gate,
-        tool_name: []const u8,
+        descriptor: zt.ToolDescriptor,
         arguments_json: []const u8,
     ) Decision {
-        return self.check(tool_name, arguments_json, null).decision;
+        return self.check(descriptor, arguments_json, null).decision;
     }
 
     /// Full check with optional `path` (from tool args) for remember + plan rules.
+    /// Risk comes only from `descriptor.capabilities.risk`.
     pub fn check(
         self: Gate,
-        tool_name: []const u8,
+        descriptor: zt.ToolDescriptor,
         arguments_json: []const u8,
         path: ?[]const u8,
     ) Outcome {
-        const risk = riskOf(tool_name);
+        const risk = descriptor.capabilities.risk;
 
         if (self.session_kind == .plan) {
             if (risk == .execute) {
@@ -225,7 +203,7 @@ pub const Gate = struct {
         }
 
         const f = self.ask_fn orelse return .{ .decision = .deny };
-        const d = f(self.ask_ctx, tool_name, arguments_json);
+        const d = f(self.ask_ctx, descriptor, arguments_json);
         if (d == .allow and risk == .write) {
             if (path) |p| {
                 if (self.remember) |store| {
@@ -237,11 +215,11 @@ pub const Gate = struct {
     }
 };
 
-fn alwaysDeny(_: ?*anyopaque, _: []const u8, _: []const u8) Decision {
+fn alwaysDeny(_: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
     return .deny;
 }
 
-fn alwaysAllow(_: ?*anyopaque, _: []const u8, _: []const u8) Decision {
+fn alwaysAllow(_: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
     return .allow;
 }
 
@@ -253,11 +231,11 @@ pub const StdinPrompter = struct {
         return Gate.ask(promptImpl, self);
     }
 
-    fn promptImpl(ptr: ?*anyopaque, tool_name: []const u8, arguments_json: []const u8) Decision {
+    fn promptImpl(ptr: ?*anyopaque, descriptor: zt.ToolDescriptor, arguments_json: []const u8) Decision {
         const self: *StdinPrompter = @ptrCast(@alignCast(ptr.?));
         const io = self.io;
-
-        const risk = riskOf(tool_name);
+        const risk = descriptor.capabilities.risk;
+        const tool_name = descriptor.definition.name;
 
         // Preview args (truncated) on stderr via std.log.
         const preview_len = @min(arguments_json.len, 400);
@@ -311,26 +289,38 @@ pub fn deniedMessageWithReason(
     return tool_error.format(allocator, .permission_denied, msg);
 }
 
-test "riskOf classification" {
-    try std.testing.expect(riskOf("list_dir") == .read);
-    try std.testing.expect(riskOf("read_file") == .read);
-    try std.testing.expect(riskOf("grep") == .read);
-    try std.testing.expect(riskOf("glob") == .read);
-    try std.testing.expect(riskOf("write_file") == .write);
-    try std.testing.expect(riskOf("search_replace") == .write);
-    try std.testing.expect(riskOf("run_shell") == .execute);
+/// Test helper: minimal descriptor with the given risk (no path / shell claim).
+pub fn testDescriptor(tool_name: []const u8, risk: Risk) zt.ToolDescriptor {
+    return .{
+        .definition = .{
+            .name = tool_name,
+            .description = "",
+            .parameters_json = "{}",
+        },
+        .capabilities = .{
+            .risk = risk,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+    };
 }
 
-test "yolo allows write" {
-    const g = Gate.yolo();
-    try std.testing.expect(g.decide("write_file", "{}") == .allow);
-    try std.testing.expect(g.decide("run_shell", "{}") == .allow);
-}
-
-test "ask mode auto-allows read" {
+test "descriptor risk drives gate" {
     const g = Gate.denyAllDangerous();
-    try std.testing.expect(g.decide("list_dir", "{}") == .allow);
-    try std.testing.expect(g.decide("write_file", "{}") == .deny);
+    try std.testing.expect(g.decide(testDescriptor("list_dir", .read), "{}") == .allow);
+    try std.testing.expect(g.decide(testDescriptor("write_file", .write), "{}") == .deny);
+    try std.testing.expect(g.decide(testDescriptor("custom_mut", .write), "{}") == .deny);
+    try std.testing.expect(g.decide(testDescriptor("custom_exec", .execute), "{}") == .deny);
+    // Name alone is never classified: unknown-looking name with read risk allows.
+    try std.testing.expect(g.decide(testDescriptor("run_shell", .read), "{}") == .allow);
+}
+
+test "yolo allows write and execute by descriptor risk" {
+    const g = Gate.yolo();
+    try std.testing.expect(g.decide(testDescriptor("write_file", .write), "{}") == .allow);
+    try std.testing.expect(g.decide(testDescriptor("run_shell", .execute), "{}") == .allow);
+    try std.testing.expect(g.decide(testDescriptor("custom_w", .write), "{}") == .allow);
 }
 
 test "mode parse" {
@@ -347,7 +337,7 @@ test "remember skips second ask for same path" {
     var allow_count: u32 = 0;
     const Ctx = struct {
         count: *u32,
-        fn ask(ptr: ?*anyopaque, _: []const u8, _: []const u8) Decision {
+        fn ask(ptr: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
             const c: *u32 = @ptrCast(@alignCast(ptr.?));
             c.* += 1;
             return .allow;
@@ -357,17 +347,18 @@ test "remember skips second ask for same path" {
     var gate = Gate.ask(Ctx.ask, &allow_count);
     gate.remember = &store;
 
-    const first = gate.check("write_file", "{\"path\":\"a.txt\"}", "a.txt");
+    const write_desc = testDescriptor("write_file", .write);
+    const first = gate.check(write_desc, "{\"path\":\"a.txt\"}", "a.txt");
     try std.testing.expect(first.decision == .allow);
     try std.testing.expect(!first.remembered);
     try std.testing.expectEqual(@as(u32, 1), allow_count);
 
-    const second = gate.check("write_file", "{\"path\":\"a.txt\"}", "a.txt");
+    const second = gate.check(write_desc, "{\"path\":\"a.txt\"}", "a.txt");
     try std.testing.expect(second.decision == .allow);
     try std.testing.expect(second.remembered);
     try std.testing.expectEqual(@as(u32, 1), allow_count);
 
-    const other = gate.check("write_file", "{\"path\":\"b.txt\"}", "b.txt");
+    const other = gate.check(write_desc, "{\"path\":\"b.txt\"}", "b.txt");
     try std.testing.expect(other.decision == .allow);
     try std.testing.expect(!other.remembered);
     try std.testing.expectEqual(@as(u32, 2), allow_count);
@@ -380,7 +371,7 @@ test "remember can be disabled" {
 
     var allow_count: u32 = 0;
     const Ctx = struct {
-        fn ask(ptr: ?*anyopaque, _: []const u8, _: []const u8) Decision {
+        fn ask(ptr: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
             const c: *u32 = @ptrCast(@alignCast(ptr.?));
             c.* += 1;
             return .allow;
@@ -389,27 +380,31 @@ test "remember can be disabled" {
     var gate = Gate.ask(Ctx.ask, &allow_count);
     gate.remember = &store;
 
-    _ = gate.check("write_file", "{}", "a.txt");
-    _ = gate.check("write_file", "{}", "a.txt");
+    const write_desc = testDescriptor("write_file", .write);
+    _ = gate.check(write_desc, "{}", "a.txt");
+    _ = gate.check(write_desc, "{}", "a.txt");
     try std.testing.expectEqual(@as(u32, 2), allow_count);
 }
 
-test "plan mode blocks shell and non-plan writes" {
+test "plan mode blocks shell and non-plan writes by risk" {
     var gate = Gate.yolo();
     gate.session_kind = .plan;
 
-    try std.testing.expect(gate.check("list_dir", "{}", null).decision == .allow);
-    try std.testing.expect(gate.check("run_shell", "{\"command\":\"ls\"}", null).decision == .deny);
-    try std.testing.expect(gate.check("run_shell", "{}", null).plan_blocked);
+    try std.testing.expect(gate.check(testDescriptor("list_dir", .read), "{}", null).decision == .allow);
+    try std.testing.expect(gate.check(testDescriptor("run_shell", .execute), "{\"command\":\"ls\"}", null).decision == .deny);
+    try std.testing.expect(gate.check(testDescriptor("run_shell", .execute), "{}", null).plan_blocked);
 
-    const bad = gate.check("write_file", "{}", "src/main.zig");
+    // Custom execute name still blocked under plan.
+    try std.testing.expect(gate.check(testDescriptor("my_shell", .execute), "{}", null).decision == .deny);
+
+    const bad = gate.check(testDescriptor("write_file", .write), "{}", "src/main.zig");
     try std.testing.expect(bad.decision == .deny);
     try std.testing.expect(bad.plan_blocked);
 
-    const ok = gate.check("write_file", "{}", "plan.md");
+    const ok = gate.check(testDescriptor("write_file", .write), "{}", "plan.md");
     try std.testing.expect(ok.decision == .allow);
-    try std.testing.expect(gate.check("write_file", "{}", ".zag/plan.md").decision == .allow);
-    try std.testing.expect(gate.check("write_file", "{}", "./plan.md").decision == .allow);
+    try std.testing.expect(gate.check(testDescriptor("write_file", .write), "{}", ".zag/plan.md").decision == .allow);
+    try std.testing.expect(gate.check(testDescriptor("write_file", .write), "{}", "./plan.md").decision == .allow);
 }
 
 test "isPlanWritePath" {

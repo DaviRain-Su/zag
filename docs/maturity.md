@@ -22,12 +22,12 @@
 | Subsystem | Current | Evidence and blocker | L2 exit | L3 direction |
 |-----------|:-------:|----------------------|---------|--------------|
 | Loop / Turn | **L1+** | soft Tool errors、serial order、goldens、between-call cancel 已有；provider failure/terminal trace 与 in-flight cancel 未闭合 | API/error/trace terminal 一致；cancel/deadline 有界；≥2 goldens | steer、parallel read-only |
-| Tool runtime / registry | **L1** | built-in registry 可用；handler 无 instance pointer，runtime capability 缺失 | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
+| Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；Registration 缺 metadata fail-closed；Provider 仅收 ToolDefinition；unknown tool soft `unknown_tool` | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
 | Tools · read/search | **L1** | list/read/grep/glob + budgets 已有；symlink 可越界 | 所有 file Tool 经真实 containment；结果有界 | LSP/repo map integration |
 | Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff 已有 | containment 下 stale/ambiguous 可恢复且不误写 | hashline/apply_patch、hunk review |
-| Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
-| Permissions | **L1+** | built-in matrix/remember/Plan stub 已有；custom mutating Tool 可默认 read | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
-| Workspace / Safety | **L1** | lexical jail + shell policy；无 secret redaction/doctor；symlink escape | symlink-aware containment、redaction、doctor、诚实 threat model | OS sandbox/network/worktree |
+| Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox；policy 选 shell 靠 descriptor.shell 非名称 | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
+| Permissions | **L2** | D-007: Gate/Ask/plan/remember 消费 descriptor.risk；custom write/execute 与 built-in 同 gate；无 `riskOf(name)` | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
+| Workspace / Safety | **L1** | lexical jail + shell policy；descriptor 选 path/shell 策略；**无** symlink-aware containment（h-workspace-001）；无 secret redaction/doctor | symlink-aware containment、redaction、doctor、诚实 threat model | OS sandbox/network/worktree |
 | Context / Compaction | **L1+** | four Layers + view-only summary 已有；second-stage trim accounting 不完整 | final returned view 与 dropped/summary/session/trace 一致 | repo map、智能选文件 |
 | Session / Resume | **L2** | D-006: create/resume distinct; open_or_create SDK-only; atomic save + per-Writer test fault preserves prior bytes; `Agent.reply` save IoFailed fixture; one active writer via reusable `{path}.lock`; strict header (version required on typed header); lexical session path; P0 fixtures (create-existing, resume missing/invalid/unsupported/general-I/O, fault-save, busy, stale sidecar, CLI open-mode). Not claimed: fsync/power-loss, symlink containment, hostile Writer-copy defense | explicit create/resume; atomic preservation; visible save errors; exclusive writer/conflict | fork/tree/journal as needed |
 | Provider / zag-ai | **L1+** | two wire styles、retry/usage/contracts/cost 已有；std timeout 无效、stream cancel/partial Tool safety 未闭合 | enforced-or-rejected deadline；in-flight cancel；redaction；contract matrix | fallback/multi-key/third protocol on demand |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | 111 tests、goldens、provider fixtures、dual backend CI；P0 fault/security fixtures缺失 | P0/P1 failure matrix进入 CI；不得削弱断言 | edit/cost/performance baselines |
+| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；tool-policy P0 fixtures 已进（custom deny / missing caps / definitions-only）；session P0 已有；symlink/redaction 等仍缺 | P0/P1 failure matrix进入 CI；不得削弱断言 | edit/cost/performance baselines |
 
 ## Phase H production-floor exit
 
@@ -74,7 +74,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Teaching | Demonstrates | Production gap |
 |----------|--------------|----------------|
 | Phase 0 | basic loop/read | lifecycle/error contracts |
-| Phase 1 | write/shell/ask | extensible fail-closed Tool policy |
+| Phase 1 | write/shell/ask | descriptor-driven risk (D-007 L2); symlink containment still open |
 | Phase 2 | session/context | durability/open/compaction accounting |
 | Phase 3 | lexical jail/policy/trace | real containment/redaction/truthful trace |
 | **Phase H** | raises all existing surfaces | current active P0/P1 tasks |

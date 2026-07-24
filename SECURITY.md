@@ -12,7 +12,7 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 
 | Control | Default/current behavior | Important limitation |
 |---------|--------------------------|----------------------|
-| Human permission | `ask`; built-in write/shell request confirmation | current custom Tool risk is inferred by name; unknown registered names can default to read until P0 Tool descriptor work lands |
+| Human permission | `ask`; write/execute risk from validated `ToolDescriptor` (custom tools included) | symlink escape and OS sandbox are still open (workspace L1) |
 | Permission remember | enabled for an approved built-in write path; `--no-remember` disables | path identity must be aligned with real containment before L2 |
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
 | Workspace path check | rejects absolute, `..`, drive/UNC, empty/NUL paths | **lexical only**; workspace symlinks can currently escape the root |

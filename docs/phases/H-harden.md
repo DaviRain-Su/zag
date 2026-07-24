@@ -13,7 +13,7 @@
 Earlier H notes treated H1/H3/H4 feature presence as closeout. Failure-path fixtures showed that several contracts remain open:
 
 - schema exists, but resume/save can still lose data;
-- built-in permission matrix exists, but custom Tool risk fails open;
+- built-in permission matrix + descriptor-driven custom Tool risk (D-007 L2);
 - four prompt layers exist, but second-stage trim accounting is incomplete;
 - trace events exist, but a provider failure may end as successful completion;
 - lexical jail exists, but workspace symlinks escape it.

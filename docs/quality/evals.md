@@ -34,9 +34,12 @@ These remain useful but do not cover the assessment blockers.
 
 ### Tool policy
 
-1. a registered custom mutating Tool is denied by the dangerous-tool deny gate.
-2. Tool registration without required capabilities fails before a Provider call.
-3. provider-visible Tool schema contains no local risk/policy metadata.
+1. a registered custom mutating Tool is denied by the dangerous-tool deny gate. ✅ (`loop` / permissions tests)
+2. Tool registration without required capabilities fails before a Provider call. ✅ (`tool.buildTool` + `InvalidToolset` / provider call count = 0)
+3. provider-visible Tool schema contains no local risk/policy metadata. ✅ (Provider port is `[]ToolDefinition`; serialization fixture)
+4. every built-in declares risk/workspace/cancellation/shell. ✅ (`toolset` test)
+5. custom path Tool jails without built-in name. ✅
+6. unknown model tool remains soft `unknown_tool`. ✅
 
 ### Workspace
 

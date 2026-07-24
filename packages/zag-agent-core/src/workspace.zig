@@ -1,9 +1,13 @@
 //! Workspace path jail — refuse tools that escape the working tree.
 //!
-//! Phase 3 rule: all `path` arguments must be **relative** and must not climb
+//! Phase 3 rule: all path arguments must be **relative** and must not climb
 //! above the workspace root via `..`. Absolute paths are rejected.
+//!
+//! Which tools claim a path is decided by `ToolDescriptor.capabilities.workspace`,
+//! not a built-in name list (D-007). Symlink-aware containment is h-workspace-001.
 
 const std = @import("std");
+const zt = @import("zag-types");
 
 pub const Error = error{
     OutsideWorkspace,
@@ -48,27 +52,29 @@ pub fn deniedMessage(allocator: std.mem.Allocator, path: []const u8) std.mem.All
     return tool_error.format(allocator, .jail_deny, msg);
 }
 
-/// Extract `path` from JSON tool arguments when present.
+/// Extract a path field from JSON tool arguments when present.
 pub fn pathArgument(
     allocator: std.mem.Allocator,
     arguments_json: []const u8,
+    field: []const u8,
 ) error{OutOfMemory}!?[]const u8 {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch
         return null;
     defer parsed.deinit();
     if (parsed.value != .object) return null;
-    const val = parsed.value.object.get("path") orelse return null;
+    const val = parsed.value.object.get(field) orelse return null;
     if (val != .string) return null;
     return try allocator.dupe(u8, val.string);
 }
 
-pub fn toolUsesPath(tool_name: []const u8) bool {
-    return std.mem.eql(u8, tool_name, "list_dir") or
-        std.mem.eql(u8, tool_name, "read_file") or
-        std.mem.eql(u8, tool_name, "write_file") or
-        std.mem.eql(u8, tool_name, "search_replace") or
-        std.mem.eql(u8, tool_name, "grep") or
-        std.mem.eql(u8, tool_name, "glob");
+/// Extract path using descriptor workspace metadata (null when no path claim).
+pub fn pathFromDescriptor(
+    allocator: std.mem.Allocator,
+    capabilities: zt.ToolCapabilities,
+    arguments_json: []const u8,
+) error{OutOfMemory}!?[]const u8 {
+    const field = capabilities.workspace.pathField() orelse return null;
+    return pathArgument(allocator, arguments_json, field);
 }
 
 test "jail allows relative paths" {
@@ -82,4 +88,25 @@ test "jail rejects absolute and escape" {
     try std.testing.expectError(error.OutsideWorkspace, checkToolPath("../secret"));
     try std.testing.expectError(error.OutsideWorkspace, checkToolPath("a/../../b"));
     try std.testing.expectError(error.InvalidPath, checkToolPath(""));
+}
+
+test "pathFromDescriptor respects workspace access" {
+    const gpa = std.testing.allocator;
+    const none_caps: zt.ToolCapabilities = .{
+        .risk = .execute,
+        .workspace = .none,
+        .cancellation = .none,
+        .shell = .command_argument,
+    };
+    try std.testing.expect(try pathFromDescriptor(gpa, none_caps, "{\"path\":\"x\"}") == null);
+
+    const path_caps: zt.ToolCapabilities = .{
+        .risk = .read,
+        .workspace = .{ .path_field = "path" },
+        .cancellation = .none,
+        .shell = .none,
+    };
+    const p = try pathFromDescriptor(gpa, path_caps, "{\"path\":\"src/a.zig\"}");
+    defer if (p) |s| gpa.free(s);
+    try std.testing.expectEqualStrings("src/a.zig", p.?);
 }

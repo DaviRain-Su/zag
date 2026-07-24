@@ -9,10 +9,10 @@
 | 规格 | 阶段 | 现状路径 | 目标拆分（可选） |
 |------|------|----------|------------------|
 | [loop-turn.md](./loop-turn.md) | H1 | `packages/zag-agent-core/src/loop.zig` | 保持 |
-| [tool-runtime.md](./tool-runtime.md) | H/P0 → SDK | `zag-types` ToolDefinition；core `tool.zig` | 保持定义/运行时分离 |
+| [tool-runtime.md](./tool-runtime.md) | H/P0 **L2** → SDK | `zag-types` ToolDefinition + ToolCapabilities；core `tool.zig` | 保持定义/运行时分离 |
 | [tools-edit.md](./tools-edit.md) | H2 → C4 | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent |
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | runtime `run_shell` + core `shell_policy` | 保持 |
-| [permissions.md](./permissions.md) | H3 | `zag-agent-core/.../permissions.zig` | 保持 |
+| [permissions.md](./permissions.md) | H3 **L2** | `zag-agent-core/.../permissions.zig` | 保持 |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | core `context`；coding `project` | 保持 |
 | [session-store.md](./session-store.md) | H4 → C5 | core `session_store.zig` | 保持 |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | core `workspace` + `shell_policy` | C7 sandbox |
@@ -28,7 +28,7 @@
 |----|-------------------|------|
 | `openai-zig` | `Client`、resources、transport | generated OpenAPI |
 | `zag-ai` | `resolve`、`WireAdapter`、`ChatOptions`、catalog | openai_compat |
-| `zag-types` | Message / ToolDefinition / ChatError | — |
+| `zag-types` | Message / ToolDefinition / ToolRisk / ToolCapabilities / ToolDescriptor / ChatError | — |
 | `zag-agent-core` | `loop`、**纯 `Provider` 端口**、session、permissions | 无 `Client` / 无 toolset 产品 / 无 zag-ai |
 | `zag-coding-agent` | `Agent`、`WireProvider`、toolset、runtime tools | 组装 core + wire |
 | `zag-cli` | flags / REPL / one-shot | 产品壳 |

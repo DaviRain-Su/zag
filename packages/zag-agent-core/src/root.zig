@@ -28,6 +28,11 @@ pub const Provider = provider.Provider;
 pub const ChatError = provider.ChatError;
 pub const Tool = tool.Tool;
 pub const ToolDefinition = tool.Definition;
+pub const ToolDescriptor = tool.ToolDescriptor;
+pub const ToolCapabilities = tool.ToolCapabilities;
+pub const ToolRisk = tool.ToolRisk;
+pub const Registration = tool.Registration;
+pub const RegistrationError = tool.RegistrationError;
 
 pub const version = "0.5.0";
 

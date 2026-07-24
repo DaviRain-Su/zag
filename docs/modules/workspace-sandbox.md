@@ -65,6 +65,7 @@ Report project instructions/test entry, permission mode, shell policy, lexical/r
 ## Current gaps
 
 - `checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.
+- Enforcement **selection** is descriptor-driven (`ToolCapabilities.workspace` / `.shell`); symlink-aware resolution is still P0 ([h-workspace-001](../plan/tasks/h-workspace-001.md)).
 - systematic redaction and doctor are not implemented.
 - OS sandbox is intentionally absent.
 

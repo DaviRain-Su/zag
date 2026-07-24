@@ -219,7 +219,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | 模块 | 现状路径 | 当前等级 / blocker |
 |------|----------|--------------------|
 | Tool runtime | `zag-agent-core/src/tool.zig` + `zag-types` | L1；无 stateful handler/capabilities |
-| permissions | `zag-agent-core/src/permissions.zig` | L1+；unknown custom Tool risk defaults read |
+| permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk (D-007) |
 | workspace | `zag-agent-core/src/workspace.zig` | L1；lexical only，symlink escape |
 | shell_policy | `zag-agent-core/src/shell_policy.zig` | L1 denylist；非 sandbox |
 | trace | `zag-agent-core/src/trace.zig` | L1；无 schema/false-success terminal |

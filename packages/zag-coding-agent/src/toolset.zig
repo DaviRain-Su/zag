@@ -1,5 +1,6 @@
 //! Named bundles of coding tools (product layer).
 
+const std = @import("std");
 const core = @import("zag-agent-core");
 const tool = core.tool;
 const fs_tools = @import("runtime/fs_tools.zig");
@@ -45,3 +46,38 @@ pub const Phase1Storage = struct {
         return .{ .tools = &self.tools };
     }
 };
+
+test "every built-in declares complete descriptor capabilities" {
+    const gpa = std.testing.allocator;
+    const storage = Phase1Storage.init();
+    const tools = storage.tools;
+    try tool.validateTools(gpa, &tools);
+
+    const expected = [_]struct {
+        name: []const u8,
+        risk: tool.ToolRisk,
+        uses_path: bool,
+        shell: tool.ShellPolicyKind,
+    }{
+        .{ .name = "list_dir", .risk = .read, .uses_path = true, .shell = .none },
+        .{ .name = "read_file", .risk = .read, .uses_path = true, .shell = .none },
+        .{ .name = "grep", .risk = .read, .uses_path = true, .shell = .none },
+        .{ .name = "glob", .risk = .read, .uses_path = true, .shell = .none },
+        .{ .name = "search_replace", .risk = .write, .uses_path = true, .shell = .none },
+        .{ .name = "write_file", .risk = .write, .uses_path = true, .shell = .none },
+        .{ .name = "run_shell", .risk = .execute, .uses_path = false, .shell = .command_argument },
+    };
+
+    try std.testing.expectEqual(expected.len, tools.len);
+    for (expected, tools) |exp, t| {
+        try std.testing.expectEqualStrings(exp.name, t.descriptor.definition.name);
+        try std.testing.expect(t.descriptor.capabilities.risk == exp.risk);
+        try std.testing.expect(t.descriptor.capabilities.workspace.usesPath() == exp.uses_path);
+        try std.testing.expect(t.descriptor.capabilities.shell == exp.shell);
+        try std.testing.expect(t.descriptor.capabilities.cancellation == .none);
+        try std.testing.expect(t.instance == null);
+        // Name never substitutes for risk: each capability field is set explicitly.
+        try std.testing.expect(t.descriptor.definition.name.len > 0);
+        try std.testing.expect(t.descriptor.definition.parameters_json.len > 0);
+    }
+}

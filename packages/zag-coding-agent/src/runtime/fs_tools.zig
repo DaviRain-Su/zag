@@ -11,94 +11,94 @@ const workspace = core.workspace;
 pub const list_dir_def: tool.Definition = .{
     .name = "list_dir",
     .description =
-        \\List entries in a directory relative to the working directory.
-        \\Returns one entry per line as "name\tkind" where kind is file, directory, or other.
+    \\List entries in a directory relative to the working directory.
+    \\Returns one entry per line as "name\tkind" where kind is file, directory, or other.
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "path": {
-        \\      "type": "string",
-        \\      "description": "Directory path relative to the working directory. Use \".\" for the current directory."
-        \\    }
-        \\  },
-        \\  "required": ["path"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "Directory path relative to the working directory. Use \".\" for the current directory."
+    \\    }
+    \\  },
+    \\  "required": ["path"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
 pub const read_file_def: tool.Definition = .{
     .name = "read_file",
     .description =
-        \\Read a UTF-8 text file relative to the working directory.
-        \\Large files are truncated. Returns the file contents as text.
+    \\Read a UTF-8 text file relative to the working directory.
+    \\Large files are truncated. Returns the file contents as text.
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "path": {
-        \\      "type": "string",
-        \\      "description": "File path relative to the working directory."
-        \\    }
-        \\  },
-        \\  "required": ["path"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "File path relative to the working directory."
+    \\    }
+    \\  },
+    \\  "required": ["path"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
 pub const grep_def: tool.Definition = .{
     .name = "grep",
     .description =
-        \\Search for a literal substring in text files under a relative path (default ".").
-        \\Returns path:line:content hits with a result budget. Absolute paths and '..' are denied by jail.
-        \\Skips .git and common build dirs. Prefer this over shell grep.
+    \\Search for a literal substring in text files under a relative path (default ".").
+    \\Returns path:line:content hits with a result budget. Absolute paths and '..' are denied by jail.
+    \\Skips .git and common build dirs. Prefer this over shell grep.
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "pattern": {
-        \\      "type": "string",
-        \\      "description": "Literal substring to find (not a regex)."
-        \\    },
-        \\    "path": {
-        \\      "type": "string",
-        \\      "description": "Relative file or directory to search. Default \".\"."
-        \\    }
-        \\  },
-        \\  "required": ["pattern"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "pattern": {
+    \\      "type": "string",
+    \\      "description": "Literal substring to find (not a regex)."
+    \\    },
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "Relative file or directory to search. Default \".\"."
+    \\    }
+    \\  },
+    \\  "required": ["pattern"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
 pub const glob_def: tool.Definition = .{
     .name = "glob",
     .description =
-        \\List relative file paths matching a glob under the working directory.
-        \\Supports * (within a path segment) and ** (any depth). Example: "**/*.zig", "src/*.md".
-        \\Optional path scopes the walk. Absolute paths and '..' are denied by jail.
+    \\List relative file paths matching a glob under the working directory.
+    \\Supports * (within a path segment) and ** (any depth). Example: "**/*.zig", "src/*.md".
+    \\Optional path scopes the walk. Absolute paths and '..' are denied by jail.
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "pattern": {
-        \\      "type": "string",
-        \\      "description": "Glob pattern relative to path (or cwd)."
-        \\    },
-        \\    "path": {
-        \\      "type": "string",
-        \\      "description": "Relative directory to search under. Default \".\"."
-        \\    }
-        \\  },
-        \\  "required": ["pattern"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "pattern": {
+    \\      "type": "string",
+    \\      "description": "Glob pattern relative to path (or cwd)."
+    \\    },
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "Relative directory to search under. Default \".\"."
+    \\    }
+    \\  },
+    \\  "required": ["pattern"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
@@ -112,7 +112,8 @@ const walk_nodes_max: u32 = 4096;
 const max_walk_depth: u32 = 32;
 const glob_frame_stack_max: u32 = 128;
 
-pub fn listDir(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const path = try tool.requireStringField(ctx.allocator, arguments_json, "path");
     defer ctx.allocator.free(path);
 
@@ -150,7 +151,8 @@ pub fn listDir(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError!
     return out.toOwnedSlice() catch return error.OutOfMemory;
 }
 
-pub fn readFile(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const path = try tool.requireStringField(ctx.allocator, arguments_json, "path");
     defer ctx.allocator.free(path);
 
@@ -183,7 +185,8 @@ pub fn readFile(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError
     return contents;
 }
 
-pub fn grep(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const pattern = try tool.requireStringField(ctx.allocator, arguments_json, "pattern");
     defer ctx.allocator.free(pattern);
     if (pattern.len == 0) return error.InvalidArguments;
@@ -215,7 +218,8 @@ pub fn grep(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u
     return out.toOwnedSlice() catch return error.OutOfMemory;
 }
 
-pub fn glob(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const pattern = try tool.requireStringField(ctx.allocator, arguments_json, "pattern");
     defer ctx.allocator.free(pattern);
     if (pattern.len == 0) return error.InvalidArguments;
@@ -497,17 +501,24 @@ pub fn matchGlob(pattern: []const u8, path: []const u8) bool {
     return false;
 }
 
+const path_read_caps: tool.ToolCapabilities = .{
+    .risk = .read,
+    .workspace = .{ .path_field = "path" },
+    .cancellation = .none,
+    .shell = .none,
+};
+
 pub fn phase0Tools() [2]tool.Tool {
     return .{
-        .{ .definition = list_dir_def, .handler = listDir },
-        .{ .definition = read_file_def, .handler = readFile },
+        tool.stateless(.{ .definition = list_dir_def, .capabilities = path_read_caps }, listDir),
+        tool.stateless(.{ .definition = read_file_def, .capabilities = path_read_caps }, readFile),
     };
 }
 
 pub fn searchTools() [2]tool.Tool {
     return .{
-        .{ .definition = grep_def, .handler = grep },
-        .{ .definition = glob_def, .handler = glob },
+        tool.stateless(.{ .definition = grep_def, .capabilities = path_read_caps }, grep),
+        tool.stateless(.{ .definition = glob_def, .capabilities = path_read_caps }, glob),
     };
 }
 
@@ -565,16 +576,16 @@ test "grep and glob in tmp dir" {
         .cwd = tmp.dir,
     };
 
-    const hits = try grep(ctx, "{\"pattern\":\"findme\"}");
+    const hits = try grep(ctx, null, "{\"pattern\":\"findme\"}");
     defer gpa.free(hits);
     try std.testing.expect(std.mem.indexOf(u8, hits, "src/a.zig") != null);
     try std.testing.expect(std.mem.indexOf(u8, hits, "readme.txt") != null);
 
-    const abs = try grep(ctx, "{\"pattern\":\"x\",\"path\":\"/etc\"}");
+    const abs = try grep(ctx, null, "{\"pattern\":\"x\",\"path\":\"/etc\"}");
     defer gpa.free(abs);
     try std.testing.expect(std.mem.indexOf(u8, abs, "code=jail_deny") != null);
 
-    const paths = try glob(ctx, "{\"pattern\":\"**/*.zig\"}");
+    const paths = try glob(ctx, null, "{\"pattern\":\"**/*.zig\"}");
     defer gpa.free(paths);
     try std.testing.expect(std.mem.indexOf(u8, paths, "src/a.zig") != null);
     try std.testing.expect(std.mem.indexOf(u8, paths, "b.md") == null);

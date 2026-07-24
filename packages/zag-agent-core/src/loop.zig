@@ -1,12 +1,12 @@
 //! Agent harness loop — business only.
 //!
 //! ```
-//! transcript ──► context.view ──► provider.chat
+//! transcript ──► context.view ──► provider.chat (definitions only)
 //!      ▲                               │
 //!      │                          tool_calls?
 //!      │                          no → done
 //!      │                          yes ↓
-//!      │              permission → jail → shell policy
+//!      │         find descriptor → permission → jail → shell policy
 //!      │                     deny → soft tool error
 //!      │                     allow → execute (serial in H1)
 //!      └──────── tool results ────────┘
@@ -15,6 +15,9 @@
 //! **Parallelism (H1 / L2):** tools in one assistant message run **serially** in
 //! call order. Spec allows future parallel read-only batches; write/shell must
 //! stay serial. See test "tools execute serially in call order".
+//!
+//! Permission / jail / shell selection use `ToolDescriptor` capabilities only
+//! (D-007). Unknown model-requested tools soft-fail without name-based risk.
 
 const std = @import("std");
 const zt = @import("zag-types");
@@ -61,6 +64,8 @@ pub const RunError = error{
     MaxTurnsExceeded,
     ProviderFailed,
     OutOfMemory,
+    /// Toolset failed closed validation before any provider call.
+    InvalidToolset,
 };
 
 pub const StopReason = enum {
@@ -96,6 +101,9 @@ pub const Deps = struct {
 };
 
 pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
+    // Fail closed before the first provider call on malformed toolsets.
+    tool.validateTools(deps.gpa, deps.toolset.tools) catch return error.InvalidToolset;
+
     var turns: u32 = 0;
     var last_text: []const u8 = "";
     var usage_total: message.Usage = .{};
@@ -234,23 +242,37 @@ fn executeOneTool(
         tr.emitToolCall(call) catch {};
     }
 
-    const path_for_perm = if (workspace.toolUsesPath(call.name))
-        try workspace.pathArgument(deps.tool_ctx.allocator, call.arguments)
-    else
-        null;
+    // Unknown model-requested tool: soft-fail without name-based permission/jail.
+    const found = registry.find(call.name) orelse {
+        const body = registry.execute(deps.tool_ctx, call.name, call.arguments) catch
+            return error.OutOfMemory;
+        defer deps.tool_ctx.allocator.free(body);
+        try finishTool(deps, transcript, call, body);
+        return;
+    };
+
+    const desc = found.descriptor;
+    const caps = desc.capabilities;
+
+    const path_for_perm = workspace.pathFromDescriptor(
+        deps.tool_ctx.allocator,
+        caps,
+        call.arguments,
+    ) catch return error.OutOfMemory;
     defer if (path_for_perm) |p| deps.tool_ctx.allocator.free(p);
 
-    const outcome = deps.options.permission_gate.check(call.name, call.arguments, path_for_perm);
+    const outcome = deps.options.permission_gate.check(desc, call.arguments, path_for_perm);
     const allowed = outcome.decision == .allow;
     deps.options.observer.emit(.{
         .permission = .{
             .tool_name = call.name,
             .allowed = allowed,
             .remembered = outcome.remembered,
+            .risk = caps.risk.name(),
         },
     });
     if (deps.options.trace) |tr| {
-        tr.emitPermission(call.name, allowed, outcome.remembered) catch {};
+        tr.emitPermission(call.name, caps.risk.name(), allowed, outcome.remembered) catch {};
     }
 
     if (!allowed) {
@@ -265,15 +287,15 @@ fn executeOneTool(
         return;
     }
 
-    if (workspace.toolUsesPath(call.name)) {
-        if (try pathJailCheck(deps, call)) |deny_body| {
+    if (caps.workspace.usesPath()) {
+        if (try pathJailCheck(deps, call, caps)) |deny_body| {
             defer deps.tool_ctx.allocator.free(deny_body);
             try finishTool(deps, transcript, call, deny_body);
             return;
         }
     }
 
-    if (std.mem.eql(u8, call.name, "run_shell")) {
+    if (caps.shell == .command_argument) {
         if (try shellPolicyCheck(deps, call.arguments)) |deny_body| {
             defer deps.tool_ctx.allocator.free(deny_body);
             try finishTool(deps, transcript, call, deny_body);
@@ -281,7 +303,7 @@ fn executeOneTool(
         }
     }
 
-    const raw = registry.execute(deps.tool_ctx, call.name, call.arguments) catch
+    const raw = registry.executeTool(deps.tool_ctx, found, call.arguments) catch
         return error.OutOfMemory;
     defer deps.tool_ctx.allocator.free(raw);
     try finishTool(deps, transcript, call, raw);
@@ -292,13 +314,18 @@ fn chatWithRetry(
     scratch: std.mem.Allocator,
     messages: []const message.Message,
 ) RunError!message.AssistantTurn {
+    const defs = tool.Registry.definitions(
+        deps.toolset.registry(),
+        scratch,
+    ) catch return error.OutOfMemory;
+
     const max_attempts: u32 = @as(u32, deps.options.chat_retries) + 1;
     var attempt: u32 = 0;
     while (attempt < max_attempts) : (attempt += 1) {
         const result = deps.provider.chat(
             scratch,
             messages,
-            deps.toolset.tools,
+            defs,
         );
         if (result) |turn| {
             return turn;
@@ -339,10 +366,17 @@ fn finishTool(
     try transcript.appendToolResult(call.id, body);
 }
 
-/// Returns owned deny message, or null if path is OK.
-fn pathJailCheck(deps: Deps, call: message.ToolCall) RunError!?[]u8 {
-    const path = workspace.pathArgument(deps.tool_ctx.allocator, call.arguments) catch
-        return error.OutOfMemory;
+/// Returns owned deny message, or null if path is OK / absent.
+fn pathJailCheck(
+    deps: Deps,
+    call: message.ToolCall,
+    caps: zt.ToolCapabilities,
+) RunError!?[]u8 {
+    const path = workspace.pathFromDescriptor(
+        deps.tool_ctx.allocator,
+        caps,
+        call.arguments,
+    ) catch return error.OutOfMemory;
     if (path == null) return null;
     defer deps.tool_ctx.allocator.free(path.?);
 
@@ -375,6 +409,30 @@ fn shellPolicyCheck(deps: Deps, arguments_json: []const u8) RunError!?[]u8 {
     return try shell_policy.deniedMessage(deps.tool_ctx.allocator, command);
 }
 
+fn readOnlyDesc(name: []const u8) zt.ToolDescriptor {
+    return .{
+        .definition = .{ .name = name, .description = "", .parameters_json = "{}" },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .none,
+            .shell = .none,
+        },
+    };
+}
+
+fn writeDesc(name: []const u8) zt.ToolDescriptor {
+    return .{
+        .definition = .{ .name = name, .description = "", .parameters_json = "{}" },
+        .capabilities = .{
+            .risk = .write,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .none,
+            .shell = .none,
+        },
+    };
+}
+
 test "loop stops when model returns text only" {
     const gpa = std.testing.allocator;
 
@@ -383,7 +441,7 @@ test "loop stops when model returns text only" {
             _: *anyopaque,
             arena: std.mem.Allocator,
             _: []const message.Message,
-            _: []const tool.Tool,
+            _: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -422,13 +480,20 @@ test "loop stops when model returns text only" {
 test "permission deny yields tool error without executing" {
     const gpa = std.testing.allocator;
 
+    const WriteStub = struct {
+        fn handle(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    };
+    const tools = [_]tool.Tool{tool.stateless(writeDesc("write_file"), WriteStub.handle)};
+
     const Mock = struct {
         calls: u32 = 0,
         fn chat(
             ptr: *anyopaque,
             arena: std.mem.Allocator,
             messages: []const message.Message,
-            _: []const tool.Tool,
+            _: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -468,7 +533,7 @@ test "permission deny yields tool error without executing" {
     const result = try run(.{
         .gpa = gpa,
         .provider = provider,
-        .toolset = .{ .tools = &.{} },
+        .toolset = .{ .tools = &tools },
         .tool_ctx = .{
             .allocator = gpa,
             .io = std.testing.io,
@@ -492,13 +557,20 @@ test "permission deny yields tool error without executing" {
 test "jail deny absolute path without writing" {
     const gpa = std.testing.allocator;
 
+    const ReadStub = struct {
+        fn handle(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    };
+    const tools = [_]tool.Tool{tool.stateless(readOnlyDesc("read_file"), ReadStub.handle)};
+
     const Mock = struct {
         calls: u32 = 0,
         fn chat(
             ptr: *anyopaque,
             arena: std.mem.Allocator,
             _: []const message.Message,
-            _: []const tool.Tool,
+            _: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -533,7 +605,7 @@ test "jail deny absolute path without writing" {
     const result = try run(.{
         .gpa = gpa,
         .provider = provider,
-        .toolset = .{ .tools = &.{} },
+        .toolset = .{ .tools = &tools },
         .tool_ctx = .{
             .allocator = gpa,
             .io = std.testing.io,
@@ -563,7 +635,7 @@ test "cancel after chat completes open tool pairs" {
             ptr: *anyopaque,
             arena: std.mem.Allocator,
             _: []const message.Message,
-            _: []const tool.Tool,
+            _: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -629,28 +701,33 @@ test "tools execute serially in call order" {
     const gpa = std.testing.allocator;
 
     const Echo = struct {
-        fn handle(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+        fn handle(ctx: tool.Context, _: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
             const label = try tool.requireStringField(ctx.allocator, arguments_json, "label");
             defer ctx.allocator.free(label);
             return std.fmt.allocPrint(ctx.allocator, "ok:{s}", .{label}) catch return error.OutOfMemory;
         }
     };
 
-    const tools = [_]tool.Tool{.{
+    const tools = [_]tool.Tool{tool.stateless(.{
         .definition = .{
             .name = "echo",
             .description = "echo",
-            .parameters_json = "{}",
+            .parameters_json = "{\"type\":\"object\"}",
         },
-        .handler = Echo.handle,
-    }};
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+    }, Echo.handle)};
 
     const Mock = struct {
         fn chat(
             _: *anyopaque,
             arena: std.mem.Allocator,
             _: []const message.Message,
-            _: []const tool.Tool,
+            _: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 3);
             tc[0] = .{
@@ -679,11 +756,11 @@ test "tools execute serially in call order" {
             ptr: *anyopaque,
             arena: std.mem.Allocator,
             msgs: []const message.Message,
-            tls: []const tool.Tool,
+            defs: []const tool.Definition,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
-            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, tls);
+            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, defs);
             // Verify tool results arrived as 1,2,3 in transcript order.
             var labels: [3]?[]const u8 = .{ null, null, null };
             var li: usize = 0;
@@ -732,4 +809,475 @@ test "tools execute serially in call order" {
 
     try std.testing.expectEqualStrings("ordered", result.final_text);
     try std.testing.expect(result.stop_reason == .completed);
+}
+
+test "custom write tool denied by denyAllDangerous" {
+    const gpa = std.testing.allocator;
+
+    const Mut = struct {
+        ran: bool = false,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.ran = true;
+            return ctx.allocator.dupe(u8, "should-not-run") catch return error.OutOfMemory;
+        }
+    };
+    var mut: Mut = .{};
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "custom_mutate",
+            .description = "dangerous custom",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .write,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = &mut,
+        .handler = Mut.handle,
+    })};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "custom_mutate"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"x.txt\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "denied ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("mutate");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .permission_gate = .denyAllDangerous() },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("denied ok", result.final_text);
+    try std.testing.expect(!mut.ran);
+    var denied = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and tool_error.hasCode(m.content, .permission_denied)) denied = true;
+    }
+    try std.testing.expect(denied);
+}
+
+test "stateful tool increments instance without globals" {
+    const gpa = std.testing.allocator;
+
+    const Counter = struct {
+        n: u32 = 0,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.n += 1;
+            return std.fmt.allocPrint(ctx.allocator, "n={d}", .{self.n}) catch return error.OutOfMemory;
+        }
+    };
+    var counter: Counter = .{};
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "tick",
+            .description = "counter",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = &counter,
+        .handler = Counter.handle,
+    })};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls <= 2) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, if (self.calls == 1) "a" else "b"),
+                    .name = try arena.dupe(u8, "tick"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("tick twice");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .permission_gate = .yolo() },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("done", result.final_text);
+    try std.testing.expectEqual(@as(u32, 2), counter.n);
+}
+
+test "missing capabilities cannot enter run; invalid toolset skips provider" {
+    const gpa = std.testing.allocator;
+
+    // Registration boundary rejects missing capabilities.
+    const noop = struct {
+        fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    }.h;
+    try std.testing.expectError(error.MissingCapabilities, tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "bad",
+            .description = "",
+            .parameters_json = "{}",
+        },
+        .capabilities = null,
+        .handler = noop,
+    }));
+
+    // Duplicate toolset fails before provider (call count stays 0).
+    const t = try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "dup",
+            .description = "",
+            .parameters_json = "{}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .handler = noop,
+    });
+    const tools = [_]tool.Tool{ t, t };
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return error.Unexpected;
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const err = run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+    }, &transcript);
+    try std.testing.expectError(error.InvalidToolset, err);
+    try std.testing.expectEqual(@as(u32, 0), mock.calls);
+}
+
+test "custom path tool jails without built-in name" {
+    const gpa = std.testing.allocator;
+
+    const PathTool = struct {
+        fn handle(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    };
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "my_path_reader",
+            .description = "custom",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .handler = PathTool.handle,
+    })};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "my_path_reader"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"../escape\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "jailed"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("escape");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .permission_gate = .yolo() },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("jailed", result.final_text);
+    var found = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and tool_error.hasCode(m.content, .jail_deny)) found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "provider receives definitions only (no risk field)" {
+    const gpa = std.testing.allocator;
+
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "secret_write",
+            .description = "d",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .write,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .cooperative,
+            .shell = .none,
+        },
+        .handler = struct {
+            fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                return error.ToolFailed;
+            }
+        }.h,
+    })};
+
+    const Mock = struct {
+        saw: bool = false,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            defs: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.saw = true;
+            if (defs.len != 1) return error.InvalidResponse;
+            if (!std.mem.eql(u8, defs[0].name, "secret_write")) return error.InvalidResponse;
+            // Serialize definition shape and ensure local capability tokens absent.
+            var out: std.Io.Writer.Allocating = .init(arena);
+            var s: std.json.Stringify = .{ .writer = &out.writer };
+            s.write(.{
+                .name = defs[0].name,
+                .description = defs[0].description,
+                .parameters_json = defs[0].parameters_json,
+            }) catch return error.InvalidResponse;
+            const body = out.written();
+            // Capability / policy tokens must not appear in model-facing serialization.
+            if (std.mem.indexOf(u8, body, "\"risk\"") != null) return error.InvalidResponse;
+            if (std.mem.indexOf(u8, body, "capabilities") != null) return error.InvalidResponse;
+            if (std.mem.indexOf(u8, body, "cooperative") != null) return error.InvalidResponse;
+            if (std.mem.indexOf(u8, body, "path_field") != null) return error.InvalidResponse;
+            if (std.mem.indexOf(u8, body, "command_argument") != null) return error.InvalidResponse;
+            return .{
+                .content = try arena.dupe(u8, "ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+    }, &transcript);
+
+    try std.testing.expect(mock.saw);
+    try std.testing.expectEqualStrings("ok", result.final_text);
+}
+
+test "unknown model tool soft-fails without permission inference" {
+    const gpa = std.testing.allocator;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "totally_unknown"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "soft"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("call unknown");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .options = .{ .permission_gate = .denyAllDangerous() },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("soft", result.final_text);
+    var found = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and tool_error.hasCode(m.content, .unknown_tool)) found = true;
+        if (m.role == .tool and tool_error.hasCode(m.content, .permission_denied)) {
+            try std.testing.expect(false);
+        }
+    }
+    try std.testing.expect(found);
 }

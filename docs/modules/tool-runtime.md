@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-types/src/root.zig`; `packages/zag-agent-core/src/tool.zig` |
-| Maturity | L1 built-in registry → **L2 explicit runtime contract (H/P0)** → L3 streaming/concurrency |
+| Maturity | **L2** — instance-aware Tool + mandatory descriptor; missing capability fail-closed |
 | Decision | [D-007](../decisions/active/D-007-tool-runtime-descriptor.md) |
 | Reference | Hyper ToolCapabilities; Pi tool lifecycle |
 
@@ -21,63 +21,66 @@ provider request                     local runtime only
 │ description        │─────────────►│ capabilities              │
 │ parameters schema  │              └─────────────┬─────────────┘
 └────────────────────┘                            │
-                                      Tool { descriptor, ptr, handler }
+                                      Tool { descriptor, instance, handler }
 ```
 
-`ToolDefinition` is serialized to providers. `ToolCapabilities`, instance pointers, handlers, and policy state are never sent to providers.
+`ToolDefinition` is serialized to providers. `ToolCapabilities`, instance pointers, handlers, and policy state are never sent to providers. The core `Provider` port accepts only `[]const ToolDefinition`.
 
 ## Types and invariants
 
-### `ToolCapabilities` — H minimum
+### `ToolCapabilities` — H minimum (all required, no default-to-read)
 
 | Field | Contract |
 |-------|----------|
-| `risk` | Required enum: `read`, `write`, or `execute`; no default-to-read behavior |
-| workspace access | Declares whether/path arguments that require workspace containment; absence means no filesystem path claim, not unrestricted access |
-| cancellation | Declares whether the handler honors the run cancellation/deadline context |
+| `risk` | Required enum: `read`, `write`, or `execute` |
+| `workspace` | `none` or `path_field: name` — absence means no filesystem path claim, not unrestricted access |
+| `cancellation` | `none` or `cooperative` — whether the handler honors cancel/deadline mid-invocation |
+| `shell` | `none` or `command_argument` — only shell-command tools parse `command` and apply shell policy |
 
 Future-compatible fields may include `max_concurrency`, progress streaming, and `behavior_version`; they are not H exit requirements.
 
 ### `Tool`
 
-A Tool owns or borrows:
+A validated Tool owns or borrows:
 
-- one `ToolDescriptor`;
-- one opaque instance pointer (`?*anyopaque` or an equivalent typed adapter);
-- one handler callback receiving the instance, execution context, and arguments.
+- one `ToolDescriptor` (definition + mandatory capabilities);
+- one opaque instance pointer (`?*anyopaque`);
+- one instance-aware handler `(Context, ?*anyopaque, args) → []u8`.
 
-The caller owns instance lifetime. Toolset/Agent documentation must state that the instance and borrowed descriptor strings outlive all invocations.
+**Lifetime:** caller owns the instance and all borrowed descriptor strings (name, description, schema, `path_field` name). They must outlive every invocation. `Tool` is copyable by value; copies share the same borrowed pointers (no deep clone). Registration does not take ownership.
 
 ## Registration and execution
 
-1. Validate identifier/schema and required capabilities before a run.
-2. Reject malformed/missing capabilities with a typed registration error.
-3. Send only `ToolDefinition` to the Provider.
-4. Pass the full descriptor to permission, workspace, trace, and scheduling decisions.
-5. Execute through the instance-aware handler.
-6. Convert expected handler failures into the stable machine-readable tool-result shape.
-
-An unknown model-requested tool remains a soft `unknown_tool` result. A malformed registered tool is a host configuration error and fails before provider/tool execution.
+1. **Public fallible boundary:** `tool.Registration` may carry optional `capabilities`; `tool.buildTool` validates name/schema and **fails with `MissingCapabilities`** when risk metadata is omitted. Static struct field omission is not enough for dynamic adapters.
+2. **Toolset validation:** `tool.validateTools` rejects invalid name/schema and duplicate names before the first provider call (`loop.run` → `error.InvalidToolset`).
+3. Validated `Tool` never carries optional capability fields.
+4. Send only `ToolDefinition[]` to the Provider (built per turn from the registry).
+5. `Registry.find` returns `?*const Tool`. Loop uses the same descriptor for permission, path jail, shell policy, trace, and execute.
+6. Unknown model-requested tools soft-fail as `unknown_tool` **without** name-based risk inference.
+7. Expected handler failures map to stable machine-readable tool-result shapes.
 
 ## Errors
 
 | Error | Boundary behavior |
 |-------|-------------------|
-| Missing/invalid risk or workspace declaration | Fail registration; never infer read |
+| Missing/invalid risk or capabilities | Fail registration (`RegistrationError`); never infer read |
+| Duplicate / invalid toolset | `error.InvalidToolset` before provider (call count 0) |
 | Unknown requested tool | Soft tool result `unknown_tool` |
 | Invalid arguments | Soft tool result `invalid_arguments` |
 | Handler failure | Soft tool result `tool_failed` |
 | Host allocation failure | Typed run error |
-| Cancellation | Handler returns/observes cancellation according to its capability; trace records terminal state |
+| Cancellation | Handler observes cancel per capability; between-tool cancel is soft `cancelled` |
 
 ## L2 tests
 
-- [ ] external stateful Tool increments instance state without globals;
-- [ ] custom write/execute Tool is denied by a dangerous-tool deny gate;
-- [ ] missing capability registration fails closed;
-- [ ] built-ins all declare descriptors;
-- [ ] provider serialization contains definition only;
-- [ ] workspace enforcement is selected by descriptor, not tool name.
+- [x] external stateful Tool increments instance state without globals;
+- [x] custom write/execute Tool is denied by a dangerous-tool deny gate;
+- [x] missing capability registration fails closed;
+- [x] malformed toolset fails before provider (provider call count = 0);
+- [x] built-ins all declare descriptors (risk/workspace/cancellation/shell);
+- [x] provider serialization / port contains definition only;
+- [x] workspace enforcement selected by descriptor, not tool name;
+- [x] unknown model tool remains soft `unknown_tool`.
 
 ## Non-goals for H
 
@@ -85,3 +88,4 @@ An unknown model-requested tool remains a soft `unknown_tool` result. A malforme
 - Parallel tool execution
 - MCP transport implementation
 - Progress UI protocol
+- Symlink-aware containment (see [workspace-sandbox](./workspace-sandbox.md) / h-workspace-001)

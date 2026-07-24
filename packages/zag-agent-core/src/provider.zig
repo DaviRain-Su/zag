@@ -2,6 +2,9 @@
 //!
 //! Core never imports wire clients (`openai_compat.Client`, etc.).
 //! Coding-agent / shell bind a `zag-ai.WireAdapter` via WireProvider.
+//!
+//! The model plane receives only `[]const ToolDefinition` — never runtime
+//! Tool/descriptor/capabilities/instance.
 
 const std = @import("std");
 const zt = @import("zag-types");
@@ -16,7 +19,7 @@ pub const VTable = struct {
         ptr: *anyopaque,
         arena: std.mem.Allocator,
         messages: []const message.Message,
-        tools: []const tool.Tool,
+        tools: []const tool.Definition,
     ) ChatError!message.AssistantTurn,
 };
 
@@ -29,7 +32,7 @@ pub const Provider = struct {
         self: Provider,
         arena: std.mem.Allocator,
         messages: []const message.Message,
-        tools: []const tool.Tool,
+        tools: []const tool.Definition,
     ) ChatError!message.AssistantTurn {
         return self.vtable.chat(self.ptr, arena, messages, tools);
     }

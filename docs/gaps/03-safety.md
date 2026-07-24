@@ -15,7 +15,7 @@
 | Gap | Production failure | Delivery |
 |-----|--------------------|----------|
 | lexical jail follows escaping workspace symlinks | file Tools can read/write outside the declared workspace | P0 `h-workspace-001` |
-| custom Tool risk unknown→read | mutating extension can bypass approval | P0 `h-tool-runtime-001` |
+| ~~custom Tool risk unknown→read~~ | **closed** D-007: mandatory capabilities | done |
 | failed provider run may be finalized `ok=true/completed` | audit says success for failure | P0 `h-trace-001` |
 | explicit trace I/O is swallowed | caller believes audit exists when it does not | P0 `h-trace-001` |
 | trace schema absent | readers cannot evolve safely | P0/P1 trace task |

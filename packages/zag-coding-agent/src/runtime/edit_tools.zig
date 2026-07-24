@@ -8,80 +8,80 @@ const tool = core.tool;
 pub const search_replace_def: tool.Definition = .{
     .name = "search_replace",
     .description =
-        \\Default edit tool: replace an exact old_string anchor with new_string in a file.
-        \\old_string must appear exactly once (unique content anchor). If missing or ambiguous,
-        \\re-read the file and widen the anchor. Prefer this over write_file for existing files.
-        \\Subject to permission checks (ask/yolo) and workspace jail.
+    \\Default edit tool: replace an exact old_string anchor with new_string in a file.
+    \\old_string must appear exactly once (unique content anchor). If missing or ambiguous,
+    \\re-read the file and widen the anchor. Prefer this over write_file for existing files.
+    \\Subject to permission checks (ask/yolo) and workspace jail.
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "path": {
-        \\      "type": "string",
-        \\      "description": "File path relative to the working directory."
-        \\    },
-        \\    "old_string": {
-        \\      "type": "string",
-        \\      "description": "Exact text that must appear once in the file."
-        \\    },
-        \\    "new_string": {
-        \\      "type": "string",
-        \\      "description": "Replacement text (may be empty to delete the anchor)."
-        \\    }
-        \\  },
-        \\  "required": ["path", "old_string", "new_string"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "File path relative to the working directory."
+    \\    },
+    \\    "old_string": {
+    \\      "type": "string",
+    \\      "description": "Exact text that must appear once in the file."
+    \\    },
+    \\    "new_string": {
+    \\      "type": "string",
+    \\      "description": "Replacement text (may be empty to delete the anchor)."
+    \\    }
+    \\  },
+    \\  "required": ["path", "old_string", "new_string"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
 pub const write_file_def: tool.Definition = .{
     .name = "write_file",
     .description =
-        \\Create a new file or overwrite an entire UTF-8 text file (relative path).
-        \\Prefer search_replace for editing existing files. Use write_file for new files
-        \\or when intentionally replacing the whole contents. Creates parent directories.
-        \\Subject to permission checks (ask/yolo).
+    \\Create a new file or overwrite an entire UTF-8 text file (relative path).
+    \\Prefer search_replace for editing existing files. Use write_file for new files
+    \\or when intentionally replacing the whole contents. Creates parent directories.
+    \\Subject to permission checks (ask/yolo).
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "path": {
-        \\      "type": "string",
-        \\      "description": "File path relative to the working directory."
-        \\    },
-        \\    "content": {
-        \\      "type": "string",
-        \\      "description": "Full new file contents."
-        \\    }
-        \\  },
-        \\  "required": ["path", "content"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "File path relative to the working directory."
+    \\    },
+    \\    "content": {
+    \\      "type": "string",
+    \\      "description": "Full new file contents."
+    \\    }
+    \\  },
+    \\  "required": ["path", "content"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
 pub const run_shell_def: tool.Definition = .{
     .name = "run_shell",
     .description =
-        \\Run a shell command in the working directory via /bin/sh -c.
-        \\Stdout and stderr are captured and truncated. Default timeout ~30s.
-        \\Subject to permission checks (ask/yolo). Prefer for build/test/git status, not interactive programs.
+    \\Run a shell command in the working directory via /bin/sh -c.
+    \\Stdout and stderr are captured and truncated. Default timeout ~30s.
+    \\Subject to permission checks (ask/yolo). Prefer for build/test/git status, not interactive programs.
     ,
     .parameters_json =
-        \\{
-        \\  "type": "object",
-        \\  "properties": {
-        \\    "command": {
-        \\      "type": "string",
-        \\      "description": "Shell command string executed as `sh -c <command>`."
-        \\    }
-        \\  },
-        \\  "required": ["command"],
-        \\  "additionalProperties": false
-        \\}
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "command": {
+    \\      "type": "string",
+    \\      "description": "Shell command string executed as `sh -c <command>`."
+    \\    }
+    \\  },
+    \\  "required": ["command"],
+    \\  "additionalProperties": false
+    \\}
     ,
 };
 
@@ -144,7 +144,8 @@ fn softError(
     return std.fmt.allocPrint(gpa, fmt, args) catch return error.OutOfMemory;
 }
 
-pub fn searchReplace(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn searchReplace(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const path = try tool.requireStringField(ctx.allocator, arguments_json, "path");
     defer ctx.allocator.free(path);
     const old_string = try tool.requireStringField(ctx.allocator, arguments_json, "old_string");
@@ -235,7 +236,8 @@ fn replaceSoftFail(
     };
 }
 
-pub fn writeFile(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const path = try tool.requireStringField(ctx.allocator, arguments_json, "path");
     defer ctx.allocator.free(path);
     const content = try tool.requireStringField(ctx.allocator, arguments_json, "content");
@@ -314,7 +316,8 @@ fn captureGitDiff(ctx: tool.Context, path: []const u8) ![]u8 {
     return result.stdout;
 }
 
-pub fn runShell(ctx: tool.Context, arguments_json: []const u8) tool.HandlerError![]u8 {
+pub fn runShell(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    _ = instance;
     const command = try tool.requireStringField(ctx.allocator, arguments_json, "command");
     defer ctx.allocator.free(command);
     if (command.len == 0) return error.InvalidArguments;
@@ -408,11 +411,25 @@ fn appendStream(out: *Io.Writer.Allocating, header: []const u8, body: []const u8
     }
 }
 
+const path_write_caps: tool.ToolCapabilities = .{
+    .risk = .write,
+    .workspace = .{ .path_field = "path" },
+    .cancellation = .none,
+    .shell = .none,
+};
+
+const shell_caps: tool.ToolCapabilities = .{
+    .risk = .execute,
+    .workspace = .none,
+    .cancellation = .none,
+    .shell = .command_argument,
+};
+
 pub fn phase1ExtraTools() [3]tool.Tool {
     return .{
-        .{ .definition = search_replace_def, .handler = searchReplace },
-        .{ .definition = write_file_def, .handler = writeFile },
-        .{ .definition = run_shell_def, .handler = runShell },
+        tool.stateless(.{ .definition = search_replace_def, .capabilities = path_write_caps }, searchReplace),
+        tool.stateless(.{ .definition = write_file_def, .capabilities = path_write_caps }, writeFile),
+        tool.stateless(.{ .definition = run_shell_def, .capabilities = shell_caps }, runShell),
     };
 }
 
@@ -451,22 +468,19 @@ test "search_replace write_file run_shell in tmp dir" {
         .cwd = tmp.dir,
     };
 
-    const written = try writeFile(
-        ctx,
+    const written = try writeFile(ctx, null,
         \\{"path":"hello.txt","content":"line one\nline two\nline one\n"}
     );
     defer gpa.free(written);
     try std.testing.expect(std.mem.indexOf(u8, written, "ok:") != null);
 
-    const amb = try searchReplace(
-        ctx,
+    const amb = try searchReplace(ctx, null,
         \\{"path":"hello.txt","old_string":"line one","new_string":"LINE"}
     );
     defer gpa.free(amb);
     try std.testing.expect(std.mem.indexOf(u8, amb, "ambiguous_anchor") != null);
 
-    const ok = try searchReplace(
-        ctx,
+    const ok = try searchReplace(ctx, null,
         \\{"path":"hello.txt","old_string":"line two","new_string":"line 2"}
     );
     defer gpa.free(ok);
@@ -476,16 +490,14 @@ test "search_replace write_file run_shell in tmp dir" {
     defer gpa.free(read_back);
     try std.testing.expectEqualStrings("line one\nline 2\nline one\n", read_back);
 
-    const missing = try searchReplace(
-        ctx,
+    const missing = try searchReplace(ctx, null,
         \\{"path":"hello.txt","old_string":"nope","new_string":"x"}
     );
     defer gpa.free(missing);
     try std.testing.expect(std.mem.indexOf(u8, missing, "anchor_not_found") != null);
 
-    const shell = try runShell(ctx, "{\"command\":\"echo shell-ok\"}");
+    const shell = try runShell(ctx, null, "{\"command\":\"echo shell-ok\"}");
     defer gpa.free(shell);
     try std.testing.expect(std.mem.indexOf(u8, shell, "shell-ok") != null);
     try std.testing.expect(std.mem.indexOf(u8, shell, "exit_code: 0") != null);
 }
-
