@@ -220,7 +220,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 |------|----------|--------------------|
 | Tool runtime | `zag-agent-core/src/tool.zig` + `zag-types` | L1；无 stateful handler/capabilities |
 | permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk (D-007) |
-| workspace | `zag-agent-core/src/workspace.zig` | L1；lexical only，symlink escape |
+| workspace | `zag-agent-core/src/workspace.zig` | L1+；realpath file containment（h-workspace-001）；非 OS sandbox |
 | shell_policy | `zag-agent-core/src/shell_policy.zig` | L1 denylist；非 sandbox |
 | trace | `zag-agent-core/src/trace.zig` | L1；无 schema/false-success terminal |
 | context | `zag-agent-core/src/context.zig` | L1+；second trim accounting gap |
@@ -267,7 +267,7 @@ Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 
 | Tool | Current | Remaining H contract |
 |------|---------|----------------------|
-| list_dir / read_file | ✅ lexical jail | symlink-aware containment + explicit descriptor |
+| list_dir / read_file | ✅ lexical + realpath jail | explicit descriptor; shell still separate |
 | grep / glob | ✅ budgets + lexical jail | same real containment |
 | search_replace | ✅ unique anchor | contained path identity + stale recovery fixture |
 | write_file | ✅ create/full write | atomic/contained file behavior; not default large-file edit path |

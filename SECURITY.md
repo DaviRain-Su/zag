@@ -12,32 +12,37 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 
 | Control | Default/current behavior | Important limitation |
 |---------|--------------------------|----------------------|
-| Human permission | `ask`; write/execute risk from validated `ToolDescriptor` (custom tools included) | symlink escape and OS sandbox are still open (workspace L1) |
-| Permission remember | enabled for an approved built-in write path; `--no-remember` disables | path identity must be aligned with real containment before L2 |
+| Human permission | `ask`; write/execute risk from validated `ToolDescriptor` (custom tools included) | not an OS sandbox; shell still broad |
+| Permission remember | enabled for an approved built-in write path; `--no-remember` disables | path identity follows real containment for file tools |
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
-| Workspace path check | rejects absolute, `..`, drive/UNC, empty/NUL paths | **lexical only**; workspace symlinks can currently escape the root |
-| Shell policy | `protect`; blocks selected catastrophic command patterns | denylist only; shell is not contained by file-path jail or OS sandbox |
+| Workspace path check | lexical deny of absolute/`..`/drive/UNC **plus** realpath containment for file tools | **software check-time** only; residual TOCTOU under concurrent FS races; not an OS sandbox |
+| Shell policy | `protect`; blocks selected catastrophic command patterns | denylist only; shell is **not** contained by the file-path jail or OS sandbox |
 | Trace | optional local JSONL events | schema/terminal truth/I/O propagation are not L2 yet |
 
-Even with `--yolo`, the current lexical jail and shell policy remain active unless shell policy is explicitly disabled. This does **not** make yolo safe against symlink escape, arbitrary shell access, malicious repositories, or secrets in tool output.
+Even with `--yolo`, the file-path jail and shell policy remain active unless shell policy is explicitly disabled. This does **not** make yolo safe against arbitrary shell access, malicious repositories that abuse shell, or secrets in tool output.
+
+## Workspace file containment (h-workspace-001)
+
+Built-in file tools (`read_file`, `list_dir`, `grep`, `glob`, `write_file`, `search_replace`) enforce **symlink-aware** containment:
+
+- workspace root is resolved once per loop run (handlers lazy-resolve if needed);
+- existing targets must realpath inside the root (component-boundary safe);
+- create/write walks existing ancestors and denies escaping or dangling intermediate/final symlinks;
+- contained symlinks (target still inside the root) continue to work;
+- containment denials use stable soft `code=jail_deny`; ordinary missing files are not mislabeled as jail denials;
+- handlers re-check so raw registry dispatch of built-ins cannot skip the jail.
+
+**Trust boundary:** the host OS account is trusted; **workspace contents (including pre-seeded symlinks) are not**. This is check-time software enforcement, **not** an OS sandbox. A concurrent process under the same account can still race paths between check and use (TOCTOU residual). Shell is a separate boundary.
 
 ## Known release blockers
 
-### Workspace symlink escape
-
-A relative path can pass lexical validation and then resolve through a workspace symlink to a file outside the workspace. Until [h-workspace-001](./docs/plan/tasks/h-workspace-001.md) lands:
-
-- do not treat the workspace jail as real filesystem containment;
-- avoid running Zag on untrusted repositories containing symlinks;
-- keep permission mode `ask` and review every shell/write action.
-
 ### Custom Tool fail-open classification
 
-Built-ins have a name-based read/write/execute matrix, but custom Tool names do not carry mandatory runtime capabilities yet. A mutating custom Tool may be treated as read. Do not expose third-party/MCP/plugin Tools through the current registry as a trusted permission boundary. Contract: [D-007](./docs/decisions/active/D-007-tool-runtime-descriptor.md).
+Built-ins declare capabilities; custom Tool names require mandatory runtime capabilities at registration (D-007). A mutating custom Tool without write/execute risk fails closed at registration. Custom tools that touch the filesystem without `workspace.path_field` (or without their own containment) are outside the loop path gate — do not treat the registry as a full multi-tenant security boundary. Contract: [D-007](./docs/decisions/active/D-007-tool-runtime-descriptor.md).
 
 ### Session and audit reliability
 
-Current resume may fall back from invalid/unsupported/I/O failure to a fresh transcript on the same path; save truncates the target and failure can be hidden. A provider failure can also leave an open trace that is finalized as successful completion. Until the P0 session/trace tasks land, back up important `.zag/sessions/` data and do not treat trace as authoritative evidence of success.
+Session durability is L2 (h-session-001). Trace lifecycle/schema and truthful terminal events remain open until the P0 trace task lands — do not treat incomplete trace as authoritative evidence of success.
 
 ## Secrets
 
@@ -64,9 +69,9 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 
 | Missing | Gate/track |
 |---------|------------|
-| symlink-aware file containment | Phase H P0 |
-| explicit Tool capabilities/fail-closed custom policy | Phase H P0 |
-| safe session open/save/concurrency | Phase H P0 |
+| ~~symlink-aware file containment~~ | **done** Phase H P0 h-workspace-001 |
+| ~~explicit Tool capabilities/fail-closed custom policy~~ | **done** Phase H P0 h-tool-runtime-001 |
+| ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
 | truthful/versioned trace lifecycle | Phase H P0/P1 |
 | systematic secret redaction | Phase H P1 |
 | enforced deadline/in-flight cancellation | Phase H P1 |

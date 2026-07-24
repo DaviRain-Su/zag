@@ -45,9 +45,12 @@ These remain useful but do not cover the assessment blockers.
 
 ### Workspace
 
-1. absolute and `..` paths deny.
-2. workspace symlink → outside is denied for read/list/grep/glob/write/search_replace.
-3. ordinary contained paths remain usable.
+1. absolute and `..` paths deny. ✅
+2. workspace symlink → **sibling outside** denied for read/list/grep/glob/write/search_replace; outside bytes unchanged. ✅ (`workspace.zig` Guard + `fs_tools`/`edit_tools` fixtures; outside is not nested under workspace)
+3. ordinary contained paths and **contained** file/dir symlinks remain usable (read/list/search/write/replace). ✅
+4. dangling / parent-escape / nested walker escape: `code=jail_deny` or safe skip without leak; missing ordinary file ≠ jail_deny. ✅
+5. prefix collision (`/ws` ⊄ `/ws2`) and symlink-loop walker bound. ✅
+6. macOS/Linux via `Io.Dir.symLink`; Windows skips symlink fixtures (no false pass). ✅
 
 ### Run/trace lifecycle
 

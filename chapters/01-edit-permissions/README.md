@@ -180,7 +180,7 @@ role=tool  content="error: code=permission_denied message=…"
 
 整文件 `write_file` + 全局 ask/yolo 只够 **Teaching** 演示编辑路径。
 **D-007 / h-tool-runtime-001 已补：** 强制 capabilities、instance-aware handler、Provider 只见 definitions。
-**仍缺：** symlink-aware containment（h-workspace-001）、完整 Plan UX、path-domain 细策略。
+**仍缺：** 完整 Plan UX、path-domain 细策略。symlink-aware file containment 见 Chapter 3 / h-workspace-001。
 
 ---
 

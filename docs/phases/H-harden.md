@@ -110,7 +110,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). Workspace symlink containment remains **L1** (H5 / h-workspace-001).
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment is done (h-workspace-001); Workspace/Safety row stays **L1+** until redaction/doctor.
 
 ## H4 — Context / Session
 

@@ -104,12 +104,32 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
     // Fail closed before the first provider call on malformed toolsets.
     tool.validateTools(deps.gpa, deps.toolset.tools) catch return error.InvalidToolset;
 
+    // Resolve workspace root once per run and thread into file-tool handlers.
+    // Failure is not a hard run error: path tools fail closed via Guard.
+    var root_owned: ?[]u8 = null;
+    defer if (root_owned) |r| deps.gpa.free(r);
+    if (deps.tool_ctx.workspace_root_real == null) {
+        root_owned = workspace.resolveCwdReal(deps.gpa, deps.tool_ctx.io, deps.tool_ctx.cwd) catch null;
+    }
+    var tool_ctx = deps.tool_ctx;
+    if (root_owned) |r| {
+        tool_ctx.workspace_root_real = r;
+    }
+    // Shadow deps with the threaded context for the rest of the run.
+    const deps_run: Deps = .{
+        .gpa = deps.gpa,
+        .provider = deps.provider,
+        .toolset = deps.toolset,
+        .tool_ctx = tool_ctx,
+        .options = deps.options,
+    };
+
     var turns: u32 = 0;
     var last_text: []const u8 = "";
     var usage_total: message.Usage = .{};
 
-    while (turns < deps.options.max_turns) {
-        if (isCancelled(deps.options)) {
+    while (turns < deps_run.options.max_turns) {
+        if (isCancelled(deps_run.options)) {
             return .{
                 .final_text = last_text,
                 .turns = turns,
@@ -119,45 +139,45 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         }
 
         turns += 1;
-        if (deps.options.trace) |tr| {
+        if (deps_run.options.trace) |tr| {
             tr.emitTurn(turns) catch {};
         }
 
-        var turn_arena_impl: std.heap.ArenaAllocator = .init(deps.gpa);
+        var turn_arena_impl: std.heap.ArenaAllocator = .init(deps_run.gpa);
         defer turn_arena_impl.deinit();
         const scratch = turn_arena_impl.allocator();
 
-        const layers = if (deps.options.get_layers) |gl|
-            gl(deps.options.layers_ctx)
+        const layers = if (deps_run.options.get_layers) |gl|
+            gl(deps_run.options.layers_ctx)
         else
-            deps.options.layers;
+            deps_run.options.layers;
         const view = context_mod.viewForModel(
             scratch,
             transcript.items(),
-            deps.options.context,
+            deps_run.options.context,
             layers,
         ) catch return error.OutOfMemory;
         if (view.compaction) |ev| {
-            if (deps.options.on_compaction) |cb| {
-                cb(deps.options.compaction_ctx, ev);
+            if (deps_run.options.on_compaction) |cb| {
+                cb(deps_run.options.compaction_ctx, ev);
             }
-            if (deps.options.trace) |tr| {
+            if (deps_run.options.trace) |tr| {
                 tr.emitCompaction(ev.dropped, ev.summary) catch {};
             }
         }
 
-        const turn = try chatWithRetry(deps, scratch, view.messages);
+        const turn = try chatWithRetry(deps_run, scratch, view.messages);
 
         try transcript.appendAssistantTurn(turn);
         last_text = transcript.items()[transcript.items().len - 1].content;
-        deps.options.observer.emit(.{ .assistant_text = last_text });
-        if (deps.options.trace) |tr| {
+        deps_run.options.observer.emit(.{ .assistant_text = last_text });
+        if (deps_run.options.trace) |tr| {
             tr.emitAssistant(last_text) catch {};
             tr.emitUsage(turn) catch {};
         }
         if (turn.usage) |u| {
             usage_total.add(u);
-            deps.options.observer.emit(.{ .usage = u });
+            deps_run.options.observer.emit(.{ .usage = u });
         }
 
         if (!turn.wantsTools()) {
@@ -180,11 +200,11 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         };
 
         // Serial execution (H1): one tool at a time, call-list order.
-        const registry = deps.toolset.registry();
+        const registry = deps_run.toolset.registry();
         var call_index: u32 = 0;
         while (call_index < calls.len) : (call_index += 1) {
-            if (isCancelled(deps.options)) {
-                try finishRemainingCancelled(deps, transcript, calls[call_index..]);
+            if (isCancelled(deps_run.options)) {
+                try finishRemainingCancelled(deps_run, transcript, calls[call_index..]);
                 return .{
                     .final_text = last_text,
                     .turns = turns,
@@ -194,7 +214,7 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             }
 
             const call = calls[call_index];
-            try executeOneTool(deps, transcript, registry, call);
+            try executeOneTool(deps_run, transcript, registry, call);
         }
     }
 
@@ -415,23 +435,61 @@ fn finishTool(
     try transcript.appendToolResult(call.id, body);
 }
 
-/// Jail check on an already-extracted path (no second parse).
-/// Returns owned deny message, or null if path is OK.
+/// Jail check on an already-extracted path (lexical + real containment).
+/// Returns owned deny message, or null if path is OK for the handler to proceed.
+/// Ordinary `NotFound` is allowed through — handlers report ToolFailed, not jail_deny.
 fn pathJailCheckOwned(
     deps: Deps,
     tool_name: []const u8,
     path: []const u8,
 ) RunError!?[]u8 {
-    workspace.checkToolPath(path) catch {
-        if (deps.options.trace) |tr| {
-            tr.emitJailDeny(tool_name, path) catch {};
-        }
-        if (deps.options.observer.on_event != null) {
-            std.log.warn("jail deny {s} path={s}", .{ tool_name, path });
-        }
-        return try workspace.deniedMessage(deps.tool_ctx.allocator, path);
+    var guard = workspace.guardFrom(
+        deps.tool_ctx.allocator,
+        deps.tool_ctx.io,
+        deps.tool_ctx.cwd,
+        deps.tool_ctx.workspace_root_real,
+    ) catch {
+        return @as(?[]u8, try emitJailDeny(deps, tool_name, path));
+    };
+    defer guard.deinit(deps.tool_ctx.allocator);
+
+    // Pre-handler gate: lexical + existing-target containment when the path
+    // already resolves. Missing paths pass (create tools need them; read tools
+    // fail later). Escaping/dangling symlinks deny.
+    guard.checkExisting(deps.tool_ctx.io, deps.tool_ctx.cwd, path) catch |err| switch (err) {
+        error.NotFound => {
+            // Still enforce create-style ancestor walk so escaping parents cannot
+            // sneak past the loop gate for write tools. Read tools get NotFound.
+            guard.checkCreate(
+                deps.tool_ctx.allocator,
+                deps.tool_ctx.io,
+                deps.tool_ctx.cwd,
+                path,
+            ) catch |cerr| switch (cerr) {
+                error.NotFound => {},
+                error.OutOfMemory => return error.OutOfMemory,
+                error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => {
+                    return @as(?[]u8, try emitJailDeny(deps, tool_name, path));
+                },
+            };
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+        error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => {
+            return @as(?[]u8, try emitJailDeny(deps, tool_name, path));
+        },
     };
     return null;
+}
+
+fn emitJailDeny(deps: Deps, tool_name: []const u8, path: []const u8) RunError![]u8 {
+    if (deps.options.trace) |tr| {
+        tr.emitJailDeny(tool_name, path) catch {};
+    }
+    if (deps.options.observer.on_event != null) {
+        std.log.warn("jail deny {s} path={s}", .{ tool_name, path });
+    }
+    return workspace.deniedMessage(deps.tool_ctx.allocator, path) catch return error.OutOfMemory;
 }
 
 fn readOnlyDesc(name: []const u8) zt.ToolDescriptor {

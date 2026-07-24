@@ -1,8 +1,8 @@
 # Chapter 3 — 边界雏形：Jail、策略、Trace
 
-> 对应 Teaching [Phase 3](../../docs/roadmap.md#phase-3--边界雏形jail--policy--trace)。  
-> **状态：tutorial-complete**（**不是** Production Floor / 不是 production-ready）。  
-> 章名目录仍为 `03-production`（历史路径）；语义上是「安全边界雏形」。  
+> 对应 Teaching [Phase 3](../../docs/roadmap.md#phase-3--边界雏形jail--policy--trace)。
+> **状态：tutorial-complete**（**不是** Production Floor / 不是 production-ready）。
+> 章名目录仍为 `03-production`（历史路径）；语义上是「安全边界雏形」。
 > **代码与本章同步。**
 
 **一句话：** 演示级默认拒绝危险路径/命令，并能用 JSONL **复盘**一次 run——距离「敢日用生产底线」见 Phase H。
@@ -33,8 +33,8 @@ cat .zag/traces/latest.jsonl
 
 验收：
 
-1. `SECURITY.md` 存在；版本号可查（`zag.version` / `build.zig.zon`）。  
-2. 工作区外路径失败且文案可解释。  
+1. `SECURITY.md` 存在；版本号可查（`zag.version` / `build.zig.zon`）。
+2. 工作区外路径失败且文案可解释。
 3. `--trace` 文件能复盘 tool 序列。
 
 ---
@@ -77,21 +77,27 @@ execute → tool result → transcript + trace
 
 ## 3. 默认拒绝什么？
 
-### 路径 jail
+### 路径 jail（lexical + real containment）
 
-- 绝对路径：`/etc/passwd`、`C:\…`  
-- 逃出工作区：`../secret`、`a/../../b`  
-- 空路径、内嵌 NUL  
+- 绝对路径：`/etc/passwd`、`C:\…`
+- 逃出工作区：`../secret`、`a/../../b`
+- 空路径、内嵌 NUL
+- **symlink/alias escape**：工作区内指向 **sibling outside** 的链接，read/list/grep/glob/write/search_replace → `code=jail_deny`
+- 悬挂（dangling）或经父目录 escape 的 create/write 同样 deny；outside 字节不变
 
-允许：`src/main.zig`、`./foo`、`a/b/../c`（仍在树内）。
+允许：`src/main.zig`、`./foo`、`a/b/../c`（仍在树内）；**目标仍在 root 内** 的 file/dir symlink 可读写列搜。
+
+实现：`workspace.Root` / `Guard`（组件边界 contains）；loop 每 run 解析一次 root；built-in handler 再强制一次（raw Registry 不能绕过）。
+
+**不是 OS sandbox**：check-time 软件约束 + trusted host；shell 另边界；TOCTOU 残余见 SECURITY。
 
 ### Shell policy（protect）
 
-- `rm -rf /`、磁盘擦除、fork bomb  
-- `curl|bash` / `wget|sh` 一类管道进 shell  
-- 粗暴破坏性关键字（见源码列表）  
+- `rm -rf /`、磁盘擦除、fork bomb
+- `curl|bash` / `wget|sh` 一类管道进 shell
+- 粗暴破坏性关键字（见源码列表）
 
-**不是**完整沙箱：恶意构造仍可能绕过——单用户本机最小条。
+**不是**完整沙箱：denylist 挡事故，不是对抗性 OS 隔离——单用户本机最小条。
 
 ---
 
@@ -113,36 +119,36 @@ execute → tool result → transcript + trace
 
 ## 5. 读完应能回答
 
-- 默认拒绝什么？如何审计一次危险操作？  
-- jail / policy / ask 三层各解决什么？  
-- 为什么 soft fail 而不是进程 exit？  
+- 默认拒绝什么？如何审计一次危险操作？
+- jail / policy / ask 三层各解决什么？
+- 为什么 soft fail 而不是进程 exit？
 - Teaching 3 与 Phase H（Production Floor）各解决什么？还缺哪些（见 gaps/03-safety）？
 
 ---
 
 ## 6. 练习
 
-1. 加一条 shell denylist + 单元测试。  
-2. 用 mock loop 断言 `../x` 产生 `workspace jail` tool 结果（仓库已有绝对路径测试）。  
+1. 加一条 shell denylist + 单元测试。
+2. 用 mock loop 断言 `../x` 产生 `workspace jail` tool 结果（仓库已有绝对路径测试）。
 3. 读一份 `--trace` 文件，手绘 tool 时序。
 
 ---
 
 ## 7. 扩展 OpenAI 兼容厂商
 
-见 `packages/zag-ai/src/presets.zig`：加一行 `ProviderSpec`（id / base_url / env_keys / default_model / api_style）。  
+见 `packages/zag-ai/src/presets.zig`：加一行 `ProviderSpec`（id / base_url / env_keys / default_model / api_style）。
 不要改 `openai_compat.zig` 除非线协议本身变了。OAuth 登录暂不支持（仅 env key）。
 
 ## 8. 生产缺口
 
-Jail + denylist + trace 仍是 L1。离 L2 见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**（redact、policy 矩阵、trace schema、doctor；OS sandbox 属 C7）。
+File **symlink-aware containment** 已在 Phase H（h-workspace-001）落地；shell denylist + trace 仍未整行 L2。离 Workspace/Safety L2 见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**（redact、trace schema、doctor；OS sandbox 属 C7）。不要把 file jail 称为 OS sandbox。
 
 ---
 
 ## 9. 下一步
 
-- **主线：** [Chapter H — Production Floor](../H-harden/README.md)  
-- 规格：[phases/H-harden.md](../../docs/phases/H-harden.md)  
-- 真沙箱属 Capability [C7](../../docs/phases/C7-sandbox.md)，不在 Teaching 3  
+- **主线：** [Chapter H — Production Floor](../H-harden/README.md)
+- 规格：[phases/H-harden.md](../../docs/phases/H-harden.md)
+- 真沙箱属 Capability [C7](../../docs/phases/C7-sandbox.md)，不在 Teaching 3
 
 **Tag：** `ch3-boundary` / tutorial-complete

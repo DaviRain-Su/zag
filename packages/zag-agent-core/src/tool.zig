@@ -76,6 +76,10 @@ pub const Context = struct {
     io: Io,
     /// Working directory for relative paths (Phase 0: process cwd).
     cwd: Io.Dir,
+    /// Optional pre-resolved workspace root real path (absolute).
+    /// Borrowed for the duration of a `loop.run` (or host call). When null,
+    /// file-tool handlers / Guard lazy-resolve from `cwd` (fail closed on error).
+    workspace_root_real: ?[]const u8 = null,
 };
 
 /// Instance-aware handler. Stateless built-ins receive `instance == null`.

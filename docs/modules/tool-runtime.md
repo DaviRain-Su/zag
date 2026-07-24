@@ -111,4 +111,4 @@ Zig cannot prevent a host from forging a `Tool` literal. Normal product path can
 - Parallel tool execution
 - MCP transport implementation
 - Progress UI protocol
-- Symlink-aware containment (see [workspace-sandbox](./workspace-sandbox.md) / h-workspace-001)
+- ~~Symlink-aware containment~~ → [workspace-sandbox](./workspace-sandbox.md) / h-workspace-001 (file tools)

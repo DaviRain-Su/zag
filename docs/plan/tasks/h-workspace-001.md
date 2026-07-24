@@ -1,7 +1,7 @@
 ---
 id: h-workspace-001
 scope: phase-h/workspace
-status: ready
+status: in-progress
 priority: P0
 depends-on: [h-tool-runtime-001]
 ---
@@ -9,6 +9,8 @@ depends-on: [h-tool-runtime-001]
 # objective
 
 Make built-in file tools enforce real workspace containment across symlinks and document the trusted-host boundary without claiming that lexical validation is an OS sandbox.
+
+> Implementer status: code+docs+tests on branch. Orchestrator marks `done` after merge.
 
 # context
 

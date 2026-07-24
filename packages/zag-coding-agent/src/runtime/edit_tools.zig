@@ -1,9 +1,14 @@
 //! Write / edit / shell tools: `search_replace`, `write_file`, `run_shell`.
+//!
+//! File mutators enforce symlink-aware workspace containment (h-workspace-001)
+//! so raw `Registry.execute` cannot bypass the jail. Shell remains a separate
+//! boundary (not contained by the path jail).
 
 const std = @import("std");
 const Io = std.Io;
 const core = @import("zag-agent-core");
 const tool = core.tool;
+const workspace = core.workspace;
 
 pub const search_replace_def: tool.Definition = .{
     .name = "search_replace",
@@ -162,6 +167,14 @@ pub fn searchReplace(ctx: tool.Context, instance: ?*anyopaque, arguments_json: [
         );
     }
 
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
+    defer guard.deinit(ctx.allocator);
+
+    // Existing target (or contained final symlink) must resolve inside root.
+    guard.checkExisting(ctx.io, ctx.cwd, path) catch |err| {
+        return jailOrFail(ctx, path, err);
+    };
+
     const contents = readEditTarget(ctx, path) catch |err| switch (err) {
         error.FileTooLarge => return softError(
             ctx.allocator,
@@ -252,6 +265,14 @@ pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
         );
     }
 
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
+    defer guard.deinit(ctx.allocator);
+
+    // Ancestor walk before createDirPath: escaping/dangling parents denied.
+    guard.checkCreate(ctx.allocator, ctx.io, ctx.cwd, path) catch |err| {
+        return jailOrFail(ctx, path, err);
+    };
+
     if (std.fs.path.dirname(path)) |dir_path| {
         if (dir_path.len > 0) {
             ctx.cwd.createDirPath(ctx.io, dir_path) catch return error.ToolFailed;
@@ -270,6 +291,17 @@ pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
         .{ content.len, path },
     );
     return maybeAppendGitDiff(ctx, path, base);
+}
+
+fn obtainGuard(ctx: tool.Context) workspace.ContainError!workspace.Guard {
+    return workspace.guardFrom(ctx.allocator, ctx.io, ctx.cwd, ctx.workspace_root_real);
+}
+
+fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) tool.HandlerError![]u8 {
+    return workspace.denyBody(ctx.allocator, path, err) catch |e| switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.NotFound => error.ToolFailed,
+    };
 }
 
 fn maybeAppendGitDiff(ctx: tool.Context, path: []const u8, base: []u8) tool.HandlerError![]u8 {
@@ -496,8 +528,100 @@ test "search_replace write_file run_shell in tmp dir" {
     defer gpa.free(missing);
     try std.testing.expect(std.mem.indexOf(u8, missing, "anchor_not_found") != null);
 
+    // Nested create under containment still works.
+    const nested = try writeFile(ctx, null,
+        \\{"path":"a/b/c.txt","content":"nested-ok\n"}
+    );
+    defer gpa.free(nested);
+    try std.testing.expect(std.mem.indexOf(u8, nested, "ok:") != null);
+    const nested_read = try tmp.dir.readFileAlloc(io, "a/b/c.txt", gpa, .limited(64));
+    defer gpa.free(nested_read);
+    try std.testing.expectEqualStrings("nested-ok\n", nested_read);
+
     const shell = try runShell(ctx, null, "{\"command\":\"echo shell-ok\"}");
     defer gpa.free(shell);
     try std.testing.expect(std.mem.indexOf(u8, shell, "shell-ok") != null);
     try std.testing.expect(std.mem.indexOf(u8, shell, "exit_code: 0") != null);
+}
+
+test "symlink containment: write/search_replace cannot mutate outside" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.txt", .data = "OUTSIDE_ORIGINAL\n" });
+    try parent.dir.writeFile(io, .{ .sub_path = "ws/inside.txt", .data = "alpha beta gamma\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+
+    try ws.symLink(io, "../outside/secret.txt", "escape_file", .{});
+    try ws.symLink(io, "inside.txt", "link_in", .{});
+    try ws.symLink(io, "../outside", "escape_dir", .{ .is_directory = true });
+    try ws.symLink(io, "../missing", "dangling", .{});
+
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    // write via escaping final symlink denied; outside unchanged
+    const w_esc = try writeFile(ctx, null,
+        \\{"path":"escape_file","content":"PWNED\n"}
+    );
+    defer gpa.free(w_esc);
+    try std.testing.expect(std.mem.indexOf(u8, w_esc, "code=jail_deny") != null);
+    const outside1 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+    defer gpa.free(outside1);
+    try std.testing.expectEqualStrings("OUTSIDE_ORIGINAL\n", outside1);
+
+    // write under escaping parent denied
+    const w_parent = try writeFile(ctx, null,
+        \\{"path":"escape_dir/new.txt","content":"nope\n"}
+    );
+    defer gpa.free(w_parent);
+    try std.testing.expect(std.mem.indexOf(u8, w_parent, "code=jail_deny") != null);
+
+    // dangling parent denied
+    const w_dang = try writeFile(ctx, null,
+        \\{"path":"dangling/x.txt","content":"nope\n"}
+    );
+    defer gpa.free(w_dang);
+    try std.testing.expect(std.mem.indexOf(u8, w_dang, "code=jail_deny") != null);
+
+    // search_replace escaping denied; outside unchanged
+    const sr_esc = try searchReplace(ctx, null,
+        \\{"path":"escape_file","old_string":"OUTSIDE_ORIGINAL","new_string":"PWNED"}
+    );
+    defer gpa.free(sr_esc);
+    try std.testing.expect(std.mem.indexOf(u8, sr_esc, "code=jail_deny") != null);
+    const outside2 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+    defer gpa.free(outside2);
+    try std.testing.expectEqualStrings("OUTSIDE_ORIGINAL\n", outside2);
+
+    // contained symlink write/replace allowed and only mutates inside target
+    const w_in = try writeFile(ctx, null,
+        \\{"path":"link_in","content":"alpha BETA gamma\n"}
+    );
+    defer gpa.free(w_in);
+    try std.testing.expect(std.mem.indexOf(u8, w_in, "ok:") != null);
+    const inside1 = try ws.readFileAlloc(io, "inside.txt", gpa, .limited(64));
+    defer gpa.free(inside1);
+    try std.testing.expectEqualStrings("alpha BETA gamma\n", inside1);
+
+    const sr_in = try searchReplace(ctx, null,
+        \\{"path":"link_in","old_string":"BETA","new_string":"beta"}
+    );
+    defer gpa.free(sr_in);
+    try std.testing.expect(std.mem.indexOf(u8, sr_in, "ok: search_replace") != null);
+    const inside2 = try ws.readFileAlloc(io, "inside.txt", gpa, .limited(64));
+    defer gpa.free(inside2);
+    try std.testing.expectEqualStrings("alpha beta gamma\n", inside2);
+
+    // outside still original
+    const outside3 = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+    defer gpa.free(outside3);
+    try std.testing.expectEqualStrings("OUTSIDE_ORIGINAL\n", outside3);
 }

@@ -1,6 +1,8 @@
 //! Read-only filesystem tools: `list_dir`, `read_file`, `grep`, `glob`.
 //!
 //! Walk/glob are iterative (TigerStyle: no recursion; fixed upper bounds).
+//! Each handler enforces symlink-aware workspace containment (h-workspace-001)
+//! so raw `Registry.execute` cannot bypass the jail.
 
 const std = @import("std");
 const Io = std.Io;
@@ -119,6 +121,15 @@ pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const
 
     const sub = if (path.len == 0) "." else path;
 
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, sub, err);
+    defer guard.deinit(ctx.allocator);
+
+    guard.checkExisting(ctx.io, ctx.cwd, sub) catch |err| {
+        return jailOrFail(ctx, sub, err);
+    };
+
+    // Open without following a directory symlink that somehow changed post-check
+    // when possible; verified path is contained so follow is OK for real dirs.
     var dir = ctx.cwd.openDir(ctx.io, sub, .{ .iterate = true }) catch {
         return error.ToolFailed;
     };
@@ -135,9 +146,11 @@ pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const
                 return error.OutOfMemory;
             break;
         }
+        // Symlink names are listed by kind; targets are never opened/read here.
         const kind = switch (entry.kind) {
             .file => "file",
             .directory => "directory",
+            .sym_link => "symlink",
             else => "other",
         };
         out.writer.print("{s}\t{s}\n", .{ entry.name, kind }) catch return error.OutOfMemory;
@@ -157,6 +170,13 @@ pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []cons
     defer ctx.allocator.free(path);
 
     if (path.len == 0) return error.InvalidArguments;
+
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
+    defer guard.deinit(ctx.allocator);
+
+    guard.checkExisting(ctx.io, ctx.cwd, path) catch |err| {
+        return jailOrFail(ctx, path, err);
+    };
 
     const contents = ctx.cwd.readFileAlloc(
         ctx.io,
@@ -194,18 +214,20 @@ pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     const root = try resolveRootPath(ctx.allocator, arguments_json);
     defer ctx.allocator.free(root);
 
-    if (workspace.checkToolPath(root)) |_| {
-        // Path is inside the jail.
-    } else |_| {
-        return workspace.deniedMessage(ctx.allocator, root) catch return error.OutOfMemory;
-    }
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, root, err);
+    defer guard.deinit(ctx.allocator);
+
+    // Root argument escaping/dangling → machine-readable jail_deny.
+    guard.checkExisting(ctx.io, ctx.cwd, root) catch |err| {
+        return jailOrFail(ctx, root, err);
+    };
 
     var out: Io.Writer.Allocating = .init(ctx.allocator);
     errdefer out.deinit();
 
     var hits: u32 = 0;
     var truncated = false;
-    try walkTree(ctx, root, .{
+    try walkTree(ctx, &guard, root, .{
         .kind = .grep,
         .pattern = pattern,
         .out = &out,
@@ -227,18 +249,19 @@ pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     const root = try resolveRootPath(ctx.allocator, arguments_json);
     defer ctx.allocator.free(root);
 
-    if (workspace.checkToolPath(root)) |_| {
-        // Path is inside the jail.
-    } else |_| {
-        return workspace.deniedMessage(ctx.allocator, root) catch return error.OutOfMemory;
-    }
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, root, err);
+    defer guard.deinit(ctx.allocator);
+
+    guard.checkExisting(ctx.io, ctx.cwd, root) catch |err| {
+        return jailOrFail(ctx, root, err);
+    };
 
     var out: Io.Writer.Allocating = .init(ctx.allocator);
     errdefer out.deinit();
 
     var hits: u32 = 0;
     var truncated = false;
-    try walkTree(ctx, root, .{
+    try walkTree(ctx, &guard, root, .{
         .kind = .glob,
         .pattern = pattern,
         .out = &out,
@@ -249,6 +272,17 @@ pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
 
     try finishSearchOutput(&out, .glob, hits, truncated, pattern);
     return out.toOwnedSlice() catch return error.OutOfMemory;
+}
+
+fn obtainGuard(ctx: tool.Context) workspace.ContainError!workspace.Guard {
+    return workspace.guardFrom(ctx.allocator, ctx.io, ctx.cwd, ctx.workspace_root_real);
+}
+
+fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) tool.HandlerError![]u8 {
+    return workspace.denyBody(ctx.allocator, path, err) catch |e| switch (e) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.NotFound => error.ToolFailed,
+    };
 }
 
 fn resolveRootPath(gpa: std.mem.Allocator, arguments_json: []const u8) tool.HandlerError![]u8 {
@@ -292,7 +326,14 @@ const WalkOpts = struct {
 };
 
 /// Bounded BFS over relative paths (no recursion).
-fn walkTree(ctx: tool.Context, root: []const u8, opts: WalkOpts) tool.HandlerError!void {
+/// Does not follow escaping/dangling symlinks; nested escapes are skipped (no leak).
+/// Contained directory identity is deduped by real path to bound symlink loops.
+fn walkTree(
+    ctx: tool.Context,
+    guard: *const workspace.Guard,
+    root: []const u8,
+    opts: WalkOpts,
+) tool.HandlerError!void {
     std.debug.assert(root.len > 0);
     std.debug.assert(opts.pattern.len > 0);
 
@@ -300,6 +341,13 @@ fn walkTree(ctx: tool.Context, root: []const u8, opts: WalkOpts) tool.HandlerErr
     defer {
         for (paths.items) |p| ctx.allocator.free(p);
         paths.deinit(ctx.allocator);
+    }
+
+    var visited_dirs: std.StringHashMapUnmanaged(void) = .empty;
+    defer {
+        var it = visited_dirs.keyIterator();
+        while (it.next()) |k| ctx.allocator.free(k.*);
+        visited_dirs.deinit(ctx.allocator);
     }
 
     try paths.append(ctx.allocator, try ctx.allocator.dupe(u8, root));
@@ -315,6 +363,12 @@ fn walkTree(ctx: tool.Context, root: []const u8, opts: WalkOpts) tool.HandlerErr
         const rel = paths.items[index];
         std.debug.assert(rel.len > 0);
 
+        // Containment: skip nested escapes/dangling without leaking outside bytes.
+        // Root was already verified by the caller; re-check for children.
+        if (index != 0) {
+            guard.checkExisting(ctx.io, ctx.cwd, rel) catch continue;
+        }
+
         const st = ctx.cwd.statFile(ctx.io, rel, .{
             .follow_symlinks = true,
         }) catch continue;
@@ -324,11 +378,26 @@ fn walkTree(ctx: tool.Context, root: []const u8, opts: WalkOpts) tool.HandlerErr
                 try visitFile(ctx, rel, opts);
             },
             .directory => {
+                const real_owned = (try resolveRealOwned(ctx, rel)) orelse continue;
+                if (visited_dirs.contains(real_owned)) {
+                    ctx.allocator.free(real_owned);
+                    continue;
+                }
+                visited_dirs.put(ctx.allocator, real_owned, {}) catch {
+                    ctx.allocator.free(real_owned);
+                    return error.OutOfMemory;
+                };
                 try enqueueDirChildren(ctx, rel, &paths);
             },
             else => {},
         }
     }
+}
+
+fn resolveRealOwned(ctx: tool.Context, rel: []const u8) error{OutOfMemory}!?[]u8 {
+    var buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const n = ctx.cwd.realPathFile(ctx.io, rel, &buf) catch return null;
+    return ctx.allocator.dupe(u8, buf[0..n]) catch return error.OutOfMemory;
 }
 
 fn visitFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
@@ -345,7 +414,9 @@ fn enqueueDirChildren(
 ) tool.HandlerError!void {
     if (pathDepth(rel) >= max_walk_depth) return;
 
-    var dir = ctx.cwd.openDir(ctx.io, rel, .{ .iterate = true }) catch return;
+    // Directory was containment-checked; open it. Do not follow an unexpected
+    // symlink-at-open by preferring iterate on the verified path.
+    var dir = ctx.cwd.openDir(ctx.io, rel, .{ .iterate = true, .follow_symlinks = true }) catch return;
     defer dir.close(ctx.io);
 
     var it = dir.iterate();
@@ -589,4 +660,126 @@ test "grep and glob in tmp dir" {
     defer gpa.free(paths);
     try std.testing.expect(std.mem.indexOf(u8, paths, "src/a.zig") != null);
     try std.testing.expect(std.mem.indexOf(u8, paths, "b.md") == null);
+}
+
+/// Sibling outside + workspace fixture for symlink containment (not nested outside).
+const SymlinkFixture = struct {
+    parent: std.testing.TmpDir,
+    ws: Io.Dir,
+
+    fn setup(io: Io) !SymlinkFixture {
+        if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+        var parent = std.testing.tmpDir(.{ .iterate = true });
+        errdefer parent.cleanup();
+
+        try parent.dir.createDirPath(io, "outside");
+        try parent.dir.createDirPath(io, "ws");
+        try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.txt", .data = "OUTSIDE_SECRET_MARKER\n" });
+        try parent.dir.writeFile(io, .{ .sub_path = "ws/inside.txt", .data = "inside-ok findme\n" });
+        try parent.dir.createDirPath(io, "ws/sub");
+        try parent.dir.writeFile(io, .{ .sub_path = "ws/sub/nested.txt", .data = "nested findme\n" });
+
+        var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+        errdefer ws.close(io);
+
+        // Escaping file symlink
+        try ws.symLink(io, "../outside/secret.txt", "escape_file", .{});
+        // Contained file symlink
+        try ws.symLink(io, "inside.txt", "link_in", .{});
+        // Contained directory symlink
+        try ws.symLink(io, "sub", "link_dir", .{ .is_directory = true });
+        // Nested escaping symlink
+        try ws.symLink(io, "../../outside/secret.txt", "sub/escape_nested", .{});
+        // Dangling
+        try ws.symLink(io, "../missing-target", "dangling", .{});
+        // Directory escape
+        try ws.symLink(io, "../outside", "escape_dir", .{ .is_directory = true });
+        // Symlink loop (bounded by walker)
+        try ws.createDirPath(io, "loop_a");
+        try ws.createDirPath(io, "loop_b");
+        try ws.symLink(io, "../loop_b", "loop_a/to_b", .{ .is_directory = true });
+        try ws.symLink(io, "../loop_a", "loop_b/to_a", .{ .is_directory = true });
+        try ws.writeFile(io, .{ .sub_path = "loop_a/note.txt", .data = "loop-note findme\n" });
+
+        return .{ .parent = parent, .ws = ws };
+    }
+
+    fn cleanup(self: *SymlinkFixture, io: Io) void {
+        self.ws.close(io);
+        self.parent.cleanup();
+    }
+
+    fn ctx(self: *SymlinkFixture, gpa: std.mem.Allocator, io: Io) tool.Context {
+        return .{ .allocator = gpa, .io = io, .cwd = self.ws };
+    }
+};
+
+test "symlink containment: read/list/grep/glob deny escape, allow contained" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var fix = try SymlinkFixture.setup(io);
+    defer fix.cleanup(io);
+    const ctx = fix.ctx(gpa, io);
+
+    // read escaping symlink → jail_deny, no outside bytes
+    const esc = try readFile(ctx, null, "{\"path\":\"escape_file\"}");
+    defer gpa.free(esc);
+    try std.testing.expect(std.mem.indexOf(u8, esc, "code=jail_deny") != null);
+    try std.testing.expect(std.mem.indexOf(u8, esc, "OUTSIDE_SECRET") == null);
+
+    // list escaping dir symlink → jail_deny
+    const list_esc = try listDir(ctx, null, "{\"path\":\"escape_dir\"}");
+    defer gpa.free(list_esc);
+    try std.testing.expect(std.mem.indexOf(u8, list_esc, "code=jail_deny") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list_esc, "secret.txt") == null);
+
+    // list workspace root: symlink names OK, no follow
+    const listing = try listDir(ctx, null, "{\"path\":\".\"}");
+    defer gpa.free(listing);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "escape_file") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listing, "OUTSIDE_SECRET") == null);
+
+    // contained file symlink works
+    const linked = try readFile(ctx, null, "{\"path\":\"link_in\"}");
+    defer gpa.free(linked);
+    try std.testing.expect(std.mem.indexOf(u8, linked, "inside-ok") != null);
+
+    // contained dir symlink list works
+    const list_in = try listDir(ctx, null, "{\"path\":\"link_dir\"}");
+    defer gpa.free(list_in);
+    try std.testing.expect(std.mem.indexOf(u8, list_in, "nested.txt") != null);
+
+    // grep root escape → jail_deny
+    const grep_esc = try grep(ctx, null, "{\"pattern\":\"OUTSIDE\",\"path\":\"escape_dir\"}");
+    defer gpa.free(grep_esc);
+    try std.testing.expect(std.mem.indexOf(u8, grep_esc, "code=jail_deny") != null);
+    try std.testing.expect(std.mem.indexOf(u8, grep_esc, "OUTSIDE_SECRET") == null);
+
+    // grep workspace: finds inside, does not leak nested escape
+    const grep_ok = try grep(ctx, null, "{\"pattern\":\"findme\"}");
+    defer gpa.free(grep_ok);
+    try std.testing.expect(std.mem.indexOf(u8, grep_ok, "inside.txt") != null or std.mem.indexOf(u8, grep_ok, "inside-ok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, grep_ok, "OUTSIDE_SECRET") == null);
+
+    // glob: no outside paths
+    const glob_all = try glob(ctx, null, "{\"pattern\":\"**/*\"}");
+    defer gpa.free(glob_all);
+    try std.testing.expect(std.mem.indexOf(u8, glob_all, "OUTSIDE_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, glob_all, "secret.txt") == null);
+
+    // dangling path deny
+    const dang = try readFile(ctx, null, "{\"path\":\"dangling\"}");
+    defer gpa.free(dang);
+    try std.testing.expect(std.mem.indexOf(u8, dang, "code=jail_deny") != null);
+
+    // ordinary missing → ToolFailed (not jail_deny)
+    const missing = readFile(ctx, null, "{\"path\":\"no_such_file.txt\"}");
+    try std.testing.expectError(error.ToolFailed, missing);
+
+    // loop walker is bounded (does not hang / OOM)
+    const loop_grep = try grep(ctx, null, "{\"pattern\":\"loop-note\",\"path\":\".\"}");
+    defer gpa.free(loop_grep);
+    try std.testing.expect(std.mem.indexOf(u8, loop_grep, "loop-note") != null or std.mem.indexOf(u8, loop_grep, "note.txt") != null);
 }

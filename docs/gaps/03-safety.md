@@ -14,7 +14,7 @@
 
 | Gap | Production failure | Delivery |
 |-----|--------------------|----------|
-| lexical jail follows escaping workspace symlinks | file Tools can read/write outside the declared workspace | P0 `h-workspace-001` |
+| ~~lexical jail follows escaping workspace symlinks~~ | **closed** realpath Guard + handler dual enforcement | done `h-workspace-001` |
 | ~~custom Tool risk unknown→read~~ | **closed** D-007: mandatory capabilities | done |
 | failed provider run may be finalized `ok=true/completed` | audit says success for failure | P0 `h-trace-001` |
 | explicit trace I/O is swallowed | caller believes audit exists when it does not | P0 `h-trace-001` |
