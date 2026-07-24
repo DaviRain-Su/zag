@@ -27,13 +27,9 @@
 
 **规格：** [modules/loop-turn.md](../modules/loop-turn.md)
 
-**已有（勿重做）：** soft-fail 统一 `error: code=<CODE> message=…`（`tool_error.zig`：unknown_tool / invalid_arguments / permission_denied / jail_deny / shell_deny / tool_failed）；`Result.stop_reason`（`completed` / `max_turns`；cancel/provider 占位）；`run_end` 可带 `stop_reason`；max_turns 改为返回 Result 而非硬错误。
+**已有（勿重做）：** soft-fail `error: code=<CODE> message=…`；`Result.stop_reason`（含 `cancelled` / `max_turns` / `completed`）；`cancel.Flag` + CLI `SIGINT`；取消时补齐未执行 tool 的 `code=cancelled`（transcript 可 resume）；工具批内**串行**（单测钉死顺序）；golden：`readonly-list-build`、`deny-write`、`cancel then session save/load`。
 
-**H1 收口剩余：**
-
-- SIGINT cancel → `stop_reason=cancelled`，不写半截 tool 对  
-- ≥2 golden transcript（只读；拒写）  
-- 并行只读策略成文测试（实现可仍串行） 
+**H1 出门：** 本切片收口完成。并行只读执行属 L3。
 
 ## H2 — Edit
 

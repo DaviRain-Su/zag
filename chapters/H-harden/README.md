@@ -35,7 +35,7 @@ H 要求每道门的失败都进**版本化** trace，且有测试钉住。
 
 | 切片 | 规格 | 主要代码（现状） |
 |------|------|------------------|
-| H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | `tool_error` + `StopReason` **已落地**；cancel/golden 待收口 |
+| H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | **出门**：cancel + golden + 串行策略 |
 | H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `search_replace` + `grep`/`glob` **已落地**；`edit_tools` / `fs_tools` |
 | H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `zag-agent-core/src/permissions.zig` |
 | H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | `context.zig` · `session_store.zig` |

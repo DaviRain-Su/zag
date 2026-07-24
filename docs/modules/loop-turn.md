@@ -46,9 +46,11 @@ error: code=<CODE> message=<human>
 ## L2 验收
 
 - [x] 错误码稳定，单测可断言 `permission_denied` / `jail_deny`  
-- [ ] cancel 后 session 文件可 resume  
+- [x] cancel 后 session 文件可 resume（`code=cancelled` 补齐 tool 对）  
 - [x] max_turns 进入 `Result.stop_reason` + trace `run_end`  
-- [ ] ≥2 golden（只读；拒写）
+- [x] ≥2 golden（`readonly-list-build`；`deny-write`）  
+
+**并行：** L2 串行已钉死；只读并行属 L3。
 
 ## L3 方向
 

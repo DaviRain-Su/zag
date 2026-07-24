@@ -19,10 +19,11 @@
 
 ### H 最低集
 
-1. `readonly-list-build` — 只读问答触及 `list_dir`/`read_file`  
-2. `deny-write` — ask/deny 后文件不出现  
+1. `readonly-list-build` — ✅ `packages/zag-coding-agent/src/golden_tests.zig`  
+2. `deny-write` — ✅ 同上（`permission_denied` + 文件不存在）  
+3. `cancel-resume` — ✅ cancel 后 session JSONL 可 load  
 
-## Security eval 最低集
+CI：`zig build test` 包含之。
 
 1. 绝对路径 read → `jail_deny`  
 2. `../` 逃逸 → deny  

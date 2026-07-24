@@ -23,7 +23,7 @@
 
 | 子系统 | 现状 | 证据 | L2 验收（一句话） | L3 方向 | 对标 |
 |--------|:----:|------|-------------------|---------|------|
-| Loop / Turn | L1+ | `loop.zig`：`StopReason`；`tool_error` 稳定 `code=` soft-fail | 统一可机读 tool 错误；cancel 干净结束；max_turns/超时进 trace；≥2 golden | 并行只读、steer、Turn 生命周期 | Pi loop；Nanocodex Turn |
+| Loop / Turn | L2 | `loop.zig` + `cancel.zig` + `tool_error`；golden in `zag-coding-agent/src/golden_tests.zig` | 统一可机读 tool 错误；cancel 干净结束；max_turns/超时进 trace；≥2 golden | 并行只读、steer、Turn 生命周期 | Pi loop；Nanocodex Turn |
 | Tools · read | L1 | `packages/zag-coding-agent/src/runtime/fs_tools.zig` | jail 内 list/read 稳定；大文件截断可解释 | LSP 诊断闭环 | Hyper tools |
 | Tools · write/edit | L1+ | `edit_tools.zig`：`search_replace`（唯一内容锚点）+ `write_file`；写后可选 `git diff` | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
 | Tools · search | L1+ | `fs_tools.zig`：`grep`（字面量）+ `glob`（`*`/`**`）；jail + result budget | `grep` + `glob` 在 jail 内，结果有 budget | AST / codebase-graph | Hyper；Aider |
@@ -38,7 +38,7 @@
 | Subagents / Oracle | L0 | — | （H 不做）C6：typed 子代理 + Oracle pin + 对话点名触发 | Advisor；worktree fan-out | Amp；Hyper design-oracle |
 | Extensions | L0 | — | （H 不做）C8：Skills 目录可加载 | Hooks + MCP + plugin 包 | Pi；goose；Hyper |
 | UX | L1 | `packages/zag-cli/src/cli.zig`（main 为薄入口）；`--trace` 仅消费 path-like / `--trace=` | headless 友好 exit code + 稳定 flag；文档与行为一致 | TUI；ACP | Hyper pager；Codex |
-| Quality / Evals | L0 | 包测 + 少量 harness 单测 | H 起：golden + security eval 可 CI | edit eval；cost 基线 | Nanocodex contracts |
+| Quality / Evals | L1 | golden：readonly-list-build、deny-write、cancel resume（随 `zig build test`） | H 起：golden + security eval 可 CI | edit eval；cost 基线 | Nanocodex contracts |
 
 ---
 

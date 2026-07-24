@@ -25,6 +25,7 @@ const session_store = core.session_store;
 const shell_policy = core.shell_policy;
 const trace_mod = core.trace;
 const loop = core.loop;
+const cancel_mod = core.cancel;
 
 pub const Options = struct {
     max_turns: u32 = loop.default_max_turns,
@@ -168,6 +169,8 @@ pub const Agent = struct {
     trace: ?trace_mod.Trace = null,
     /// Session/run cost accumulator (updated on each provider usage event).
     ledger: ai.cost.Ledger = .{},
+    /// Cooperative cancel; CLI installs SIGINT against this flag.
+    cancel: cancel_mod.Flag = .{},
 
     pub fn init(
         gpa: std.mem.Allocator,
@@ -185,6 +188,7 @@ pub const Agent = struct {
             .permission_gate = .yolo(),
             .trace = null,
             .ledger = .{},
+            .cancel = .{},
         };
         self.permission_gate = self.resolveGate();
         if (options.trace_path) |tp| {
@@ -243,6 +247,7 @@ pub const Agent = struct {
                 .trace = if (self.trace) |*tr| tr else null,
                 .chat_retries = self.options.chat_retries,
                 .retry_base_delay_ms = self.options.retry_base_delay_ms,
+                .cancel = &self.cancel,
             },
         };
     }

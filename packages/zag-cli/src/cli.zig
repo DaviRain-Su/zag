@@ -249,6 +249,7 @@ pub fn run(init: std.process.Init) !void {
 
     var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts);
     defer agent.deinit();
+    core.cancel.installSigInt(&agent.cancel);
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
@@ -286,6 +287,8 @@ fn runOneShot(
     }
     if (result.stop_reason == .max_turns) {
         std.log.warn("stopped: max_turns reached ({d})", .{result.turns});
+    } else if (result.stop_reason == .cancelled) {
+        std.log.warn("stopped: cancelled (SIGINT)", .{});
     }
 
     try writeStdout(agent.io, result.final_text);
