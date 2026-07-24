@@ -107,17 +107,39 @@ const ShellConfig = struct {
     stderr_limit: usize = max_shell_stream_bytes,
 };
 
+const TestEditFault = enum {
+    none,
+    parent_create,
+    temp_create,
+    write_after_prefix,
+    flush,
+    containment,
+    replace,
+    post_commit_enrichment,
+};
+
 var test_shell_config: if (builtin.is_test) ShellConfig else void =
     if (builtin.is_test) .{} else {};
+var test_edit_fault: if (builtin.is_test) TestEditFault else void =
+    if (builtin.is_test) .none else {};
 
 fn activeShellConfig() ShellConfig {
     if (builtin.is_test) return test_shell_config;
     return .{};
 }
 
-/// Test-only shell seam. The empty production namespace exposes no controls.
-/// It deliberately contains only the four contract-approved settings.
+fn takeEditFault(comptime expected: TestEditFault) bool {
+    if (!builtin.is_test) return false;
+    if (test_edit_fault != expected) return false;
+    test_edit_fault = .none;
+    return true;
+}
+
+/// Test-only seams. The empty production namespace exposes no controls.
+/// Edit faults are one-shot and are consumed inside the production commit path.
 pub const testing = if (builtin.is_test) struct {
+    pub const EditFault = TestEditFault;
+
     pub fn configure(
         shell_path: []const u8,
         timeout_ms: u32,
@@ -132,8 +154,14 @@ pub const testing = if (builtin.is_test) struct {
         };
     }
 
+    pub fn failNextEditAt(fault: EditFault) void {
+        std.debug.assert(fault != .none);
+        test_edit_fault = fault;
+    }
+
     pub fn reset() void {
         test_shell_config = .{};
+        test_edit_fault = .none;
     }
 } else struct {};
 
@@ -239,17 +267,19 @@ pub fn searchReplace(ctx: tool.Context, instance: ?*anyopaque, arguments_json: [
         );
     }
 
-    ctx.cwd.writeFile(ctx.io, .{
-        .sub_path = path,
-        .data = replaced,
-        .flags = .{ .truncate = true },
-    }) catch return error.ToolFailed;
-
+    // Allocate the mandatory success body before the commit boundary. Once the
+    // atomic replacement succeeds, only best-effort non-failing enrichment runs.
     const base = try softError(
         ctx.allocator,
         "ok: search_replace path={s} removed={d} inserted={d} bytes file_size={d}",
         .{ path, old_string.len, new_string.len, replaced.len },
     );
+    errdefer ctx.allocator.free(base);
+
+    if (try atomicCommit(ctx, guard, .search_replace, path, replaced)) |failure_body| {
+        ctx.allocator.free(base);
+        return failure_body;
+    }
     return maybeAppendGitDiff(ctx, path, base);
 }
 
@@ -314,22 +344,233 @@ pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
         return jailOrFail(ctx, path, err);
     };
 
-    // Create only missing parent dirs. Do not createDirPath over an existing
-    // contained directory symlink (that returns ToolFailed on Zig createDirPath).
-    ensureParentDirs(ctx, path) catch return error.ToolFailed;
-
-    ctx.cwd.writeFile(ctx.io, .{
-        .sub_path = path,
-        .data = content,
-        .flags = .{ .truncate = true },
-    }) catch return error.ToolFailed;
-
+    // Allocate the mandatory success body before parent creation or commit.
+    // A completed replacement can therefore never surface as post-commit OOM.
     const base = try softError(
         ctx.allocator,
         "ok: wrote {d} bytes to {s}",
         .{ content.len, path },
     );
+    errdefer ctx.allocator.free(base);
+
+    if (try atomicCommit(ctx, guard, .write_file, path, content)) |failure_body| {
+        ctx.allocator.free(base);
+        return failure_body;
+    }
     return maybeAppendGitDiff(ctx, path, base);
+}
+
+const EditOperation = enum {
+    write_file,
+    search_replace,
+
+    fn name(self: EditOperation) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const EditStage = enum {
+    parent_create,
+    temp_create,
+    write,
+    flush,
+    replace,
+
+    fn name(self: EditStage) []const u8 {
+        return @tagName(self);
+    }
+};
+
+const ParentDirs = enum {
+    unchanged,
+    may_remain,
+
+    fn name(self: ParentDirs) []const u8 {
+        return @tagName(self);
+    }
+};
+
+/// Publish one complete edit with Zig 0.16 `Io.File.Atomic`.
+///
+/// The selected destination is canonicalized first so a contained final file
+/// symlink commits to its real target rather than renaming over the symlink.
+/// Opening that target's canonical parent and passing only its basename to
+/// `createFileAtomic` keeps staging and replacement on the same parent
+/// filesystem. `flush` is the buffered Zig writer flush, not file/dir fsync.
+fn atomicCommit(
+    ctx: tool.Context,
+    guard: workspace.Guard,
+    operation: EditOperation,
+    request_path: []const u8,
+    complete_bytes: []const u8,
+) tool.HandlerError!?[]u8 {
+    var parent_dirs: ParentDirs = .unchanged;
+    if (operation == .write_file) {
+        ensureParentDirs(ctx, request_path, &parent_dirs) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return try editIoFailure(ctx.allocator, operation, .parent_create, parent_dirs),
+        };
+        if (takeEditFault(.parent_create)) {
+            return try editIoFailure(ctx.allocator, operation, .parent_create, parent_dirs);
+        }
+    }
+
+    const selected_path = selectCommitPath(ctx, guard, operation, request_path) catch |err| {
+        return try finalContainmentFailure(ctx, request_path, parent_dirs, err);
+    };
+    defer ctx.allocator.free(selected_path);
+
+    const parent_path = std.fs.path.dirname(selected_path) orelse {
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+    };
+    const target_basename = std.fs.path.basename(selected_path);
+    if (target_basename.len == 0) {
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+    }
+
+    var target_parent = Io.Dir.openDirAbsolute(ctx.io, parent_path, .{}) catch {
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+    };
+    defer target_parent.close(ctx.io);
+
+    if (takeEditFault(.temp_create)) {
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+    }
+
+    var atomic_file = target_parent.createFileAtomic(ctx.io, target_basename, .{
+        .replace = true,
+    }) catch {
+        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs);
+    };
+    defer atomic_file.deinit(ctx.io);
+
+    var write_buffer: [4096]u8 = undefined;
+    var file_writer = atomic_file.file.writer(ctx.io, &write_buffer);
+    writeCompleteForCommit(&file_writer, complete_bytes) catch {
+        return try editIoFailure(ctx.allocator, operation, .write, parent_dirs);
+    };
+    flushCompleteForCommit(&file_writer) catch {
+        return try editIoFailure(ctx.allocator, operation, .flush, parent_dirs);
+    };
+
+    recheckForCommit(ctx, guard, operation, request_path) catch |err| {
+        return try finalContainmentFailure(ctx, request_path, parent_dirs, err);
+    };
+
+    replaceForCommit(&atomic_file, ctx.io) catch {
+        return try editIoFailure(ctx.allocator, operation, .replace, parent_dirs);
+    };
+    return null;
+}
+
+fn selectCommitPath(
+    ctx: tool.Context,
+    guard: workspace.Guard,
+    operation: EditOperation,
+    request_path: []const u8,
+) workspace.ContainError![]u8 {
+    if (guard.resolveContained(ctx.allocator, ctx.io, ctx.cwd, request_path)) |existing| {
+        return existing;
+    } else |err| switch (err) {
+        error.NotFound => {
+            if (operation == .search_replace) return error.NotFound;
+        },
+        else => return err,
+    }
+
+    // `write_file` absent target: parents now exist and are contained. Join the
+    // lexical final basename beneath the canonical parent selected by Guard.
+    const parent_rel = std.fs.path.dirname(request_path) orelse ".";
+    const parent_real = try guard.resolveContained(ctx.allocator, ctx.io, ctx.cwd, parent_rel);
+    defer ctx.allocator.free(parent_real);
+    const basename = std.fs.path.basename(request_path);
+    if (basename.len == 0) return error.InvalidPath;
+    return std.fs.path.join(ctx.allocator, &.{ parent_real, basename }) catch
+        return error.OutOfMemory;
+}
+
+fn writeCompleteForCommit(file_writer: *Io.File.Writer, complete_bytes: []const u8) !void {
+    if (takeEditFault(.write_after_prefix)) {
+        const prefix_len = @min(complete_bytes.len, 3);
+        std.debug.assert(prefix_len > 0);
+        try file_writer.interface.writeAll(complete_bytes[0..prefix_len]);
+        // Force the nonzero prefix into the temporary before injecting the
+        // later write failure; cleanup must remove this genuinely partial temp.
+        try file_writer.flush();
+        return error.InjectedEditWriteFailure;
+    }
+    try file_writer.interface.writeAll(complete_bytes);
+}
+
+fn flushCompleteForCommit(file_writer: *Io.File.Writer) !void {
+    if (takeEditFault(.flush)) {
+        // Drain the complete buffered bytes, then inject the flush outcome so
+        // the fixture proves cleanup of a fully staged, uncommitted temporary.
+        try file_writer.flush();
+        return error.InjectedEditFlushFailure;
+    }
+    try file_writer.flush();
+}
+
+fn recheckForCommit(
+    ctx: tool.Context,
+    guard: workspace.Guard,
+    operation: EditOperation,
+    request_path: []const u8,
+) workspace.ContainError!void {
+    switch (operation) {
+        .write_file => try guard.checkCreate(ctx.allocator, ctx.io, ctx.cwd, request_path),
+        .search_replace => try guard.checkExisting(ctx.io, ctx.cwd, request_path),
+    }
+    if (takeEditFault(.containment)) return error.OutsideWorkspace;
+}
+
+fn replaceForCommit(atomic_file: *Io.File.Atomic, io: Io) !void {
+    if (takeEditFault(.replace)) return error.InjectedEditReplaceFailure;
+    try atomic_file.replace(io);
+}
+
+fn editIoFailure(
+    gpa: std.mem.Allocator,
+    operation: EditOperation,
+    stage: EditStage,
+    parent_dirs: ParentDirs,
+) tool.HandlerError![]u8 {
+    var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const line = std.fmt.bufPrint(
+        &line_buf,
+        "error: code=edit_io_failed format=edit-v1 operation={s} stage={s} target=preserved parent_dirs={s}",
+        .{ operation.name(), stage.name(), parent_dirs.name() },
+    ) catch return error.ToolFailed;
+    std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+    return gpa.dupe(u8, line) catch return error.OutOfMemory;
+}
+
+fn finalContainmentFailure(
+    ctx: tool.Context,
+    path: []const u8,
+    parent_dirs: ParentDirs,
+    err: workspace.ContainError,
+) tool.HandlerError![]u8 {
+    // At the final security-critical boundary, disappearance is unresolved
+    // containment rather than an ordinary pre-edit missing-file result.
+    const deny_err: workspace.ContainError = if (err == error.NotFound)
+        error.ResolveFailed
+    else
+        err;
+    const base = try jailOrFail(ctx, path, deny_err);
+    if (parent_dirs == .unchanged) return base;
+    defer ctx.allocator.free(base);
+
+    // `write_file` may already have created parents. Keep the result's primary
+    // jail classification while reporting the only authorized partial residue.
+    const jail_prefix = "error: code=jail_deny ";
+    if (!std.mem.startsWith(u8, base, jail_prefix)) return error.ToolFailed;
+    return std.fmt.allocPrint(
+        ctx.allocator,
+        "{s}parent_dirs=may_remain {s}",
+        .{ jail_prefix, base[jail_prefix.len..] },
+    ) catch return error.OutOfMemory;
 }
 
 fn obtainGuard(ctx: tool.Context) workspace.ContainError!workspace.Guard {
@@ -363,7 +604,14 @@ fn replaceOwnedSlice(
 /// already opens as a directory (plain dir or contained dir symlink), skip
 /// create. Otherwise create only the pure-missing suffix under the longest
 /// openable prefix so `link_dir/nested/file` works when `link_dir` is a symlink.
-fn ensureParentDirs(ctx: tool.Context, file_path: []const u8) !void {
+/// `parent_dirs` becomes `may_remain` immediately before the one create call;
+/// rollback is intentionally forbidden because unrelated workspace activity
+/// may already depend on directories that appeared.
+fn ensureParentDirs(
+    ctx: tool.Context,
+    file_path: []const u8,
+    parent_dirs: *ParentDirs,
+) !void {
     const dir_path = std.fs.path.dirname(file_path) orelse return;
     if (dir_path.len == 0 or std.mem.eql(u8, dir_path, ".")) return;
 
@@ -418,14 +666,18 @@ fn ensureParentDirs(ctx: tool.Context, file_path: []const u8) !void {
     if (openable_owned) |prefix| {
         var base = try ctx.cwd.openDir(ctx.io, prefix, .{ .access_sub_paths = true });
         defer base.close(ctx.io);
+        parent_dirs.* = .may_remain;
         try base.createDirPath(ctx.io, rel_create);
     } else {
+        parent_dirs.* = .may_remain;
         try ctx.cwd.createDirPath(ctx.io, rel_create);
     }
 }
 
-fn maybeAppendGitDiff(ctx: tool.Context, path: []const u8, base: []u8) tool.HandlerError![]u8 {
-    // Best-effort enrichment: the edit already succeeded.
+fn maybeAppendGitDiff(ctx: tool.Context, path: []const u8, base: []u8) []u8 {
+    // Best-effort enrichment: the edit already succeeded. This function is
+    // deliberately non-failing; allocation/process errors retain `base`.
+    if (takeEditFault(.post_commit_enrichment)) return base;
     const diff = captureGitDiff(ctx, path) catch return base;
     defer ctx.allocator.free(diff);
     if (diff.len == 0) return base;
@@ -909,7 +1161,12 @@ test "ensureParentDirs OOM after openable prefix: no leak, no create, no outside
         .io = io,
         .cwd = ws,
     };
-    try std.testing.expectError(error.OutOfMemory, ensureParentDirs(ctx, "a/b/c/file.txt"));
+    var parent_dirs: ParentDirs = .unchanged;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        ensureParentDirs(ctx, "a/b/c/file.txt", &parent_dirs),
+    );
+    try std.testing.expect(parent_dirs == .unchanged);
 
     // Real allocator failure on the third allocation attempt (second prefix dupe).
     try std.testing.expect(failing_state.has_induced_failure);
@@ -930,6 +1187,390 @@ test "ensureParentDirs OOM after openable prefix: no leak, no create, no outside
     defer gpa.free(marker);
     try std.testing.expectEqualStrings("OUT\n", marker);
     try std.testing.expectError(error.FileNotFound, parent.dir.statFile(io, "outside/c", .{}));
+}
+
+const edit_commit_faults = [_]TestEditFault{
+    .temp_create,
+    .write_after_prefix,
+    .flush,
+    .containment,
+    .replace,
+};
+
+fn invokeEditFixture(
+    ctx: tool.Context,
+    operation: EditOperation,
+    path: []const u8,
+) tool.HandlerError![]u8 {
+    const arguments = switch (operation) {
+        .write_file => std.fmt.allocPrint(
+            ctx.allocator,
+            "{{\"path\":{f},\"content\":\"complete replacement bytes\\n\"}}",
+            .{std.json.fmt(path, .{})},
+        ) catch return error.OutOfMemory,
+        .search_replace => std.fmt.allocPrint(
+            ctx.allocator,
+            "{{\"path\":{f},\"old_string\":\"OLD\",\"new_string\":\"NEW\"}}",
+            .{std.json.fmt(path, .{})},
+        ) catch return error.OutOfMemory,
+    };
+    defer ctx.allocator.free(arguments);
+    return switch (operation) {
+        .write_file => writeFile(ctx, null, arguments),
+        .search_replace => searchReplace(ctx, null, arguments),
+    };
+}
+
+fn expectEditFaultBody(
+    body: []const u8,
+    operation: EditOperation,
+    fault: TestEditFault,
+    parent_dirs: ParentDirs,
+) !void {
+    try std.testing.expect(body.len <= trace.cap_tool_result_body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "InjectedEdit") == null);
+    if (fault == .containment) {
+        try std.testing.expect(std.mem.startsWith(u8, body, "error: code=jail_deny "));
+        try std.testing.expect(std.mem.indexOf(u8, body, "edit_io_failed") == null);
+        if (parent_dirs == .may_remain) {
+            try std.testing.expect(std.mem.indexOf(u8, body, "parent_dirs=may_remain") != null);
+        } else {
+            try std.testing.expect(std.mem.indexOf(u8, body, "parent_dirs=") == null);
+        }
+        return;
+    }
+
+    const stage: EditStage = switch (fault) {
+        .parent_create => .parent_create,
+        .temp_create => .temp_create,
+        .write_after_prefix => .write,
+        .flush => .flush,
+        .replace => .replace,
+        else => return error.TestUnexpectedResult,
+    };
+    var expected_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const expected = try std.fmt.bufPrint(
+        &expected_buf,
+        "error: code=edit_io_failed format=edit-v1 operation={s} stage={s} target=preserved parent_dirs={s}",
+        .{ operation.name(), stage.name(), parent_dirs.name() },
+    );
+    try std.testing.expectEqualStrings(expected, body);
+    try std.testing.expect(std.mem.indexOfScalar(u8, body, '\n') == null);
+}
+
+fn expectFileBytes(
+    gpa: std.mem.Allocator,
+    io: Io,
+    dir: Io.Dir,
+    path: []const u8,
+    expected: []const u8,
+) !void {
+    const actual = try dir.readFileAlloc(io, path, gpa, .limited(expected.len + 1));
+    defer gpa.free(actual);
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
+fn expectPathAbsentIn(dir: Io.Dir, io: Io, path: []const u8) !void {
+    _ = dir.statFile(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => |e| return e,
+    };
+    return error.TestUnexpectedResult;
+}
+
+fn expectDirEntries(
+    io: Io,
+    dir: Io.Dir,
+    expected_names: []const []const u8,
+) !void {
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        count += 1;
+        var found = false;
+        for (expected_names) |expected| {
+            if (std.mem.eql(u8, entry.name, expected)) {
+                found = true;
+                break;
+            }
+        }
+        try std.testing.expect(found);
+    }
+    try std.testing.expectEqual(expected_names.len, count);
+}
+
+fn expectSymlink(
+    dir: Io.Dir,
+    io: Io,
+    path: []const u8,
+    expected_text: []const u8,
+) !void {
+    const st = try dir.statFile(io, path, .{ .follow_symlinks = false });
+    try std.testing.expect(st.kind == .sym_link);
+    var link_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const link_len = try dir.readLink(io, path, &link_buf);
+    try std.testing.expectEqualStrings(expected_text, link_buf[0..link_len]);
+}
+
+test "edit-v1 existing ordinary targets preserve exact bytes and clean temps" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    for ([_]EditOperation{ .write_file, .search_replace }) |operation| {
+        for (edit_commit_faults) |fault| {
+            var tmp = std.testing.tmpDir(.{ .iterate = true });
+            defer tmp.cleanup();
+            const original = "alpha OLD omega\n";
+            try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = original });
+            const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+            testing.failNextEditAt(fault);
+            const body = try invokeEditFixture(ctx, operation, "target.txt");
+            defer gpa.free(body);
+            try expectEditFaultBody(body, operation, fault, .unchanged);
+            try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+            try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+        }
+    }
+}
+
+test "edit-v1 absent write_file target stays absent and temp-free on commit faults" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    for (edit_commit_faults) |fault| {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+        testing.failNextEditAt(fault);
+        const body = try invokeEditFixture(ctx, .write_file, "target.txt");
+        defer gpa.free(body);
+        try expectEditFaultBody(body, .write_file, fault, .unchanged);
+        try expectPathAbsentIn(tmp.dir, io, "target.txt");
+        try expectDirEntries(io, tmp.dir, &.{});
+    }
+}
+
+test "edit-v1 contained final symlink failures preserve target link text and cleanup" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    for ([_]EditOperation{ .write_file, .search_replace }) |operation| {
+        for (edit_commit_faults) |fault| {
+            var tmp = std.testing.tmpDir(.{ .iterate = true });
+            defer tmp.cleanup();
+            const original = "alpha OLD omega\n";
+            try tmp.dir.writeFile(io, .{ .sub_path = "real.txt", .data = original });
+            try tmp.dir.symLink(io, "real.txt", "link.txt", .{});
+            const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+            testing.failNextEditAt(fault);
+            const body = try invokeEditFixture(ctx, operation, "link.txt");
+            defer gpa.free(body);
+            try expectEditFaultBody(body, operation, fault, .unchanged);
+            try expectFileBytes(gpa, io, tmp.dir, "real.txt", original);
+            try expectSymlink(tmp.dir, io, "link.txt", "real.txt");
+            try expectDirEntries(io, tmp.dir, &.{ "real.txt", "link.txt" });
+        }
+    }
+}
+
+test "atomic edit success commits through contained final symlink without replacing link" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    for ([_]EditOperation{ .write_file, .search_replace }) |operation| {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(io, .{ .sub_path = "real.txt", .data = "alpha OLD omega\n" });
+        try tmp.dir.symLink(io, "real.txt", "link.txt", .{});
+        const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+        const body = try invokeEditFixture(ctx, operation, "link.txt");
+        defer gpa.free(body);
+        try std.testing.expect(std.mem.startsWith(u8, body, "ok:"));
+        const expected = switch (operation) {
+            .write_file => "complete replacement bytes\n",
+            .search_replace => "alpha NEW omega\n",
+        };
+        try expectFileBytes(gpa, io, tmp.dir, "real.txt", expected);
+        try expectSymlink(tmp.dir, io, "link.txt", "real.txt");
+        try expectDirEntries(io, tmp.dir, &.{ "real.txt", "link.txt" });
+    }
+}
+
+test "edit-v1 missing-parent failures leave only declared directory residue" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    for ([_]TestEditFault{
+        .parent_create,
+        .temp_create,
+        .write_after_prefix,
+        .flush,
+        .containment,
+        .replace,
+    }) |fault| {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+        testing.failNextEditAt(fault);
+        const body = try invokeEditFixture(ctx, .write_file, "new/a/b/file.txt");
+        defer gpa.free(body);
+        try expectEditFaultBody(body, .write_file, fault, .may_remain);
+        try expectPathAbsentIn(tmp.dir, io, "new/a/b/file.txt");
+        try expectDirEntries(io, tmp.dir, &.{"new"});
+
+        var new_dir = try tmp.dir.openDir(io, "new", .{ .iterate = true });
+        defer new_dir.close(io);
+        try expectDirEntries(io, new_dir, &.{"a"});
+        var a_dir = try new_dir.openDir(io, "a", .{ .iterate = true });
+        defer a_dir.close(io);
+        try expectDirEntries(io, a_dir, &.{"b"});
+        var b_dir = try a_dir.openDir(io, "b", .{ .iterate = true });
+        defer b_dir.close(io);
+        try expectDirEntries(io, b_dir, &.{});
+    }
+}
+
+test "search_replace stale missing ambiguous and oversize outcomes do not mutate" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const current = "current bytes\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = current });
+    const stale = try searchReplace(
+        ctx,
+        null,
+        "{\"path\":\"target.txt\",\"old_string\":\"stale bytes\",\"new_string\":\"new\"}",
+    );
+    defer gpa.free(stale);
+    try std.testing.expect(std.mem.indexOf(u8, stale, "code=anchor_not_found") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", current);
+
+    try std.testing.expectError(
+        error.ToolFailed,
+        searchReplace(
+            ctx,
+            null,
+            "{\"path\":\"missing.txt\",\"old_string\":\"x\",\"new_string\":\"y\"}",
+        ),
+    );
+    try expectPathAbsentIn(tmp.dir, io, "missing.txt");
+
+    const ambiguous_bytes = "OLD and OLD\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = ambiguous_bytes, .flags = .{ .truncate = true } });
+    const ambiguous = try invokeEditFixture(ctx, .search_replace, "target.txt");
+    defer gpa.free(ambiguous);
+    try std.testing.expect(std.mem.indexOf(u8, ambiguous, "code=ambiguous_anchor") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", ambiguous_bytes);
+
+    const oversized_replacement = try gpa.alloc(u8, @as(usize, max_write_bytes) + 1);
+    defer gpa.free(oversized_replacement);
+    @memset(oversized_replacement, 'R');
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = "OLD\n", .flags = .{ .truncate = true } });
+    const replace_args = try std.fmt.allocPrint(
+        gpa,
+        "{{\"path\":\"target.txt\",\"old_string\":\"OLD\",\"new_string\":\"{s}\"}}",
+        .{oversized_replacement},
+    );
+    defer gpa.free(replace_args);
+    const result_too_large = try searchReplace(ctx, null, replace_args);
+    defer gpa.free(result_too_large);
+    try std.testing.expect(std.mem.indexOf(u8, result_too_large, "code=too_large") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", "OLD\n");
+
+    const write_args = try std.fmt.allocPrint(
+        gpa,
+        "{{\"path\":\"target.txt\",\"content\":\"{s}\"}}",
+        .{oversized_replacement},
+    );
+    defer gpa.free(write_args);
+    const write_too_large = try writeFile(ctx, null, write_args);
+    defer gpa.free(write_too_large);
+    try std.testing.expect(std.mem.indexOf(u8, write_too_large, "code=too_large") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", "OLD\n");
+
+    const oversized = try gpa.alloc(u8, max_read_for_edit);
+    defer gpa.free(oversized);
+    @memset(oversized, 'Q');
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = oversized, .flags = .{ .truncate = true } });
+    const too_large = try invokeEditFixture(ctx, .search_replace, "target.txt");
+    defer gpa.free(too_large);
+    try std.testing.expect(std.mem.indexOf(u8, too_large, "code=too_large") != null);
+    const after = try tmp.dir.readFileAlloc(io, "target.txt", gpa, .limited(oversized.len + 1));
+    defer gpa.free(after);
+    try std.testing.expectEqualSlices(u8, oversized, after);
+    try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+}
+
+test "atomic commit OOM before temp is typed and preserves target" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const original = "original before OOM\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = original });
+
+    const normal_ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    var guard = try obtainGuard(normal_ctx);
+    defer guard.deinit(gpa);
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const failing_ctx: tool.Context = .{
+        .allocator = failing.allocator(),
+        .io = io,
+        .cwd = tmp.dir,
+    };
+    try std.testing.expectError(
+        error.OutOfMemory,
+        atomicCommit(failing_ctx, guard, .write_file, "target.txt", "complete new bytes\n"),
+    );
+    try std.testing.expect(failing.has_induced_failure);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+    try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+}
+
+test "post-commit enrichment failure remains successful with complete target bytes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    for ([_]EditOperation{ .write_file, .search_replace }) |operation| {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = "alpha OLD omega\n" });
+        const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+        testing.failNextEditAt(.post_commit_enrichment);
+        const body = try invokeEditFixture(ctx, operation, "target.txt");
+        defer gpa.free(body);
+        try std.testing.expect(std.mem.startsWith(u8, body, "ok:"));
+        try std.testing.expect(std.mem.indexOf(u8, body, "git diff") == null);
+        const expected = switch (operation) {
+            .write_file => "complete replacement bytes\n",
+            .search_replace => "alpha NEW omega\n",
+        };
+        try expectFileBytes(gpa, io, tmp.dir, "target.txt", expected);
+        try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+    }
 }
 
 test "search_replace write_file run_shell in tmp dir" {

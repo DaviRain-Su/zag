@@ -53,7 +53,7 @@ These remain useful but do not cover the assessment blockers.
 5. prefix collision (`/ws` ⊄ `/ws2`) and symlink-loop walker bound. ✅
 6. macOS/Linux via `Io.Dir.symLink`; Windows skips symlink fixtures (no false pass). ✅
 
-### Edit integrity (`h-edit-integrity-001`, open)
+### Edit integrity (`h-edit-integrity-001`, in progress)
 
 1. existing ordinary target: injected write-prefix, flush, final containment-denial, and replace faults preserve exact prior bytes;
 2. absent `write_file` target remains absent on every commit fault;
@@ -62,6 +62,8 @@ These remain useful but do not cover the assessment blockers.
 5. stable `edit_io_failed format=edit-v1` stage/target/parent fields survive one Agent transcript/session/resume/parsed-trace recovery chain with the original Tool-call ID and one `completed` terminal;
 6. no allocation or optional diff step after commit can report a hard failure after successful mutation;
 7. lexical remember aliases re-prompt and remembered approval never bypasses Guard/jail.
+
+Develop-stage fixtures now cover all seven items, including supported macOS symlink execution and schema-true trace correlation (Tool-call ID on transcript/session and trace `tool_call`; no ID on trace `tool_result`). They remain pending independent verification and merged-main std/curl Gate, so this section and the task stay in progress.
 
 ### Run/trace lifecycle
 

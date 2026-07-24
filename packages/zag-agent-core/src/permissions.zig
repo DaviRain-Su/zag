@@ -388,6 +388,101 @@ test "remember skips second ask for same path" {
     try std.testing.expectEqual(@as(u32, 2), allow_count);
 }
 
+test "remember keys are exact lexical request paths and aliases re-prompt" {
+    const gpa = std.testing.allocator;
+    var store = Remember.init(gpa, true);
+    defer store.deinit();
+
+    var allow_count: u32 = 0;
+    const Ctx = struct {
+        fn ask(ptr: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
+            const count: *u32 = @ptrCast(@alignCast(ptr.?));
+            count.* += 1;
+            return .allow;
+        }
+    };
+    var gate = Gate.ask(Ctx.ask, &allow_count);
+    gate.remember = &store;
+    const descriptor = testDescriptor("write_file", .write);
+
+    const first = gate.check(descriptor, "{}", "a.txt");
+    try std.testing.expect(first.decision == .allow and !first.remembered);
+    const alias = gate.check(descriptor, "{}", "./a.txt");
+    try std.testing.expect(alias.decision == .allow and !alias.remembered);
+    try std.testing.expectEqual(@as(u32, 2), allow_count);
+
+    const first_again = gate.check(descriptor, "{}", "a.txt");
+    const alias_again = gate.check(descriptor, "{}", "./a.txt");
+    try std.testing.expect(first_again.remembered);
+    try std.testing.expect(alias_again.remembered);
+    try std.testing.expectEqual(@as(u32, 2), allow_count);
+}
+
+test "remembered write approval still re-enters Guard and jail-denied alias stays denied" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const workspace = @import("workspace.zig");
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/keep.txt", .data = "outside-original\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{ .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "../outside/keep.txt", "escape_file", .{});
+
+    var store = Remember.init(gpa, true);
+    defer store.deinit();
+    var allow_count: u32 = 0;
+    const Ctx = struct {
+        fn ask(ptr: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
+            const count: *u32 = @ptrCast(@alignCast(ptr.?));
+            count.* += 1;
+            return .allow;
+        }
+    };
+    var gate = Gate.ask(Ctx.ask, &allow_count);
+    gate.remember = &store;
+    const descriptor = testDescriptor("write_file", .write);
+    var guard = try workspace.guardFrom(gpa, io, ws, null);
+    defer guard.deinit(gpa);
+
+    const approved = gate.check(descriptor, "{}", "escape_file");
+    try std.testing.expect(approved.decision == .allow and !approved.remembered);
+    try std.testing.expectError(
+        error.OutsideWorkspace,
+        guard.checkCreate(gpa, io, ws, "escape_file"),
+    );
+    const remembered = gate.check(descriptor, "{}", "escape_file");
+    try std.testing.expect(remembered.decision == .allow and remembered.remembered);
+    try std.testing.expectError(
+        error.OutsideWorkspace,
+        guard.checkCreate(gpa, io, ws, "escape_file"),
+    );
+
+    // A lexical alias receives its own prompt and still cannot turn approval
+    // into executable authorization at the Guard boundary.
+    const alias = gate.check(descriptor, "{}", "./escape_file");
+    try std.testing.expect(alias.decision == .allow and !alias.remembered);
+    try std.testing.expectEqual(@as(u32, 2), allow_count);
+    try std.testing.expectError(
+        error.OutsideWorkspace,
+        guard.checkCreate(gpa, io, ws, "./escape_file"),
+    );
+    const alias_remembered = gate.check(descriptor, "{}", "./escape_file");
+    try std.testing.expect(alias_remembered.remembered);
+    try std.testing.expectError(
+        error.OutsideWorkspace,
+        guard.checkCreate(gpa, io, ws, "./escape_file"),
+    );
+
+    const outside = try parent.dir.readFileAlloc(io, "outside/keep.txt", gpa, .limited(64));
+    defer gpa.free(outside);
+    try std.testing.expectEqualStrings("outside-original\n", outside);
+}
+
 test "remember can be disabled" {
     const gpa = std.testing.allocator;
     var store = Remember.init(gpa, false);

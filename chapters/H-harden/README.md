@@ -41,7 +41,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | Slice | Spec | Current truth |
 |-------|------|---------------|
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | L2：soft errors/serial/goldens + facade terminal；provider active control；accepted multi-Tool between-call Agent composition 已通过独立/main Gate；mid-flight Tool preemption post-H |
-| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 保持；final audit 证明 edit truncate/write 与 read/search silent cutoff 仍阻塞，两个 file tasks ready |
+| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 保持；edit same-parent atomic commit + fault/Agent fixtures 已在 in-progress branch，待独立/main Gate；read/search silent cutoff task 仍 ready |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
@@ -66,7 +66,7 @@ Tool runtime + trace
 h-shell-001（re-review + Oracle + main std/curl）✅
   ↓
 final audit FAIL（existing suites green）
-  ├─ h-edit-integrity-001 ready
+  ├─ h-edit-integrity-001 in-progress（develop fixtures green；independent/main pending）
   └─ h-read-search-bounds-001 ready
   ↓
 h-integration-001 blocked → 两者 done 后 fresh sentence audit

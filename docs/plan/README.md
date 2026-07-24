@@ -18,7 +18,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 | Area | Status |
 |------|--------|
 | Phase H | **Blocked.** The final audit passed existing suites but found two unowned default file-surface L2 counterexamples. |
-| P0 | Original queue is done; data preservation reopened narrowly as `h-edit-integrity-001` (ready). |
+| P0 | Original queue is done; `h-edit-integrity-001` is in progress with develop implementation/fixtures present and independent/main Gate pending. |
 | P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is ready; retained integration evidence remains valid. |
 | Integration | `h-integration-001` is blocked on both file-surface tasks, then must repeat the sentence-by-sentence audit. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
@@ -34,8 +34,8 @@ original P0/P1 modules + doctor + shell ✅
                     │
          ┌──────────┴──────────┐
          ▼                     ▼
-ready: h-edit-integrity-001   ready: h-read-search-bounds-001
-single-file atomic preserve   bounded + explicit incomplete results
+in-progress: h-edit-integrity-001   ready: h-read-search-bounds-001
+atomic develop evidence; Gate pending   bounded + explicit incomplete results
          └──────────┬──────────┘
                     ▼
           blocked: h-integration-001
@@ -63,7 +63,7 @@ Doctor and shell keep their completed dependency contracts. Integration remains 
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | done | Secret redaction |
 | [h-doctor-001](./tasks/h-doctor-001.md) | P1 | done | Provider-independent readiness/control report |
 | [h-shell-001](./tasks/h-shell-001.md) | P1 | done | Synchronous shell-v1/budget/direct-child/Agent evidence |
-| [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | ready | Target-preserving single-file write/edit commit |
+| [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | in-progress | Target-preserving single-file write/edit commit |
 | [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | ready | Bounded read/search bodies and explicit incomplete results |
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Fresh Phase H sentence audit after both file tasks |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |

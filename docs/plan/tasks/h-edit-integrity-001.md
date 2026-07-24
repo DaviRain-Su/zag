@@ -1,7 +1,7 @@
 ---
 id: h-edit-integrity-001
 scope: phase-h/edit-integrity
-status: ready
+status: in-progress
 priority: P0
 depends-on: [h-tool-runtime-001, h-workspace-001, h-session-001, h-trace-001, h-redact-001]
 ---
@@ -52,7 +52,7 @@ error: code=edit_io_failed format=edit-v1 operation=<write_file|search_replace> 
 - `parent_dirs=may_remain` is valid only for `write_file` after missing-parent creation may have started.
 - The line omits raw OS errors, temporary names, absolute paths, and file contents and fits `trace.cap_tool_result_body`.
 - `OutOfMemory` remains a typed host error before commit. The implementation must make the post-commit success path non-failing.
-- Existing `anchor_not_found`, `ambiguous_anchor`, `too_large`, `jail_deny`, invalid-argument, and permission results keep their meanings. A failed final containment recheck returns `jail_deny`, not `edit_io_failed`, and still preserves the target.
+- Existing `anchor_not_found`, `ambiguous_anchor`, `too_large`, `jail_deny`, invalid-argument, and permission results keep their meanings. A failed final containment recheck returns `jail_deny`, not `edit_io_failed`, and still preserves the target; if `write_file` parent creation had begun, that jail result also reports `parent_dirs=may_remain`.
 - The code remains handler-local; core Tool error and trace schemas do not expand.
 
 ## permission remember boundary
@@ -115,6 +115,12 @@ Add one real coding-product Agent fixture for a recoverable injected edit failur
 - `chapters/01-edit-permissions/README.md`
 - `chapters/H-harden/README.md`
 - `SECURITY.md` if the trusted-host wording needs synchronization
+
+# develop evidence (pending independent verification)
+
+The task branch now routes both handlers through one `Io.File.Atomic` commit helper: canonical selected-target parent, complete write, Zig writer flush, final Guard recheck, and atomic replace. Test-only one-shot seams cover parent/temp creation, nonzero-prefix write, flush, containment denial, replace, and non-failing post-commit enrichment. Permanent fixtures cover ordinary/absent/contained-final-symlink targets, cleanup and parent residue, anchor failures, lexical remember/Guard composition, and one real Agent transcript/session/resume/parsed-trace recovery chain.
+
+This is develop-stage evidence only. Task status remains `in-progress`; independent worktree verification and merged-main std/curl Gate are still required, and `h-integration-001` remains blocked.
 
 # verification
 

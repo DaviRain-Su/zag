@@ -4063,6 +4063,210 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
     try expectSessionBytesForbidNeedle(gpa, io, sess_path, outside_bytes);
 }
 
+const edit_agent_call_id = "edit-fault-write-1";
+const edit_agent_target = ".zag-test-h-edit-agent/edits/target.txt";
+const edit_agent_failure_body =
+    "error: code=edit_io_failed format=edit-v1 operation=write_file stage=write target=preserved parent_dirs=unchanged";
+
+fn expectStructuredEditFailureTrace(gpa: std.mem.Allocator, buf: []const u8) !void {
+    var permission_count: u32 = 0;
+    var tool_call_count: u32 = 0;
+    var tool_result_count: u32 = 0;
+    var run_end_count: u32 = 0;
+
+    var lines = std.mem.splitScalar(u8, buf, '\n');
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        var parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
+            return error.TestUnexpectedResult;
+        defer parsed.deinit();
+        if (parsed.value != .object) return error.TestUnexpectedResult;
+        const obj = parsed.value.object;
+        const kind_v = obj.get("kind") orelse return error.TestUnexpectedResult;
+        if (kind_v != .string) return error.TestUnexpectedResult;
+        const kind = kind_v.string;
+
+        if (std.mem.eql(u8, kind, "permission")) {
+            permission_count += 1;
+            const name_v = obj.get("name") orelse return error.TestUnexpectedResult;
+            const risk_v = obj.get("risk") orelse return error.TestUnexpectedResult;
+            const allowed_v = obj.get("allowed") orelse return error.TestUnexpectedResult;
+            if (name_v != .string or !std.mem.eql(u8, name_v.string, "write_file"))
+                return error.TestUnexpectedResult;
+            if (risk_v != .string or !std.mem.eql(u8, risk_v.string, "write"))
+                return error.TestUnexpectedResult;
+            if (allowed_v != .bool or !allowed_v.bool) return error.TestUnexpectedResult;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "tool_call")) {
+            tool_call_count += 1;
+            const id_v = obj.get("id") orelse return error.TestUnexpectedResult;
+            const name_v = obj.get("name") orelse return error.TestUnexpectedResult;
+            if (id_v != .string or !std.mem.eql(u8, id_v.string, edit_agent_call_id))
+                return error.TestUnexpectedResult;
+            if (name_v != .string or !std.mem.eql(u8, name_v.string, "write_file"))
+                return error.TestUnexpectedResult;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "tool_result")) {
+            tool_result_count += 1;
+            // Schema truth: trace results have name+body, not a Tool-call ID.
+            if (obj.get("id") != null or obj.get("tool_call_id") != null)
+                return error.TestUnexpectedResult;
+            const name_v = obj.get("name") orelse return error.TestUnexpectedResult;
+            const body_v = obj.get("body") orelse return error.TestUnexpectedResult;
+            if (name_v != .string or !std.mem.eql(u8, name_v.string, "write_file"))
+                return error.TestUnexpectedResult;
+            if (body_v != .string or !std.mem.eql(u8, body_v.string, edit_agent_failure_body))
+                return error.TestUnexpectedResult;
+            continue;
+        }
+        if (std.mem.eql(u8, kind, "run_end")) {
+            run_end_count += 1;
+            const ok_v = obj.get("ok") orelse return error.TestUnexpectedResult;
+            const stop_v = obj.get("stop_reason") orelse return error.TestUnexpectedResult;
+            if (ok_v != .bool or !ok_v.bool) return error.TestUnexpectedResult;
+            if (stop_v != .string or !std.mem.eql(u8, stop_v.string, "completed"))
+                return error.TestUnexpectedResult;
+        }
+    }
+
+    try std.testing.expectEqual(@as(u32, 1), permission_count);
+    try std.testing.expectEqual(@as(u32, 1), tool_call_count);
+    try std.testing.expectEqual(@as(u32, 1), tool_result_count);
+    try std.testing.expectEqual(@as(u32, 1), run_end_count);
+}
+
+fn expectEditTargetAndNoTemp(io: Io, gpa: std.mem.Allocator, expected: []const u8) !void {
+    const actual = try Io.Dir.cwd().readFileAlloc(io, edit_agent_target, gpa, .limited(expected.len + 1));
+    defer gpa.free(actual);
+    try std.testing.expectEqualStrings(expected, actual);
+
+    var dir = try Io.Dir.cwd().openDir(io, ".zag-test-h-edit-agent/edits", .{ .iterate = true });
+    defer dir.close(io);
+    var count: usize = 0;
+    var it = dir.iterate();
+    while (try it.next(io)) |entry| {
+        count += 1;
+        try std.testing.expectEqualStrings("target.txt", entry.name);
+        try std.testing.expect(entry.kind == .file);
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
+}
+
+test "h-edit: recoverable write fault composes transcript session resume parsed trace terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-h-edit-agent";
+    const sess_path = ".zag-test-h-edit-agent/s.jsonl";
+    const original = "ORIGINAL_TARGET_BYTES\n";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, ".zag-test-h-edit-agent/edits");
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = edit_agent_target, .data = original });
+    edit_tools.testing.reset();
+    defer edit_tools.testing.reset();
+
+    const Mock = struct {
+        step: u32 = 0,
+
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const calls = try arena.alloc(message.ToolCall, 1);
+                calls[0] = .{
+                    .id = try arena.dupe(u8, edit_agent_call_id),
+                    .name = try arena.dupe(u8, "write_file"),
+                    .arguments = try arena.dupe(
+                        u8,
+                        "{\"path\":\".zag-test-h-edit-agent/edits/target.txt\",\"content\":\"COMPLETE_NEW_BYTES\\n\"}",
+                    ),
+                };
+                return .{ .content = "", .tool_calls = calls, .finish_reason = "tool_calls" };
+            }
+            if (self.step != 2) return error.InvalidResponse;
+            const body = toolBodyById(messages, edit_agent_call_id) orelse
+                return error.InvalidResponse;
+            if (!assistantHasCallId(messages, edit_agent_call_id)) return error.InvalidResponse;
+            if (!std.mem.eql(u8, body, edit_agent_failure_body)) return error.InvalidResponse;
+            return .{
+                .content = try arena.dupe(u8, "edit-failure-recovered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    edit_tools.testing.failNextEditAt(.write_after_prefix);
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        const result = try agent.reply(&session, "replace the target");
+        try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+        try std.testing.expectEqualStrings("edit-failure-recovered", result.final_text);
+        try std.testing.expectEqual(@as(u32, 2), mock.step);
+
+        const body = try expectPairedToolId(session.transcript.items(), edit_agent_call_id);
+        try std.testing.expectEqualStrings(edit_agent_failure_body, body);
+        try expectSessionPairedOutcome(
+            gpa,
+            io,
+            sess_path,
+            edit_agent_call_id,
+            .{ .exact = edit_agent_failure_body },
+        );
+        try expectEditTargetAndNoTemp(io, gpa, original);
+
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try expectStructuredEditFailureTrace(gpa, tr.buf.items);
+        try expectUniqueStructuredRunEnd(gpa, tr.buf.items, true, "completed");
+        try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+    }
+
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    const resumed_body = try expectPairedToolId(resumed.transcript.items(), edit_agent_call_id);
+    try std.testing.expectEqualStrings(edit_agent_failure_body, resumed_body);
+    try expectSessionPairedOutcome(
+        gpa,
+        io,
+        sess_path,
+        edit_agent_call_id,
+        .{ .exact = edit_agent_failure_body },
+    );
+    try expectEditTargetAndNoTemp(io, gpa, original);
+}
+
 const ShellRecoveryProvider = struct {
     call_id: []const u8,
     command: []const u8,

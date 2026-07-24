@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **L1+** — descriptors and symlink-aware containment landed; final Phase H audit exposed bounded-read/search and single-file commit-integrity blockers |
+| Current maturity | **L1+** — atomic single-file edit implementation and fixtures are on the in-progress task branch; independent/main Gate and the separate read/search blocker remain open |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -34,6 +34,10 @@ D-007 descriptors and h-workspace-001 symlink-aware containment are complete for
 2. count caps do not prove the shared result-byte ceiling: `list_dir`/`glob` can exceed it, `read_file` does not reliably produce its advertised oversized prefix on Zig 0.16, and walker/search cutoffs can silently present incomplete output as complete.
 
 These are owned by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) and [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md). Shell remains independently L2 under [`shell-v1`](./tools-shell.md); its passing Gate does not waive file-tool contracts.
+
+### Edit-integrity delivery state
+
+The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes and mandatory success text are allocated before staging; the helper writes, flushes, rechecks Guard, and replaces the canonical selected target. Contained final file symlinks therefore keep their link entry/text while the resolved target changes. One-shot test seams and a real Agent recovery fixture exercise the `edit-v1` contract. This evidence still requires independent verification and merged-main std/curl Gate, so the module and Phase H do not advance yet.
 
 ## H read/search contract
 
@@ -71,7 +75,7 @@ Expected commit failures use:
 error: code=edit_io_failed format=edit-v1 operation=<write_file|search_replace> stage=<parent_create|temp_create|write|flush|replace> target=preserved parent_dirs=<unchanged|may_remain>
 ```
 
-The first line contains no raw OS error, temporary name, absolute path, or file content and fits the trace Tool-result cap. A failed final containment recheck keeps the existing `jail_deny` result and preserves the target. `OutOfMemory` remains typed before commit; no post-commit allocation may turn success into failure.
+The first line contains no raw OS error, temporary name, absolute path, or file content and fits the trace Tool-result cap. A failed final containment recheck keeps the existing `jail_deny` result and preserves the target; after `write_file` parent creation began, the jail result additionally reports `parent_dirs=may_remain`. `OutOfMemory` remains typed before commit; no post-commit allocation may turn success into failure.
 
 This is software-crash/ordinary-I/O preservation only. It does not claim `fsync`/power-loss durability, hostile concurrent-filesystem safety, compare-and-swap, metadata fidelity, or multi-file atomicity.
 
@@ -85,9 +89,9 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] zero/multiple anchor failures do not mutate and are tested.
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
-- [ ] write/edit faults preserve exact prior target state, clean temporary state, and expose stable `edit-v1` results (`h-edit-integrity-001`).
-- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`).
-- [ ] lexical remember alias/jail fixtures prove the documented conservative H boundary (`h-edit-integrity-001`).
+- [ ] write/edit faults preserve exact prior target state, clean temporary state, and expose stable `edit-v1` results (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
+- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
+- [ ] lexical remember alias/jail fixtures prove the documented conservative H boundary (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
 - [x] shell/error integration passes its separate lifecycle contract and independent/main Gate (`h-shell-001`).
 
 ## L3 (C4)

@@ -16,6 +16,7 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 | Permission remember | exact lexical request-path key for one Agent lifetime; `--no-remember` disables | aliases re-prompt; canonical filesystem-object policy is not claimed; Guard still revalidates every execution |
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
 | Workspace path check | lexical deny of absolute/`..`/drive/UNC **plus** realpath containment for file tools | **software check-time** only; residual TOCTOU under concurrent FS races; not an OS sandbox |
+| Edit commit | in-progress task branch stages complete bytes in the resolved target's same parent, writer-flushes, Guard-rechecks, then atomically replaces | independent/main Gate pending; no fsync/power-loss, metadata, multi-file, or hostile-FS-race claim |
 | Shell policy/runtime | `protect`; stable synchronous `shell-v1`; 30 KiB/stream + bounded body; h-shell-001 Gate passed | denylist only; shell is **not** contained by the file-path jail or OS sandbox; no process-tree or mid-flight cancellation claim |
 | Trace | optional local JSONL events | lifecycle/schema L2; redaction before serialize (h-redact-001) |
 | Secret redaction | configured keys + common API-key shapes before verbose/trace/session | not DLP; `.zag/` still sensitive; no zeroization claim |
@@ -107,7 +108,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001 |
 | ~~default Agent policy/containment composition~~ | **done evidence** h-integration-001; independent review + main std/curl passed |
 | ~~stable synchronous shell outcomes/body budget/direct-child trace evidence~~ | **done** Phase H P1 h-shell-001; fixed deny + encoding/budget/cleanup/Agent Gate passed |
-| target-preserving `write_file` / `search_replace` commit faults | **open P0** h-edit-integrity-001; direct truncate/write is not yet safe |
+| target-preserving `write_file` / `search_replace` commit faults | **in-progress P0** h-edit-integrity-001; atomic implementation/develop fixtures present, independent/main Gate pending |
 | bounded read/list/grep/glob bodies + explicit incomplete cutoffs | **open P1** h-read-search-bounds-001 |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |

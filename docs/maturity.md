@@ -11,7 +11,7 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**总状态（2026-07-25 final audit）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。最终审计在既有 default/curl suites 全绿的同时发现两个 file-surface L2 反例：单文件写入故障不能保全目标，以及 read/search 预算/截断不完整。`h-edit-integrity-001` 与 `h-read-search-bounds-001` 已登记；`h-integration-001` 在两者完成前 blocked。
+**总状态（2026-07-25 final audit；2026-07-25 edit develop update）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。最终审计发现两个 file-surface L2 反例。`h-edit-integrity-001` 的 atomic commit 与永久 fixtures 已在 in-progress task branch 实现，但仍待独立验证与 merged-main Gate；read/search 预算/截断 blocker 仍 open。`h-integration-001` 在两者完成前 blocked。
 
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
@@ -24,7 +24,7 @@
 | Loop / Turn | **L2** | soft Tool errors、serial order、goldens、facade 单 terminal、provider in-flight cancel/deadline；accepted multi-Tool between-call cancel 的 Agent/transcript/session/trace 组合 fixture 已独立验收并通过 main std/curl Gate；Tool/shell mid-flight preemption 明确为 post-H process work | API/error/trace terminal 一致 ✅；provider cancel/deadline 有界 ✅；≥2 goldens ✅；真实组合 cancel fixture ✅ | steer、parallel read-only |
 | Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；`buildTool`+`validateTools`+`loop.run` 对 missing/invalid caps fail-closed；path/shell 参数校验；Provider/WireProvider 仅 ToolDefinition；`.cooperative` 仅为声明（handler preemption 属 post-H shell/process work） | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
 | Tools · read/search | **L1+** | containment 已落地；final audit 反例：list/glob 仅 count cap 可超 64 KiB，read oversized prefix 与 Zig 0.16 limit 语义不一致，walker/source/pattern cutoffs 可静默不完整；`h-read-search-bounds-001` ready | 四类 body ≤64 KiB；每个 runtime cutoff 有完整 `fs-v1` marker；N/N+1/walker 矩阵 | LSP/repo map integration |
-| Tools · write/edit | **L1+** | anchor/descriptor/Guard 已落地；final audit 反例：两 handler 直接 truncate/write，write/flush/replace failure 可破坏 prior bytes；`h-edit-integrity-001` ready | target-preserving single-file commit；contained final symlink；stable `edit-v1` fault + Agent chain | hashline/apply_patch、hunk review |
+| Tools · write/edit | **L1+** | `h-edit-integrity-001` in-progress branch 已用共享 same-parent `Io.File.Atomic` helper 替换两 handler truncate/write，并加入 target/symlink/temp/Agent/remember fixtures；尚待独立验证与 merged-main std/curl Gate | target-preserving single-file commit；contained final symlink；stable `edit-v1` fault + Agent chain | hashline/apply_patch、hunk review |
 | Tools · shell | **L2** | fixed generic deny；UTF-8/base64 + scoped capture/body limits；real N/N+1；checked 64 KiB body；direct-PID + Agent/session/parsed-trace chain；independent re-review + Oracle + main std/curl passed；非 sandbox | synchronous shell-v1 matrix、bounded body、direct-child evidence、truthful recovered terminal ✅ | process supervisor |
 | Permissions | **L2** | D-007 descriptor-derived gate；remember 明确定义为 exact lexical request-path key，alias 保守 re-prompt 且 execution-time Guard 不可绕过；focused alias/jail evidence 跟随 h-edit-integrity-001 | descriptor-derived risk；custom Tool 同 gate；missing risk fail-closed；lexical remember boundary | canonical path/domain policies、Plan UX |
 | Workspace / Safety | **L2** | lexical + symlink-aware file containment（Root/Guard、loop+handler 双检、`code=jail_deny`）+ secret redaction + provider-independent doctor；default Agent ask-deny write / yolo escaping-symlink jail composition 已独立验收并通过 main std/curl；shell 是单独非 path-jail 边界；无 OS sandbox claim | file containment ✅；redaction ✅；doctor ✅；Agent policy/containment composition ✅ | OS sandbox/network/worktree |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | 既有 module/doctor/Agent/shell matrices 均通过；final audit 证明 suite 仍缺 mutator preservation 与 read/search budget/walker boundary fixtures | existing composition ✅；shell matrix ✅；两项 file-surface fixtures + fresh integration audit | edit/cost/perf baselines |
+| Quality / Evals | **L1+** | 既有 module/doctor/Agent/shell matrices 均通过；edit mutator preservation/Agent/remember fixtures 已在 in-progress branch 落地但待独立 Gate，read/search budget/walker fixtures 仍缺 | existing composition ✅；shell matrix ✅；两项 file-surface fixtures + fresh integration audit | edit/cost/perf baselines |
 
 ## Phase H production-floor exit
 
@@ -50,14 +50,14 @@
 5. **Context accounting ✅**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致。
 6. **Secrets ✅**：fake configured key 不出现在 verbose、trace、session fixtures；`.zag/` 仍标敏感；无 zeroization/DLP 声称。
 7. **Deadline/cancel ✅（按 H 边界）**：curl 真正执行 provider deadline/active cancel；std 配置 deadline 显式 `unsupported_control`；半截 Tool call 不执行；accepted multi-Tool turn 的 between-Tool cancel 组合 fixture 已验收。已运行 Tool/shell 的 mid-flight preemption 不属于 H，作为 post-H process work 保持显式 open。
-8. **Editing/runtime ❌**：shell 子合同已通过；file 子合同被 final audit 阻断。`h-edit-integrity-001` 必须证明目标保全/contained final symlink/`edit-v1`，`h-read-search-bounds-001` 必须证明四类 body 有界且所有 cutoff 显式 `fs-v1` incomplete。
+8. **Editing/runtime ❌**：shell 子合同已通过；edit atomic commit/contained final symlink/`edit-v1` 已在 task branch 实现并通过 develop fixtures，但独立/main Gate 未完成；`h-read-search-bounds-001` 仍须证明四类 body 有界且所有 cutoff 显式 `fs-v1` incomplete。
 9. **Observability ✅**：real invalid UTF-8 shell fixture 经 transcript/session/resume/parsed single-call trace 后以 recovered `completed` 收口；trace 用 exact-one counts，不假设 result call ID；shell policy/runtime replay Gate 已通过。
-10. **Regression evidence ❌**：既有 goldens、doctor、Agent policy/containment、between-Tool cancel 与 shell matrices 全绿，但缺 mutator write-fault preservation 和 read/search budget/walker boundary 永久 fixtures。
-11. **Documentation truth ❌（delivery 状态）**：负面能力边界保持诚实；本次 planning baseline 已登记两个 blocker 并同步 DAG，但只有两 task 完成且 fresh integration audit 通过后才能重新勾选本句。
+10. **Regression evidence ❌**：mutator preservation/Agent/remember 永久 fixtures 已在 edit task branch 增加但待独立 Gate；read/search budget/walker boundary fixtures 仍缺。
+11. **Documentation truth ❌（delivery 状态）**：负面能力边界保持诚实；edit task 保持 `in-progress`，integration 保持 blocked。只有两 file task 完成且 fresh integration audit 通过后才能重新勾选本句。
 
 L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。
 
-Final audit verdict is **FAIL** despite default `384/384` and curl `383/383`. Complete and independently merge both file-surface tasks first; then return `h-integration-001` to `ready` for a fresh 11-sentence audit. A green shell/provider row does not promote Phase H, file tools, SDK, or headless indirectly.
+Final audit verdict remains **FAIL** despite the historical default `384/384` and curl `383/383`. The edit task's develop implementation does not close its independent/merged-main Gate; complete and independently merge both file-surface tasks first, then return `h-integration-001` to `ready` for a fresh 11-sentence audit. A green shell/provider/edit develop suite does not promote Phase H, SDK, or headless indirectly.
 
 ## SDK-ready gate
 
@@ -76,7 +76,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Teaching | Demonstrates | Production gap |
 |----------|--------------|----------------|
 | Phase 0 | basic loop/read | lifecycle/error contracts |
-| Phase 1 | write/shell/ask | descriptor-driven risk、file containment 与 synchronous shell-v1 已分别过 Gate；edit fault sharpness仍保守 |
+| Phase 1 | write/shell/ask | descriptor-driven risk、file containment 与 synchronous shell-v1 已分别过 Gate；atomic edit fault implementation 在 task branch，仍待独立/main Gate |
 | Phase 2 | session/context | durability/open L2；compaction accounting L2 |
 | Phase 3 | lexical jail/policy/trace | real file containment、truthful/versioned trace、redaction closed；no OS sandbox |
 | **Phase H** | raises existing surfaces | original DAG done；final audit found edit-integrity + read/search-bounds blockers → integration blocked |
