@@ -1,33 +1,49 @@
 # Module: tools-shell
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-coding-agent/src/runtime/edit_tools.zig`（`run_shell`）+ core `shell_policy` |
-| 成熟度 | L1 → L2（随 H2/H5）→ L3（后台 job） |
-| 对标 | Hyper background tasks；Codex sandbox shell |
+| Item | Content |
+|------|---------|
+| Code | coding-agent `runtime/edit_tools.zig` (`run_shell`) + core `shell_policy` |
+| Current maturity | **L1** — synchronous bounded basics; lifecycle/sandbox gaps open |
+| Target | L2 H correctness → L3 background/process supervisor |
+| Reference | Hyper background tasks; Codex sandbox shell |
 
-## 不变式
+## Invariants
 
-1. Shell 经 permission → shell_policy → execute。  
-2. stdout/stderr 捕获并截断；超时可配置。  
-3. 退出码与超时必须可区分（错误码或结构化前缀）。
+1. Execute Tool declares `risk=execute` and passes permission then shell/process policy.
+2. Shell is not made workspace-contained by the file Tool jail.
+3. stdout/stderr are bounded and truncation is explicit.
+4. exit, timeout, cancellation, policy denial, spawn failure, and output truncation are distinguishable.
+5. A timeout/cancel owns and reaps the documented process scope; it does not leave an untracked child.
 
-## L2 要求
+## L2 synchronous contract
 
-- 统一结果：`exit_code` / `timed_out` / `output`（截断标记）  
-- 与 [workspace-sandbox](./workspace-sandbox.md) policy 矩阵联动测试  
-- 非交互；文档写明不支持 TTY 程序  
+- non-interactive command execution;
+- structured/machine-readable `exit_code`, timeout/cancel and bounded output semantics;
+- configured timeout actually executes;
+- cancel integrates with run terminal state;
+- fixed shell-policy matrix;
+- docs state that TTY/background/process-tree sandbox are absent.
 
-## L3 方向
+## Current gaps
 
-- 后台任务 + monitor/poll（C 轨 / Hyper user-guide 20）  
-- sandbox 内执行（C7）  
+- run cancellation does not preempt an in-flight Tool handler;
+- shell/process ownership and result shape need failure fixtures;
+- denylist is accident reduction, not OS isolation.
 
-## 非目标（H）
+## L2 acceptance
 
-- 完整 PTY 复刻 Hyper pager  
+- [ ] exit/timeout/cancel/policy/spawn failure matrix is stable.
+- [ ] timeout/cancel has a bounded cleanup contract.
+- [ ] output truncation preserves useful diagnostics and marks omitted bytes.
+- [ ] required policy/security events appear in truthful trace.
+- [ ] docs and behavior agree that no PTY/background/OS sandbox is present.
 
-## 相关
+## L3
 
-- [permissions.md](./permissions.md)  
-- [phases/H-harden.md](../phases/H-harden.md) H2/H5  
+Background jobs require C7 process supervisor first: task IDs, monitor/output retrieval, cancel/kill, process-group ownership, bounded retained logs, and required sandbox policy for autonomous execution.
+
+## Non-goals for H
+
+- PTY/TUI terminal emulation
+- Detached background jobs
+- OS sandbox implementation

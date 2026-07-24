@@ -11,12 +11,52 @@ docs/plan/
 └─ backlog.md         non-blocking findings / deferrals
 ```
 
-## Status
+## Current baseline
 
-| Area | Notes |
-|------|-------|
-| Phase H | Spec in [../phases/H-harden.md](../phases/H-harden.md); H1+H2 largely landed |
-| Tasks | Add files under `tasks/` when splitting work; see skill `docs-sprint` |
+The accepted planning baseline is [the 2026-07-24 production-floor assessment](./analysis/2026-07-24-production-floor-assessment.md).
+
+| Area | Status |
+|------|--------|
+| Phase H | **Not complete.** Functional foundations exist; P0/P1 correctness gates remain. |
+| P0 | Session durability, Tool descriptor/fail-closed policy, symlink containment, truthful trace lifecycle |
+| P1 | Compaction accounting, redaction, deadlines/cancel, Zig SDK gate, headless process gate |
+| P2 | Sandbox/process supervisor and capability work after their dependencies |
+
+Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
+
+## Task DAG
+
+```text
+ready P0
+  h-session-001
+  h-tool-runtime-001 ─► h-workspace-001
+  h-trace-001
+        │
+        ├─ h-session-001 + h-trace-001 ─► h-context-001
+        ├─ h-trace-001 ─────────────────► h-provider-001
+        └─ h-session-001 + h-trace-001 ─► h-redact-001
+                                                   │
+all module P0/P1 tasks ─► h-integration-001
+                              ├───────────────────► sdk-contract-001
+                              └───────────────────► headless-001
+```
+
+`ready` means dependencies are satisfied, not that tasks may safely edit one shared checkout in parallel. Use task `path` overlap rules.
+
+## Task index
+
+| ID | Priority | Status | Scope |
+|----|----------|--------|-------|
+| [h-session-001](./tasks/h-session-001.md) | P0 | ready | Session open/save/concurrency |
+| [h-tool-runtime-001](./tasks/h-tool-runtime-001.md) | P0 | ready | Tool descriptor + permission |
+| [h-workspace-001](./tasks/h-workspace-001.md) | P0 | pending | Filesystem containment after Tool descriptor |
+| [h-trace-001](./tasks/h-trace-001.md) | P0 | ready | Trace/run terminal lifecycle |
+| [h-context-001](./tasks/h-context-001.md) | P1 | pending | Compaction accounting |
+| [h-provider-001](./tasks/h-provider-001.md) | P1 | pending | Deadline/in-flight cancellation |
+| [h-redact-001](./tasks/h-redact-001.md) | P1 | pending | Secret redaction |
+| [h-integration-001](./tasks/h-integration-001.md) | P1 | pending | Phase H real-composition/E2E closeout |
+| [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
+| [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
 
 ## Task file skeleton
 
@@ -25,6 +65,7 @@ docs/plan/
 id: h3-001
 scope: permissions
 status: pending   # pending | ready | in-progress | done | blocked
+priority: P0      # assessment delivery priority
 depends-on: []
 ---
 
@@ -44,6 +85,8 @@ depends-on: []
 
 ## Rules
 
-- Design docs in **Product Spec** / **decisions** before coding contract changes.
-- Task `context` must point at existing specs.
-- Blocking review findings must be fixed before merge; non-blocking → `backlog.md`.
+- Design docs in **Product Spec** / **decisions** precede coding contract changes.
+- Task `context` points at existing specs; analysis is background, not the sole contract.
+- Blocking review findings must be fixed before merge; non-blocking findings go to `backlog.md`.
+- Behavior changes update the relevant module doc, maturity row, and teaching chapter in the same delivery.
+- No task may claim Phase H, SDK-ready, or headless-ready until its full gate passes.

@@ -1,68 +1,91 @@
 # Module: workspace-sandbox
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-agent-core/src/{workspace,shell_policy}.zig` |
-| 成熟度 | L1 → **L2（H5）** → L3（OS sandbox，C7） |
-| 对标 | Hyper sandbox；Codex sandbox；Droid readiness（轻量） |
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
+| Current maturity | **L1** — lexical jail/policy exist; symlink containment is P0 |
+| Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
+| Reference | Hyper sandbox; Codex sandbox |
 
-## 不变式
+## Threat model
 
-1. 路径工具不得访问工作区外（相对路径 jail）。  
-2. Shell policy 默认 `protect`；关 policy 须显式。  
-3. **H 阶段不声称 OS sandbox。** denylist ≠ 隔离。  
-4. Secret 不得以明文出现在 verbose/trace/session。
+H targets one local user on a trusted OS account, but the **workspace contents may be untrusted**, including pre-existing symlinks. H does not claim multi-tenant isolation, network isolation, or containment of arbitrary shell commands by the path jail.
 
-## Jail（已有，L2 加固）
+A product mode that requires OS enforcement must fail closed when enforcement is unsupported or cannot be installed. Warn-and-continue is not acceptable for such a mode.
 
-- 绝对路径、`..` 逃逸、NUL、空路径 → `jail_deny`  
-- 单测覆盖表维护在仓库测试中；改规则必改表  
+## Boundaries
 
-## Shell policy 必须用例（L2）
+```text
+file Tool: permission → lexical validation → filesystem containment → operation
+shell Tool: permission → shell policy → process runner (OS sandbox only when configured/required)
+```
 
-至少钉住（允许随实现微调，但需有测试名）：
+The file-tool jail and shell policy are different controls. `run_shell` is not made workspace-contained by `checkToolPath`.
 
-| 用例 | 期望 |
-|------|------|
+## Invariants
+
+1. File Tools do not read, write, list, search, or replace outside the workspace through absolute paths, `..`, symlinks, or equivalent aliases.
+2. Lexical path validation is a preliminary input check, not proof of containment.
+3. Containment uses real filesystem identity for existing targets and the resolved parent for create/write targets; final symlink behavior is explicit and tested.
+4. Enforcement selection comes from `ToolDescriptor` workspace capabilities, not a built-in-name list.
+5. Shell policy defaults to `protect`; disabling it is explicit.
+6. H documentation says **no OS sandbox**.
+7. Known secrets are redacted before verbose/trace/session persistence, while `.zag/` remains sensitive.
+
+## File containment contract (L2)
+
+- Reject empty/NUL/absolute/drive/UNC and lexical escape paths.
+- Resolve the workspace root once to a stable filesystem identity.
+- Existing read/list/search targets must resolve beneath that root.
+- Write/create resolves and verifies the parent; it must not follow an escaping final symlink.
+- Enforcement failure or an unresolvable security-critical case denies the Tool operation with a machine-readable jail error.
+- Document residual TOCTOU limits; tests cover the supported threat model.
+
+## Shell policy minimum matrix
+
+| Case | Expected |
+|------|----------|
 | `rm -rf /` | deny |
-| `curl … \| bash` / `wget … \| sh` | deny |
-| `echo hi` | allow（仍受 permission） |
-| `mkfs` / fork bomb 模式 | deny |
+| `curl … | bash` / `wget … | sh` | deny |
+| `mkfs` / fork-bomb pattern | deny |
+| `echo hi` | allow after permission |
 
-## Secret redact（L2）
+A denylist reduces accidents; it is not an adversarial sandbox.
 
-- 对已知 env 名与 `sk-`/`api_key` 类模式脱敏  
-- 应用于：stderr verbose、trace 参数字段、session 写盘前可选扫描  
-- 完整文件内容仍可能含秘密：文档警告 `.zag/` 敏感  
+## Secret redaction (P1)
 
-## Doctor / readiness（L2 最小）
+- One shared redactor consumes configured secret values plus documented common key patterns.
+- Apply before verbose logging, trace serialization, and session persistence.
+- Avoid claiming arbitrary file/tool content is secret-free; keep `.zag/` private.
 
-检查并打印：
+## Doctor/readiness
 
-- 是否存在 `AGENTS.md`（或等价）  
-- 是否存在 `build.zig` / 可识别测试入口  
-- 当前 permission / shell_policy / jail 状态  
+Report project instructions/test entry, permission mode, shell policy, lexical/real containment status, and sandbox availability. Doctor reports; it does not silently change policy.
 
-不自动修仓库；不适配则警告。
+## Current gaps
 
-## L2 验收
+- `checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.
+- systematic redaction and doctor are not implemented.
+- OS sandbox is intentionally absent.
 
-- [ ] policy 矩阵测试绿  
-- [ ] redact 单测：假 key 不进 trace 样例  
-- [ ] SECURITY.md 与本模块「非 OS sandbox」一致  
-- [ ] doctor 可调用（CLI 或库）  
+## L2 acceptance
 
-## L3（C7）
+- [ ] escaping symlinks are denied for read/list/grep/glob/write/search_replace.
+- [ ] normal contained paths and documented contained symlinks work.
+- [ ] policy matrix tests pass.
+- [ ] secret fixtures do not appear in verbose/trace/session output.
+- [ ] doctor exposes active controls.
+- [ ] SECURITY and maturity state the same trusted-host/non-sandbox boundary.
 
-- macOS seatbelt / Linux bubblewrap / 容器  
-- 网络 allowlist  
-- worktree 隔离执行  
+## L3 (C7)
 
-## 非目标（H）
+- macOS/Linux platform enforcement behind a process supervisor;
+- explicit network policy;
+- worktree isolation;
+- bounded process-tree cancellation and cleanup.
 
-- 多租户  
-- 完整 Hyper sandbox 复刻  
+## Non-goals for H
 
-## Hyper 对照
-
-- user-guide `18-sandbox`、`22-permissions-and-safety`  
+- Multi-tenant security
+- Kernel-escape resistance
+- Full Hyper sandbox reproduction

@@ -1,34 +1,32 @@
 # Gap: Phase 3 Jail + Policy + Trace → L2
 
-> Teaching：[chapters/03-production](../../chapters/03-production/README.md) = **tutorial-complete**。  
-> 章名含「production」为历史命名；**不等于** Production Floor 完成。  
-> 对照：[maturity.md](../maturity.md) Workspace / Trace / Quality。
+> Teaching chapter is tutorial-complete; its historical `production` name is not a maturity claim. Current truth: [maturity](../maturity.md).
 
-## 教程已具备
+## Teaching/current foundations
 
-- 工作区路径 jail（相对路径、拒绝对绝对路径与 `..` 逃逸）
-- shell denylist（`protect`）
-- `--trace` JSONL（tool 序列、jail/shell deny）
-- `SECURITY.md` 初稿
+- lexical relative-path validation;
+- `protect` shell denylist;
+- ask/yolo product default flow;
+- JSONL Tool/permission/usage/retry trace events;
+- SECURITY warning that OS sandbox is absent.
 
-## 离 L2 还差什么
+## Remaining L2 gaps
 
-| 缺口 | 为何算生产问题 | 落点 |
-|------|----------------|------|
-| 非 OS sandbox | denylist/jail 可被构造绕过 | 诚实文档 + **C7**；H 不承诺 sandbox |
-| 无 secret redact | key/内容进 verbose/trace/session | H5 · [workspace-sandbox](../modules/workspace-sandbox.md) |
-| policy 无固定测试矩阵 | 改一行 denylist 无回归 | H5 · [evals](../quality/evals.md) |
-| trace schema 无版本 | 审计工具易碎 | H7 · [trace-observability](../modules/trace-observability.md) |
-| trace 缺 usage / 停因 | 无法复盘成本与 cancel | H6 + H7 |
-| 无 `/doctor` readiness | 不适配仓库仍硬跑 | H5 最小 doctor |
-| 无 security eval CI | 「默认拒绝」只是故事 | H · Quality |
+| Gap | Production failure | Delivery |
+|-----|--------------------|----------|
+| lexical jail follows escaping workspace symlinks | file Tools can read/write outside the declared workspace | P0 `h-workspace-001` |
+| custom Tool risk unknown→read | mutating extension can bypass approval | P0 `h-tool-runtime-001` |
+| failed provider run may be finalized `ok=true/completed` | audit says success for failure | P0 `h-trace-001` |
+| explicit trace I/O is swallowed | caller believes audit exists when it does not | P0 `h-trace-001` |
+| trace schema absent | readers cannot evolve safely | P0/P1 trace task |
+| no shared secret redaction | known keys may enter verbose/trace/session | P1 `h-redact-001` |
+| policy/containment/fault matrix incomplete | safety story is not regression evidence | [quality/evals](../quality/evals.md) |
+| no doctor/readiness | active controls/degradation are not visible | H5 |
 
-## 非本阶段（勿写进「Phase 3 已完成」）
+## OS sandbox boundary
 
-- seatbelt / bubblewrap / 容器  
-- 网络 allowlist  
-- 多租户隔离  
+OS sandbox/network/process-tree enforcement is C7, not Phase H. Trusted-host L2 is allowed only with honest limitations and default ask. Higher-autonomy/background/untrusted executable extensions require a fail-closed sandbox/process-supervisor Gate.
 
-## 下一步
+## Next
 
-[H-harden H5 + H7](../phases/H-harden.md)；真沙箱 [C7](../phases/C7-sandbox.md)。  
+Complete P0 Tool/workspace/trace tasks, then redaction/doctor and the security fixtures. See [Phase H](../phases/H-harden.md) and [C7](../phases/C7-sandbox.md).

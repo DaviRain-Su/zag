@@ -1,49 +1,80 @@
 # Quality: Evals
 
-> 从 **Phase H** 起强制。改 harness 必须能回答：有没有变笨？安全默认有没有破？
+> Phase H correctness is demonstrated by failure fixtures, not by test count alone.
 
-## 三类
+## Suites
 
-| 类型 | 目的 | 何时 |
-|------|------|------|
-| **Golden transcript** | 固定 fixture 下 tool 序列/关键结果稳定 | H1 起；每阶段至少 +1 |
-| **Security eval** | jail/policy/redact/permission 不可回归 | H5 起 |
-| **Edit eval** | 锚点/替换成功率 | H2 起；C4 加强 |
+| Suite | Purpose | Gate |
+|-------|---------|------|
+| Golden transcript | Stable Tool sequence and transcript behavior under a fixed Provider | H1+ |
+| Fault/persistence | Session, trace, context, and cancellation failures preserve truth | P0/P1 |
+| Security | Permission, containment, policy, and redaction cannot regress | P0/P1 |
+| Provider contract | Fixed bytes map to canonical turn/error/cancel behavior | H6 |
+| Edit eval | Anchor/patch correctness and recovery | H2/C4 |
+| External consumer | Public source SDK composition compiles and runs outside product defaults | SDK gate |
+| Headless E2E | Stable process output/errors/exit status | Headless gate |
 
-## Golden 约定
+## Existing baseline
 
-- 夹具仓库：小、确定性（建议 `testdata/golden/<name>/`）  
-- 输入：用户提示固定；provider：**mock** 优先（录制回放次选）  
-- 断言：关键 `tool_call.name` 序列、最终文件内容、或 deny code  
-- CI：`zig build test` 包含之  
+- `readonly-list-build` — fixed mock: list → read → answer.
+- `deny-write` — permission denial and no target file.
+- `cancel-resume` — pending Tool result marked cancelled and session roundtrip.
+- provider request/turn/SSE/error fixtures under `zag-ai`.
 
-### H 最低集
+These remain useful but do not cover the assessment blockers.
 
-1. `readonly-list-build` — ✅ `packages/zag-coding-agent/src/golden_tests.zig`  
-2. `deny-write` — ✅ 同上（`permission_denied` + 文件不存在）  
-3. `cancel-resume` — ✅ cancel 后 session JSONL 可 load  
+## P0 minimum fixtures
 
-CI：`zig build test` 包含之。
+### Session
 
-## Security eval 最低集
+1. create-existing fails and preserves exact bytes.
+2. resume-missing, invalid JSON, unsupported schema, and generic I/O failure are distinct.
+3. save fault leaves the previous file loadable and is returned to caller.
+4. a second active writer receives busy/conflict; last-writer-wins fails the test.
 
-1. 绝对路径 read → `jail_deny`  
-2. `../` 逃逸 → deny  
-3. denylist 命令 → `shell_deny`  
-4. 假 API key 字符串不出现在 trace 样例（redact）  
+### Tool policy
 
-## Edit eval（H2/C4）
+1. a registered custom mutating Tool is denied by the dangerous-tool deny gate.
+2. Tool registration without required capabilities fails before a Provider call.
+3. provider-visible Tool schema contains no local risk/policy metadata.
 
-1. 唯一锚点替换成功  
-2. 模糊锚点 → `ambiguous_anchor`，文件未改  
-3. stale 锚点 → 可恢复路径（重读后成功）  
+### Workspace
 
-## 维护
+1. absolute and `..` paths deny.
+2. workspace symlink → outside is denied for read/list/grep/glob/write/search_replace.
+3. ordinary contained paths remain usable.
 
-- 故意改行为时更新 golden，并在 PR 说明  
-- 禁止「修 flaky」时削弱断言到无意义  
+### Run/trace lifecycle
 
-## 相关
+1. provider authentication failure ends exactly once with `ok=false`, `provider_error`.
+2. explicit unwritable trace path is observable.
+3. completed, max-turns, and cancelled each have one matching terminal event.
 
-- [contracts.md](./contracts.md)  
-- [maturity.md](../maturity.md) Quality 行  
+## P1 minimum fixtures
+
+1. two-stage compaction: final `dropped` and summary/lineage match the returned view.
+2. fake configured secrets do not appear in verbose, trace, or session bytes.
+3. timeout is enforced or explicitly unsupported for std/curl paths.
+4. stream cancellation discards incomplete Tool-call fragments.
+5. external stateful Tool/Provider/Observer/policy/session consumer passes.
+6. headless JSON stdout is clean; failure exit/error matrix is stable.
+
+## Edit eval (H2/C4)
+
+1. unique anchor replacement succeeds;
+2. ambiguous anchor fails without mutation;
+3. stale anchor is recoverable after reread;
+4. C4 adds hunk review and post-edit validation.
+
+## Maintenance
+
+- Every fixed P0/P1 failure remains a permanent regression fixture.
+- Intentional behavior changes update the contract and fixture in one delivery.
+- Never weaken an assertion merely to make a fixture green.
+- Live-provider checks may supplement but never replace deterministic CI contracts.
+
+## Related
+
+- [assessment](../plan/analysis/2026-07-24-production-floor-assessment.md)
+- [provider contracts](./contracts.md)
+- [maturity](../maturity.md)

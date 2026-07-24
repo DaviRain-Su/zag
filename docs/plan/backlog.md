@@ -1,11 +1,15 @@
 # Backlog (non-blocking)
 
- deferrals and non-blocking review findings. Blocking items stay on the task until fixed.
+Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/](./tasks/) and the [assessment](./analysis/2026-07-24-production-floor-assessment.md).
 
-| Date | Source | Note |
-|------|--------|------|
-| 2026-07-24 | H1 closeout | Parallel read-only tool batches → L3 (documented serial for L2) |
-| 2026-07-24 | H2 | Edit golden for stale-anchor recover path optional |
-| 2026-07-24 | H3 | Plan mode full UX / hotkeys → C6 (stub + invariants shipped) |
-| 2026-07-24 | H4 | Context/Session L2：四层 Layers、view-only compaction、schema_version |
-| 2026-07-24 | H6 | Session JSONL usage metadata; stream cancel tests |
+| Date | Source | Priority | Note |
+|------|--------|----------|------|
+| 2026-07-24 | H1 | P2 | Parallel read-only tool batches; serial execution remains acceptable for L2. |
+| 2026-07-24 | H2 | P2 | Additional stale-anchor recovery golden after correctness gates. |
+| 2026-07-24 | H3 | P2 | Full Plan UX/hotkeys after the permission contract; current stub is not an L2 SDK claim. |
+| 2026-07-24 | H6 | P2 | Session usage/cost metadata after persistence semantics are safe. |
+| 2026-07-24 | Assessment | P2 | C4 edit sharpness and C5.1 repo map may start after their H dependencies. |
+| 2026-07-24 | Assessment | P2 | OS sandbox/process supervisor before higher-autonomy background jobs and executable extensions. |
+| 2026-07-24 | Assessment | P2 | Memory Repo, Graph, TUI, full LSP/AST remain later capability work. |
+| 2026-07-24 | Assessment | P2 | Measure startup/size/cross-build before making Zig performance claims. |
+| 2026-07-24 | Packaging | P2 | Repo split/C ABI/dynamic plugin ABI deferred until SDK gate plus a second consumer/release channel. |

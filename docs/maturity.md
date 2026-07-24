@@ -1,76 +1,86 @@
 # Zag 生产成熟度矩阵
 
-> **真理源。** 其他文档对「做到哪了」有争议时，以本文件为准。  
-> 更新规则：实现合并后回写「现状」列；新能力先补 L2/L3 验收句再写代码。
+> **状态真理源。** 其他文档对“当前做到哪了”有争议时，以本文件为准。合同细节以对应 `docs/modules/` 和 active decisions 为准。
 
-| Level | 含义 |
-|-------|------|
+| Level | Meaning |
+|-------|---------|
 | **L0** | 无 / 玩具 |
-| **L1** | 教程可演示（Teaching Phase 0–3 多数停在这） |
-| **L2** | **生产底线**（[Phase H](./phases/H-harden.md) 目标）：日用可信、可审计、可回归 |
-| **L3** | 工业锐度（Capability / Hyper·omp 级） |
+| **L1** | 教程可演示；正常路径可用 |
+| **L2** | **生产底线**：单用户、受控本机、失败可见、状态可恢复、行为可审计 |
+| **L3** | 工业锐度与更高自治 |
 
-**总状态（文档日）：** Teaching = L1 齐；Production Floor = **未达 L2**（主线 Phase H）；Capability = 未开始。  
-**局部进度：** Provider / Trace 有 L1+ 接线（ChatOptions、retry、usage 事件、catalog 预算），**未**满足 L2 出门句。
+`L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-> 等级规则：只有 L2 验收句**全部**可演示 + 有证据，才把「现状」升到 L2。部分完成写在「证据」列，不提前升格。
+**总状态（2026-07-24 评估后）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。
 
----
+> 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
-## 矩阵
+评估与优先级：[production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
 
-图例：单元格为当前自评等级。证据路径相对于仓库根。
+## 当前矩阵
 
-| 子系统 | 现状 | 证据 | L2 验收（一句话） | L3 方向 | 对标 |
-|--------|:----:|------|-------------------|---------|------|
-| Loop / Turn | L2 | `loop.zig` + `cancel.zig` + `tool_error`；golden in `zag-coding-agent/src/golden_tests.zig` | 统一可机读 tool 错误；cancel 干净结束；max_turns/超时进 trace；≥2 golden | 并行只读、steer、Turn 生命周期 | Pi loop；Nanocodex Turn |
-| Tools · read | L1 | `packages/zag-coding-agent/src/runtime/fs_tools.zig` | jail 内 list/read 稳定；大文件截断可解释 | LSP 诊断闭环 | Hyper tools |
-| Tools · write/edit | L1+ | `edit_tools.zig`：`search_replace`（唯一内容锚点）+ `write_file`；写后可选 `git diff` | 默认路径含 **search_replace + 内容锚点**；stale 可恢复；非唯一 overwrite | hashline 级；diff review UX | Hyper hashline；omp |
-| Tools · search | L1+ | `fs_tools.zig`：`grep`（字面量）+ `glob`（`*`/`**`）；jail + result budget | `grep` + `glob` 在 jail 内，结果有 budget | AST / codebase-graph | Hyper；Aider |
-| Tools · shell | L1 | `edit_tools.zig` `run_shell` | 超时/截断/exit code 统一形状；policy 测试矩阵绿 | 后台 job + monitor | Hyper background |
-| Permissions | L2 | `permissions.zig`：read/write/shell 矩阵；会话 remember；`SessionKind.plan` stub；CLI `--plan` / `--no-remember`；trace `remembered` | 按 tool 类矩阵；会话内 remember 同 path | plan mode 产品化；细粒度 path 规则 | Hyper permissions |
-| Workspace / Sandbox | L1 | `workspace.zig` + `shell_policy.zig` | jail + denylist + **secret redact** + `/doctor` 最小；SECURITY 诚实 | OS sandbox（seatbelt/bwrap） | Hyper sandbox；Codex |
-| Context / Compaction | **L2** | `context.zig`（四层 Layers + view-only compaction） | 四层 prompt；超限 compaction（摘要+最近 N）落盘可解释 | repo map；智能选文件；**Memory 挂载点** | Pi；Aider；Hyper |
-| Session / Resume | **L2** | `session_store.zig`（schema_version + meta） | schema 版本 + 迁移；transcript≠view 边界写死 | session 树 / fork / 旁支 | Pi；Nanocodex fork |
-| Provider / zag-ai | L1+ | `packages/zag-ai/`：WireAdapter + `createWire`；openai_compat + anthropic_messages；shared http/Config；embed on vtable；retry/usage/contract_tests；catalog→comptime + `cost.Ledger` 已接线 CLI。欠：session 文件元数据、流式取消测试、redact 联动 | H6 收口项勾满 → L2（见 [zag-ai-provider](./modules/zag-ai-provider.md)） | fallback / multi-key；第三协议 | Hyper models；omp |
-| Trace / Observability | L1+ | `trace.zig`（usage / provider_retry 事件） | schema 版本化；能复盘 permission/jail/shell/usage | dashboard；费用透视 | Hyper dashboard |
-| Memory Repo | L0 | 规格 [modules/memory.md](./modules/memory.md) | （H 不做）C5：默认关；可审可删；注入 ephemeral | embed 检索可选 | Hyper memory |
-| Subagents / Oracle | L0 | — | （H 不做）C6：typed 子代理 + Oracle pin + 对话点名触发 | Advisor；worktree fan-out | Amp；Hyper design-oracle |
-| Extensions | L0 | — | （H 不做）C8：Skills 目录可加载 | Hooks + MCP + plugin 包 | Pi；goose；Hyper |
-| UX | L1 | `packages/zag-cli/src/cli.zig`（main 为薄入口）；`--trace` 仅消费 path-like / `--trace=` | headless 友好 exit code + 稳定 flag；文档与行为一致 | TUI；ACP | Hyper pager；Codex |
-| Quality / Evals | L1 | golden：readonly-list-build、deny-write、cancel resume（随 `zig build test`） | H 起：golden + security eval 可 CI | edit eval；cost 基线 | Nanocodex contracts |
+| Subsystem | Current | Evidence and blocker | L2 exit | L3 direction |
+|-----------|:-------:|----------------------|---------|--------------|
+| Loop / Turn | **L1+** | soft Tool errors、serial order、goldens、between-call cancel 已有；provider failure/terminal trace 与 in-flight cancel 未闭合 | API/error/trace terminal 一致；cancel/deadline 有界；≥2 goldens | steer、parallel read-only |
+| Tool runtime / registry | **L1** | built-in registry 可用；handler 无 instance pointer，runtime capability 缺失 | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
+| Tools · read/search | **L1** | list/read/grep/glob + budgets 已有；symlink 可越界 | 所有 file Tool 经真实 containment；结果有界 | LSP/repo map integration |
+| Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff 已有 | containment 下 stale/ambiguous 可恢复且不误写 | hashline/apply_patch、hunk review |
+| Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
+| Permissions | **L1+** | built-in matrix/remember/Plan stub 已有；custom mutating Tool 可默认 read | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
+| Workspace / Safety | **L1** | lexical jail + shell policy；无 secret redaction/doctor；symlink escape | symlink-aware containment、redaction、doctor、诚实 threat model | OS sandbox/network/worktree |
+| Context / Compaction | **L1+** | four Layers + view-only summary 已有；second-stage trim accounting 不完整 | final returned view 与 dropped/summary/session/trace 一致 | repo map、智能选文件 |
+| Session / Resume | **L1+** | schema v1/legacy roundtrip 已有；resume fallback、truncate save、hidden save error、无 writer conflict | explicit create/resume；atomic preservation；visible save errors；exclusive writer/conflict | fork/tree/journal as needed |
+| Provider / zag-ai | **L1+** | two wire styles、retry/usage/contracts/cost 已有；std timeout 无效、stream cancel/partial Tool safety 未闭合 | enforced-or-rejected deadline；in-flight cancel；redaction；contract matrix | fallback/multi-key/third protocol on demand |
+| Trace / Observability | **L1** | event JSONL/usage/retry 已有；无 schema，provider failure 可被 finalise 为成功，I/O hidden | versioned schema；exactly one truthful terminal；visible persistence failure | dashboard/correlation |
+| Zig source composition | **L1** | external low-level Kernel composition 可编译运行 | [SDK gate](./packaging.md#sdk-ready-gate)：stateful Tool、injection、ownership/error/event contracts、external consumer CI | published packages after second consumer |
+| Headless / Process SDK | **L1** | one-shot CLI 存在；无 versioned JSON/events/exit matrix | clean JSON/streaming output + stable errors/exit codes | ACP/editor integration |
+| Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
+| Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
+| Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
+| Quality / Evals | **L1+** | 111 tests、goldens、provider fixtures、dual backend CI；P0 fault/security fixtures缺失 | P0/P1 failure matrix进入 CI；不得削弱断言 | edit/cost/performance baselines |
 
----
+## Phase H production-floor exit
 
-## 按 Teaching 阶段对照
+全部为真，才能对外写“生产底线（单用户、受控本机）”：
 
-| Teaching | 教程目标 | 多数子系统落点 | 生产缺口文档 |
-|----------|----------|----------------|--------------|
-| Phase 0 | 可跑 loop | Loop/Tools-read = L1 | [gaps/00-loop.md](./gaps/00-loop.md) |
-| Phase 1 | 能写 + 权限门 | write/shell/permissions = L1 | [gaps/01-edit.md](./gaps/01-edit.md) |
-| Phase 2 | 会话续聊 + view | session/context = L1 | [gaps/02-session.md](./gaps/02-session.md) |
-| Phase 3 | jail + policy + trace | workspace/trace = L1 | [gaps/03-safety.md](./gaps/03-safety.md) |
-| **Phase H** | 全体抬到 **L2** | 见 [phases/H-harden.md](./phases/H-harden.md) | — |
+1. **Session durability**：create/resume 分离；invalid/unsupported/I/O 不回退新会话；save 原文件保护；错误可见；并发 writer 冲突。
+2. **Tool contract**：Tool 有 instance state 和 mandatory runtime descriptor；risk/path/cancel 不按名称猜测；缺失 metadata fail-closed。
+3. **Filesystem containment**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace；shell 边界单独诚实说明。
+4. **Truthful lifecycle**：每个 started run 恰有一个 terminal；provider/save/trace/cancel/timeout 不得记为 completed success。
+5. **Context accounting**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致。
+6. **Secrets**：fake configured key 不出现在 verbose、trace、session fixtures；`.zag/` 仍标敏感。
+7. **Deadline/cancel**：公开 timeout 真正执行或明确拒绝；provider/stream cancellation 有界；半截 Tool call 不执行。
+8. **Editing/runtime**：search_replace/grep/glob 可用；shell exit/timeout/truncation/deny 为稳定机器可读形状。
+9. **Observability**：trace schema versioned；permission/jail/shell/usage/stop reason 可复盘；显式 trace I/O failure可见。
+10. **Regression evidence**：goldens + P0 fault fixtures + security/redaction + provider cancel contracts 均在 CI。
+11. **Documentation truth**：README、SECURITY、architecture、Phase H 与本表一致，不声称 OS sandbox 或 SDK-ready 已具备。
 
----
+L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。
 
-## L2 总验收（Phase H 出门条件）
+## SDK-ready gate
 
-全部为真才可在对外文案写「生产底线（单用户本机）」：
+Phase H correctness 是前置，但不自动等于 SDK-ready。SDK-ready 还要求：
 
-1. 编辑默认路径不是「唯一整文件 overwrite」。  
-2. `grep`/`glob` 可用且受 jail。  
-3. tool 错误可机读；permission/jail/shell deny 进版本化 trace。  
-4. prompt 四层 + 最小 compaction；session 有 schema 版本。  
-5. API key 不出现在 verbose/trace/session 明文（redact）。  
-6. shell policy 与 jail 有固定测试矩阵。  
-7. ≥2 条 golden transcript + ≥1 条 security eval 在 CI。  
-8. `SECURITY.md` / `maturity.md` / README 叙事一致：不声称 OS sandbox 已具备。
+- supported high-level injection of Toolset/Observer/policy;
+- documented ownership/lifetime/error/cancel/event compatibility;
+- repository-owned external stateful consumer test;
+- package self-contained tests;
+- migration/release policy。
 
----
+Semver publication and repo mirror wait for a second real consumer and release channel. See [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md).
 
-## 维护
+## Teaching mapping
 
-- 实现 PR：若改变某行等级，必须改本表「现状」与证据路径。  
-- Capability 阶段完成某 L3 项时，把「L3 方向」迁到「现状」并注明阶段 ID（C4…）。  
-- 与 [vision.md](./vision.md) 冲突时以 vision 的「刻意不做」为准，降级或标 wont。  
+| Teaching | Demonstrates | Production gap |
+|----------|--------------|----------------|
+| Phase 0 | basic loop/read | lifecycle/error contracts |
+| Phase 1 | write/shell/ask | extensible fail-closed Tool policy |
+| Phase 2 | session/context | durability/open/compaction accounting |
+| Phase 3 | lexical jail/policy/trace | real containment/redaction/truthful trace |
+| **Phase H** | raises all existing surfaces | current active P0/P1 tasks |
+
+## Maintenance
+
+- Behavior changes update the relevant module doc, this matrix, task, and teaching chapter together.
+- A partial implementation stays L1/L1+ until every exit sentence for that row passes.
+- Capability work cannot mark a blocked H row L2 indirectly.

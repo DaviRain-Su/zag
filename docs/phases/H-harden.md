@@ -1,121 +1,201 @@
-# Phase H — Production Floor（硬化）
+# Phase H — Production Floor (hardening)
 
-| 项 | 内容 |
-|----|------|
-| 状态 | **规格**（实现未完成） |
-| 前置 | Teaching Phase 0–3 tutorial-complete |
-| 目标 | 全体关键子系统 → [maturity L2](../maturity.md) |
-| 非目标 | subagent、MCP、OS sandbox、TUI（属 C 轨） |
+| Item | Content |
+|------|---------|
+| Status | **In progress; not L2** |
+| Prerequisite | Teaching Phase 0–3 tutorial-complete |
+| Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
+| Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
+| Assessment | [2026-07-24 production-floor assessment](../plan/analysis/2026-07-24-production-floor-assessment.md) |
 
-## 原则
+## Reset after assessment
 
-1. **加深已有表面**，不新增产品品类。  
-2. 每切片：规格 → 实现 → 回写 maturity → 至少 1 条测试/golden。  
-3. 出门条件见 maturity「L2 总验收」。
+Earlier H notes treated H1/H3/H4 feature presence as closeout. Failure-path fixtures showed that several contracts remain open:
 
-## 已知问题（H 内必修）
+- schema exists, but resume/save can still lose data;
+- built-in permission matrix exists, but custom Tool risk fails open;
+- four prompt layers exist, but second-stage trim accounting is incomplete;
+- trace events exist, but a provider failure may end as successful completion;
+- lexical jail exists, but workspace symlinks escape it.
 
-| 问题 | 位置 | 说明 |
-|------|------|------|
-| ~~`--trace` 可选参吞 prompt~~ | `zag-cli` | ✅ 已修：仅 path-like / `--trace=PATH` 才消费下一参数 |
-| ~~core → zag-ai 依赖残留~~ | `zag-agent-core` | ✅ 已抽 `zag-types`；core 仅依赖 L0 |  
-4. **不做** Memory Repo / repo map / subagent / MCP（属 C 轨；见 [memory.md](../modules/memory.md)）。
+Therefore **feature landed ≠ L2 closed**. Current truth is `maturity.md`; priorities and task IDs live in the assessment/plan.
 
----
+## Principles
 
-## H1 — Loop
+1. Correctness and failure visibility before capability breadth.
+2. Contract/spec → failing fixture → implementation → integration/E2E → maturity update.
+3. Required data/metadata fails explicitly; silent fallback requires a documented optional lookup.
+4. Product default remains `ask`; H does not claim OS sandbox.
+5. Package separation does not imply SDK-ready.
+6. Do not add Memory, Graph, TUI, MCP, or background jobs to avoid a P0/P1 fix.
 
-**规格：** [modules/loop-turn.md](../modules/loop-turn.md)
+## Delivery priorities
 
-**已有（勿重做）：** soft-fail `error: code=<CODE> message=…`；`Result.stop_reason`（含 `cancelled` / `max_turns` / `completed`）；`cancel.Flag` + CLI `SIGINT`；取消时补齐未执行 tool 的 `code=cancelled`（transcript 可 resume）；工具批内**串行**（单测钉死顺序）；golden：`readonly-list-build`、`deny-write`、`cancel then session save/load`。
+| Priority | Phase H meaning |
+|----------|-----------------|
+| **P0** | Data preservation, fail-closed permission, filesystem containment, truthful terminal/audit state |
+| **P1** | Compaction accounting, redaction, deadline/cancel, SDK/headless gates |
+| **P2** | Capability/packaging work after the contracts above |
 
-**H1 出门：** 本切片收口完成。并行只读执行属 L3。
+Canonical table: [assessment § priorities](../plan/analysis/2026-07-24-production-floor-assessment.md#priority-meanings).
 
-## H2 — Edit
+## P0 queue
 
-**规格：** [modules/tools-edit.md](../modules/tools-edit.md)
+| Task | Contract | Exit |
+|------|----------|------|
+| [h-session-001](../plan/tasks/h-session-001.md) | [D-006](../decisions/active/D-006-session-open-and-durability.md) | explicit create/resume; atomic preservation; visible errors; writer conflict |
+| [h-tool-runtime-001](../plan/tasks/h-tool-runtime-001.md) | [D-007](../decisions/active/D-007-tool-runtime-descriptor.md) | stateful Tool; mandatory descriptor; fail-closed custom policy |
+| [h-workspace-001](../plan/tasks/h-workspace-001.md) | [workspace-sandbox](../modules/workspace-sandbox.md) | symlink-aware file containment |
+| [h-trace-001](../plan/tasks/h-trace-001.md) | [trace-observability](../modules/trace-observability.md) | exactly one truthful terminal; visible trace failure |
 
-**已有（勿重做）：** `search_replace`（唯一 `old_string` 锚点；`anchor_not_found` / `ambiguous_anchor` / `too_large`）；`grep` / `glob`（jail + budget）；`write_file` 保留新建/整文件；写后可选短 `git diff`；默认 toolset + CLI system 引导优先 `search_replace`。
+No P2 capability implementation is promoted while a P0 task remains open.
 
-**H2 收口剩余：**
+## H1 — Loop / lifecycle
 
-- golden transcript：stale 锚点 → read → 重试（可选；单测已覆盖锚点失败）  
-- shell 错误形状统一（旁路，见 tools-shell）
+Spec: [loop-turn](../modules/loop-turn.md).
 
-## H3 — Permissions
+### Landed
 
-**规格：** [modules/permissions.md](../modules/permissions.md)
+- stable machine-readable Tool-result errors;
+- serial Tool order;
+- `completed` / `max_turns` / between-call `cancelled` Result paths;
+- pending Tool-call cancellation results keep transcript resume-safe;
+- golden transcripts.
 
-**已有（勿重做）：** 类别矩阵 read / write / shell（`Risk`）；会话内 write-path remember（可 `--no-remember`）；trace `remembered`；`SessionKind.plan` stub（只读 + `plan.md` / `.zag/plan.md`；CLI `--plan`）。Jail / shell_policy 仍在权限门之后。
+### Remaining
 
-**H3 出门：** 本切片收口完成。完整 plan UX → C6。
+- provider/error/facade/trace terminal state agreement (P0 trace task);
+- in-flight provider/stream cancellation/deadline (P1 provider task);
+- partial Tool-call discard after cancellation.
+
+H1 remains **L1+**, not closed L2.
+
+## H2 — Edit/search/shell
+
+Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-shell.md).
+
+### Landed
+
+- `search_replace` with unique anchor and stable error codes;
+- `grep` / `glob` with result budgets;
+- `write_file` for create/full replacement;
+- optional post-write diff;
+- shell policy/timeout/truncation basics.
+
+### Remaining
+
+- all file Tools must use descriptor-selected real containment;
+- shell error/deadline/cancel shape must align with H lifecycle contracts;
+- C4 edit sharpness/change review remains post-H capability.
+
+## H3 — Tool runtime / permissions
+
+Specs: [tool-runtime](../modules/tool-runtime.md), [permissions](../modules/permissions.md).
+
+### Landed
+
+- built-in read/write/execute matrix;
+- write-path remember and `--no-remember`;
+- Plan stub and permission trace event.
+
+### Remaining (P0)
+
+- separate model `ToolDefinition` from runtime capabilities;
+- stateful Tool instance pointer/callback;
+- descriptor-derived risk/path/cancel metadata;
+- missing/invalid capability fails registration rather than defaulting to read;
+- custom mutating Tool follows the same gate as built-ins.
+
+H3 remains **L1+**, not closed L2.
 
 ## H4 — Context / Session
 
-**规格：** [context-compaction.md](../modules/context-compaction.md)、[session-store.md](../modules/session-store.md)
+Specs: [context-compaction](../modules/context-compaction.md), [session-store](../modules/session-store.md).
 
-**已落地：**
+### Landed
 
-- prompt 四层：`context.Layers`（system / project / session / ephemeral）经 `viewForModel` 组装  
-- compaction：超限 → 启发式摘要进 view + `SessionMeta.compaction_*`；**不删** transcript  
-- session `schema_version`（+ legacy `v`）；未知版本拒绝；trace `compaction` 事件  
+- four prompt layers;
+- view-only heuristic compaction without transcript deletion;
+- session schema v1 and legacy parsing;
+- compaction metadata/trace event plumbing.
 
-**H4 出门：** 本切片收口完成。repo map / session fork → C5。
+### Remaining
+
+- P0 session explicit open, atomic save preservation, visible errors, exclusive writer;
+- P1 final-view compaction accounting and summary lineage;
+- persistence/trace integration fixtures.
+
+H4 remains **L1+**, not closed L2. Repo map/fork/Memory stay C5.
 
 ## H5 — Safety
 
-**规格：** [workspace-sandbox.md](../modules/workspace-sandbox.md)
+Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
-- shell policy **必须用例表** + 单测  
-- secret redact：API key 模式不进 verbose/trace/session 明文  
-- 文档明确：**尚非 OS sandbox**；C7 边界  
-- readiness/doctor 最小：探测 `zig build test` 脚本或 `build.zig`、`AGENTS.md` 是否存在  
+Required:
 
-## H6 — Provider（zag-ai）
+- symlink-aware containment for all file Tools (P0);
+- fixed shell-policy matrix;
+- shared secret redaction before verbose/trace/session (P1);
+- doctor/readiness output;
+- explicit trusted-host/non-OS-sandbox threat model.
 
-**规格：** [zag-ai-provider.md](../modules/zag-ai-provider.md)
+OS sandbox/process supervisor remains C7, but is required before higher-autonomy/background/untrusted executable-extension claims.
 
-**已有（勿重做）：** `isRetryableError`、transport + loop 重试、`ChatOptions`/config、turn usage → trace、catalog 预算、`contract_tests.zig`、包边界 openai-zig、`cost.Ledger` 接线 CLI（累计 + `run_end` USD）；HTTP 双 backend（`-Dhttp_backend=std|curl`，[D-005](../decisions/complete/D-005-outbound-http-std-not-httpz.md) Phase 0–3 已收口）。
+## H6 — Provider
 
-**H6 收口剩余：**
+Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 
-- usage 写入 session JSONL 元数据（内存 Ledger / CLI 汇总已有）  
-- 流式取消与不完整 tool_call 组装规格 + 测试（std/curl 均尚无 mid-stream cancel）  
-- contract 目录约定与 CI 说明（见 [quality/contracts.md](../quality/contracts.md)）  
-- 与 H5 redact：密钥不进 verbose/trace
-- （可选）std 路径真正执行 `timeout_ms`，或文档强制生产用 curl
+### Landed
 
-## H7 — Trace
+- OpenAI-compatible and Anthropic wire adapters;
+- canonical errors, retry, ChatOptions, usage/cost, provider fixtures;
+- std/curl selectable transports.
 
-**规格：** [trace-observability.md](../modules/trace-observability.md)
+### Remaining (P1)
 
-**已有雏形：** `usage`、`provider_retry` 事件。
+- public timeout is enforced or explicitly rejected;
+- cancel/deadline propagation through Provider/adapter/stream;
+- incomplete Tool-call fragment discard;
+- retry ownership/attempt traceability;
+- redaction integration.
 
-**H7 剩余：**
+Until std deadlines are implemented, production deadline users must use the documented curl path; storing an ineffective timeout is not L2.
 
-- 事件 schema 版本化  
-- 必须能复盘：permission / jail_deny / shell_deny / usage / 停因  
-- 与 [SECURITY.md](../../SECURITY.md) 交叉链接  
+## H7 — Trace / quality
 
----
+Specs: [trace-observability](../modules/trace-observability.md), [evals](../quality/evals.md), [contracts](../quality/contracts.md).
 
-## 建议实现顺序
+Required:
+
+- trace schema version;
+- exactly one truthful terminal event;
+- provider/save/trace/cancel/timeout terminal fixtures;
+- P0 persistence/tool/workspace failure fixtures;
+- P1 compaction/redaction/provider cancellation fixtures;
+- std/curl and external-consumer gates in CI.
+
+## Dependency order
 
 ```text
-H1 + H7（错误与审计底座）
-  → H2 + H3（编辑与权限）
-    → H4（上下文）
-      → H5 + H6（安全与模型）
-        → Quality CI 绿灯 → 回写 maturity 全 L2
+P0 session + Tool + workspace + trace
+  ├─► P1 context
+  ├─► P1 provider deadline/cancel
+  └─► P1 redaction
+         │
+         ▼
+h-integration-001（real product composition + failure matrix）
+         │
+         ▼
+Phase H L2 exit
+  ├─► Zig SDK-ready gate
+  ├─► headless/process gate
+  ├─► C4 edit sharpness
+  ├─► C5.1 repo map/fork
+  └─► C7 sandbox/process supervisor
 ```
 
-## 对照读码（一次一个）
+This is a DAG. Independent P0 work may overlap in isolated worktrees when task paths do not overlap; shared truth docs may require serialized merges.
 
-- Hyper：tools 编辑 / hashline **或** shell session turn  
-- Pi：session vs compaction 边界叙述  
+## Exit
 
-## 相关
-
-- [chapters/H-harden](../../chapters/H-harden/README.md)  
-- [roadmap.md](../roadmap.md)  
-- [quality/evals.md](../quality/evals.md)  
+Phase H exits only when all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) and the linked task verifications pass. A green current test suite, package split, or partial checklist cannot waive an exit condition.

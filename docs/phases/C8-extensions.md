@@ -1,35 +1,51 @@
 # C8 — Extensions
 
-| 项 | 内容 |
-|----|------|
-| 前置 | **Phase H 完成** |
-| 失败模式 | 扩展必须改核心；生态无法分享 |
-| 模块 | [extensions](../modules/extensions.md) |
-| 哲学 | Pi：**先包后核** |
+| Item | Content |
+|------|---------|
+| Prerequisite | Phase H + SDK/process contracts; executable extension prerequisites depend on risk |
+| Failure mode | every workflow requires core edits, or third-party Tools bypass policy/safety |
+| Module | [extensions](../modules/extensions.md) |
+| Philosophy | validate externally before promoting into product core |
 
-## 目标
+## Scope by risk
 
-不改 Zag 核心也能增加工作流：Skills、Hooks、MCP、可分享 plugin 目录。
+### Passive Skills/packages
 
-## 范围
+- `SKILL.md` discovery and bounded prompt injection;
+- agent/prompt definitions with no executable privilege;
+- may follow SDK/headless injection contracts without waiting for full OS sandbox.
 
-1. Skills：目录约定 + `SKILL.md`；触发与 prompt 注入预算  
-2. Hooks：PreToolUse / PostToolUse / Stop；可 deny  
-3. MCP client（stdio）；tool 合并进 registry，仍过权限/jail  
-4. Plugin 包：一目录 = skills + hooks + agents 定义  
-5. 示例包 ≥1（文档+夹具）
+### Hooks
 
-## 非目标
+- Pre/Post Tool and Stop lifecycle;
+- consume versioned events and validated ToolDescriptor;
+- a hook may deny but may not weaken mandatory policy/containment.
 
-- 商业插件市场  
-- 一上来内置 30+ 官方 skills  
+### MCP/executable servers
 
-## 验收
+- stdio/process transport behind quarantine;
+- every imported Tool supplies validated D-007 capabilities before registry insertion;
+- process supervisor owns child lifecycle/output/cancel;
+- permission and required sandbox policy apply exactly as for built-ins.
 
-- [ ] 丢入 skill 目录无需重编译即可生效（或热加载策略成文）  
-- [ ] Hook 能否决危险 write（测试）  
-- [ ] 至少一个 MCP server 联调文档  
+## Invariants
 
-## 对标
+- Missing/unknown Tool capability fails closed.
+- Extensions do not import provider wire types into Kernel.
+- Executable extension failure is structured and cannot corrupt session/trace terminal state.
+- No dynamic shared-library/C ABI requirement; process protocol is preferred.
+- Expensive/privileged extension paths are configurable and default explainable.
 
-Pi packages；Hyper skills/hooks/MCP；goose  
+## Acceptance
+
+- [ ] passive Skill loads without recompiling core and respects prompt budget;
+- [ ] hook can deny a custom mutating Tool and cannot bypass core policy;
+- [ ] MCP custom Tool passes descriptor/permission/containment tests;
+- [ ] child process cancel/reap/output bounds are tested;
+- [ ] one example package has docs and deterministic fixtures.
+
+## Non-goals
+
+- Commercial marketplace
+- 30+ built-in extension bundle before real use
+- Stable Zig dynamic plugin ABI

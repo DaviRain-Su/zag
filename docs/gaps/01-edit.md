@@ -17,10 +17,12 @@
 | ~~无内容锚点~~ | — | ✅ 唯一 `old_string`；失败码 `anchor_not_found` / `ambiguous_anchor` |
 | ~~无 grep/glob~~ | — | ✅ `fs_tools` + jail |
 | ~~无写后 diff~~ | — | ✅ 可选短 `git diff`（失败省略） |
-| ~~权限仅两档全局~~ | — | ✅ H3：write-path remember + `--no-remember` |
-| ~~无 plan 模式语义~~ | — | ✅ H3 stub：`SessionKind.plan` / `--plan`；完整 UX → C6 |
-| shell 错误形状不统一 | exit/timeout/policy 难区分 | H 旁路 · [tools-shell](../modules/tools-shell.md) |
-| edit golden transcript | 端到端回归 | H2 收口 / Quality |
+| ~~built-in 权限仅两档全局~~ | — | ✅ write-path remember + `--no-remember` |
+| ~~无 plan 模式语义~~ | — | ✅ `SessionKind.plan` stub；完整 UX → C6 |
+| custom Tool risk 按名称且 unknown→read | 第三方写/执行 Tool 可绕过确认 | P0 [tool-runtime](../modules/tool-runtime.md) / `h-tool-runtime-001` |
+| file Tool 仅 lexical jail | symlink 可越界 | P0 [workspace-sandbox](../modules/workspace-sandbox.md) |
+| shell 错误/deadline/cancel 形状未闭合 | exit/timeout/policy/cancel 难统一审计 | H P1 · [tools-shell](../modules/tools-shell.md) |
+| edit/failure golden matrix | 端到端回归需覆盖 custom deny/containment | H Quality |
 
 ## 非本阶段
 
@@ -31,4 +33,4 @@
 
 ## 下一步
 
-[H-harden H4+](../phases/H-harden.md)（Permissions L2 已收口）。
+先完成 Phase H P0 `h-tool-runtime-001` 与 `h-workspace-001`；built-in matrix 已有，但 Permissions/Workspace 尚未达到 extensible L2。

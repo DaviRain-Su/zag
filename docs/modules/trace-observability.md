@@ -1,44 +1,73 @@
 # Module: trace-observability
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-agent-core/src/{trace,observer}.zig` |
-| 成熟度 | L1 → **L2（H7）** → L3（dashboard，C9） |
-| 对标 | Hyper telemetry/dashboard；SECURITY 审计 |
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/{trace,observer}.zig`; run facade in coding-agent `agent.zig` |
+| Current maturity | **L1** — events exist; terminal truth/persistence/schema are P0/P1 |
+| Target | L2 (H) → L3 dashboard (C9) |
+| Reference | Hyper telemetry/dashboard; SECURITY audit |
 
-## 不变式
+## Purpose
 
-1. Trace 是审计与复盘通道，不是 debug println。  
-2. Schema 必须版本化；读方校验版本。  
-3. 与 transcript 互补：trace 偏事件，transcript 偏对话内容。  
-4. 经 redact 后再写盘（见 workspace-sandbox）。
+Trace is a versioned audit channel for reconstructing run decisions. Observer is an in-process event side channel. Neither is a debug-print substitute, and neither may report a successful terminal state for a failed run.
 
-## Schema（L2）
+## Lifecycle invariants
 
-文件头或每行含 `schema_version`（或 `run_start` 带版本）。
+1. Every started run has exactly one terminal event.
+2. Terminal state is derived from the actual result/error, never from destructor fallback assumptions.
+3. `completed`, `max_turns`, `cancelled`, `provider_error`, timeout, session persistence failure, and trace persistence failure are distinguishable according to the public error policy.
+4. `run_end.ok=false` for every failed run.
+5. Deinit may release resources but must not invent `ok=true/completed`.
+6. If an explicit trace path cannot be persisted, the caller receives a typed/structured failure; silent audit loss is forbidden.
+7. Redaction occurs before event serialization/persistence.
 
-**kind 最小集（L2）：**
+## Schema (L2)
 
-`run_start` · `turn` · `assistant` · `tool_call` · `tool_result` · `permission` · `jail_deny` · `shell_deny` · `usage` · `run_end`
+A trace starts with a schema-identifying record or a `run_start` containing `schema_version` and Zag version.
 
-`run_end` 必含：`turns`、`ok`、`stop_reason`。
+Minimum event kinds:
 
-## L2 验收
+`run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`
 
-- [ ] 拒绝写文件的路径能在 trace 看到 permission 或等价  
-- [ ] jail/shell deny 可复盘  
-- [ ] usage 至少在有供应商数据时出现  
-- [ ] SECURITY.md 指向本 schema  
+`run_end` contains:
+
+- turns;
+- `ok`;
+- stable `stop_reason`/error category;
+- available usage/cost totals.
+
+Unknown schema versions fail explicitly in strict readers. Additive event fields follow a documented compatibility policy.
+
+## Observer contract
+
+Observer already supports an opaque `ptr`; high-level Agent injection and lifecycle compatibility are part of the SDK gate. H stabilizes run/turn/tool terminal semantics before adding a broader event surface.
+
+Callbacks must not own borrowed event slices after the callback returns unless they copy them.
+
+## Current gaps
+
+- Provider failure can return `ProviderFailed`, then Agent deinit finalizes an unfinished trace as `ok=true/completed`.
+- trace directory/file I/O is swallowed.
+- schema version is absent.
+- event surface does not yet expose a complete versioned run/turn lifecycle for SDK/headless consumers.
+
+## L2 acceptance
+
+- [ ] provider/auth failure produces exactly one `ok=false`, `provider_error` terminal event.
+- [ ] complete/max-turns/cancel/timeout/save failure each produce one truthful terminal state.
+- [ ] schema version and compatibility are contract-tested.
+- [ ] permission, jail, shell, usage, compaction, and Tool results are replayable.
+- [ ] explicit trace-path I/O failure is observable.
+- [ ] secret fixtures are redacted before write.
+- [ ] SECURITY links to this schema/limitation.
 
 ## L3
 
-- 本地 dashboard（会话/费用/子代理）  
-- 与 CI artifact 上传约定  
+- local usage/timing dashboard;
+- CI artifact conventions;
+- subagent correlation after C6.
 
-## 非目标（H）
+## Non-goals for H
 
-- 云端遥测强制  
-
-## Hyper 对照
-
-- user-guide `23-dashboard`、`24-monitoring-usage`  
+- Mandatory cloud telemetry
+- TUI/dashboard rendering

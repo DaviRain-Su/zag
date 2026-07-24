@@ -1,35 +1,41 @@
-# Module: extensions（Capability stub）
+# Module: extensions (Capability stub)
 
-| 项 | 内容 |
-|----|------|
-| 状态 | **stub** — 前置 Phase H |
-| 阶段 | [C8](../phases/C8-extensions.md) |
-| 对标 | Pi packages；Hyper skills/hooks/MCP；goose |
+| Item | Content |
+|------|---------|
+| Status | L0 / not implemented |
+| Stage | [C8](../phases/C8-extensions.md) |
+| Prerequisite | Phase H + SDK/process contracts; executable paths also require process safety |
+| Reference | Pi packages; Hyper Skills/Hooks/MCP; goose |
 
-## 不变式（目标）
+## Invariants
 
-1. **先包后核**：工作流优先 Skills/插件验证，再考虑内置。  
-2. Hooks 可 deny 工具调用。  
-3. MCP 工具动态合并进 registry，仍过 permission/jail。  
+1. Validate a workflow as an external Skill/package before promoting it into product core.
+2. Imported Tools use [D-007](../decisions/active/D-007-tool-runtime-descriptor.md) descriptors and the same permission/containment/trace path as built-ins.
+3. Missing capability metadata fails closed.
+4. Hooks may deny but cannot weaken mandatory policy or sandbox requirements.
+5. Executable extension processes are owned/cancelled/reaped by the process supervisor.
+6. Process protocol is preferred; no stable Zig dynamic plugin ABI is required.
 
-## 表面（C8）
+## Surfaces by risk
 
-| 表面 | 说明 |
-|------|------|
-| Skills | `SKILL.md` + 触发；受控进 prompt |
-| Hooks | PreToolUse / PostToolUse / Stop |
-| MCP | stdio client |
-| Plugins | 一目录打包 skills+hooks+agents |
+| Surface | Dependency |
+|---------|------------|
+| Passive Skills/prompt package | injection/budget + SDK/headless contract |
+| Hooks | versioned lifecycle + Tool descriptor |
+| MCP stdio Tool server | descriptor + process supervisor + permission/sandbox policy |
+| Package directory | combines only surfaces whose gates pass |
 
-## L2
+## Acceptance (C8)
 
-不适用（H 不做）。
+- passive Skill loads without core recompilation and respects prompt budget;
+- a hook denies a mutating custom Tool through core policy;
+- MCP Tool registration rejects missing capabilities;
+- executable child cancel/output/process ownership is tested;
+- extension failure cannot create false successful session/trace state.
 
-## 非目标（早期）
+## Non-goals
 
-- 插件市场商业化  
-- 与 Hyper marketplace 协议兼容硬性要求  
-
-## 详设
-
-见 [C8-extensions.md](../phases/C8-extensions.md)。  
+- Phase H implementation
+- Marketplace
+- Stable C/shared-library plugin ABI
+- Large built-in extension catalog before usage evidence

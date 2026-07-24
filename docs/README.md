@@ -25,6 +25,7 @@ vision → maturity（看清自己在哪）
 | [maturity.md](./maturity.md) | **真理源**：子系统 L0–L3 成熟度矩阵 |
 | [roadmap.md](./roadmap.md) | Teaching / Phase H / Capability / Quality |
 | [architecture.md](./architecture.md) | **钉死**：Loop⊂Graph、WireAdapter、Agent/Memory/产品壳分层 |
+| [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md) | 评估结论、P0/P1/P2 与实施 DAG |
 | [plan/](./plan/) | Active 交付（analysis · tasks · reviews · backlog） |
 | [decisions/](./decisions/) | Active / Complete 设计决策 |
 | [references.md](./references.md) | 外部教程与竞品对照（**Pi 主对照**） |
@@ -43,8 +44,10 @@ vision → maturity（看清自己在哪）
 ## 包边界（实现时）
 
 ```text
-agent → zag-ai → openai-zig
-agent → runtime
+# consumer → dependency
+main → zag-cli → coding-agent → agent-core → zag-types
+                         └────→ zag-ai ─┬→ zag-types
+                                       └→ openai-zig
 ```
 
 详见 [architecture.md § Monorepo 包边界](./architecture.md#monorepo-包边界强制)。
@@ -57,7 +60,7 @@ agent → runtime
 | [chapters/01-edit-permissions](../chapters/01-edit-permissions/README.md) | tutorial-complete | write + ask/yolo |
 | [chapters/02-session-context](../chapters/02-session-context/README.md) | tutorial-complete | session + context view |
 | [chapters/03-production](../chapters/03-production/README.md) | tutorial-complete | jail + policy + trace（**非**生产完成） |
-| [chapters/H-harden](../chapters/H-harden/README.md) | planned | Production Floor 硬化 |
+| [chapters/H-harden](../chapters/H-harden/README.md) | in progress | P0/P1 Production Floor hardening |
 
 ## 相关根文档
 

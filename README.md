@@ -21,13 +21,14 @@
 | **[docs/INDEX.md](./docs/INDEX.md)** | 文档桶地图（Product Spec / Active / Complete / Reference / Quality） |
 | [docs/vision.md](./docs/vision.md) | 定位与吸收原则 |
 | [docs/maturity.md](./docs/maturity.md) | L0–L3 成熟度真理源 |
-| [docs/roadmap.md](./docs/roadmap.md) | Teaching / H / Capability / Quality |
-| [docs/architecture.md](./docs/architecture.md) | 分层钉死：Loop⊂Graph · WireAdapter · 产品壳 |
+| [docs/roadmap.md](./docs/roadmap.md) | Phase H P0/P1、SDK/headless Gate、Capability DAG |
+| [production-floor assessment](./docs/plan/analysis/2026-07-24-production-floor-assessment.md) | 2026-07-24 评估、P0/P1/P2 与实施任务 |
+| [docs/architecture.md](./docs/architecture.md) | 分层：Loop⊂Graph · Tool runtime · WireAdapter · 产品壳 |
 | [chapters/00-loop](./chapters/00-loop/README.md) | Teaching 0：loop |
 | [chapters/01-edit-permissions](./chapters/01-edit-permissions/README.md) | Teaching 1：编辑 + 权限 |
 | [chapters/02-session-context](./chapters/02-session-context/README.md) | Teaching 2：会话 + context |
 | [chapters/03-production](./chapters/03-production/README.md) | Teaching 3：jail / policy / trace（**目录名历史遗留**；≠ 生产完成） |
-| [chapters/H-harden](./chapters/H-harden/README.md) | Phase H 硬化（planned）— **当前实现主线** |
+| [chapters/H-harden](./chapters/H-harden/README.md) | Phase H P0/P1 硬化（in progress） |
 | [docs/modules/memory.md](./docs/modules/memory.md) | Memory Repo 规格（C5；H 不做） |
 | [SECURITY.md](./SECURITY.md) | 安全默认与「尚未」 |
 
@@ -76,7 +77,10 @@ packages/openai-zig/            线协议 · transport · OpenAPI
 ```
 
 ```text
-main → zag-cli → coding-agent → agent-core → zag-ai → openai-zig
+# consumer → dependency
+main → zag-cli → coding-agent → agent-core → zag-types
+                         └────→ zag-ai ─┬→ zag-types
+                                       └→ openai-zig
 ```
 
 详见 [docs/architecture.md](./docs/architecture.md)。

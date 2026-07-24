@@ -1,34 +1,41 @@
-# C7 — Sandbox Plus
+# C7 — Sandbox / Process Supervisor
 
-| 项 | 内容 |
-|----|------|
-| 前置 | **Phase H 完成**（尤其 H5） |
-| 失败模式 | denylist/jail 可绕过；yolo 仍危险 |
-| 模块 | [workspace-sandbox](../modules/workspace-sandbox.md) L3 |
+| Item | Content |
+|------|---------|
+| Prerequisite | Phase H safety/Tool descriptor/lifecycle contracts |
+| Failure mode | lexical jail/denylist can be bypassed; background/executable extensions lack process ownership |
+| Module | [workspace-sandbox](../modules/workspace-sandbox.md) L3 |
 
-## 目标
+## Goal
 
-在 jail + policy + redact 之上提供 **OS 级**执行边界，使「别人敢开较高自治」成为可能。
+Add product/runtime OS enforcement and process-tree ownership above H's trusted-host containment. Sandbox is not part of Provider/message ABI and does not replace permission prompts.
 
-## 范围
+## Scope
 
-1. macOS seatbelt 与/或 Linux bubblewrap（按平台）  
-2. 网络默认拒绝 + 可配允许域  
-3. 可选 git worktree 隔离危险任务  
-4. Secrets：环境注入策略与 redact 加强  
-5. Doctor 扩展：报告 sandbox 是否可用  
+1. Process supervisor: spawn, process-group/job ownership, bounded stdout/stderr, deadline, cancel, TERM→KILL/reap.
+2. macOS/Linux enforcement adapters (for example seatbelt/bubblewrap or equivalent evaluated mechanisms).
+3. Explicit network policy where the platform can enforce it.
+4. Optional worktree isolation for risky tasks.
+5. Secret/environment injection policy.
+6. Doctor reports support/profile/enforcement state.
 
-## 非目标
+## Fail-closed modes
 
-- 多租户云隔离  
-- 完美对抗内核逃逸  
+- A mode/profile that declares sandbox **required** refuses execution when unsupported, disabled, or installation fails.
+- An explicitly optional trusted-host mode may run without OS sandbox only after clearly reporting the downgrade and preserving ask/policy controls.
+- Higher-autonomy/yolo, autonomous background jobs, and untrusted executable extensions cannot silently downgrade.
 
-## 验收
+## Acceptance
 
-- [ ] sandbox 开启时，构造性逃逸用例失败  
-- [ ] 文档清晰：无 sandbox 平台上的降级行为  
-- [ ] security eval 覆盖 sandbox on/off  
+- [ ] required enforcement failure prevents child execution;
+- [ ] constructive filesystem/network escape fixtures fail under the documented profile;
+- [ ] process tree is cancelled and reaped within bounds;
+- [ ] output is bounded with retained diagnostics;
+- [ ] on/off/unsupported behavior is documented and security-tested;
+- [ ] Kernel source API contains policy/capability abstractions, not platform sandbox implementation types.
 
-## 对标
+## Non-goals
 
-Hyper sandbox；Codex sandbox；Pi「文档建议容器」  
+- Multi-tenant cloud isolation
+- Kernel-escape guarantees
+- One identical platform mechanism on every OS

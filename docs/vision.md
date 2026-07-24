@@ -4,13 +4,13 @@
 |----|------|
 | 受众 | 个人 power user + **SDK 开发者**；本地优先；多 provider / BYOK |
 | 产品形态 | **双轨：Kernel SDK × All-in-One agent**（对齐 Grok Build 路线，非 Pi 极简路线） |
-| 生产条 | 敢在**受控本机**日用 + CI headless；SDK 面有 semver 承诺 |
+| 生产条 | 先过 Phase H trusted-host correctness；再分别过 Zig SDK-ready 与 headless/process Gate；semver publication 更晚 |
 | 载体 | Zig 0.16 |
 | 主角 | **Harness**（loop、tools、权限、context、可观测） |
 
 ## 一句话
 
-> 模型只是引擎；Code Agent 好不好，主要看 harness。  
+> 模型只是引擎；Code Agent 好不好，主要看 harness。
 > Zag 用 Zig 做一个 **all-in-one 的 coding agent**，并用**严格分层的小包**把内核做成可嵌入 SDK——功能全和结构清不冲突，Grok Build 已经证明了这一点。
 
 ## 双轨定位（核心决策）
@@ -20,7 +20,7 @@
 轨 B：Kernel SDK          zag-kernel + 领域包：别人嵌入即得完整 agent 能力
 ```
 
-- 两轨**同一 monorepo、同一套代码**；产品是 SDK 的第一个用户。
+- 两轨**同一 monorepo、同一套代码**；产品是 Kernel 的第一个严格用户。Low-level composition、SDK-ready、process SDK 是三道不同 Gate，见 [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md)。
 - 功能广度是目标（学 Grok Build batteries-included），**不是**罪过；
 - 广度的代价用**包分层纪律**支付，见 [packaging.md](./packaging.md)。
 - 拆 repo 是发布动作：`openai-zig`、`zag-ai` 等达到拆包标准后 mirror 出去。
@@ -65,7 +65,7 @@
 | 跨会话偏好 / 重复交代 | Memory Repo（默认可关） | **C5 only**（[memory.md](./modules/memory.md)） |
 | 扩展要改核心 | skills / hooks / MCP | C8 · zag-hooks/zag-mcp |
 | 改 harness 变笨 | golden + contracts | Quality（H 起） |
-| SDK 用户无法嵌入 | kernel API + Observer 契约 | packaging §4 |
+| SDK 用户无法安全嵌入 | stateful Tool + runtime descriptor + injection + ownership/event/session contract | Phase H P0/P1 → SDK Gate |
 
 ## 目标分层（摘要）
 
@@ -75,8 +75,10 @@
                                      → Runtime / 领域包
 ```
 
-- **Loop** 可独立跑；**Graph** 多角色编排（C6），节点内仍是 Loop。  
-- **WireAdapter** 预留多协议；现状仅 OpenAI-compat。  
+- **Loop** 可独立跑；**Graph** 多角色编排（C6），节点内仍是 Loop。
+- Model-visible `ToolDefinition` 与 local runtime `ToolCapabilities` 分离；缺失 metadata fail-closed。
+- **WireAdapter** 隔离协议；现状 OpenAI-compatible + Anthropic。
+- Memory/Graph hooks 不进入 H 或 SDK minimum contract；到对应 C 阶段按真实 use case 设计。
 - 包分层与拆包：[packaging.md](./packaging.md)；详图：[architecture.md](./architecture.md)。
 
 ## 刻意不做（当前）
@@ -85,7 +87,9 @@
 - 云 thread / collab、企业 Missions / SDLC 云平台
 - 一上来打磨 TUI（属 C9；但 TUI **是**目标，不是永久非目标）
 - Phase H 内做 Memory 平台 / 云知识库（属 C5，默认关）
-- 一开始就多 repo 开发流（monorepo 唯一开发源）
+- 一开始就 multi-repo development（monorepo 唯一开发源）
+- 未测量就宣传 Zig binary size/startup/cross-build advantage
+- 在 SDK Gate 前承诺 semver、C ABI 或 Zig dynamic plugin ABI
 - ~~把默认工具面压到最小~~（已废弃的 Pi 叙事）
 
 ## 文档轨

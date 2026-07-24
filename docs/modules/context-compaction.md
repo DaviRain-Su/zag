@@ -1,57 +1,70 @@
 # Module: context-compaction
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-agent-core/src/context.zig`、`zag-coding-agent/src/project.zig` |
-| 成熟度 | L1（截断）→ **L2（H4 已落地）** → L3（repo map，C5） |
-| 对标 | Pi session/compaction；Aider repo map；Hyper compaction |
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/context.zig`; `zag-coding-agent/src/project.zig` |
+| Current maturity | **L1+** — layers/view compaction exist; final-view accounting is P1 |
+| Target | L2 (H) → L3 repo map/intelligent selection (C5) |
+| Reference | Pi session/compaction; Aider repo map; Hyper compaction |
 
-## 不变式
+## Purpose and boundary
 
-1. **Transcript 权威；view 是投影。** 禁止在 loop 里直接砍 transcript 数组当「压缩」。  
-2. 项目约定（AGENTS.md）必须在压缩后仍可到达模型（system/project 层）。  
-3. 压缩可解释：trace 或 session 记录「触发了 compaction」。
+Transcript is authoritative. Context view is a per-provider-call projection assembled from stable prompt layers and selected transcript history. Compaction shapes the view; it does not delete transcript rows.
 
-## 四层 Prompt（L2）
+## Invariants
 
-| 层 | 内容 | 生命周期 |
-|----|------|----------|
-| system | 身份、安全、tool 使用政策 | 进程/配置 |
-| project | AGENTS.md、项目规则 | 工作区 |
-| session | 用户长期偏好、压缩摘要 | 会话文件 |
-| ephemeral | 本 turn 提醒、doctor、Oracle 建议 | 单 turn |
+1. **Transcript ≠ view.** Loop never truncates authoritative transcript to satisfy a model budget.
+2. system/project instructions remain reachable after compaction.
+3. Tool call/result boundaries remain valid in every selected tail.
+4. A `CompactionEvent` describes the **final returned view**, not an intermediate trim.
+5. `event.dropped` equals the number of history messages excluded by that projection.
+6. The summary or explicit lineage accounts for the same omitted set; session and trace receive that same event.
 
-`viewForModel` = 组装四层 + 选取的历史消息尾部（跳过 transcript 内旧 leading system，避免与 Layers 重复）。超限时只改 **view**，并返回 `CompactionEvent` 供 session 头落盘。
+## Four prompt layers
 
-## Compaction 最小算法（L2）
+| Layer | Content | Lifetime |
+|-------|---------|----------|
+| system | identity, safety, Tool policy | process/config |
+| project | AGENTS.md/project rules | workspace |
+| session | compaction summary/session context | session |
+| ephemeral | turn-only hints/doctor/Oracle advice | one turn |
 
-1. 触发：估计 token 或消息数超阈值（配置项）。  
-2. 动作：将「中间历史」折叠为一条 `role=system` 或 session 摘要消息；**保留**最近 N 条原始消息；**保留**所有 system/project。  
-3. 摘要可先用启发式（拼接决策句），L2 不强制再调 LLM；若用 LLM 摘要须可关。  
-4. 落盘：session 中记录 `compaction_gen` 与摘要文本。
+`viewForModel` assembles non-empty layers, skips duplicate leading transcript system rows, aligns history to valid Tool boundaries, and applies message/character budgets.
 
-## L2 验收
+## L2 compaction algorithm
 
-- [x] 四层在文档与代码注释对齐  
-- [x] 超限触发 compaction；摘要后项目规则仍在（Layers.project 每 turn 注入）  
-- [x] 全量 transcript 仍可从磁盘读到压缩前要点或摘要（`compaction_summary` 头字段；transcript 不删行）  
+1. Select a tail by message count and align its start to a Tool boundary.
+2. Trim to the initial character budget while respecting `min_tail_messages`.
+3. Build a summary for the omitted set.
+4. Recalculate layer cost with that summary.
+5. If summary/layer growth requires another trim, extend the omitted set, realign boundaries, and rebuild accounting/summary before returning.
+6. Emit one final `CompactionEvent` to session and trace.
 
-## L3（C5）
+L2 permits deterministic heuristic summaries. LLM summarization remains optional/default-off capability work.
 
-- repo map（工作区索引；见 [C5](../phases/C5-context.md)）  
-- 智能选文件  
-- **跨 session Memory Repo** 挂载点：只经 ephemeral/project 注入；规格见 [memory.md](./memory.md)  
+## Current gap
 
-H4 必须为 C5 留好的边界：transcript 权威、view 可重建、session schema 可版本化。
+The current second trimming loop can remove additional selected messages after the summary is built without increasing `dropped` or rebuilding the summary. The returned event can therefore omit history not represented in its accounting. Four layers and a schema field alone do not satisfy L2.
 
-## 非目标（H）
+## L2 acceptance
 
-- 完美语义压缩  
-- 云端记忆  
-- Memory Repo 实现（属 C5，默认关）  
+- [x] four layers are assembled and project rules are re-injected per turn.
+- [x] authoritative transcript remains unchanged.
+- [ ] a two-stage trim fixture reports the exact final omitted set.
+- [ ] summary/lineage covers messages removed in every stage.
+- [ ] Tool call/result boundaries remain valid at the selected start.
+- [ ] persisted metadata and trace use the same final event.
+- [ ] repeated compaction has a documented generation/lineage meaning.
 
-## Hyper / Pi 对照
+## L3 (C5)
 
-- Pi：turn snapshot vs config 边界  
-- Hyper：compaction 入口（只读）  
+- repo map and task-aware file selection;
+- session fork/branch;
+- optional LLM summary with quality fixtures;
+- default-off Memory Repo injection through a defined layer.
 
+## Non-goals for H
+
+- Perfect semantic compression
+- Cross-session Memory Repo
+- Cloud knowledge store

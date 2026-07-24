@@ -1,79 +1,97 @@
 # Module: loop-turn
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-agent-core/src/loop.zig` |
-| 分层 | **Agent Core 内核**（[architecture 总图](../architecture.md#目标分层总图钉死)） |
-| 成熟度 | L1 → **L2（H1）** → L3（C6 Turn/steer；Graph 节点内仍用本 Loop） |
-| 对标 | Pi-agent-core loop；Nanocodex Turn |
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/loop.zig` |
+| Layer | Agent Core Kernel |
+| Current maturity | **L1+** — core loop/goldens exist; truthful failure/cancel lifecycle still open |
+| Target | L2 (H) → L3 steer/read-only parallelism (C6) |
+| Reference | Pi agent loop; Nanocodex Turn |
 
-## 不变式
+## Purpose
 
-1. 模型决定是否 `tool_calls`；harness 执行并回灌。  
-2. Tool 失败 **soft-fail**（进 transcript），不崩进程。  
-3. 发给模型的是 **context view**，不是任意截断后的权威账本。  
-4. 一次 run 的停因可审计（max_turns / cancel / 正常结束 / provider 错）。
+Run one agent loop: build model view, request one assistant turn, execute requested Tools through policy/enforcement, append results, and stop with an auditable outcome.
 
-## 公共 API / 事件（目标）
+## Invariants
 
-- `run(deps, transcript) → Result { final_text, turns, stop_reason }`  
-- `stop_reason`: `completed | max_turns | cancelled | provider_error`  
-- Observer / Trace：`turn`、`tool_call`、`tool_result`、`run_end(stop_reason)`  
+1. The model chooses Tool calls; the harness validates, executes, and returns results.
+2. Expected Tool failures are machine-readable soft results, not process crashes.
+3. Provider input is a context view; transcript remains authoritative.
+4. Every started run has one truthful terminal lifecycle across Result, error, Observer, and trace.
+5. Permission → workspace containment → shell policy → execution remains ordered.
+6. Cancellation never leaves unmatched accepted Tool calls in transcript.
 
-### Tool 错误形状（L2）
+## Public result/error contract
 
-回灌字符串须可被测试解析，建议前缀或 JSON 行：
+`run(deps, transcript)` returns a Result for normal completion, max turns, and clean cancellation. Provider/host failures may remain typed errors, but their Observer/trace terminal category must be `provider_error` or the corresponding stable failure—not `completed`.
+
+Stable stop categories include:
+
+`completed | max_turns | cancelled | provider_error`
+
+Deadline/transport distinctions may be structured error details while preserving a stable top-level category.
+
+## Tool error shape
+
+Expected Tool mistakes return:
 
 ```text
 error: code=<CODE> message=<human>
 ```
 
-最少 `CODE`：`unknown_tool | invalid_arguments | permission_denied | jail_deny | shell_deny | tool_failed | cancelled`。
+Minimum codes:
 
-## 失败模式
+`unknown_tool | invalid_arguments | permission_denied | jail_deny | shell_deny | tool_failed | cancelled`
 
-| 场景 | 行为 |
-|------|------|
-| max_turns | 停止；trace `run_end`；Result 标明 |
-| SIGINT | 不写半截 tool 对；stop_reason=cancelled |
-| Provider 失败 | 可重试由 zag-ai；耗尽则 ProviderFailed |
+Malformed host registration is not an `unknown_tool` soft result; it fails before running. See [tool-runtime](./tool-runtime.md).
 
-## 并行策略（规格；实现可分期）
+## Cancellation/deadline boundary
 
-- 同一 assistant 消息内：仅 **只读** tools 可并行；含 write/shell 则串行。  
-- L2 可先串行实现，但文档与测试注明策略。
+- Current cooperative flag checks between provider turns and Tool calls.
+- L2 provider path propagates cancellation/deadline into in-flight provider/stream operations.
+- A Tool that declares cancellation support receives the run cancellation/deadline context.
+- Pending accepted calls receive cancelled results when needed for transcript consistency.
+- Partial streamed Tool-call arguments are never executed.
 
-## L2 验收
+## Execution strategy
 
-- [x] 错误码稳定，单测可断言 `permission_denied` / `jail_deny`  
-- [x] cancel 后 session 文件可 resume（`code=cancelled` 补齐 tool 对）  
-- [x] max_turns 进入 `Result.stop_reason` + trace `run_end`  
-- [x] ≥2 golden（`readonly-list-build`；`deny-write`）  
+L2 executes a Tool-call batch serially in call order. Parallel read-only batches remain L3 and require descriptor-based risk/concurrency capabilities.
 
-**并行：** L2 串行已钉死；只读并行属 L3。
+## Current gaps
 
-## L3 方向
+- Provider failure is returned as `ProviderFailed`, while facade deinit may emit a successful trace terminal state.
+- In-flight provider/stream/tool cancellation is not supported.
+- High-level Observer event lifecycle is not yet an SDK contract.
 
-steer（中途纠偏）、并行只读落地、与 subagent 生命周期对齐（C6）。
+## L2 acceptance
 
-## Loop vs Graph（边界）
+- [x] stable machine-readable Tool errors for built-in paths.
+- [x] serial Tool order is tested.
+- [x] cancel between calls fills pending Tool results and remains resume-safe.
+- [x] at least two golden transcripts exist.
+- [ ] every normal/error path has one matching terminal state across API and trace.
+- [ ] in-flight provider cancellation/deadline is contract-tested.
+- [ ] partial Tool calls never execute after stream cancellation.
+- [ ] max-turns and failure trace semantics are stable.
 
-| | Loop（本模块 / Phase H） | Graph（C6+ 编排，非本模块默认 runtime） |
-|--|---------------------------|----------------------------------------|
-| 适用 | 单 coding agent：模型选 tool → 执行 → 回灌 | 多角色 fan-out、handoff、条件汇合、组织拓扑 |
-| 状态 | transcript + context view | 共享 state + 节点检查点 |
-| 对标 | Pi agent-core loop；Claude Code 薄循环 | LangGraph / MS Agent Framework；Pi 不把 graph 做核 |
+## Loop vs Graph
 
-**H1 实现的是 loop，不是 workflow DAG。**  
-图论/图工程若引入，挂在 C6（subagent/Oracle 编排），且每个节点内部仍可以是 loop。  
-行业扫描见 [research/2026-harness-landscape.md](../research/2026-harness-landscape.md)。
+| | Loop (H/default) | Graph (C6+) |
+|--|------------------|-------------|
+| Purpose | One coding agent Tool loop | Multi-role handoff/fan-out/join |
+| State | transcript + context view | shared artifacts/checkpoints |
+| Rule | works without Graph | agentic nodes may run this Loop |
 
-## 非目标
+H does not introduce a workflow DAG runtime. Graph, Memory, and Oracle hooks are not prerequisites for the L2 loop.
 
-- 分布式工作流引擎 / 把 `loop.run` 换成通用 graph runtime（H 阶段）  
-- 多租户调度  
+## L3
 
-## 对照
+- steer/interruption semantics;
+- descriptor-governed parallel read-only Tools;
+- subagent lifecycle correlation.
 
-- Pi：`packages/agent` agent-loop；`transformContext` → `convertToLlm`  
-- Hyper：`xai-grok-shell` session / turn 入口（只读架构）  
+## Non-goals for H
+
+- Distributed workflow engine
+- Multi-tenant scheduler
+- Graph replacing the normal coding loop

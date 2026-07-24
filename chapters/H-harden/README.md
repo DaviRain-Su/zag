@@ -1,79 +1,89 @@
 # Chapter H — Production Floor（硬化）
 
 > 对应 [Phase H](../../docs/phases/H-harden.md)。  
-> **状态：planned** — 规格已写；实现与本节「先跑起来」同步后更新命令与代码路径。  
-> Teaching 0–3 = tutorial-complete；本章目标 = **maturity L2**。
+> **状态：in progress，未达 L2。** Teaching 0–3 tutorial-complete；当前 P0/P1 基线见 [assessment](../../docs/plan/analysis/2026-07-24-production-floor-assessment.md)。
 
-**一句话：** 不堆新功能表面；把已有 loop / edit / session / safety / provider / trace 补到**敢日用**的底线。
-
----
+**一句话：** 不堆新功能表面；先让已有 loop、Tool、edit、session、workspace、provider、trace 在失败路径上不丢数据、不 fail-open、不说假成功。
 
 ## 0. 读之前
 
-1. [docs/maturity.md](../../docs/maturity.md) — 看清 L1→L2  
-2. [docs/phases/H-harden.md](../../docs/phases/H-harden.md) — H1–H7 清单  
-3. 对应 [docs/gaps/](../../docs/gaps/) — 各 Teaching 章缺口  
+1. [maturity](../../docs/maturity.md) — 当前 L1/L1+ 与 L2 exit；
+2. [assessment](../../docs/plan/analysis/2026-07-24-production-floor-assessment.md) — P0/P1/P2 与证据；
+3. [Phase H](../../docs/phases/H-harden.md) — slice 状态；
+4. [plan](../../docs/plan/README.md) — 实施 task DAG。
 
----
-
-## 1. 业务心智（在 Phase 3 三道门上加「可回归」）
+## 1. 业务心智
 
 ```text
-Teaching: 能演示
+Teaching: normal path 可演示
     ↓
-H: 错误可机读 · 编辑可局部 · 上下文可压缩 · 密钥可脱敏 · 行为可 CI
+H P0: preserve state · fail closed · real containment · truthful terminal
     ↓
-对外文案才允许：「单用户本机生产底线」
+H P1: exact context · redact · deadline/cancel · failure regression
+    ↓
+才允许：「single-user trusted-host production floor」
 ```
 
-三道门仍在：`permission → jail → shell policy → execute`。  
-H 要求每道门的失败都进**版本化** trace，且有测试钉住。
+Tool 执行目标边界：
 
----
+```text
+validated ToolDescriptor
+  → permission
+  → filesystem containment（file Tool）
+  → shell/process policy（execute Tool）
+  → execute
+```
 
-## 2. 切片与规格（实现时按此读）
+Deny/expected Tool failure soft-fail；host registration、session、trace 等基础设施错误必须返回给 host，不能伪装成 Tool success。
 
-| 切片 | 规格 | 主要代码（现状） |
-|------|------|------------------|
-| H1 Loop | [modules/loop-turn.md](../../docs/modules/loop-turn.md) | **出门**：cancel + golden + 串行策略 |
-| H2 Edit | [modules/tools-edit.md](../../docs/modules/tools-edit.md) | `search_replace` + `grep`/`glob` **已落地**；`edit_tools` / `fs_tools` |
-| H3 Permissions | [modules/permissions.md](../../docs/modules/permissions.md) | `zag-agent-core/src/permissions.zig` |
-| H4 Context/Session | [context-compaction](../../docs/modules/context-compaction.md) · [session-store](../../docs/modules/session-store.md) | **出门**：`Layers` + view-only compaction + `schema_version` |
-| H5 Safety | [workspace-sandbox.md](../../docs/modules/workspace-sandbox.md) | `workspace.zig` · `shell_policy.zig` |
-| H6 Provider | [zag-ai-provider.md](../../docs/modules/zag-ai-provider.md) | `packages/zag-ai/` + `provider.zig`（retry/usage **部分已有**） |
-| H7 Trace | [trace-observability.md](../../docs/modules/trace-observability.md) | `zag-agent-core/src/trace.zig`（usage 事件雏形） |
+## 2. Slice 与当前状态
 
-**明确不做（本章）：** Memory Repo、repo map、subagent、MCP —— 见 [memory.md](../../docs/modules/memory.md) / Capability 轨。
+| Slice | Spec | Current truth |
+|-------|------|---------------|
+| H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | soft errors/serial/goldens landed；terminal/in-flight cancel open |
+| H2 Edit | [tools-edit](../../docs/modules/tools-edit.md) | search_replace/grep/glob landed；real containment still P0 |
+| H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | built-in matrix landed；custom capability fail-open P0 |
+| H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | layers/schema landed；safe open/save/accounting open |
+| H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | symlink containment/redact/doctor open |
+| H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | two wire styles/retry/usage landed；deadline/cancel open |
+| H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | events/tests landed；truth/schema/fault matrix open |
 
----
+Schema presence or existing happy-path tests do not mark H3/H4 closed.
 
-## 3. 先跑起来（实现后填写）
+## 3. Current task order
+
+```text
+P0: h-session-001 · h-tool-runtime-001 · h-workspace-001 · h-trace-001
+  ↓
+P1: h-context-001 · h-provider-001 · h-redact-001
+  ↓
+h-integration-001（real composition failure matrix）
+  ↓
+Phase H exit
+  ↓
+SDK-ready gate · headless gate · C4/C5.1/C7 by dependency
+```
+
+Run the deterministic suite after each behavior change:
 
 ```bash
-# H2 / H4 相关单测随 monorepo 跑
-zig build test
-
-# H4：带 session 持久化（压缩摘要写进 JSONL 头）
-# zig build run -- -c -v '做一个多轮对话，观察 .zag/sessions/default.jsonl 头字段'
-
-# 手工：--yolo 下让模型 search_replace / grep（需 API key）
-# zig build run -- --yolo -v '用 grep 找 TODO，再用 search_replace 改一处'
+zig build test --summary all
+zig build test -Dhttp_backend=curl --summary all
 ```
 
-出门条件见 [maturity L2 总验收](../../docs/maturity.md#l2-总验收phase-h-出门条件)。
-H1–H4 核心面已可用；全 L2 仍需 H5–H7 + Quality。
+Each task adds its named failure fixture before claiming closeout. Live provider success is supplemental only.
 
----
+## 4. Explicit non-goals
 
-## 4. 读完应能回答
+- Memory Repo / early Memory hook
+- Graph/DAG runtime
+- full subagents/Oracle
+- MCP/executable extensions
+- background jobs
+- TUI
+- OS sandbox implementation inside H
+- C ABI or Zig dynamic plugin ABI
 
-- 为什么 Teaching「边界雏形」章（目录名 03-production）仍不是生产完成？  
-- L2 与 L3（Capability）边界在哪？（例：OS sandbox 属 C7）  
-- 改 harness 时哪两类测试必须绿？
+## 5. Exit
 
----
-
-## 5. 下一步
-
-- H 完成后进入 [C4 编辑锐度](../../docs/phases/C4-edit-sharpness.md)  
-- Quality：[evals](../../docs/quality/evals.md) · [contracts](../../docs/quality/contracts.md)  
+All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) and P0/P1 task verifications must pass. H completion does not automatically imply SDK-ready or headless-ready; those are separate gates.

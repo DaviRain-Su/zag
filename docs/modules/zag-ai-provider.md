@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `openai-zig`（OpenAI）/ `std.http`（Anthropic） |
-| 成熟度 | **H6 大半完成（L1+）**；L2 出门尚欠 session 账本 / 流式取消测试 / redact 联动 |
+| 成熟度 | **L1+**；L2 出门尚欠可执行 deadline、in-flight cancel、partial Tool-call safety、redact 联动 |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
 ## 包内分层
@@ -70,17 +70,20 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 ### 不变式（适配层）
 
-1. Agent Core / `loop` **永不** import 厂商 wire 类型。  
-2. 错误分类在 adapter 边界映到统一 `Error` + `isRetryableError`。  
-3. Usage / finish_reason / tool_calls 在 canonical `AssistantTurn` 上对齐。  
+1. Agent Core / `loop` **永不** import 厂商 wire 类型。
+2. 错误分类在 adapter 边界映到统一 `Error` + `isRetryableError`。
+3. Usage / finish_reason / tool_calls 在 canonical `AssistantTurn` 上对齐。
 4. 流式：wire 增量 → 统一 `StreamEvent` 或组装后的 turn（流式**取消**测试仍属 H6 收口）。
 
 ## 不变式
 
-1. Harness 只依赖稳定 Provider 端口；线协议细节关在 adapter / 协议包。  
-2. Auth：env + 配置文件；H 不做 OAuth（可后置）。  
-3. 可重试错误与不可重试错误分类稳定，供 loop 使用（`isRetryableError`）。  
-4. 配置密钥不进 trace/session 明文（与 H5 redact 对齐；H6 配合）。
+1. Harness 只依赖稳定 Provider 端口；线协议细节关在 adapter / 协议包。
+2. Auth：env + 配置文件；H 不做 OAuth（可后置）。
+3. 可重试错误与不可重试错误分类稳定，供 loop 使用（`isRetryableError`）。
+4. 配置密钥不进 verbose/trace/session 明文（与 H5 redact 对齐）。
+5. 配置的 deadline 必须真正执行或在启动/调用时明确拒绝；禁止静默保存无效 `timeout_ms`。
+6. Cancel/deadline 贯穿 Provider 与 stream；取消后的半截 Tool call 不进入 transcript 或执行。
+7. 每次 provider attempt 只有一个 owner 负责重试，避免 transport 与 loop 组合造成未记录的重试爆炸。
 
 ## 已落地（勿重复劳动）
 
@@ -117,50 +120,56 @@ canonical: types.Message / ToolDefinition / ChatOptions
 
 ## Usage
 
-- ✅ turn 级 usage（供应商返回时）  
-- ✅ trace 事件（含 turn `usage`；`run_end` 可带累计 tokens / `estimated_usd`）  
-- ✅ Agent `cost.Ledger`：每 chat turn 记账；CLI one-shot / REPL 结束打印汇总  
-- ❌ session JSONL 元数据里持久化 usage（仍待）  
+- ✅ turn 级 usage（供应商返回时）
+- ✅ trace 事件（含 turn `usage`；`run_end` 可带累计 tokens / `estimated_usd`）
+- ✅ Agent `cost.Ledger`：每 chat turn 记账；CLI one-shot / REPL 结束打印汇总
+- ❌ session JSONL 元数据里持久化 usage（仍待）
 
-## 流式
+## Deadline / cancel / 流式
 
-- ✅ OpenAI / Anthropic SSE 组装为 turn  
-- ❌ `--stream` 可取消（与 loop cancel 对齐）— **待 H1/H6 收口**  
-- ❌ 取消时丢弃不完整 tool_call 的 CI 断言  
+- ✅ OpenAI / Anthropic SSE 可组装为完整 turn。
+- ⚠️ curl backend 能执行请求 timeout；std backend 当前保存 `timeout_ms` 但不执行，生产 deadline 必须使用 curl，直到 std 路径实现或拒绝该配置。
+- ❌ `--stream` 的 in-flight cancel 尚未贯穿 transport/adapter。
+- ❌ 取消时丢弃不完整 Tool call 的 CI 断言尚未存在。
+- ❌ Provider 端口尚无稳定 request context（cancel/deadline）合同。
+
+L2 不要求异步 runtime，但要求有界、可中断的可观察行为。无法支持 deadline/cancel 的 backend 必须显式报告能力不足。
 
 ## Contract tests
 
 见 [quality/contracts.md](../quality/contracts.md)。
 
-- ✅ 包内 `contract_tests.zig`  
-- ❌ 约定目录 / 多家 fixture / CI 门禁命名仍待收口  
+- ✅ 包内 `contract_tests.zig`
+- ❌ 约定目录 / 多家 fixture / CI 门禁命名仍待收口
 
 ## L2 验收（H6 出门）
 
-- [x] WireAdapter + 至少两家 style  
-- [x] 重试政策文档 = 代码  
-- [x] usage 出现在 trace（turn 级）  
-- [x] usage 聚合账本 + catalog USD 估算（Agent `ledger` / CLI 汇总；session 文件元数据仍待）  
-- [ ] 流式取消规格有测试或明确 TODO 绑定 CI  
-- [ ] contract 目录约定落地并进 CI 说明  
-- [ ] 与 H5：密钥不出现在 verbose/trace  
+- [x] WireAdapter + 至少两家 style。
+- [x] retry/error/usage 的基础 contract fixtures 无网络运行。
+- [x] usage 出现在 trace，并可聚合 cost ledger。
+- [ ] 每个公开 timeout 配置都被执行或显式拒绝。
+- [ ] cancel/deadline 贯穿 Provider、adapter、std/curl stream。
+- [ ] 取消/超时后的不完整 Tool call 不进入执行，并有 CI fixture。
+- [ ] retry owner/attempt 上限可从 trace 解释。
+- [ ] contract fixture 目录与 std/curl CI 约定成文。
+- [ ] 与 H5：密钥不出现在 verbose/trace/session。
 
-**结论：** 多协议 Model plane **已可用**；maturity Provider 行保持 **L1+**，勾满上表后升 **L2**。
+Session usage metadata是后续可加字段，不优先于 persistence correctness。勾满本表后才升 L2。
 
 ## L3
 
-- provider fallback 链、multi-key  
-- **OpenAI Responses** WireAdapter（与 Completions 并存）  
-- **图像生成**独立面（不进 chat loop）  
-- Memory / RAG 用 embed 仅作可选后端，见 [memory.md](./memory.md)  
+- provider fallback 链、multi-key
+- **OpenAI Responses** WireAdapter（与 Completions 并存）
+- **图像生成**独立面（不进 chat loop）
+- Memory / RAG 用 embed 仅作可选后端，见 [memory.md](./memory.md)
 
 ## 非目标（H）
 
-- 完整 OAuth 产品  
-- 绑定单一云厂商  
-- Memory Repo（属 C5）  
-- Graph 编排（属 C6；节点内仍用本 Provider 端口）  
+- 完整 OAuth 产品
+- 绑定单一云厂商
+- Memory Repo（属 C5）
+- Graph 编排（属 C6；节点内仍用本 Provider 端口）
 
 ## Hyper 对照
 
-- `xai-grok-models`、sampler；user-guide 多 provider 章  
+- `xai-grok-models`、sampler；user-guide 多 provider 章

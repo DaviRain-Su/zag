@@ -1,34 +1,48 @@
 # C9 — Product Shell
 
-| 项 | 内容 |
-|----|------|
-| 前置 | **Phase H 完成**；建议 C4–C6 至少部分可用 |
-| 失败模式 | 只能玩具 CLI；无法进 CI；无法嵌编辑器 |
-| 对标 | Hyper pager/headless/ACP/dashboard |
+| Item | Content |
+|------|---------|
+| Prerequisite | Phase H + independent headless/process Gate; C4–C6 only as needed by a specific UI |
+| Failure mode | Kernel works but daily/editor UX is weak or duplicates business logic |
+| Reference | Hyper pager/dashboard/ACP |
 
-## 目标
+## Scope split
 
-日用与自动化外壳：稳定 CLI、headless CI、可选 TUI、可选 ACP、轻量透视。
+Headless automation is **not deferred to late C9**. It is an earlier post-H Gate defined by [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md) and [headless-001](../plan/tasks/headless-001.md):
 
-## 范围
+- clean JSON/streaming JSON;
+- versioned events;
+- stable errors/exit codes;
+- process E2E fixtures.
 
-1. Headless：`-p`/非交互、JSON 或流式、稳定 exit code  
-2. Config：schema、semver、迁移（与 session schema 纪律一致）  
-3. 可选 TUI：流式、tool 卡片、diff pane（不做皮肤竞赛）  
-4. 可选 ACP：嵌 IDE  
-5. 轻量 dashboard：会话费用、tool 时序（可读本地 HTML/TUI 其一）  
+C9 starts only after that machine contract exists and focuses on optional product UX.
 
-## 非目标
+## C9 goals
 
-- 10 语言 i18n 首发（可后置）  
-- 云协作 thread  
+1. Optional TUI: streaming text, Tool cards, permission prompts, diff/review pane.
+2. Polished ACP/editor integration over the existing process contract.
+3. Lightweight local dashboard for session cost/Tool timing/trace inspection.
+4. Config UX/migration on top of versioned config contracts.
 
-## 验收
+## Invariants
 
-- [ ] CI job 用 headless 改 fixture 仓并跑测试  
-- [ ] flag/config 文档与 `--help` 一致  
-- [ ] （若做 TUI）核心任务不比纯 CLI 丢功能  
+- Product shells assemble Kernel APIs; they do not implement loop, permission, session, or provider business logic.
+- TUI and plain/headless modes expose the same correctness and errors.
+- stdout protocol remains uncontaminated by logs.
+- UI closure/drop cannot invent a successful run terminal state.
+- No cloud collaboration requirement.
 
-## 对标
+## Acceptance
 
-Hyper pager-bin、user-guide headless/ACP/dashboard  
+- [ ] headless Gate remains green while C9 is enabled/disabled;
+- [ ] TUI (if shipped) can complete core tasks without losing permission/error/session behavior;
+- [ ] ACP/editor path negotiates protocol version and uses stable process errors;
+- [ ] dashboard reads versioned trace rather than private Agent memory;
+- [ ] CLI/help/config docs match behavior.
+
+## Non-goals
+
+- Loop implementation in UI
+- First-release 10-language i18n
+- Cloud thread/collaboration platform
+- Dynamic Zig plugin ABI

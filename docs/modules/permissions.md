@@ -1,58 +1,80 @@
 # Module: permissions
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-agent-core/src/permissions.zig` |
-| 成熟度 | L1（ask/yolo）→ **L2（H3）** → L3（细粒度 + plan 产品化） |
-| 对标 | Hyper permissions-and-safety；Claude Code 默认 UX |
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/permissions.zig` |
+| Current maturity | **L1+** — built-in matrix/remember exist; custom Tool policy is P0 fail-open |
+| Target | L2 (H) → L3 fine-grained rules + product Plan UX |
+| Decision | [D-007](../decisions/active/D-007-tool-runtime-descriptor.md) |
 | CLI | `--ask` / `--yolo` · `--plan` · `--no-remember` |
 
-## 不变式
+## Purpose
 
-1. 默认偏拒绝危险写/shell（产品默认 `ask`，非 yolo）。  
-2. Deny 永远 soft-fail 回灌，不崩 loop。  
-3. yolo **不**绕过 jail / shell_policy（除非用户显式关 policy）。  
-4. `SessionKind.plan` 是硬约束：即使 `--yolo` 也禁止一般 write / shell。
+Permission policy decides whether an otherwise valid Tool invocation may proceed. Tool registration and capabilities are defined in [tool-runtime](./tool-runtime.md); workspace containment and shell policy remain later independent gates.
 
-## L2：类别矩阵
+```text
+ToolDescriptor → permission → workspace containment → shell policy → execute
+```
 
-| 类别 | 典型 tools | ask 默认 | yolo | plan |
-|------|------------|----------|------|------|
-| read | list/read/grep/glob | allow | allow | allow |
-| write | search_replace/write_file | confirm | allow | **仅** `plan.md` / `.zag/plan.md` |
-| shell | run_shell | confirm | allow | **deny** |
+## Invariants
 
-实现枚举：`Risk.read` / `.write` / `.execute`（`.label()` → `shell`）。
+1. Product default is `ask`; production documentation never defaults to yolo.
+2. Write/execute cannot become read because a tool name is unknown.
+3. Every registered Tool has explicit runtime risk metadata; missing metadata fails closed before a run.
+4. Denial is a machine-readable soft Tool result so the model may adapt.
+5. yolo bypasses confirmation only; it does not bypass workspace or shell/sandbox enforcement.
+6. `SessionKind.plan` blocks general write/execute even under yolo.
 
-### Remember（会话内）
+## Risk matrix
 
-- 用户批准 `write` 某 `path` 后，同 Agent 生命周期内再次写同 path 可跳过确认。  
-- 默认开；`--no-remember` / `Options.remember_writes=false` 关闭。  
-- 上限 64 条 path（有界）。  
-- Trace：`permission` 事件含 `remembered=true|false`。
+| Risk | Typical built-ins | ask | yolo | plan |
+|------|-------------------|-----|------|------|
+| `read` | list/read/grep/glob | allow | allow | allow |
+| `write` | search_replace/write_file | confirm | allow | only reserved plan files |
+| `execute` | run_shell | confirm | allow | deny |
 
-## Plan 模式语义（H3 stub；完整 UX → C6）
+The examples do not define classification. `ToolDescriptor.capabilities.risk` does.
 
-**不变式：** plan 模式下禁止一般 write/shell；允许读 + 写约定 plan 文件（`plan.md` / `.zag/plan.md`，含 `./` 前缀）。  
-配置键：`SessionKind` = `agent` | `plan`（CLI `--plan`）。  
-完整切换快捷键 / 产品壳可在 C6 做完；此处语义与键名已固定，避免日后冲突。
+## Gate API
 
-## L2 验收
+A caller may inject a `permission_gate`. The Gate receives the complete descriptor plus arguments and any validated path context; it must not call a name-based `riskOf` fallback.
 
-- [x] 矩阵表与实现一致（`riskOf` + 单测）  
-- [x] remember 可测（`remember skips second ask for same path`）  
-- [x] plan 语义成文 + stub（`plan mode blocks shell and non-plan writes`；CLI `--plan`）  
+A missing ask callback in ask mode denies dangerous operations. A caller-supplied policy may be stricter than the product matrix but may not relabel missing capability metadata as read.
+
+## Remember
+
+- After approval of a write to a validated path, the same Agent lifetime may skip a second prompt for that path.
+- Default on; `--no-remember` disables it.
+- Maximum 64 paths.
+- Remember keys use the same normalized/contained path identity as workspace enforcement; raw spelling alone is insufficient.
+- Trace permission events include `remembered=true|false`.
+
+## Plan mode
+
+Plan mode permits read and reserved plan-file writes (`plan.md`, `.zag/plan.md`, normalized equivalent) and denies general writes/execute. Product switching UX remains C6; the enforcement semantics belong here.
+
+## Current gap
+
+Current `riskOf(tool_name)` recognizes a small built-in list and returns `.read` for every other name. A registered custom mutating Tool can bypass `denyAllDangerous`. The built-in matrix tests therefore do not establish an extensible L2 permission boundary.
+
+## L2 acceptance
+
+- [x] built-in read/write/execute matrix and remember behavior have tests.
+- [x] Plan stub blocks shell and non-plan writes.
+- [ ] all Tool risk comes from a validated descriptor.
+- [ ] custom write/execute Tools are confirmed/denied like built-ins.
+- [ ] missing descriptor/risk fails registration rather than defaulting to read.
+- [ ] remember keys use contained canonical path identity.
+- [ ] trace records descriptor-derived risk and decision.
 
 ## L3
 
-- path/command 级规则文件  
-- 与 ACP session mode 对齐（若做 C9）  
-- plan 模式完整 UX（快捷键、专用 plan 文件编辑流）  
+- path/command/domain rules;
+- persisted policy backend;
+- full Plan UX and ACP mode mapping.
 
-## 非目标
+## Non-goals
 
-- Amp 四档 effort Modes  
-
-## Hyper 对照
-
-- user-guide `22-permissions-and-safety`、`19-plan-mode`  
+- Effort/model modes
+- OS sandbox enforcement
+- Dynamic plugin loading in H

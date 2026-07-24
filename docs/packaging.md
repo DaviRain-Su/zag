@@ -2,9 +2,9 @@
 
 | 项 | 内容 |
 |----|------|
-| 状态 | **设计文档**（结构先行；迁移与实现随 Phase H / C 轨推进） |
-| 对标 | Grok Build workspace 分层（`hyper-grok-build/Cargo.toml` 60+ crates） |
-| 决策 | **单 monorepo 多包**；拆 repo 是发布动作，不是架构动作 |
+| 状态 | **Active design**；包边界已落地，SDK-ready/发布 Gate 未达 |
+| 对标 | Grok Build 单向 workspace discipline；不复制 crate 粒度 |
+| 决策 | **单 monorepo 多包**；拆 repo 是发布动作，不是架构动作；见 [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) |
 
 ---
 
@@ -14,13 +14,13 @@
 
 1. **产品目标 = all-in-one**：工具、子代理、沙箱、扩展、TUI 都是一等目标，不做「刻意极简」。
 2. **实现纪律 = 严格分层**：功能多不等于泥球；每个能力落进一个小包，依赖只准朝下。
-3. **SDK 目标 = 内核可嵌入**：`zag-kernel` 以下的所有包都是对外 SDK 面；别人拿内核就能造自己的 agent 产品。
+3. **SDK 目标 = 内核可嵌入**：`zag-agent-core` 的 low-level composition 已可行；只有通过 SDK-ready Gate 的 public surface 才获得兼容承诺，不能把所有下层包自动视为已发布 SDK。
 4. Pi 保留的只有一条：**扩展验证纪律**（新工作流先 skill/plugin 验证再内置）——不再作为「默认面要小」的依据。
 
 ```text
       All-in-One 产品（zag bin / TUI / headless）
               ▲  组装
-      Kernel SDK（zag-kernel + 领域包）
+      Kernel composition → SDK-ready Gate（zag-agent-core + selected domain APIs）
               ▲  依赖
       契约层（types / tool-protocol）
 ```
@@ -70,8 +70,9 @@ L2 领域服务      openai-zig          HTTP SDK ✅
                  zag-sandbox         OS 沙箱（C7 新包）
                  zag-hooks / zag-mcp / zag-memory / zag-compaction（C 轨按需新包）
 L3 产品 harness  zag-coding-agent ✅  Agent/Session 外观 · 默认 toolset · WireProvider 桥 · runtime tools
-L4 内核 ★SDK 主入口
-                 zag-agent-core ✅    loop · 纯 Provider 端口 · session · permissions · trace（**仅依赖 zag-types**）
+L4 内核 ★low-level composition
+                 zag-agent-core ✅    loop · 纯 Provider 端口 · session · policy · trace（**仅依赖 zag-types**）
+                 SDK-ready ❌         stateful Tool/capabilities/session/event contract 待 Gate
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
                  zag-tui / zag-acp   （C9）
 L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run` ✅
@@ -83,29 +84,29 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 
 1. **只准朝下依赖**；L4 不得 import L5/L6。
 2. L2 包之间不互相依赖，经 L0 契约通信（例外须在本文件登记）。
-3. HTTP/网络细节 quarantine 在 `openai-zig` / `zag-ai` / 未来 `zag-mcp` 内部；`zag-kernel` 不见 HTTP。
-4. 每个包独立 `zig build test`；契约测试放在被依赖方。
+3. HTTP/network details quarantine in `openai-zig` / `zag-ai` / future `zag-mcp`; `zag-agent-core` does not see wire clients.
+4. Model-visible `ToolDefinition` 与 local runtime `ToolCapabilities` 分离；见 [D-007](./decisions/active/D-007-tool-runtime-descriptor.md)。
+5. 每个包独立 `zig build test`；契约测试放在被依赖方；SDK Gate 另有 external consumer fixture。
 
 ### 概念层 ↔ 实际包名
 
 | 概念层（architecture） | 实际包 | 状态 |
 |------------------------|--------|------|
 | Product shell | zag-cli（+ C9 zag-tui / zag-acp）+ zag (bin) | ✅ |
-| Kernel（Agent Core） | **zag-agent-core** | ✅ |
-| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅ |
-| Model plane（canonical + WireAdapter） | zag-ai + openai-zig | ✅ |
-| Runtime / 领域包 | zag-tools / zag-workspace / zag-sandbox | 待拆（下表） |
-| 契约 | **zag-types** | ✅ |
-| Runtime / 领域包 | zag-tools / zag-workspace / zag-sandbox | 待拆（下表） |
+| Kernel low-level composition | **zag-agent-core** | ✅；SDK-ready ❌ |
+| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅；caller injection 待 SDK Gate |
+| Model plane（canonical + WireAdapter） | zag-ai + openai-zig | L1+；deadline/cancel 待 H6 |
+| Runtime / 领域包 | coding-agent runtime / core workspace；未来 sandbox | 先稳定 contract，非为拆而拆 |
+| 契约 | **zag-types** | canonical 已有；runtime ToolCapabilities 待 P0 |
 
 ### 后续拆分排期
 
 | 拆什么 | 从哪拆 | 时机 | 动机 |
 |--------|--------|------|------|
 | ~~**zag-types**~~ | ~~`zag-ai/types`~~ | ✅ 已完成 | core 仅依赖 zag-types；`ChatError` 中性 |
-| zag-tools | `zag-coding-agent/src/runtime/*` + toolset | H2 出门后 | 编辑面 API 稳定 |
-| zag-workspace | `zag-agent-core` 的 `workspace/shell_policy` | H5 出门后 | 安全面独立演进 + C7 sandbox 挂点 |
-| zag-agent（若需要） | coding-agent 中的 agent 定义 | C6 | subagent/persona 成形时再议，勿提前 |
+| zag-tools | `zag-coding-agent/src/runtime/*` + toolset | SDK Gate 后且有第二消费边界 | 不是 H2 完成的自动动作 |
+| zag-workspace | core workspace/shell policy | containment contract 稳定且 C7 需要独立演进时 | sandbox runner 不强制与 lexical policy 同包 |
+| zag-agent（若需要） | coding-agent agent definition | C6 出现真实多 agent composition 后 | 不提前建空包 |
 
 ### 2.1 ~~已知残留：core → zag-ai~~（已解）
 
@@ -118,7 +119,7 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 须同时满足：
 
 1. **API 冻结**：语义化版本，破坏性变更有迁移文档；
-2. **第二使用方**：除 zag bin 外至少一个真实外部消费者（或明确的 SDK 发布计划）；
+2. **第二使用方**：除 zag bin/仓库 fixture 外至少一个真实外部消费者；计划本身不算消费者；
 3. **测试自洽**：不依赖 monorepo 其他包的私有测试设施；
 4. **发布通道**：tag / zon 包可独立获取。
 
@@ -126,39 +127,58 @@ Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 
 
 ---
 
-## 4. SDK 面承诺
+## 4. SDK readiness（当前无发布承诺）
 
-| 层 | 稳定性承诺 |
-|----|------------|
-| L0 zag-types | 最严：semver，破坏性变更必须 major |
-| L2 zag-ai / zag-tools | 稳定 API + 文档化错误集 |
-| L4 zag-kernel | 嵌入入口（`Agent.init` 一族）；事件/Observer 契约版本化 |
-| L5/L6 | 产品面，不做兼容承诺 |
+[D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) separates three levels:
 
-嵌入示例（目标形态，与现 `Agent.init` 连续）：
+| Level | Contract | Current |
+|-------|----------|---------|
+| Low-level Zig composition | direct Provider/Toolset/Observer/Transcript/loop assembly | ✅ validated |
+| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ❌ Gate open |
+| Process SDK/headless | versioned JSON/events + stable errors/exit codes | ❌ Gate open |
+
+### SDK-ready Gate
+
+All conditions are required:
+
+1. Phase H correctness passes; no fail-open custom Tool or unsafe session semantics.
+2. `Tool` supports instance state and mandatory runtime capabilities.
+3. Supported high-level composition accepts caller Toolset, Observer, and policy without product-private fields.
+4. Ownership/lifetime, typed errors, cancellation/deadline, events, and session semantics are documented and tested.
+5. A repository-owned external consumer builds/runs in CI without private monorepo imports.
+6. Package tests are self-contained.
+
+Only after the Gate may a stability table assign semver promises. Repo mirror additionally needs a second real consumer and release channel.
+
+Target usage is intentionally illustrative until the Gate lands:
 
 ```zig
-const zag = @import("zag-kernel");
+// Target shape; this is not the current Agent.Options API.
 var agent = zag.Agent.init(gpa, io, provider, .{
-    .permission_mode = .ask,
-    .toolset = my_tools,      // 可替换：SDK 用户带自己的工具
-    .observer = my_observer,  // 事件流：UI/日志自定义
+    .toolset = my_tools,
+    .observer = my_observer,
+    .permission_policy = my_policy,
 });
 ```
+
+Cross-language hosts use the later process/headless contract. No stable C ABI, Zig dynamic ABI, or in-process dynamic plugin ABI is promised.
 
 ---
 
 ## 5. 与路线图的关系
 
-- **Phase H**：骨架拆分 + **zag-types** 已完成；H 内 Packaging 不再动包结构。其余 H 切片按模块规格实现。
-- **C 轨**：每个新能力必须在设计中声明「落进哪个包」；不允许新能力直接长在 zag-cli/main 里。tools/workspace 拆分挂 H2/H5 出门之后（见 §2 排期表）。
-- **maturity.md** 增补视角：某包达到「API 冻结 + 测试自洁」即可标记 SDK-ready。
+- **Phase H**：保持当前 package layout，先完成 session、Tool descriptor、containment、trace、context、redact、deadline/cancel correctness。
+- **SDK-ready Gate**：完成 public composition 和 external consumer；不由 Phase H 或 package count 自动获得。
+- **Headless Gate**：提供 process contract，早于 TUI/ACP polish。
+- **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。
+- Split decisions use dependency/consumer pressure, not phase completion as an automatic trigger.
 
 ## 6. 刻意不做
 
-- 在 H 内继续碎拆（zag-types 之外的拆分等 H2/H5 出门）；
-- 双向同步的多 repo 开发流；
-- 为对齐 Grok Build 而复刻其 60+ crate 粒度——当前 6 包 + 排期 3 包足够，膨胀再分。
+- 在 H/P0-P1 correctness 未闭合时继续碎拆；
+- 在 SDK Gate 前承诺 semver public API、C ABI 或 dynamic plugin ABI；
+- 双向同步的 multi-repo development flow；
+- 为对齐 Grok Build 而复刻其 crate 粒度；只有真实 ownership/dependency pressure 才拆包。
 
 ## 相关
 

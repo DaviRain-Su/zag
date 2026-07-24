@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 前置 | **Phase H 完成**（单 Loop 生产底线） |
+| 前置 | Phase H lifecycle/session correctness + SDK/headless event contract；executable subagents 另依赖 process supervisor/safety policy |
 | 失败模式 | 弱模型硬撑；子代理散文不可用；大任务无计划 |
 | 模块 | [subagents-oracle](../modules/subagents-oracle.md) |
 | 架构 | [Loop ⊂ Graph](../architecture.md#loop--graph多角色编排) |
@@ -12,6 +12,12 @@
 
 主会话可用便宜/日常模型干活；卡住时请到**更强只读 Oracle**；计划与子代理有界。  
 可选 **Graph/DAG 编排** 表达多角色拓扑；**每个 agentic 节点内部仍是 Agent Core Loop**。
+
+Delivery order inside C6:
+
+1. read-only Oracle over stable lifecycle/headless contract;
+2. bounded typed subagents with explicit process ownership/cancel;
+3. optional Graph only after repeated real orchestration shapes justify it.
 
 ## 范围
 

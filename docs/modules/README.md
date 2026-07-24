@@ -9,6 +9,7 @@
 | 规格 | 阶段 | 现状路径 | 目标拆分（可选） |
 |------|------|----------|------------------|
 | [loop-turn.md](./loop-turn.md) | H1 | `packages/zag-agent-core/src/loop.zig` | 保持 |
+| [tool-runtime.md](./tool-runtime.md) | H/P0 → SDK | `zag-types` ToolDefinition；core `tool.zig` | 保持定义/运行时分离 |
 | [tools-edit.md](./tools-edit.md) | H2 → C4 | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent |
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | runtime `run_shell` + core `shell_policy` | 保持 |
 | [permissions.md](./permissions.md) | H3 | `zag-agent-core/.../permissions.zig` | 保持 |
@@ -36,8 +37,9 @@
 依赖单向：
 
 ```text
+# consumer → dependency
 main → zag-cli → coding-agent → agent-core → zag-types
-                      ↘───────────→ zag-ai → zag-types
+                         └────→ zag-ai ─┬→ zag-types
                                        └→ openai-zig
 ```
 
@@ -50,13 +52,14 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | 模块 | 阶段 | 说明 |
 |------|------|------|
 | [loop-turn.md](./loop-turn.md) | H1 | harness 主循环 |
+| [tool-runtime.md](./tool-runtime.md) | H/P0 → SDK | model definition / runtime capabilities / stateful handler |
 | [tools-edit.md](./tools-edit.md) | H2 → C4 | 编辑 / grep / glob |
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | shell 执行 |
 | [permissions.md](./permissions.md) | H3 | 权限矩阵 / plan 语义 |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | 四层 prompt / 压缩 |
 | [session-store.md](./session-store.md) | H4 → C5 | 会话落盘 / schema |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | jail / policy / redact |
-| [zag-ai-provider.md](./zag-ai-provider.md) | H6 + WireAdapter | 模型接入；**适配器预留**（OpenAI 先） |
+| [zag-ai-provider.md](./zag-ai-provider.md) | H6 + WireAdapter | OpenAI-compatible + Anthropic；deadline/cancel contract |
 | [trace-observability.md](./trace-observability.md) | H7 | 审计 trace |
 | [memory.md](./memory.md) | C5 stub | Memory Repo（跨 session；默认可关） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |

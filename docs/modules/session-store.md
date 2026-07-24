@@ -1,53 +1,97 @@
 # Module: session-store
 
-| 项 | 内容 |
-|----|------|
-| 代码 | `packages/zag-agent-core/src/{session_store,transcript}.zig` |
-| 成熟度 | L1 → **L2（H4 已落地）** → L3（fork/树，C5） |
-| 对标 | Pi session；Hyper sessions；Nanocodex checkpoint |
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/{session_store,transcript}.zig`; facade in coding-agent `agent.zig` |
+| Current maturity | **L1+** — schema/roundtrip exist; safe open/durability contract is P0 |
+| Target | L2 (H) → L3 fork/tree (C5) |
+| Decision | [D-006](../decisions/active/D-006-session-open-and-durability.md) |
 
-## 不变式
+## Purpose and state boundary
 
-1. Session 文件是恢复权威来源之一；与内存 transcript 一致策略成文。  
-2. **必须有 schema 版本**；未知版本 → 明确错误，不静默解析。  
-3. 可能含代码与命令输出：按敏感本地状态对待（gitignore）。
+Transcript is authoritative conversation state in memory. A configured session file is its recoverable persisted representation. Context view/compaction never silently mutates transcript history.
 
-## Schema（L2）
+The Session owner holds transcript memory, path, metadata, and the active-writer lease for its lifetime.
 
-JSONL 头部 + 消息行。头字段：
+## Invariants
 
-| 字段 | 说明 |
-|------|------|
-| `schema_version` | 整数，当前 **1**（亦写 legacy `v`） |
-| `type` | 恒为 `zag_session` |
-| `zag_version` | 写入时的包版本（可选） |
-| `compaction_gen` | 视图压缩代数 |
-| `compaction_summary` | 最近一次启发式摘要（可选） |
-| 消息行 | `role` / `content` / `tool_calls` … |
+1. Schema version is mandatory; unknown versions fail explicitly.
+2. Create, resume, and optional open-or-create have distinct semantics.
+3. Missing, invalid, unsupported, busy, and general I/O failures are not interchangeable.
+4. A failed load never authorizes overwriting the same path with a fresh transcript.
+5. A failed save preserves the previous good file and is visible to the caller.
+6. L2 has at most one active writer per persisted session; last-writer-wins is forbidden.
+7. Session files may contain code, command output, and secrets; `.zag/` remains sensitive local state.
 
-未知 `schema_version` → `UnsupportedSchema`（不静默解析）。无头旧文件按 v1 加载。
+## Schema v1 (current format)
 
-### 迁移
+JSONL header plus message lines:
 
-- vN → vN+1：纯加字段则向前兼容；破坏性变更必须提供迁移函数或拒绝加载并提示。  
-- 迁移失败不得损坏原文件（写临时文件再替换）。
+| Field | Meaning |
+|-------|---------|
+| `schema_version` | Integer, current `1` (legacy `v` accepted) |
+| `type` | `zag_session` |
+| `zag_version` | Optional writer package version |
+| `compaction_gen` | Compaction generation |
+| `compaction_summary` | Optional latest summary |
+| message row | `role`, `content`, `tool_calls`, `tool_call_id`, … |
 
-## L2 验收
+Header-less legacy files load as v1. `schema_version != 1` returns `UnsupportedSchema`; it must not seed a new session on that path.
 
-- [x] 新旧版本加载行为有测试（legacy `v`、无头、schema=99 拒绝）  
-- [x] resume 后 tool 对仍然成对（既有 golden / roundtrip）  
-- [x] 文档列出最小字段  
+## Open contract (L2 target)
 
-## L3
+| Operation | Required behavior |
+|-----------|-------------------|
+| `create_new(path)` | Acquire writer ownership and create only if absent; existing path → typed already-exists error |
+| `resume_existing(path)` | Missing → not-found; invalid → invalid-session; unknown schema → unsupported-schema; busy → busy/conflict |
+| `open_or_create(path)` (optional) | Create only after typed not-found; every other load failure propagates |
+| ephemeral session | No path, no persistence claim |
 
-- branch / fork / 旁支会话（C5）  
-- 与 subagent 子 transcript 索引（C6）  
+Names may follow Zig conventions, but these behaviors may not be collapsed into a catch-all fallback.
 
-## 非目标（H）
+## Save/durability contract (L2 target)
 
-- 云同步  
-- SQLite 强制（可后置）  
+1. Serialize complete bytes away from the target.
+2. Write a same-filesystem temporary file.
+3. Atomically replace the target only after successful serialization/write.
+4. Release/clean temporary state on failure while preserving the prior target.
+5. Return persistence errors through `Agent.reply` and headless structured output.
+6. Prevent a second active writer with an explicit lease/lock or an equivalent conflict mechanism.
 
-## Hyper 对照
+This is a **software-crash preservation** contract. Power-loss/fsync durability is not claimed by L2.
 
-- user-guide `17-sessions`  
+Physical append-only storage is optional. Snapshot, append journal, or hybrid implementations are acceptable if they satisfy the observable contract.
+
+## Migration
+
+- Additive v1 fields may remain compatible.
+- Breaking format changes require a new schema and migration or explicit refusal.
+- Migration writes a replacement atomically and keeps the source recoverable until commit.
+- Unknown future fields/variants follow the documented compatibility policy; they are never silently normalized into empty state.
+
+## Current gap
+
+Current facade resume catches `IoFailed`, `InvalidSession`, and `UnsupportedSchema`, seeds a new transcript, and retains the path. Current save truncates the destination directly, and `Agent.reply` logs save failure only in verbose mode. Therefore schema presence alone does not satisfy L2.
+
+## L2 acceptance
+
+- [x] v1 header, legacy `v`, header-less legacy, and unsupported-schema parsing tests exist.
+- [ ] create-existing fails without modifying bytes.
+- [ ] resume missing/invalid/unsupported/general I/O failures are stable and distinct.
+- [ ] fault-injected save preserves prior bytes and returns failure.
+- [ ] a second active writer receives busy/conflict.
+- [ ] facade/headless never reports unqualified success after a requested save fails.
+- [ ] cancel/tool-pair roundtrip remains resume-safe under the new persistence path.
+
+## L3 (C5)
+
+- branch/fork/session tree;
+- append journal or snapshots when justified by measured session size;
+- subagent transcript indexing.
+
+## Non-goals for H
+
+- Cloud sync
+- Mandatory SQLite
+- Power-loss durability claim
+- Branch/fork UI
