@@ -97,7 +97,7 @@ Implementation notes:
 - The active writer holds an exclusive advisory lock on `{path}.lock` for its lifetime; the session file itself is not locked.
 - Save serializes to a same-filesystem temporary file and atomically replaces the target via `createFileAtomic`. Test builds may inject a per-Writer before-replace fault via `session_store.testing` (absent as an enablement path in production); failure leaves the prior bytes intact and loadable.
 - Typed header lines require integer `schema_version` and/or legacy `v` (missing both → `InvalidSession`); header-less message files still load as implied v1.
-- Final read `FileNotFound` maps to `SessionNotFound`; other read/access failures map to `IoFailed` (e.g. path component is a regular file).
+- Final read `FileNotFound` maps to `SessionNotFound`; other read/access failures map to `IoFailed` (fixture: session path is a directory so open/read fails as general I/O).
 - `Session.save` errors propagate through `Agent.reply` and `Agent.complete`; the CLI exits with a non-zero status and a logged error.
 - `Session.start` releases a partially acquired writer on error (`errdefer`) and only treats a successful resume as `resumed` for project-layer reload.
 
@@ -106,7 +106,7 @@ Implementation notes:
 - [x] v1 header, legacy `v`, header-less legacy, and unsupported-schema parsing tests exist.
 - [x] Strict header tests: float version, missing version on typed header, conflicting v/schema_version, mid-stream/duplicate header, content not misclassified.
 - [x] create-existing fails without modifying bytes.
-- [x] resume missing/invalid/unsupported/general I/O (path-component file) are stable and distinct; openOrCreate does not create on IoFailed.
+- [x] resume missing/invalid/unsupported/general I/O (session path is a directory) are stable and distinct; openOrCreate does not create on IoFailed.
 - [x] per-Writer test fault before replace preserves prior bytes and returns failure; prior file remains loadable.
 - [x] a second active writer receives busy/conflict; public save also respects the lock (bounded cross-process holder).
 - [x] stale lock sidecar is reusable after release.

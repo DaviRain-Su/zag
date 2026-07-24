@@ -667,7 +667,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
     try std.testing.expect(original.len > 0);
 
     // Per-Writer test-only fault: fail after temp write, before replace.
-    const writer = &(session.writer orelse return error.TestUnexpectedResult);
+    const writer = if (session.writer) |*w| w else return error.TestUnexpectedResult;
     session_store.testing.setFailBeforeReplace(writer, true);
 
     const Mock = struct {
@@ -703,14 +703,12 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
     defer gpa.free(after);
     try std.testing.expectEqualStrings(original, after);
 
-    // Prior bytes remain loadable as a session (without the active writer).
+    // Prior bytes remain loadable via the held Writer (load does not re-acquire the lock).
     session_store.testing.setFailBeforeReplace(writer, false);
     var load_arena: std.heap.ArenaAllocator = .init(gpa);
     defer load_arena.deinit();
     var loaded = transcript_mod.Transcript.init(load_arena.allocator());
-    // Public load would take a brief lock while Session still holds the writer → Busy.
-    // Parse the preserved bytes directly.
-    const meta = try session_store.parseSessionBytes(gpa, &loaded, after);
+    const meta = try writer.load(&loaded);
     try std.testing.expectEqual(session_store.current_schema_version, meta.schema_version);
     try std.testing.expect(loaded.items().len >= 1);
 }
