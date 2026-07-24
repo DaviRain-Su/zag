@@ -106,7 +106,7 @@ while turns < max:
 | HTTP + JSON | `openai_compat.Client` | `Provider.chat` |
 | env 选 key/model | `provider/config.zig` | `main` 解析一次 |
 | 装 list_dir/read_file | `Phase0Storage` / `Agent.initPhase0` | `agent.reply` |
-| stderr 日志 | `Observer.stderrLog` | `Options.verbose` |
+| stderr 日志（产品路径） | `logEventRedacted`（Agent verbose） | `Options.verbose`；低层 bypass 为 `Observer.stderrLogUnredacted`（非产品默认） |
 | CLI flag | `main.zig` | 不进 loop |
 
 ---

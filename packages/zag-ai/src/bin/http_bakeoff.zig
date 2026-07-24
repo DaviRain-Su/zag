@@ -36,7 +36,8 @@ pub fn main(init: std.process.Init) !void {
     const out = &stdout_writer.interface;
 
     try out.print("BACKEND={s}\n", .{backend});
-    try out.print("BASE_URL={s}\n", .{base_url});
+    // h-redact-001: never print caller/env base_url (userinfo/query may hold secrets).
+    try out.print("{s}\n", .{http.formatConfiguredBaseUrlStatus(base_url)});
 
     try runCase(gpa, io, out, "post_ok", base_url, "/post", null, 8_000);
     try runCase(gpa, io, out, "timeout", base_url, "/delay/5", 1_500, 20_000);

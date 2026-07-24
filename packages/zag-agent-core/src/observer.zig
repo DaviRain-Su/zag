@@ -38,21 +38,22 @@ pub const Observer = struct {
         return .{};
     }
 
-    /// Stderr logger suitable for CLI `-v` **without** redaction (low-level).
-    /// Product path uses `logEventRedacted` via Agent.
-    pub fn stderrLog() Observer {
+    /// Low-level stderr logger **without** redaction (explicit bypass).
+    /// Product Agent/CLI paths must use `logEventRedacted` instead.
+    /// Named `*Unredacted` so silent raw bypass is not a default-looking API.
+    pub fn stderrLogUnredacted() Observer {
         return .{
             .ptr = null,
-            .on_event = logToStderr,
+            .on_event = logToStderrUnredacted,
         };
     }
 };
 
-fn logToStderr(_: ?*anyopaque, event: Event) void {
-    // Low-level: no redactor. Prefer logEventRedacted on the product path.
+fn logToStderrUnredacted(_: ?*anyopaque, event: Event) void {
     logEventRaw(event);
 }
 
+/// Private raw formatter for the unredacted stderr observer only.
 fn logEventRaw(event: Event) void {
     switch (event) {
         .assistant_text => |text| {
@@ -235,4 +236,10 @@ test "prepareEventLogLine OOM drops without raw secret" {
     });
     try std.testing.expect(out == null);
     try std.testing.expect(failing.has_induced_failure);
+}
+
+test "stderrLogUnredacted is explicit bypass Observer" {
+    // Named *Unredacted so raw logging is not a silent default-looking API.
+    const obs = Observer.stderrLogUnredacted();
+    try std.testing.expect(obs.on_event != null);
 }

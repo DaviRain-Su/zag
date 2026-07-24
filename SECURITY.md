@@ -54,13 +54,17 @@ Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/termi
 - Matching: global longest among exact+patterns; pattern token boundaries; AWS fixed 20-byte form; complexity O(input × secret material + pattern scan).
 - Session owns a cloned redactor at `Session.start` (create writes redacted); safe to `save` after Agent deinit. Tool-call IDs that contain secrets map to collision-safe `zag-rtid-<n>` pseudonyms (skip reserved IDs already in context / prior resume); never collapse multiple IDs to one marker; no secret material in the name.
 - Trace `stop_reason`: Agent vocabulary is allocation-free; arbitrary public stop_reason is redacted (OOM → minimal terminal). Agent clears `trace.redactor` on every reply exit.
-- Low-level unredacted session APIs are explicitly named (`createNewUnredacted` / `saveUnredacted` / …); product path always uses redaction.
 - Ask-mode permission prompt logs **risk + args_len only** (never tool name or raw arguments). CLI verbose/REPL do not echo session/trace/project paths.
-- Model-plane / openai-zig HTTP diagnostics print **status + body length only** — never Authorization, body text, or hex dumps.
+- Model-plane / openai-zig HTTP diagnostics print **status + body length only** — never Authorization, body text, or hex dumps. HTTP bake-off prints fixed `BASE_URL=configured` (never raw base URL).
 - Shell/jail loop warnings are generic (no raw command/path).
 - **Final assistant stdout** (one-shot/REPL answer) and **standalone openai-zig examples** are intentional user-facing output and are **outside** the verbose/diagnostic redaction gate.
+- **Low-level unredacted bypasses** (explicit names only; product Agent/CLI always bind a redactor):
+  - session: `createNewUnredacted` / `openOrCreateUnredacted` / `saveUnredacted` / `saveWithMetaUnredacted` / `Writer.saveUnredacted`;
+  - observer: `Observer.stderrLogUnredacted()` (raw stderr; product path uses `logEventRedacted`);
+  - trace: `Trace.redactor == null` / never bound (skip redaction before serialize).
 - **Not claimed:** zeroization of freed secret buffers, DLP over arbitrary tool/file content, or proof that `.zag/` is secret-free.
 - Treat all `.zag/` files as sensitive local state and keep them out of version control.
+- Status: h-redact-001 **branch implemented, pending Gate** (not done).
 
 Redaction reduces known-key and shape leakage; it will not prove arbitrary file/Tool output secret-free.
 

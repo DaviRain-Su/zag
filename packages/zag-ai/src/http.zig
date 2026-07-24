@@ -28,8 +28,31 @@ pub fn backendName() []const u8 {
     return @tagName(build_options.http_backend);
 }
 
+/// Diagnostic label for bake-off / HTTP tooling base URL (h-redact-001).
+/// Always returns the fixed token `BASE_URL=configured` — never interpolates
+/// caller/env URL bytes (`base_url` may contain userinfo or query secrets).
+/// `base_url` is accepted only so call sites can pass the real value without
+/// a separate print path that might echo it.
+pub fn formatConfiguredBaseUrlStatus(base_url: []const u8) []const u8 {
+    _ = base_url;
+    return "BASE_URL=configured";
+}
+
 test "http backend is named" {
     const name = backendName();
     try std.testing.expect(name.len > 0);
     try std.testing.expect(std.mem.eql(u8, name, "std") or std.mem.eql(u8, name, "curl"));
+}
+
+test "formatConfiguredBaseUrlStatus never echoes secret-bearing URL" {
+    const secret_url = "https://user:secret@example.invalid/?token=sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    const out = formatConfiguredBaseUrlStatus(secret_url);
+    try std.testing.expectEqualStrings("BASE_URL=configured", out);
+    try std.testing.expect(std.mem.indexOf(u8, out, secret_url) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "user") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "secret") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "token=") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "sk-") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "example.invalid") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "https://") == null);
 }
