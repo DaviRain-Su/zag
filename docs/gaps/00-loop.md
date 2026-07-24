@@ -14,13 +14,13 @@
 
 | 缺口 | 为何算生产问题 | 落点 |
 |------|----------------|------|
-| Tool 错误不可机读 | 模型与 eval 难以分支处理；日志难聚合 | H1 · [loop-turn](../modules/loop-turn.md) |
-| 无 cancel / 中断语义 | 长 turn 只能杀进程，transcript 半残 | H1 |
-| max_turns 等未稳定进 trace | 无法审计「为何停」 | H1 · H7 |
+| Tool 错误不可机读 | 模型与 eval 难以分支处理；日志难聚合 | ✅ H1：`tool_error` `code=` |
+| 无 cancel / 中断语义 | 长 turn 只能杀进程，transcript 半残 | H1 收口 |
+| max_turns 等未稳定进 trace | 无法审计「为何停」 | ✅ `stop_reason`；超时仍待 |
 | 无 golden transcript | 改 loop 易 silent 变笨 | H1 · [evals](../quality/evals.md) |
-| 只读工具无 grep/glob | 中型仓库靠瞎 list | H2（工具面，loop 消费） |
+| ~~只读工具无 grep/glob~~ | — | ✅ H2 |
 | 流式/部分 tool_call 不稳 | 生产常用 `--stream` | H6 · [zag-ai-provider](../modules/zag-ai-provider.md) |
-| usage 仅 turn/trace 雏形 | 缺 session 聚合账本 | H6（trace 已有 usage 事件） |
+| usage 仅 turn/trace 雏形 | session 文件元数据仍待 | H6（Ledger/CLI **已有**） |
 
 ## 非本阶段（勿塞进「修 Phase 0」）
 

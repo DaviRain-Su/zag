@@ -15,6 +15,7 @@ pub const context = @import("context.zig");
 pub const session_store = @import("session_store.zig");
 pub const shell_policy = @import("shell_policy.zig");
 pub const workspace = @import("workspace.zig");
+pub const tool_error = @import("tool_error.zig");
 pub const trace = @import("trace.zig");
 pub const loop = @import("loop.zig");
 

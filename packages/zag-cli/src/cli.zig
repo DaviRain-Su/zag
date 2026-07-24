@@ -278,11 +278,14 @@ fn runOneShot(
     defer result.deinit(agent.gpa);
 
     if (verbose) {
-        std.log.info("completed in {d} turn(s)", .{result.turns});
+        std.log.info("completed in {d} turn(s) stop={s}", .{ result.turns, @tagName(result.stop_reason) });
         agent.logCostSummary();
     } else if (agent.ledger.turns > 0) {
         // Quiet one-liner on run_end so cost is visible without -v.
         agent.logCostSummary();
+    }
+    if (result.stop_reason == .max_turns) {
+        std.log.warn("stopped: max_turns reached ({d})", .{result.turns});
     }
 
     try writeStdout(agent.io, result.final_text);

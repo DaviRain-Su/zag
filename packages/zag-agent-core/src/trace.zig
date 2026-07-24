@@ -140,6 +140,7 @@ pub const Trace = struct {
         total_tokens: u64 = 0,
         /// Present when catalog rates made a USD estimate possible.
         estimated_usd: ?f64 = null,
+        stop_reason: ?[]const u8 = null,
     };
 
     pub fn emitRunEnd(self: *Trace, info: RunEndInfo) std.mem.Allocator.Error!void {
@@ -152,6 +153,7 @@ pub const Trace = struct {
             .completion_tokens = if (info.completion_tokens != 0) info.completion_tokens else null,
             .total_tokens = if (info.total_tokens != 0) info.total_tokens else null,
             .estimated_usd = info.estimated_usd,
+            .stop_reason = info.stop_reason,
         });
         self.finished = true;
         try self.flush();

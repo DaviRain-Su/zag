@@ -157,11 +157,14 @@ pub fn deniedMessage(
     allocator: std.mem.Allocator,
     tool_name: []const u8,
 ) std.mem.Allocator.Error![]u8 {
-    return std.fmt.allocPrint(
+    const tool_error = @import("tool_error.zig");
+    const msg = try std.fmt.allocPrint(
         allocator,
-        "error: permission denied for tool '{s}'. The user rejected this operation. Do not retry the same call; explain what you wanted to do and wait for guidance.",
+        "permission denied for tool '{s}'. The user rejected this operation. Do not retry the same call; explain what you wanted to do and wait for guidance.",
         .{tool_name},
     );
+    defer allocator.free(msg);
+    return tool_error.format(allocator, .permission_denied, msg);
 }
 
 test "riskOf classification" {

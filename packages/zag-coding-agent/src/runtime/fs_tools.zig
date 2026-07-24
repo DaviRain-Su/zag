@@ -534,7 +534,7 @@ test "list_dir and read_file on project files" {
 
     const unknown = try registry.execute(ctx, "nope", "{}");
     defer gpa.free(unknown);
-    try std.testing.expect(std.mem.indexOf(u8, unknown, "unknown tool") != null);
+    try std.testing.expect(std.mem.indexOf(u8, unknown, "code=unknown_tool") != null);
 }
 
 test "matchGlob basics" {
@@ -572,7 +572,7 @@ test "grep and glob in tmp dir" {
 
     const abs = try grep(ctx, "{\"pattern\":\"x\",\"path\":\"/etc\"}");
     defer gpa.free(abs);
-    try std.testing.expect(std.mem.indexOf(u8, abs, "workspace jail") != null);
+    try std.testing.expect(std.mem.indexOf(u8, abs, "code=jail_deny") != null);
 
     const paths = try glob(ctx, "{\"pattern\":\"**/*.zig\"}");
     defer gpa.free(paths);

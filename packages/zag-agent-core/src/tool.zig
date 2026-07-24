@@ -53,32 +53,40 @@ pub const Registry = struct {
     }
 
     /// Run a tool by name. On unknown tools or handler errors, returns an
-    /// allocated error string the model can read (never hard-fails the loop).
+    /// allocated soft-fail string (`error: code=… message=…`) so the loop never
+    /// hard-fails on tool mistakes.
     pub fn execute(
         self: Registry,
         ctx: Context,
         name: []const u8,
         arguments_json: []const u8,
     ) std.mem.Allocator.Error![]u8 {
-        const tool = self.find(name) orelse {
-            return std.fmt.allocPrint(
-                ctx.allocator,
-                "error: unknown tool '{s}'",
-                .{name},
-            );
+        const tool_error = @import("tool_error.zig");
+        const found = self.find(name) orelse {
+            const msg = try std.fmt.allocPrint(ctx.allocator, "unknown tool '{s}'", .{name});
+            defer ctx.allocator.free(msg);
+            return tool_error.format(ctx.allocator, .unknown_tool, msg);
         };
-        return tool.handler(ctx, arguments_json) catch |err| switch (err) {
+        return found.handler(ctx, arguments_json) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            error.InvalidArguments => std.fmt.allocPrint(
-                ctx.allocator,
-                "error: invalid arguments for '{s}': {s}",
-                .{ name, arguments_json },
-            ),
-            error.ToolFailed => std.fmt.allocPrint(
-                ctx.allocator,
-                "error: tool '{s}' failed",
-                .{name},
-            ),
+            error.InvalidArguments => {
+                const msg = try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "invalid arguments for '{s}'",
+                    .{name},
+                );
+                defer ctx.allocator.free(msg);
+                return tool_error.format(ctx.allocator, .invalid_arguments, msg);
+            },
+            error.ToolFailed => {
+                const msg = try std.fmt.allocPrint(
+                    ctx.allocator,
+                    "tool '{s}' failed",
+                    .{name},
+                );
+                defer ctx.allocator.free(msg);
+                return tool_error.format(ctx.allocator, .tool_failed, msg);
+            },
         };
     }
 

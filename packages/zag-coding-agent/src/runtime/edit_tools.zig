@@ -343,23 +343,36 @@ fn shellRunError(
     command: []const u8,
     err: anyerror,
 ) tool.HandlerError![]u8 {
+    const core_err = @import("zag-agent-core").tool_error;
     return switch (err) {
         error.OutOfMemory => error.OutOfMemory,
-        error.Timeout => softError(
-            gpa,
-            "error: command timed out after {d}s: {s}",
-            .{ shell_timeout_secs, command },
-        ),
-        error.StreamTooLong => softError(
-            gpa,
-            "error: command output exceeded {d} bytes (truncated). Command: {s}",
-            .{ max_shell_output, command },
-        ),
-        else => softError(
-            gpa,
-            "error: failed to run command ({s}): {s}",
-            .{ @errorName(err), command },
-        ),
+        error.Timeout => {
+            const msg = try std.fmt.allocPrint(
+                gpa,
+                "command timed out after {d}s: {s}",
+                .{ shell_timeout_secs, command },
+            );
+            defer gpa.free(msg);
+            return core_err.format(gpa, .tool_failed, msg);
+        },
+        error.StreamTooLong => {
+            const msg = try std.fmt.allocPrint(
+                gpa,
+                "command output exceeded {d} bytes (truncated). Command: {s}",
+                .{ max_shell_output, command },
+            );
+            defer gpa.free(msg);
+            return core_err.format(gpa, .tool_failed, msg);
+        },
+        else => {
+            const msg = try std.fmt.allocPrint(
+                gpa,
+                "failed to run command ({s}): {s}",
+                .{ @errorName(err), command },
+            );
+            defer gpa.free(msg);
+            return core_err.format(gpa, .tool_failed, msg);
+        },
     };
 }
 

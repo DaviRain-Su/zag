@@ -112,15 +112,18 @@ pub fn check(mode: Mode, command: []const u8) Decision {
 }
 
 pub fn deniedMessage(allocator: std.mem.Allocator, command: []const u8) std.mem.Allocator.Error![]u8 {
+    const tool_error = @import("tool_error.zig");
     const preview_len = @min(command.len, 120);
-    return std.fmt.allocPrint(
+    const msg = try std.fmt.allocPrint(
         allocator,
-        "error: shell command blocked by policy: '{s}{s}'. Refusing dangerous pattern. Use a safer command or ask the user to adjust policy.",
+        "shell command blocked by policy: '{s}{s}'. Refusing dangerous pattern. Use a safer command or ask the user to adjust policy.",
         .{
             command[0..preview_len],
             if (command.len > preview_len) "…" else "",
         },
     );
+    defer allocator.free(msg);
+    return tool_error.format(allocator, .shell_deny, msg);
 }
 
 test "policy allows normal build/test" {

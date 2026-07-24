@@ -27,11 +27,13 @@
 
 **规格：** [modules/loop-turn.md](../modules/loop-turn.md)
 
-- 统一 tool 错误形状：可机读 `code` + `message`（字符串仍可给人/模型读）  
-- cancel：SIGINT → 干净结束当前 turn，transcript 一致  
-- `max_turns` / 超时可配置且写入 trace  
-- 并行策略成文：只读可并、写串行（实现可分期，规格先钉）  
-- Golden ≥2：只读问答；拒绝写文件  
+**已有（勿重做）：** soft-fail 统一 `error: code=<CODE> message=…`（`tool_error.zig`：unknown_tool / invalid_arguments / permission_denied / jail_deny / shell_deny / tool_failed）；`Result.stop_reason`（`completed` / `max_turns`；cancel/provider 占位）；`run_end` 可带 `stop_reason`；max_turns 改为返回 Result 而非硬错误。
+
+**H1 收口剩余：**
+
+- SIGINT cancel → `stop_reason=cancelled`，不写半截 tool 对  
+- ≥2 golden transcript（只读；拒写）  
+- 并行只读策略成文测试（实现可仍串行） 
 
 ## H2 — Edit
 

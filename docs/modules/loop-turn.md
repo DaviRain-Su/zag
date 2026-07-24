@@ -45,9 +45,9 @@ error: code=<CODE> message=<human>
 
 ## L2 验收
 
-- [ ] 错误码稳定，golden 可断言 `permission_denied`  
+- [x] 错误码稳定，单测可断言 `permission_denied` / `jail_deny`  
 - [ ] cancel 后 session 文件可 resume  
-- [ ] max_turns 出现在 trace  
+- [x] max_turns 进入 `Result.stop_reason` + trace `run_end`  
 - [ ] ≥2 golden（只读；拒写）
 
 ## L3 方向

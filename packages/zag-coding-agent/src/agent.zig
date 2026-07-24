@@ -196,7 +196,7 @@ pub const Agent = struct {
     pub fn deinit(self: *Agent) void {
         if (self.trace) |*tr| {
             if (!tr.finished and tr.event_count > 0) {
-                self.emitRunEnd(tr, 0, true);
+                self.emitRunEnd(tr, 0, true, .completed);
             }
             tr.deinit();
         }
@@ -278,7 +278,7 @@ pub const Agent = struct {
         }) catch {};
     }
 
-    fn emitRunEnd(self: *Agent, tr: *trace_mod.Trace, turns: u32, ok: bool) void {
+    fn emitRunEnd(self: *Agent, tr: *trace_mod.Trace, turns: u32, ok: bool, stop_reason: loop.StopReason) void {
         const usd: ?f64 = if (self.ledger.cost.known) self.ledger.cost.total else null;
         tr.emitRunEnd(.{
             .turns = turns,
@@ -287,6 +287,7 @@ pub const Agent = struct {
             .completion_tokens = self.ledger.completion_tokens,
             .total_tokens = self.ledger.total_tokens,
             .estimated_usd = usd,
+            .stop_reason = stop_reason.name(),
         }) catch {};
     }
 
@@ -359,10 +360,15 @@ pub const Agent = struct {
 
         const result = try self.reply(&session, user_prompt);
         if (self.trace) |*tr| {
-            self.emitRunEnd(tr, result.turns, true);
+            self.emitRunEnd(tr, result.turns, true, result.stop_reason);
         }
         const owned = self.gpa.dupe(u8, result.final_text) catch return error.OutOfMemory;
-        return .{ .final_text = owned, .turns = result.turns, .usage = result.usage };
+        return .{
+            .final_text = owned,
+            .turns = result.turns,
+            .usage = result.usage,
+            .stop_reason = result.stop_reason,
+        };
     }
 };
 
@@ -370,6 +376,7 @@ pub const OwnedResult = struct {
     final_text: []u8,
     turns: u32,
     usage: message.Usage = .{},
+    stop_reason: loop.StopReason = .completed,
 
     pub fn deinit(self: OwnedResult, gpa: std.mem.Allocator) void {
         gpa.free(self.final_text);

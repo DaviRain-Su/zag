@@ -24,6 +24,7 @@ const context_mod = @import("context.zig");
 const workspace = @import("workspace.zig");
 const shell_policy = @import("shell_policy.zig");
 const trace_mod = @import("trace.zig");
+const tool_error = @import("tool_error.zig");
 
 pub const default_max_turns: u32 = 20;
 
@@ -41,9 +42,26 @@ pub const Options = struct {
 };
 
 pub const RunError = error{
+    /// Prefer Result.stop_reason=.max_turns; kept for callers that still match this error.
     MaxTurnsExceeded,
     ProviderFailed,
     OutOfMemory,
+};
+
+pub const StopReason = enum {
+    completed,
+    max_turns,
+    cancelled,
+    provider_error,
+
+    pub fn name(self: StopReason) []const u8 {
+        return switch (self) {
+            .completed => "completed",
+            .max_turns => "max_turns",
+            .cancelled => "cancelled",
+            .provider_error => "provider_error",
+        };
+    }
 };
 
 pub const Result = struct {
@@ -51,6 +69,7 @@ pub const Result = struct {
     turns: u32,
     /// Sum of provider-reported usage across chat turns (zeros if none reported).
     usage: message.Usage = .{},
+    stop_reason: StopReason = .completed,
 };
 
 pub const Deps = struct {
@@ -97,12 +116,22 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         }
 
         if (!turn.wantsTools()) {
-            return .{ .final_text = last_text, .turns = turns, .usage = usage_total };
+            return .{
+                .final_text = last_text,
+                .turns = turns,
+                .usage = usage_total,
+                .stop_reason = .completed,
+            };
         }
 
         const last_msg = transcript.items()[transcript.items().len - 1];
         const calls = last_msg.tool_calls orelse {
-            return .{ .final_text = last_text, .turns = turns, .usage = usage_total };
+            return .{
+                .final_text = last_text,
+                .turns = turns,
+                .usage = usage_total,
+                .stop_reason = .completed,
+            };
         };
 
         const registry = deps.toolset.registry();
@@ -155,7 +184,12 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         }
     }
 
-    return error.MaxTurnsExceeded;
+    return .{
+        .final_text = last_text,
+        .turns = turns,
+        .usage = usage_total,
+        .stop_reason = .max_turns,
+    };
 }
 
 fn chatWithRetry(
@@ -353,7 +387,7 @@ test "permission deny yields tool error without executing" {
     try std.testing.expectEqualStrings("understood, not writing", result.final_text);
     var found_deny = false;
     for (transcript.items()) |m| {
-        if (m.role == .tool and std.mem.indexOf(u8, m.content, "permission denied") != null) {
+        if (m.role == .tool and tool_error.hasCode(m.content, .permission_denied)) {
             found_deny = true;
         }
     }
@@ -416,7 +450,7 @@ test "jail deny absolute path without writing" {
     try std.testing.expectEqualStrings("blocked", result.final_text);
     var found = false;
     for (transcript.items()) |m| {
-        if (m.role == .tool and std.mem.indexOf(u8, m.content, "workspace jail") != null) {
+        if (m.role == .tool and tool_error.hasCode(m.content, .jail_deny)) {
             found = true;
         }
     }

@@ -38,11 +38,14 @@ pub fn checkToolPath(path: []const u8) Error!void {
 
 /// Soft error string for the model (caller owns with allocator).
 pub fn deniedMessage(allocator: std.mem.Allocator, path: []const u8) std.mem.Allocator.Error![]u8 {
-    return std.fmt.allocPrint(
+    const tool_error = @import("tool_error.zig");
+    const msg = try std.fmt.allocPrint(
         allocator,
-        "error: path outside workspace jail: '{s}'. Use relative paths under the working directory; '..' escapes and absolute paths are denied.",
+        "path outside workspace jail: '{s}'. Use relative paths under the working directory; '..' escapes and absolute paths are denied.",
         .{path},
     );
+    defer allocator.free(msg);
+    return tool_error.format(allocator, .jail_deny, msg);
 }
 
 /// Extract `path` from JSON tool arguments when present.
