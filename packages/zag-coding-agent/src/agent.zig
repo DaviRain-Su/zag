@@ -3474,20 +3474,18 @@ const SessionBodyExpect = union(enum) {
     code: tool_error.Code,
 };
 
-/// Structured session JSONL pairing (no whole-file independent needles).
-/// Skips header lines without `role`. Fail-loud on malformed JSON, missing
-/// assistant id, missing/duplicate tool records, or body mismatch.
-fn expectSessionPairedOutcome(
+/// Structured session JSONL pairing on raw bytes (no whole-file independent needles).
+/// Skips header lines without `role`. Counts every assistant `tool_calls[].id`
+/// occurrence for `id` across all assistant records (and within one array);
+/// second hit fails immediately; final count must be exactly 1. Tool rows for
+/// `id` must also appear exactly once with the expected body.
+fn expectSessionPairedOutcomeBytes(
     gpa: std.mem.Allocator,
-    io: Io,
-    path: []const u8,
+    raw: []const u8,
     id: []const u8,
     body_expect: SessionBodyExpect,
 ) !void {
-    const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024 * 1024));
-    defer gpa.free(raw);
-
-    var saw_assistant_id = false;
+    var assistant_id_hits: u32 = 0;
     var tool_hits: u32 = 0;
     var matched_body = false;
 
@@ -3512,7 +3510,10 @@ fn expectSessionPairedOutcome(
                     if (item != .object) return error.TestUnexpectedResult;
                     const cid_v = item.object.get("id") orelse return error.TestUnexpectedResult;
                     if (cid_v != .string) return error.TestUnexpectedResult;
-                    if (std.mem.eql(u8, cid_v.string, id)) saw_assistant_id = true;
+                    if (std.mem.eql(u8, cid_v.string, id)) {
+                        assistant_id_hits += 1;
+                        if (assistant_id_hits > 1) return error.TestUnexpectedResult;
+                    }
                 }
             }
             continue;
@@ -3539,9 +3540,109 @@ fn expectSessionPairedOutcome(
         }
     }
 
-    if (!saw_assistant_id) return error.TestUnexpectedResult;
+    if (assistant_id_hits != 1) return error.TestUnexpectedResult;
     if (tool_hits != 1) return error.TestUnexpectedResult;
     if (!matched_body) return error.TestUnexpectedResult;
+}
+
+fn expectSessionPairedOutcome(
+    gpa: std.mem.Allocator,
+    io: Io,
+    path: []const u8,
+    id: []const u8,
+    body_expect: SessionBodyExpect,
+) !void {
+    const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+    defer gpa.free(raw);
+    try expectSessionPairedOutcomeBytes(gpa, raw, id, body_expect);
+}
+
+/// Independent raw-byte forbid (separate from semantic id↔tool pairing).
+/// Any occurrence of `needle` in durable session bytes fails.
+fn expectSessionBytesForbidNeedle(
+    gpa: std.mem.Allocator,
+    io: Io,
+    path: []const u8,
+    needle: []const u8,
+) !void {
+    const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+    defer gpa.free(raw);
+    try expectRawForbidsNeedle(raw, needle);
+}
+
+fn expectRawForbidsNeedle(raw: []const u8, needle: []const u8) !void {
+    if (std.mem.indexOf(u8, raw, needle) != null) return error.TestUnexpectedResult;
+}
+
+test "h-integration helper: paired outcome accepts unique assistant+tool" {
+    const gpa = std.testing.allocator;
+    // Shape matches product session JSONL (header + roles + tool_calls array).
+    const raw =
+        \\{"schema_version":1,"type":"zag_session","compaction_gen":0}
+        \\{"role":"system","content":"sys"}
+        \\{"role":"user","content":"hi"}
+        \\{"role":"assistant","content":"","tool_calls":[{"id":"call-a","name":"read_file","arguments":"{\"path\":\"x\"}"}]}
+        \\{"role":"tool","tool_call_id":"call-a","content":"error: code=jail_deny message=blocked"}
+        \\
+    ;
+    try expectSessionPairedOutcomeBytes(gpa, raw, "call-a", .{ .code = .jail_deny });
+    try expectSessionPairedOutcomeBytes(gpa, raw, "call-a", .{
+        .exact = "error: code=jail_deny message=blocked",
+    });
+}
+
+test "h-integration helper: same-array duplicate assistant id fails" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"hi"}
+        \\{"role":"assistant","content":"","tool_calls":[{"id":"dup","name":"a","arguments":"{}"},{"id":"dup","name":"b","arguments":"{}"}]}
+        \\{"role":"tool","tool_call_id":"dup","content":"error: code=cancelled message=x"}
+        \\
+    ;
+    try std.testing.expectError(
+        error.TestUnexpectedResult,
+        expectSessionPairedOutcomeBytes(gpa, raw, "dup", .{ .code = .cancelled }),
+    );
+}
+
+test "h-integration helper: cross-assistant duplicate id fails with one tool" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"hi"}
+        \\{"role":"assistant","content":"","tool_calls":[{"id":"x1","name":"a","arguments":"{}"}]}
+        \\{"role":"tool","tool_call_id":"x1","content":"error: code=permission_denied message=no"}
+        \\{"role":"assistant","content":"","tool_calls":[{"id":"x1","name":"a","arguments":"{}"}]}
+        \\
+    ;
+    try std.testing.expectError(
+        error.TestUnexpectedResult,
+        expectSessionPairedOutcomeBytes(gpa, raw, "x1", .{ .code = .permission_denied }),
+    );
+}
+
+test "h-integration helper: raw forbid needle fails when secret present in any field" {
+    const secret = "OUTSIDE_SECRET_BYTES_v1";
+    // Secret in arguments (or any raw field) must fail independent forbid check.
+    const contaminated =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"assistant","content":"","tool_calls":[{"id":"j1","name":"read_file","arguments":"{\"leak\":\"OUTSIDE_SECRET_BYTES_v1\"}"}]}
+        \\{"role":"tool","tool_call_id":"j1","content":"error: code=jail_deny message=blocked"}
+        \\
+    ;
+    try std.testing.expectError(
+        error.TestUnexpectedResult,
+        expectRawForbidsNeedle(contaminated, secret),
+    );
+    // Clean durable bytes must pass forbid.
+    const clean =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"assistant","content":"","tool_calls":[{"id":"j1","name":"read_file","arguments":"{\"path\":\"escape_file\"}"}]}
+        \\{"role":"tool","tool_call_id":"j1","content":"error: code=jail_deny message=blocked"}
+        \\
+    ;
+    try expectRawForbidsNeedle(clean, secret);
 }
 
 /// Integration Gate terminal: exactly one parsed `kind=run_end` object with
@@ -3815,6 +3916,9 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
             "int-jail-read-1",
             .{ .code = .jail_deny },
         );
+        // Independent of semantic pairing: no outside secret substring in durable bytes.
+        try expectSessionBytesForbidNeedle(gpa, io, sess_path, "OUTSIDE_SECRET");
+        try expectSessionBytesForbidNeedle(gpa, io, sess_path, outside_bytes);
     }
 
     var resumed = try Session.start(gpa, io, .{
@@ -3837,6 +3941,8 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
         "int-jail-read-1",
         .{ .code = .jail_deny },
     );
+    try expectSessionBytesForbidNeedle(gpa, io, sess_path, "OUTSIDE_SECRET");
+    try expectSessionBytesForbidNeedle(gpa, io, sess_path, outside_bytes);
 }
 
 /// Instance state for between-Tool cancel: first handler runs, then requests cancel.
