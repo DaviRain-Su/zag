@@ -527,6 +527,134 @@ const AtomicPrimaryFailure = union(enum) {
     }
 };
 
+/// Owned failure bodies prepared before the selected parent is opened.
+///
+/// Once a temporary exists, cleanup outcome classification only takes one of
+/// these slices and nulls its slot. `deinit` frees every unselected body once;
+/// the caller owns the selected slice. No result allocation follows staging.
+const PreparedAtomicFailureBodies = struct {
+    allocator: std.mem.Allocator,
+    temp_create: ?[]u8 = null,
+    write: ?[]u8 = null,
+    flush: ?[]u8 = null,
+    containment: ?[]u8 = null,
+    replace: ?[]u8 = null,
+    cleanup_write: ?[]u8 = null,
+    cleanup_flush: ?[]u8 = null,
+    cleanup_containment: ?[]u8 = null,
+    cleanup_replace: ?[]u8 = null,
+
+    fn init(
+        ctx: tool.Context,
+        operation: EditOperation,
+        request_path: []const u8,
+        parent_dirs: ParentDirs,
+    ) tool.HandlerError!PreparedAtomicFailureBodies {
+        var prepared: PreparedAtomicFailureBodies = .{ .allocator = ctx.allocator };
+        errdefer prepared.deinit();
+
+        prepared.temp_create = try editIoFailure(
+            ctx.allocator,
+            operation,
+            .temp_create,
+            parent_dirs,
+            .absent,
+        );
+        prepared.write = try editIoFailure(ctx.allocator, operation, .write, parent_dirs, .absent);
+        prepared.flush = try editIoFailure(ctx.allocator, operation, .flush, parent_dirs, .absent);
+        prepared.replace = try editIoFailure(ctx.allocator, operation, .replace, parent_dirs, .absent);
+
+        // Every non-OOM containment failure has the same stable jail body.
+        // Guard OOM remains typed if cleanup succeeds.
+        prepared.containment = try finalContainmentFailure(
+            ctx,
+            request_path,
+            parent_dirs,
+            .absent,
+            error.OutsideWorkspace,
+        );
+
+        prepared.cleanup_write = try tempCleanupFailure(
+            ctx.allocator,
+            operation,
+            .write,
+            parent_dirs,
+        );
+        prepared.cleanup_flush = try tempCleanupFailure(
+            ctx.allocator,
+            operation,
+            .flush,
+            parent_dirs,
+        );
+        prepared.cleanup_containment = try tempCleanupFailure(
+            ctx.allocator,
+            operation,
+            .{ .containment = error.OutsideWorkspace },
+            parent_dirs,
+        );
+        prepared.cleanup_replace = try tempCleanupFailure(
+            ctx.allocator,
+            operation,
+            .replace,
+            parent_dirs,
+        );
+        return prepared;
+    }
+
+    fn deinit(self: *PreparedAtomicFailureBodies) void {
+        self.freeSlot(&self.temp_create);
+        self.freeSlot(&self.write);
+        self.freeSlot(&self.flush);
+        self.freeSlot(&self.containment);
+        self.freeSlot(&self.replace);
+        self.freeSlot(&self.cleanup_write);
+        self.freeSlot(&self.cleanup_flush);
+        self.freeSlot(&self.cleanup_containment);
+        self.freeSlot(&self.cleanup_replace);
+    }
+
+    fn takeTempCreate(self: *PreparedAtomicFailureBodies) []u8 {
+        return takeSlot(&self.temp_create);
+    }
+
+    fn takeAfterCleanup(
+        self: *PreparedAtomicFailureBodies,
+        primary: AtomicPrimaryFailure,
+        temp_artifact: TempArtifact,
+    ) tool.HandlerError![]u8 {
+        if (temp_artifact == .may_remain) {
+            return switch (primary) {
+                .write => takeSlot(&self.cleanup_write),
+                .flush => takeSlot(&self.cleanup_flush),
+                .containment => takeSlot(&self.cleanup_containment),
+                .replace => takeSlot(&self.cleanup_replace),
+            };
+        }
+
+        return switch (primary) {
+            .write => takeSlot(&self.write),
+            .flush => takeSlot(&self.flush),
+            .containment => |err| if (err == error.OutOfMemory)
+                error.OutOfMemory
+            else
+                takeSlot(&self.containment),
+            .replace => takeSlot(&self.replace),
+        };
+    }
+
+    fn freeSlot(self: *PreparedAtomicFailureBodies, slot: *?[]u8) void {
+        if (slot.*) |body| self.allocator.free(body);
+        slot.* = null;
+    }
+
+    fn takeSlot(slot: *?[]u8) []u8 {
+        std.debug.assert(slot.* != null);
+        const body = slot.*.?;
+        slot.* = null;
+        return body;
+    }
+};
+
 fn atomicCommit(
     ctx: tool.Context,
     guard: workspace.Guard,
@@ -558,19 +686,50 @@ fn atomicCommit(
         return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
     }
 
+    // Prepare every stable body before opening the selected parent. From this
+    // point through cleanup and result selection, only a Guard OOM may remain
+    // typed; no result allocation can hide a staged temporary or target state.
+    var prepared = try PreparedAtomicFailureBodies.init(
+        ctx,
+        operation,
+        request_path,
+        parent_dirs,
+    );
+    defer prepared.deinit();
+
+    return stageAtomicCommit(
+        ctx,
+        guard,
+        operation,
+        request_path,
+        complete_bytes,
+        parent_path,
+        target_basename,
+        &prepared,
+    );
+}
+
+fn stageAtomicCommit(
+    ctx: tool.Context,
+    guard: workspace.Guard,
+    operation: EditOperation,
+    request_path: []const u8,
+    complete_bytes: []const u8,
+    parent_path: []const u8,
+    target_basename: []const u8,
+    prepared: *PreparedAtomicFailureBodies,
+) tool.HandlerError!?[]u8 {
     var target_parent = Io.Dir.openDirAbsolute(ctx.io, parent_path, .{}) catch {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
+        return prepared.takeTempCreate();
     };
     defer target_parent.close(ctx.io);
 
-    if (takeEditFault(.temp_create)) {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
-    }
+    if (takeEditFault(.temp_create)) return prepared.takeTempCreate();
 
     var atomic_file = target_parent.createFileAtomic(ctx.io, target_basename, .{
         .replace = true,
     }) catch {
-        return try editIoFailure(ctx.allocator, operation, .temp_create, parent_dirs, .absent);
+        return prepared.takeTempCreate();
     };
     var atomic_needs_deinit = true;
     defer if (atomic_needs_deinit) atomic_file.deinit(ctx.io);
@@ -579,47 +738,39 @@ fn atomicCommit(
     var file_writer = atomic_file.file.writer(ctx.io, &write_buffer);
     writeCompleteForCommit(&file_writer, complete_bytes) catch {
         return try finishAtomicFailure(
-            ctx,
-            request_path,
-            operation,
-            parent_dirs,
+            ctx.io,
             &atomic_file,
             &atomic_needs_deinit,
+            prepared,
             .write,
         );
     };
     flushCompleteForCommit(&file_writer) catch {
         return try finishAtomicFailure(
-            ctx,
-            request_path,
-            operation,
-            parent_dirs,
+            ctx.io,
             &atomic_file,
             &atomic_needs_deinit,
+            prepared,
             .flush,
         );
     };
 
     recheckForCommit(ctx, guard, operation, request_path) catch |err| {
         return try finishAtomicFailure(
-            ctx,
-            request_path,
-            operation,
-            parent_dirs,
+            ctx.io,
             &atomic_file,
             &atomic_needs_deinit,
+            prepared,
             .{ .containment = err },
         );
     };
 
     replaceForCommit(&atomic_file, ctx.io) catch {
         return try finishAtomicFailure(
-            ctx,
-            request_path,
-            operation,
-            parent_dirs,
+            ctx.io,
             &atomic_file,
             &atomic_needs_deinit,
+            prepared,
             .replace,
         );
     };
@@ -627,33 +778,16 @@ fn atomicCommit(
 }
 
 fn finishAtomicFailure(
-    ctx: tool.Context,
-    request_path: []const u8,
-    operation: EditOperation,
-    parent_dirs: ParentDirs,
+    io: Io,
     atomic_file: *Io.File.Atomic,
     atomic_needs_deinit: *bool,
+    prepared: *PreparedAtomicFailureBodies,
     primary: AtomicPrimaryFailure,
 ) tool.HandlerError![]u8 {
     std.debug.assert(atomic_needs_deinit.*);
-    const temp_artifact = cleanupTemporary(atomic_file, ctx.io);
+    const temp_artifact = cleanupTemporary(atomic_file, io);
     atomic_needs_deinit.* = false;
-
-    if (temp_artifact == .may_remain) {
-        return tempCleanupFailure(ctx.allocator, operation, primary, parent_dirs);
-    }
-    return switch (primary) {
-        .write => editIoFailure(ctx.allocator, operation, .write, parent_dirs, .absent),
-        .flush => editIoFailure(ctx.allocator, operation, .flush, parent_dirs, .absent),
-        .containment => |err| finalContainmentFailure(
-            ctx,
-            request_path,
-            parent_dirs,
-            .absent,
-            err,
-        ),
-        .replace => editIoFailure(ctx.allocator, operation, .replace, parent_dirs, .absent),
-    };
+    return prepared.takeAfterCleanup(primary, temp_artifact);
 }
 
 fn cleanupTemporary(atomic_file: *Io.File.Atomic, io: Io) TempArtifact {
@@ -1876,6 +2010,128 @@ test "edit-v1 cleanup deletion failure is truthful observable and safely removab
     try expectPathAbsentIn(tmp.dir, io, artifact);
     try expectDirEntries(io, tmp.dir, &.{"target.txt"});
     try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+}
+
+test "edit-v1 cleanup result selection allocates nothing after preparation" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = original });
+
+    const guard_ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    var guard = try obtainGuard(guard_ctx);
+    defer guard.deinit(gpa);
+
+    // Measure the exact production preparation boundary without staging.
+    var probe = std.testing.FailingAllocator.init(gpa, .{});
+    const probe_allocator = probe.allocator();
+    const probe_ctx: tool.Context = .{ .allocator = probe_allocator, .io = io, .cwd = tmp.dir };
+    {
+        const selected_path = try selectCommitPath(probe_ctx, guard, .write_file, "target.txt");
+        defer probe_allocator.free(selected_path);
+        var prepared = try PreparedAtomicFailureBodies.init(
+            probe_ctx,
+            .write_file,
+            "target.txt",
+            .unchanged,
+        );
+        defer prepared.deinit();
+    }
+    const allocations_before_stage = probe.alloc_index;
+    try std.testing.expect(allocations_before_stage > 0);
+    try std.testing.expectEqual(probe.allocations, probe.deallocations);
+    try std.testing.expectEqual(probe.allocated_bytes, probe.freed_bytes);
+
+    // The next allocation after the measured boundary cannot succeed. The
+    // former tempCleanupFailure allocation would therefore mask the artifact.
+    var failing = std.testing.FailingAllocator.init(gpa, .{
+        .fail_index = allocations_before_stage,
+    });
+    const allocator = failing.allocator();
+    const ctx: tool.Context = .{ .allocator = allocator, .io = io, .cwd = tmp.dir };
+
+    {
+        testing.failNextEditAt(.write_after_prefix);
+        testing.failNextTempCleanupDelete();
+        const body = (try atomicCommit(
+            ctx,
+            guard,
+            .write_file,
+            "target.txt",
+            "complete replacement bytes\n",
+        )) orelse return error.TestUnexpectedResult;
+        defer allocator.free(body);
+
+        try std.testing.expectEqualStrings(
+            "error: code=edit_io_failed format=edit-v1 operation=write_file stage=temp_cleanup primary_stage=write target=preserved parent_dirs=unchanged temp_artifact=may_remain",
+            body,
+        );
+        try std.testing.expect(!failing.has_induced_failure);
+        try std.testing.expectEqual(allocations_before_stage, failing.alloc_index);
+        try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+
+        var artifact_name: ?[]u8 = null;
+        defer if (artifact_name) |name| gpa.free(name);
+        var file_count: usize = 0;
+        var it = tmp.dir.iterate();
+        while (try it.next(io)) |entry| {
+            file_count += 1;
+            try std.testing.expect(entry.kind == .file);
+            if (std.mem.eql(u8, entry.name, "target.txt")) continue;
+            try std.testing.expect(artifact_name == null);
+            artifact_name = try gpa.dupe(u8, entry.name);
+        }
+        try std.testing.expectEqual(@as(usize, 2), file_count);
+        const artifact = artifact_name orelse return error.TestUnexpectedResult;
+        try std.testing.expect(std.mem.indexOf(u8, body, artifact) == null);
+        try std.testing.expect((try tmp.dir.statFile(
+            io,
+            artifact,
+            .{ .follow_symlinks = false },
+        )).kind == .file);
+        try expectFileBytes(gpa, io, tmp.dir, artifact, "com");
+
+        try tmp.dir.deleteFile(io, artifact);
+        try expectPathAbsentIn(tmp.dir, io, artifact);
+        try expectDirEntries(io, tmp.dir, &.{"target.txt"});
+        try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+    }
+
+    try std.testing.expectEqual(failing.allocations, failing.deallocations);
+    try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
+
+    // A true Guard allocation failure after staging remains typed when cleanup
+    // succeeds; all prepared bodies and the temporary are still released.
+    var guard_oom = std.testing.FailingAllocator.init(gpa, .{
+        .fail_index = allocations_before_stage,
+    });
+    const guard_oom_allocator = guard_oom.allocator();
+    const guard_oom_ctx: tool.Context = .{
+        .allocator = guard_oom_allocator,
+        .io = io,
+        .cwd = tmp.dir,
+    };
+    try std.testing.expectError(
+        error.OutOfMemory,
+        atomicCommit(
+            guard_oom_ctx,
+            guard,
+            .write_file,
+            "target.txt",
+            "complete replacement bytes\n",
+        ),
+    );
+    try std.testing.expect(guard_oom.has_induced_failure);
+    try std.testing.expectEqual(allocations_before_stage, guard_oom.alloc_index);
+    try std.testing.expectEqual(guard_oom.allocations, guard_oom.deallocations);
+    try std.testing.expectEqual(guard_oom.allocated_bytes, guard_oom.freed_bytes);
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", original);
+    try expectDirEntries(io, tmp.dir, &.{"target.txt"});
 }
 
 test "edit-v1 cleanup failure takes precedence over final containment jail" {

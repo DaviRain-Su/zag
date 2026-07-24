@@ -59,14 +59,15 @@ These remain useful but do not cover the assessment blockers.
 2. absent `write_file` target remains absent on every commit fault;
 3. contained final file symlink retains symlink kind/link text and exact target bytes on failure; success updates only the contained target;
 4. every ordinary failure reports `temp_artifact=absent`; deterministic cleanup-delete failure reports `stage=temp_cleanup`, preserves the target, leaves one confined observable artifact, and the fixture removes it safely;
-5. missing-parent failure leaves only declared directory residue;
-6. trailing-separator/final-dot/root-resolving/directory endpoints are rejected before create/staging, with inside/outside enumeration; valid interior normalization remains contained;
-7. stable `edit_io_failed format=edit-v1` stage/target/parent/temp fields survive one yolo Agent transcript/session/resume/parsed-trace recovery chain with one recovered `completed` terminal;
-8. transcript/session own Tool-call ID pairing; parsed single-call trace uses exact-one name/body/count correlation because trace `tool_result` has no call ID;
-9. no allocation or optional diff step after commit can report a hard failure after successful mutation;
-10. separate core fixtures prove lexical remember aliases re-prompt and remembered approval never bypasses Guard/jail.
+5. stable failure bodies are preallocated before parent open; a fail-next allocator over a real partial temporary proves cleanup/result ownership selection is allocation-free and cannot mask `temp_artifact=may_remain`;
+6. missing-parent failure leaves only declared directory residue;
+7. trailing-separator/final-dot/root-resolving/directory endpoints are rejected before create/staging, with inside/outside enumeration; valid interior normalization remains contained;
+8. stable `edit_io_failed format=edit-v1` stage/target/parent/temp fields survive one yolo Agent transcript/session/resume/parsed-trace recovery chain with one recovered `completed` terminal;
+9. transcript/session own Tool-call ID pairing; parsed single-call trace uses exact-one name/body/count correlation because trace `tool_result` has no call ID;
+10. no allocation or optional diff step after commit can report a hard failure after successful mutation;
+11. separate core fixtures prove lexical remember aliases re-prompt and remembered approval never bypasses Guard/jail.
 
-Develop-stage fixes for independent review 01 cover these items on the task branch. They remain pending re-verification and merged-main std/curl Gate, so this section and the task stay in progress.
+Independent review 02 passed the endpoint/cleanup remediation, then Oracle found the post-cleanup result-allocation counterexample. The third develop-stage correction and allocator-boundary fixture remain pending re-verification and merged-main std/curl Gate, so this section and the task stay in progress.
 
 ### Run/trace lifecycle
 

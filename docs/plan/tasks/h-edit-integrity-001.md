@@ -23,6 +23,7 @@ The owning contract is [`docs/modules/tools-edit.md`](../../modules/tools-edit.m
 - Build the complete replacement bytes before opening a commit temporary.
 - Before parent creation or staging, require a lexical file endpoint: no trailing host separator and no final `.` or `..`. Existing endpoints must resolve to a regular file strictly below the workspace root; directories, non-files, the root itself, and contained directory/root aliases are invalid arguments. Interior normalization such as `dir/../file` remains valid only when Guard and the selected parent prove the file target remains inside the workspace.
 - After canonical target selection, require the target to be strictly below Guard root and its staging parent to be the root or a descendant before `openDirAbsolute` / `createFileAtomic`; no temporary may be created outside the workspace.
+- Once `parent_dirs` is known and before opening the selected parent, preallocate every stable owned body that temp creation or a staged write/flush/containment/replace/cleanup outcome could return. After staging, cleanup classification selects one prepared ownership allocation-free and frees every unselected body exactly once. Guard OOM stays typed only after confirmed cleanup; a known `may_remain` artifact takes prepared cleanup precedence.
 - Create the temporary in the selected target's parent, write all bytes, flush the Zig file writer, re-run containment immediately before commit, then atomically replace the selected target.
 - Existing ordinary files and contained final-symlink targets keep exact prior bytes on any pre-commit or replace failure.
 - A previously absent `write_file` target remains absent on failure.
@@ -81,13 +82,14 @@ Fixtures must cover:
 3. failure at the final containment recheck;
 4. failure at atomic replace after the temporary has entered the closed rename-boundary state;
 5. cleanup-deletion failure reports `temp_artifact=may_remain`, leaves the target exact, exposes the confined artifact only to the fixture, and permits safe fixture cleanup;
-6. existing ordinary target, absent target, and contained final-symlink target for both handlers where applicable;
-7. exact prior bytes/absence, unchanged symlink text, and `temp_artifact=absent` after ordinary failures;
-8. missing-parent `write_file` failure with only the declared directory residue;
-9. `new-dir/.`, `alias.txt/`, `sub/..`, `.`, `./`, directory endpoints, and contained directory/root aliases are rejected before create/staging; fixtures enumerate inside and outside parents. Valid `dir/../file` remains contained and usable;
-10. stale/missing/ambiguous/oversize `search_replace` remains non-mutating;
-11. post-commit success reporting cannot fail ambiguously;
-12. lexical remember aliases re-prompt and remembered approval cannot bypass jail.
+6. after body preparation, an allocator armed to reject the next allocation still returns the exact prepared cleanup-precedence body for a real partial temporary; the fixture proves no post-staging allocation attempt and no leak/double-free;
+7. existing ordinary target, absent target, and contained final-symlink target for both handlers where applicable;
+8. exact prior bytes/absence, unchanged symlink text, and `temp_artifact=absent` after ordinary failures;
+9. missing-parent `write_file` failure with only the declared directory residue;
+10. `new-dir/.`, `alias.txt/`, `sub/..`, `.`, `./`, directory endpoints, and contained directory/root aliases are rejected before create/staging; fixtures enumerate inside and outside parents. Valid `dir/../file` remains contained and usable;
+11. stale/missing/ambiguous/oversize `search_replace` remains non-mutating;
+12. post-commit success reporting cannot fail ambiguously;
+13. lexical remember aliases re-prompt and remembered approval cannot bypass jail.
 
 Add one real coding-product Agent fixture for a recoverable injected edit failure: preserve the original Tool-call ID in transcript and persisted/resumed session, retain the exact `edit-v1` body, project the matching Tool events into parsed trace using schema-true correlation, preserve the target, clean the temporary, and end in one truthful recovered `completed` terminal.
 
@@ -131,15 +133,16 @@ Add one real coding-product Agent fixture for a recoverable injected edit failur
 
 # develop evidence (pending independent verification)
 
-The task branch routes both handlers through one `Io.File.Atomic` commit helper: validated file endpoint, canonical target/parent containment proof, complete write, Zig writer flush, final Guard recheck, and atomic replace. Review-01 remediation adds exact public-handler endpoint repro fixtures, explicit close/delete/absence verification, cleanup-failure precedence, and a replace seam after the temporary is closed at the rename boundary. Permanent fixtures also cover ordinary/absent/contained-final-symlink targets, parent residue, anchor failures, separate lexical remember/Guard evidence, and one yolo Agent transcript/session/resume/parsed-trace recovery chain.
+The task branch routes both handlers through one `Io.File.Atomic` commit helper: validated file endpoint, canonical target/parent containment proof, complete write, Zig writer flush, final Guard recheck, and atomic replace. Review-01 remediation added exact public-handler endpoint repro fixtures, explicit close/delete/absence verification, cleanup-failure precedence, and a replace seam after the temporary is closed at the rename boundary; independent review 02 passed those corrections. Oracle then found that formatting the cleanup-precedence body could OOM after an artifact became known. The third remediation preallocates every stable post-selection body before opening the parent and makes staged failure selection allocation-free, with an allocator-boundary fixture over a real partial temporary.
 
-This is develop-stage evidence only. Independent review 01 was blocked and these fixes require re-verification. Task status remains `in-progress`; merged-main std/curl Gate is still required, and `h-integration-001` remains blocked.
+This is develop-stage evidence only. The third remediation requires re-verification. Task status remains `in-progress`; merged-main std/curl Gate is still required, and `h-integration-001` remains blocked.
 
 # verification
 
 - both handlers share the atomic commit path and contain no in-place truncate write;
 - invalid endpoint/root/directory aliases create no target or temporary inside or outside root; valid interior normalization remains contained;
 - every deterministic fault satisfies the target, symlink, parent-residue, and cleanup-truth contract, including observable `temp_cleanup` failure;
+- all stable bodies exist before parent open, and a fail-next allocator proves staged cleanup/result selection performs no allocation that could mask `temp_artifact=may_remain`;
 - the exact ordinary `edit-v1` stage plus `temp_artifact=absent` survives the yolo Agent transcript/session/resume/single-call trace chain with one recovered terminal;
 - existing containment, anchor, diff-enrichment, permission, session, and trace fixtures do not regress;
 - focused core/coding-agent tests pass under applicable backends;

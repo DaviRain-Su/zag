@@ -132,7 +132,7 @@ role=tool  content="error: code=permission_denied message=…"
 | `path` | 相对工作区路径 |
 | `content` | **整文件**内容（Phase 1 不做 diff/patch） |
 
-本地 descriptor：`risk=write`，`workspace=path_field("path")`。H 的 in-progress hardening branch 先验证 file endpoint 与 canonical target/parent containment，再准备完整 bytes/success body，在 resolved target 的同一 parent 创建 atomic temp，写完、writer flush、Guard 重检后 replace；contained final file symlink 保留 link entry/text。失败 cleanup 显式 close/delete/check，并用 `temp_artifact` 诚实报告。这里不表示 fsync/power-loss durability。
+本地 descriptor：`risk=write`，`workspace=path_field("path")`。H 的 in-progress hardening branch 先验证 file endpoint 与 canonical target/parent containment，再准备完整 bytes、success body 与所有稳定 failure bodies，之后才打开 resolved parent/创建 atomic temp；写完、writer flush、Guard 重检后 replace。staging 后 cleanup/classification 只转移预备 body ownership，不再 allocation；contained final file symlink 保留 link entry/text，`temp_artifact` 诚实报告 cleanup。这里不表示 fsync/power-loss durability。
 
 ### `run_shell`
 
@@ -180,7 +180,7 @@ role=tool  content="error: code=permission_denied message=…"
 
 整文件 `write_file` + 全局 ask/yolo 只够 **Teaching** 演示编辑路径。
 **D-007 / h-tool-runtime-001 已补：** 强制 capabilities、instance-aware handler、Provider 只见 definitions；h-workspace-001 已补 symlink-aware file containment。
-**h-shell-001 Gate 已通过：** fixed deny、UTF-8/base64、scoped limits、N/N+1、direct-PID/parsed single-call trace fixtures 已通过独立/Oracle/main std+curl。随后 final audit 返回 FAIL。`h-edit-integrity-001` 初次独立 review 因 endpoint/outside-staging 与 cleanup truth BLOCKED；修复后的 same-parent atomic commit、cleanup-truthful `edit-v1`、contained final symlink、yolo Agent recovery 与 separate core remember fixtures 已在 task branch，仍待 re-review/main Gate；`h-read-search-bounds-001` 仍负责 64 KiB body 与 silent cutoff 反例。H 阶段 remember key 按 exact lexical request path；alias re-prompt 且 Guard 始终重检。**仍不宣称：** overall Phase H、mid-flight shell cancellation/process-tree ownership、fsync/power-loss edit durability、完整 Plan UX 与 canonical path-domain policy。
+**h-shell-001 Gate 已通过：** fixed deny、UTF-8/base64、scoped limits、N/N+1、direct-PID/parsed single-call trace fixtures 已通过独立/Oracle/main std+curl。随后 final audit 返回 FAIL。`h-edit-integrity-001` review-02 已通过 endpoint/outside-staging 与 cleanup truth；Oracle 后续发现 cleanup 后 result OOM 可遮蔽 artifact，第三次修复以预分配 body + allocation-free selection 加入 task branch，仍待 re-verification/main Gate。contained final symlink、yolo Agent recovery 与 separate core remember fixtures 保留；`h-read-search-bounds-001` 仍负责 64 KiB body 与 silent cutoff 反例。H 阶段 remember key 按 exact lexical request path；alias re-prompt 且 Guard 始终重检。**仍不宣称：** overall Phase H、mid-flight shell cancellation/process-tree ownership、fsync/power-loss edit durability、完整 Plan UX 与 canonical path-domain policy。
 
 ---
 

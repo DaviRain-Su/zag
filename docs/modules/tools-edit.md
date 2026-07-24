@@ -37,7 +37,7 @@ These are owned by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md)
 
 ### Edit-integrity delivery state
 
-The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes and mandatory success text are allocated before staging; endpoint checks and canonical target/parent proofs run before parent creation or temp open; the helper writes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies instead of relying on `Atomic.deinit`'s swallowed deletion error. Contained final file symlinks keep their link entry/text while the resolved target changes. One-shot endpoint, commit, cleanup, and Agent recovery fixtures exercise the contract. Independent re-verification and merged-main std/curl Gate remain pending, so the module and Phase H do not advance yet.
+The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes, mandatory success text, and stable failure bodies are allocated before parent open/staging; endpoint checks and canonical target/parent proofs run before parent creation or temp open; the helper writes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies instead of relying on `Atomic.deinit`'s swallowed deletion error, then selects prepared result ownership allocation-free. Contained final file symlinks keep their link entry/text while the resolved target changes. Review 02 passed the endpoint/cleanup corrections; Oracle's later result-OOM blocker has a third develop fix and allocator-boundary fixture pending re-verification and merged-main std/curl Gate, so the module and Phase H do not advance yet.
 
 ## H read/search contract
 
@@ -61,7 +61,9 @@ Private test-only limits or pure helpers may shrink boundaries for deterministic
 
 Both mutators build complete new bytes before opening a commit temporary. Before parent creation/staging they reject trailing host separators, final `.`/`..`, workspace-root-resolving endpoints, and existing directory/non-file endpoints. Existing endpoints must be regular files strictly below Guard root. Interior normalization such as `dir/../file` remains valid only when Guard and the canonical selected parent prove containment.
 
-After selection, the target is re-proven strictly below Guard root and the staging parent is proven root-or-descendant before opening it. The temporary is created in that selected target parent, receives all bytes, is writer-flushed, passes a final containment recheck, then atomically replaces the selected target.
+After selection, the target is re-proven strictly below Guard root and the staging parent is proven root-or-descendant before opening it. Once `parent_dirs` is known, the handler preallocates the stable temp-create, write, flush, replace, final-containment, and cleanup-precedence bodies for the current operation before opening that parent. The temporary is then created in the selected target parent, receives all bytes, is writer-flushed, passes a final containment recheck, then atomically replaces the selected target.
+
+After staging, cleanup classification and owned-body selection are allocation-free: one prepared body transfers to the caller and every unselected body is freed exactly once. A Guard OOM remains typed only when cleanup confirms temporary absence; if cleanup cannot confirm deletion, the prepared `temp_cleanup` result takes precedence, so a known artifact can never be masked by result-allocation OOM.
 
 - Existing target: any pre-commit or replace failure preserves exact prior bytes.
 - Absent `write_file` target: failure preserves absence.
@@ -99,9 +101,9 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] zero/multiple anchor failures do not mutate and are tested.
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
-- [ ] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`; review-01 fixes await re-verification).
-- [ ] write/edit faults preserve exact prior target state and expose stable cleanup-truthful `edit-v1` results (`h-edit-integrity-001`; review-01 fixes await re-verification).
-- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; review-01 fixes await re-verification).
+- [ ] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`; review 02 passed, merged-main Gate pending).
+- [ ] write/edit faults preserve exact prior target state and expose stable cleanup-truthful `edit-v1` results without post-staging result allocation (`h-edit-integrity-001`; third fix awaits re-verification).
+- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; review 02 passed, merged-main Gate pending).
 - [ ] lexical remember alias/jail fixtures prove the documented conservative H boundary (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
 - [x] shell/error integration passes its separate lifecycle contract and independent/main Gate (`h-shell-001`).
 
