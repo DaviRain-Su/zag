@@ -25,6 +25,8 @@
 
 CI：`zig build test` 包含之。
 
+## Security eval 最低集
+
 1. 绝对路径 read → `jail_deny`  
 2. `../` 逃逸 → deny  
 3. denylist 命令 → `shell_deny`  
