@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{trace,observer}.zig`; run facade in coding-agent `agent.zig` |
-| Current maturity | **L2** (lifecycle/schema/atomic persistence) — redaction still P1 (`h-redact-001`) |
+| Current maturity | **L2** (lifecycle/schema/atomic persistence + redaction before serialize) |
 | Target | L2 (H) → L3 dashboard (C9) |
 | Reference | Hyper telemetry/dashboard; SECURITY audit |
 
@@ -19,7 +19,7 @@ Trace is a versioned audit channel for reconstructing run decisions. Observer is
 4. `run_end.ok=false` for harness failures, **deadline `timeout`**, and **`unsupported_control`**; clean cooperative `cancelled` and normal `max_turns` / `completed` use `ok=true`.
 5. Explicit path persistence is fail-closed: typed `TraceIoFailed` / `InvalidPath` (never OOM-mapped filesystem errors).
 6. **One reply = one run.** Explicit path atomically holds the **latest completed reply** only (not a lifetime accumulation).
-7. Redaction before serialize/persist is P1 (`h-redact-001`).
+7. Redaction before serialize/persist (`h-redact-001`): when `Trace.redactor` is set (product Agent always attaches), every arbitrary string field is redacted **before** JSON serialization. Redaction OOM → `OutOfMemory` (fail closed; no raw line). Null redactor is a documented low-level bypass.
 
 ## Lifecycle owner
 
@@ -147,7 +147,7 @@ Callbacks must not own borrowed event slices after return unless they copy them.
 - [x] per-reply latest-run file/buffer semantics + run-local ledger.
 - [x] transactional writeObj under allocator failure.
 - [x] fail-closed precedence when failure-terminal persist fails.
-- [ ] secret redaction before write (`h-redact-001`).
+- [x] secret redaction before write (`h-redact-001`).
 - [x] SECURITY links to this contract.
 
 ## L3

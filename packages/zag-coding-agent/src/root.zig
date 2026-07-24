@@ -19,6 +19,7 @@ pub const context = core.context;
 pub const session_store = core.session_store;
 pub const shell_policy = core.shell_policy;
 pub const workspace = core.workspace;
+pub const redact = core.redact;
 pub const trace = core.trace;
 pub const loop = core.loop;
 

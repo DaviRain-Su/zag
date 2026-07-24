@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 代码 | `packages/zag-ai/`；纯端口 `zag-agent-core/src/provider.zig`；桥 `zag-coding-agent/src/wire_provider.zig`；传输 `openai-zig`（OpenAI）/ `std.http`（Anthropic） |
-| 成熟度 | **L1+**；deadline/cancel/partial Tool safety 已落地（h-provider-001）；L2 仍欠 redact 联动等 |
+| 成熟度 | **L1+**；deadline/cancel/partial Tool safety（h-provider-001）+ log scrub helpers（h-redact-001）；L2 仍欠更多 contract matrix |
 | 对标 | Hyper models；Pi pi-ai；Nanocodex 行为合同 |
 
 ## 包内分层
@@ -80,7 +80,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 1. Harness 只依赖稳定 Provider 端口；线协议细节关在 adapter / 协议包。
 2. Auth：env + 配置文件；H 不做 OAuth（可后置）。
 3. 可重试错误与不可重试错误分类稳定，供 loop 使用（`isRetryableError`）。
-4. 配置密钥不进 verbose/trace/session 明文（与 H5 redact 对齐）。
+4. 配置密钥不进 verbose/trace/session 明文（h-redact-001：CLI 把 resolved key 拷入 core Redactor；HTTP 不 log Authorization；`redact_log` 可 scrub body/URL 诊断）。
 5. 配置的 deadline 必须真正执行或在启动/调用时明确拒绝；禁止静默保存无效 `timeout_ms`。
 6. Cancel/deadline 贯穿 Provider 与 stream；取消后的半截 Tool call 不进入 transcript 或执行。
 7. 每次 provider attempt 只有一个 owner 负责重试，避免 transport 与 loop 组合造成未记录的重试爆炸。

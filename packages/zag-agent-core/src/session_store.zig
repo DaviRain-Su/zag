@@ -19,6 +19,12 @@
 //! - At most one active writer per persisted session (advisory lock on `{path}.lock`).
 //! - Software-crash preservation only; power-loss/fsync durability is not claimed.
 //! - Session path is lexical relative-workspace only (not symlink containment).
+//! - **Redaction (h-redact-001):** when a `redactor` is attached, every arbitrary
+//!   string field (message content, tool args/ids, compaction summary, content
+//!   parts/URLs) is redacted into a temporary buffer **before** atomic serialize.
+//!   In-memory transcript is not mutated. Redaction OOM → `OutOfMemory` (fail
+//!   closed; prior file bytes preserved). Null redactor is a documented low-level
+//!   bypass; product Session/Agent always attaches policy.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -26,6 +32,7 @@ const Io = std.Io;
 const message = @import("message.zig");
 const transcript_mod = @import("transcript.zig");
 const workspace = @import("workspace.zig");
+const redact_mod = @import("redact.zig");
 
 pub const Error = error{
     OutOfMemory,
@@ -70,8 +77,12 @@ pub const Writer = struct {
     lock_path: []const u8,
     /// Held open for the lifetime of the writer.
     lock_file: Io.File,
+    /// Borrowed redaction policy (product path sets; null = low-level bypass).
+    redactor: ?*const redact_mod.Redactor = null,
     /// Test builds only: fail after temp write, before atomic replace/link.
     fail_before_replace: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
+    /// Test-only: next save redaction returns OOM once.
+    fail_next_redact: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
 
     pub fn deinit(self: *Writer) void {
         self.lock_file.close(self.io);
@@ -80,10 +91,17 @@ pub const Writer = struct {
         self.* = undefined;
     }
 
+    pub fn setRedactor(self: *Writer, r: ?*const redact_mod.Redactor) void {
+        self.redactor = r;
+    }
+
     /// Persist transcript atomically, preserving the prior file on failure.
+    /// Redacts into temporary buffers only; does not mutate `messages`.
     pub fn save(self: *Writer, messages: []const message.Message, meta: SessionMeta) Error!void {
         const fault = if (builtin.is_test) self.fail_before_replace else false;
-        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault);
+        const redact_fault = if (builtin.is_test) self.fail_next_redact else false;
+        if (builtin.is_test and self.fail_next_redact) self.fail_next_redact = false;
+        try saveWithMetaAtomic(self.gpa, self.io, self.cwd, self.path, messages, meta, fault, self.redactor, redact_fault);
     }
 
     /// Load the current session file into `transcript` and return header meta.
@@ -96,6 +114,9 @@ pub const Writer = struct {
 pub const testing = if (builtin.is_test) struct {
     pub fn setFailBeforeReplace(writer: *Writer, enabled: bool) void {
         writer.fail_before_replace = enabled;
+    }
+    pub fn setFailNextRedact(writer: *Writer, enabled: bool) void {
+        writer.fail_next_redact = enabled;
     }
 } else struct {};
 
@@ -185,6 +206,8 @@ fn acquireWriterLease(
 }
 
 /// Create a new persisted session. Fails if the session file already exists.
+/// `redactor` is stored on the Writer for subsequent saves and applied to the
+/// initial create write (null = low-level bypass).
 pub fn createNew(
     gpa: std.mem.Allocator,
     io: Io,
@@ -192,6 +215,18 @@ pub fn createNew(
     path: []const u8,
     messages: []const message.Message,
     meta: SessionMeta,
+) Error!Writer {
+    return createNewWithRedactor(gpa, io, cwd, path, messages, meta, null);
+}
+
+pub fn createNewWithRedactor(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+    redactor: ?*const redact_mod.Redactor,
 ) Error!Writer {
     try validateSessionPath(path);
     // Fast path: existing bytes must not be touched and need not take the lock.
@@ -203,7 +238,7 @@ pub fn createNew(
     // Race: another writer may have materialized the file between access and lock.
     if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
 
-    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta, false);
+    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta, false, redactor, false);
 
     return .{
         .gpa = gpa,
@@ -212,6 +247,7 @@ pub fn createNew(
         .path = lease.path_owned,
         .lock_path = lease.lock_path,
         .lock_file = lease.lock_file,
+        .redactor = redactor,
     };
 }
 
@@ -310,13 +346,17 @@ fn saveWithMetaAtomic(
     messages: []const message.Message,
     meta: SessionMeta,
     fail_before_replace: bool,
+    redactor: ?*const redact_mod.Redactor,
+    fail_redact: bool,
 ) Error!void {
+    if (fail_redact) return error.OutOfMemory;
+
     var body: Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
 
-    writeHeader(&body.writer, meta) catch return error.OutOfMemory;
+    try writeHeaderRedacted(gpa, &body.writer, meta, redactor);
     for (messages) |msg| {
-        writeMessage(&body.writer, msg) catch return error.OutOfMemory;
+        try writeMessageRedacted(gpa, &body.writer, msg, redactor);
     }
 
     var atomic = cwd.createFileAtomic(io, path, .{
@@ -345,13 +385,17 @@ fn saveWithMetaAtomicCreate(
     messages: []const message.Message,
     meta: SessionMeta,
     fail_before_replace: bool,
+    redactor: ?*const redact_mod.Redactor,
+    fail_redact: bool,
 ) Error!void {
+    if (fail_redact) return error.OutOfMemory;
+
     var body: Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
 
-    writeHeader(&body.writer, meta) catch return error.OutOfMemory;
+    try writeHeaderRedacted(gpa, &body.writer, meta, redactor);
     for (messages) |msg| {
-        writeMessage(&body.writer, msg) catch return error.OutOfMemory;
+        try writeMessageRedacted(gpa, &body.writer, msg, redactor);
     }
 
     var atomic = cwd.createFileAtomic(io, path, .{
@@ -382,6 +426,7 @@ fn mapCreateAtomicErr(err: anyerror) Error {
 }
 
 /// Public save: acquires the writer lock for the call so it cannot bypass single-writer.
+/// Low-level: no redactor (product Session.Writer path attaches policy).
 pub fn save(
     gpa: std.mem.Allocator,
     io: Io,
@@ -393,6 +438,7 @@ pub fn save(
 }
 
 /// Public save with meta: acquires the writer lock for the call so it cannot bypass single-writer.
+/// Low-level: no redactor. Prefer `Writer.save` after `setRedactor` on the product path.
 pub fn saveWithMeta(
     gpa: std.mem.Allocator,
     io: Io,
@@ -403,7 +449,22 @@ pub fn saveWithMeta(
 ) Error!void {
     var lock = try acquireBriefLock(gpa, io, cwd, path);
     defer lock.deinit();
-    try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta, false);
+    try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta, false, null, false);
+}
+
+/// Public save with optional redactor (SDK convenience).
+pub fn saveWithMetaRedacted(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    path: []const u8,
+    messages: []const message.Message,
+    meta: SessionMeta,
+    redactor: ?*const redact_mod.Redactor,
+) Error!void {
+    var lock = try acquireBriefLock(gpa, io, cwd, path);
+    defer lock.deinit();
+    try saveWithMetaAtomic(gpa, io, cwd, path, messages, meta, false, redactor, false);
 }
 
 /// Load jsonl into an empty transcript (messages are arena-owned via transcript).
@@ -545,23 +606,63 @@ fn jsonInt(v: std.json.Value) Error!u32 {
     };
 }
 
-fn writeHeader(w: *Io.Writer, meta: SessionMeta) Io.Writer.Error!void {
+fn redactField(
+    gpa: std.mem.Allocator,
+    redactor: ?*const redact_mod.Redactor,
+    value: []const u8,
+) Error![]u8 {
+    return redact_mod.redactOptional(redactor, gpa, value);
+}
+
+fn writeHeaderRedacted(
+    gpa: std.mem.Allocator,
+    w: *Io.Writer,
+    meta: SessionMeta,
+    redactor: ?*const redact_mod.Redactor,
+) Error!void {
+    var owned_summary: ?[]u8 = null;
+    defer if (owned_summary) |s| gpa.free(s);
+    var owned_ver: ?[]u8 = null;
+    defer if (owned_ver) |s| gpa.free(s);
+
+    const summary_out: ?[]const u8 = if (meta.compaction_summary) |sum| blk: {
+        const r = try redactField(gpa, redactor, sum);
+        // Always owned when redactor path used; redactOptional always dups.
+        owned_summary = r;
+        break :blk r;
+    } else null;
+    const ver_out: ?[]const u8 = if (meta.zag_version) |zv| blk: {
+        const r = try redactField(gpa, redactor, zv);
+        owned_ver = r;
+        break :blk r;
+    } else null;
+
+    writeHeaderRaw(w, meta.schema_version, ver_out, meta.compaction_gen, summary_out) catch
+        return error.OutOfMemory;
+}
+
+fn writeHeaderRaw(
+    w: *Io.Writer,
+    schema_version: u32,
+    zag_version: ?[]const u8,
+    compaction_gen: u32,
+    compaction_summary: ?[]const u8,
+) Io.Writer.Error!void {
     var s: std.json.Stringify = .{ .writer = w };
     try s.beginObject();
     try s.objectField("schema_version");
-    try s.write(meta.schema_version);
-    // Legacy alias for older readers.
+    try s.write(schema_version);
     try s.objectField("v");
-    try s.write(meta.schema_version);
+    try s.write(schema_version);
     try s.objectField("type");
     try s.write(header_type);
-    if (meta.zag_version) |zv| {
+    if (zag_version) |zv| {
         try s.objectField("zag_version");
         try s.write(zv);
     }
     try s.objectField("compaction_gen");
-    try s.write(meta.compaction_gen);
-    if (meta.compaction_summary) |sum| {
+    try s.write(compaction_gen);
+    if (compaction_summary) |sum| {
         try s.objectField("compaction_summary");
         try s.write(sum);
     }
@@ -569,23 +670,106 @@ fn writeHeader(w: *Io.Writer, meta: SessionMeta) Io.Writer.Error!void {
     try w.writeAll("\n");
 }
 
-fn writeMessage(w: *Io.Writer, msg: message.Message) Io.Writer.Error!void {
+fn writeMessageRedacted(
+    gpa: std.mem.Allocator,
+    w: *Io.Writer,
+    msg: message.Message,
+    redactor: ?*const redact_mod.Redactor,
+) Error!void {
+    // Collect owned redacted strings; free after write.
+    var owned: std.ArrayList([]u8) = .empty;
+    defer {
+        for (owned.items) |s| gpa.free(s);
+        owned.deinit(gpa);
+    }
+
+    const take = struct {
+        fn call(
+            alloc: std.mem.Allocator,
+            list: *std.ArrayList([]u8),
+            r: ?*const redact_mod.Redactor,
+            v: []const u8,
+        ) Error![]u8 {
+            const out = try redactField(alloc, r, v);
+            list.append(alloc, out) catch {
+                alloc.free(out);
+                return error.OutOfMemory;
+            };
+            return out;
+        }
+    }.call;
+
+    const content = try take(gpa, &owned, redactor, msg.content);
+    const tool_call_id: ?[]const u8 = if (msg.tool_call_id) |id|
+        try take(gpa, &owned, redactor, id)
+    else
+        null;
+
+    // Redact content_parts when present (text + image URLs).
+    var parts_owned: ?[]message.ContentPart = null;
+    defer if (parts_owned) |p| gpa.free(p);
+    const parts_out: ?[]const message.ContentPart = if (msg.content_parts) |parts| blk: {
+        const arr = gpa.alloc(message.ContentPart, parts.len) catch return error.OutOfMemory;
+        parts_owned = arr;
+        for (parts, 0..) |p, i| {
+            switch (p) {
+                .text => |t| {
+                    const rt = try take(gpa, &owned, redactor, t);
+                    arr[i] = .{ .text = rt };
+                },
+                .image_url => |img| {
+                    const ru = try take(gpa, &owned, redactor, img.url);
+                    const rd: ?[]const u8 = if (img.detail) |d| try take(gpa, &owned, redactor, d) else null;
+                    arr[i] = .{ .image_url = .{ .url = ru, .detail = rd } };
+                },
+            }
+        }
+        break :blk arr;
+    } else null;
+
+    var calls_owned: ?[]message.ToolCall = null;
+    defer if (calls_owned) |c| gpa.free(c);
+    const calls_out: ?[]const message.ToolCall = if (msg.tool_calls) |calls| blk: {
+        const arr = gpa.alloc(message.ToolCall, calls.len) catch return error.OutOfMemory;
+        calls_owned = arr;
+        for (calls, 0..) |c, i| {
+            arr[i] = .{
+                .id = try take(gpa, &owned, redactor, c.id),
+                .name = try take(gpa, &owned, redactor, c.name),
+                .arguments = try take(gpa, &owned, redactor, c.arguments),
+            };
+        }
+        break :blk arr;
+    } else null;
+
+    writeMessageRaw(w, msg.role, content, tool_call_id, calls_out, parts_out) catch
+        return error.OutOfMemory;
+}
+
+fn writeMessageRaw(
+    w: *Io.Writer,
+    role: message.Role,
+    content: []const u8,
+    tool_call_id: ?[]const u8,
+    tool_calls: ?[]const message.ToolCall,
+    content_parts: ?[]const message.ContentPart,
+) Io.Writer.Error!void {
     var s: std.json.Stringify = .{ .writer = w };
     try s.beginObject();
     try s.objectField("role");
-    try s.write(msg.role.jsonName());
+    try s.write(role.jsonName());
 
-    switch (msg.role) {
+    switch (role) {
         .tool => {
             try s.objectField("tool_call_id");
-            try s.write(msg.tool_call_id orelse "");
+            try s.write(tool_call_id orelse "");
             try s.objectField("content");
-            try s.write(msg.content);
+            try s.write(content);
         },
         .assistant => {
             try s.objectField("content");
-            try s.write(msg.content);
-            if (msg.tool_calls) |calls| {
+            try s.write(content);
+            if (tool_calls) |calls| {
                 try s.objectField("tool_calls");
                 try s.beginArray();
                 for (calls) |c| {
@@ -602,8 +786,35 @@ fn writeMessage(w: *Io.Writer, msg: message.Message) Io.Writer.Error!void {
             }
         },
         .system, .user => {
+            if (content_parts) |parts| {
+                try s.objectField("content_parts");
+                try s.beginArray();
+                for (parts) |p| {
+                    try s.beginObject();
+                    switch (p) {
+                        .text => |t| {
+                            try s.objectField("type");
+                            try s.write("text");
+                            try s.objectField("text");
+                            try s.write(t);
+                        },
+                        .image_url => |img| {
+                            try s.objectField("type");
+                            try s.write("image_url");
+                            try s.objectField("url");
+                            try s.write(img.url);
+                            if (img.detail) |d| {
+                                try s.objectField("detail");
+                                try s.write(d);
+                            }
+                        },
+                    }
+                    try s.endObject();
+                }
+                try s.endArray();
+            }
             try s.objectField("content");
-            try s.write(msg.content);
+            try s.write(content);
         },
     }
 

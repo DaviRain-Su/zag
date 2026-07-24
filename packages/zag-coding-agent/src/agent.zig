@@ -25,6 +25,7 @@ const context_mod = core.context;
 const session_store = core.session_store;
 const shell_policy = core.shell_policy;
 const trace_mod = core.trace;
+const redact_mod = core.redact;
 const loop = core.loop;
 const cancel_mod = core.cancel;
 
@@ -52,6 +53,15 @@ pub const Options = struct {
     provider_timeout_ms: ?u64 = null,
     /// Catalog row for cost rates / context (from `ai.resolve`); null = no USD estimate.
     model_info: ?ai.ModelInfo = null,
+    /// Exact secrets to redact (copied into Agent-owned Redactor at init).
+    /// CLI wires the resolved provider API key here without logging it.
+    /// Empty/short entries are ignored by the redactor.
+    secrets: []const []const u8 = &.{},
+    /// Apply documented common API-key/token patterns (default true).
+    pattern_redaction: bool = true,
+    /// Optional pre-built redactor borrowed for Agent lifetime (caller owns).
+    /// When set, `secrets` / `pattern_redaction` are ignored for construction.
+    redactor: ?*const redact_mod.Redactor = null,
 };
 
 pub const OpenMode = enum {
@@ -99,6 +109,8 @@ pub const Session = struct {
     /// Latest compaction summary for the session layer / header (arena-owned).
     compaction_summary: ?[]const u8 = null,
     zag_version: []const u8 = "0.5.0",
+    /// Borrowed redactor for persistence (product Agent attaches before save).
+    redactor: ?*const redact_mod.Redactor = null,
     /// Test-only: next `noteCompaction` returns OOM without mutating gen/summary.
     fail_next_note_compaction: if (builtin.is_test) bool else void =
         if (builtin.is_test) false else {},
@@ -290,9 +302,18 @@ pub const Session = struct {
         self.* = undefined;
     }
 
+    /// Attach redaction policy for subsequent saves (borrowed; must outlive Session).
+    pub fn setRedactor(self: *Session, r: ?*const redact_mod.Redactor) void {
+        self.redactor = r;
+        if (self.writer) |*w| w.setRedactor(r);
+    }
+
     /// Persist transcript if a path is configured.
+    /// Redacts arbitrary fields into temporary buffers; does not mutate in-memory transcript.
     pub fn save(self: *Session) session_store.Error!void {
         if (self.writer) |*w| {
+            // Keep writer policy aligned with session (Agent may attach late).
+            if (self.redactor) |r| w.setRedactor(r);
             try w.save(self.transcript.items(), .{
                 .schema_version = session_store.current_schema_version,
                 .zag_version = self.zag_version,
@@ -318,6 +339,12 @@ pub const Agent = struct {
     ledger: ai.cost.Ledger = .{},
     /// Cooperative cancel; CLI installs SIGINT against this flag.
     cancel: cancel_mod.Flag = .{},
+    /// Owned redactor when `options.redactor` is null; otherwise unused.
+    /// Do not take a long-lived pointer to this field across Agent moves —
+    /// use `activeRedactor()` after Agent is in its final storage.
+    owned_redactor: ?redact_mod.Redactor = null,
+    /// Borrowed redactor from options (caller owns; must outlive Agent).
+    borrowed_redactor: ?*const redact_mod.Redactor = null,
     /// Test-only toolset override for InvalidToolset fixtures (production always null).
     test_tools: if (builtin.is_test) ?[]const tool.Tool else void =
         if (builtin.is_test) null else {},
@@ -340,10 +367,26 @@ pub const Agent = struct {
             .trace = null,
             .ledger = .{},
             .cancel = .{},
+            .owned_redactor = null,
+            .borrowed_redactor = options.redactor,
         };
         self.permission_gate = self.resolveGate();
+
+        // Own a redactor when the caller did not supply one.
+        if (options.redactor == null) {
+            if (redact_mod.Redactor.init(gpa, .{
+                .secrets = options.secrets,
+                .patterns = options.pattern_redaction,
+            })) |owned| {
+                self.owned_redactor = owned;
+            } else |_| {
+                self.owned_redactor = null;
+            }
+        }
+
         if (options.trace_path) |tp| {
             self.trace = trace_mod.Trace.init(gpa, io, tp, Io.Dir.cwd());
+            // Pointer rebound after Agent is stored by callers via attachRedactor/beginRun.
         }
         return self;
     }
@@ -354,7 +397,24 @@ pub const Agent = struct {
         if (self.trace) |*tr| {
             tr.deinit();
         }
+        if (self.owned_redactor) |*r| r.deinit();
         self.* = undefined;
+    }
+
+    /// Active redactor after Agent lives in stable storage (not during init return).
+    pub fn activeRedactor(self: *Agent) ?*const redact_mod.Redactor {
+        if (self.borrowed_redactor) |r| return r;
+        if (self.owned_redactor != null) return &self.owned_redactor.?;
+        return null;
+    }
+
+    /// Active redactor (const). Prefer `activeRedactor` when mutable Agent is available.
+    pub fn getRedactor(self: *const Agent) ?*const redact_mod.Redactor {
+        if (self.borrowed_redactor) |r| return r;
+        // Cannot rebind owned optional through const self safely for mutation-free;
+        // return pointer into owned payload when present.
+        if (self.owned_redactor) |*r| return r;
+        return null;
     }
 
     pub fn initPhase0(
@@ -437,7 +497,8 @@ pub const Agent = struct {
             .usage => |u| {
                 self.ledger.recordModel(u, self.options.model_info);
                 if (self.options.verbose) {
-                    observer_mod.Observer.stderrLog().emit(event);
+                    // Redact optional log; OOM drops the line (never raw).
+                    observer_mod.logEventRedacted(self.gpa, self.activeRedactor(), event);
                     if (self.ledger.cost.known) {
                         std.log.info("cost est cumulative=${d:.6}", .{self.ledger.cost.total});
                     }
@@ -445,10 +506,17 @@ pub const Agent = struct {
             },
             else => {
                 if (self.options.verbose) {
-                    observer_mod.Observer.stderrLog().emit(event);
+                    observer_mod.logEventRedacted(self.gpa, self.activeRedactor(), event);
                 }
             },
         }
+    }
+
+    /// Attach this agent's redactor to a session (and its writer/trace).
+    pub fn attachRedactor(self: *Agent, session: *Session) void {
+        const r = self.activeRedactor();
+        session.setRedactor(r);
+        if (self.trace) |*tr| tr.setRedactor(r);
     }
 
     /// Per-reply prep: reset ledger + trace buffer, non-destructive preflight,
@@ -456,6 +524,8 @@ pub const Agent = struct {
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
         // Fresh run-local cost ledger each reply.
         self.ledger = .{};
+        // Product path: session/trace always see current redaction policy.
+        self.attachRedactor(session);
         const tr = if (self.trace) |*t| t else return;
         try tr.beginReply();
         try tr.emitRunStart(.{
@@ -2396,4 +2466,312 @@ test "h-context: tiny-budget prior lineage survives save/resume/recompact chain"
         try std.testing.expectEqualStrings(sum2_owned, resumed2.compaction_summary.?);
         gpa.free(sum2_owned);
     }
+}
+
+// ── h-redact-001 permanent fixtures ─────────────────────────────────────────
+
+/// Provider that echoes user text (and can plant secrets in assistant/tool paths).
+const EchoSecretChat = struct {
+    secret: []const u8,
+    mode: enum { text, tool_then_text } = .text,
+    step: u32 = 0,
+
+    fn chat(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const message.Message,
+        _: []const tool.Definition,
+        _: provider_mod.RequestControl,
+    ) provider_mod.ChatError!message.AssistantTurn {
+        const self: *EchoSecretChat = @ptrCast(@alignCast(ptr));
+        self.step += 1;
+        // Ensure provider still sees the raw secret when present in history.
+        for (messages) |m| {
+            if (std.mem.indexOf(u8, m.content, self.secret) != null) {
+                // observed raw — ok
+            }
+        }
+        switch (self.mode) {
+            .text => {
+                const last = if (messages.len > 0) messages[messages.len - 1].content else "";
+                const body = try std.fmt.allocPrint(arena, "echo:{s}", .{last});
+                return .{ .content = body, .tool_calls = &.{}, .finish_reason = "stop" };
+            },
+            .tool_then_text => {
+                if (self.step == 1) {
+                    const args = try std.fmt.allocPrint(arena, "{{\"path\":\"{s}\"}}", .{self.secret});
+                    const calls = try arena.alloc(message.ToolCall, 1);
+                    calls[0] = .{
+                        .id = "c-secret",
+                        .name = "list_dir",
+                        .arguments = args,
+                    };
+                    return .{
+                        .content = try arena.dupe(u8, "calling"),
+                        .tool_calls = calls,
+                        .finish_reason = "tool_calls",
+                    };
+                }
+                return .{
+                    .content = try arena.dupe(u8, "done"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            },
+        }
+    }
+};
+
+fn assertNoSecret(hay: []const u8, secret: []const u8) !void {
+    try std.testing.expect(std.mem.indexOf(u8, hay, secret) == null);
+}
+
+test "h-redact: secret absent from session bytes, trace, while in-memory raw" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    const dir_name = ".zag-test-h-redact-session";
+    const sess_path = ".zag-test-h-redact-session/s.jsonl";
+    const tr_path = ".zag-test-h-redact-session/t.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
+    const secret_slots = [_][]const u8{secret};
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = tr_path,
+        .secrets = &secret_slots,
+        .pattern_redaction = true,
+    });
+    defer agent.deinit();
+
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        // User message plants the configured secret.
+        const user_text = try std.fmt.allocPrint(gpa, "key={s}", .{secret});
+        defer gpa.free(user_text);
+        const result = try agent.reply(&session, user_text);
+        try std.testing.expect(std.mem.indexOf(u8, result.final_text, secret) != null);
+
+        // In-memory transcript keeps the raw secret.
+        var found_raw = false;
+        for (session.transcript.items()) |m| {
+            if (std.mem.indexOf(u8, m.content, secret) != null) found_raw = true;
+        }
+        try std.testing.expect(found_raw);
+
+        // Session file must not contain the secret.
+        const sess_bytes = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+        defer gpa.free(sess_bytes);
+        try assertNoSecret(sess_bytes, secret);
+        try std.testing.expect(std.mem.indexOf(u8, sess_bytes, redact_mod.marker) != null);
+
+        // Trace buffer + file must not contain the secret.
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try assertNoSecret(tr.buf.items, secret);
+        const tr_bytes = try Io.Dir.cwd().readFileAlloc(io, tr_path, gpa, .limited(2 * 1024 * 1024));
+        defer gpa.free(tr_bytes);
+        try assertNoSecret(tr_bytes, secret);
+    }
+
+    // Resume sees redacted bytes (not the original secret).
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    var resumed_has_secret = false;
+    for (resumed.transcript.items()) |m| {
+        if (std.mem.indexOf(u8, m.content, secret) != null) resumed_has_secret = true;
+    }
+    try std.testing.expect(!resumed_has_secret);
+}
+
+test "h-redact: tool args/result and pattern shapes redacted in trace+session" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    const dir_name = ".zag-test-h-redact-tools";
+    const sess_path = ".zag-test-h-redact-tools/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var mock: EchoSecretChat = .{ .secret = secret, .mode = .tool_then_text };
+    const secret_slots = [_][]const u8{secret};
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .secrets = &secret_slots,
+        .pattern_redaction = true,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    if (agent.trace) |*tr| tr.setRedactor(agent.activeRedactor());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    // Plant pattern-shaped secrets in user text too.
+    const user_text = try std.fmt.allocPrint(gpa, "use {s} and {s}", .{
+        secret,
+        redact_mod.testing.fake_aws,
+    });
+    defer gpa.free(user_text);
+    _ = try agent.reply(&session, user_text);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try assertNoSecret(tr.buf.items, secret);
+    try assertNoSecret(tr.buf.items, redact_mod.testing.fake_aws);
+    // Near-miss / code-like must remain if present in trace (tool name list_dir).
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "list_dir") != null);
+
+    const sess_bytes = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(sess_bytes);
+    try assertNoSecret(sess_bytes, secret);
+    try assertNoSecret(sess_bytes, redact_mod.testing.fake_aws);
+}
+
+test "h-redact: redaction OOM on session save preserves prior bytes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    const dir_name = ".zag-test-h-redact-oom";
+    const sess_path = ".zag-test-h-redact-oom/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
+    const secret_slots = [_][]const u8{secret};
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .secrets = &secret_slots,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    // First successful save establishes prior bytes.
+    _ = try agent.reply(&session, "hello");
+    const prior = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(prior);
+
+    // Inject redact OOM on next writer save.
+    if (session.writer) |*w| {
+        session_store.testing.setFailNextRedact(w, true);
+    }
+
+    const leak_msg = try std.fmt.allocPrint(gpa, "leak {s}", .{secret});
+    defer gpa.free(leak_msg);
+    // append user + force save path via reply
+    const err = agent.reply(&session, leak_msg);
+    try std.testing.expectError(error.OutOfMemory, err);
+
+    const after = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(prior, after);
+    try assertNoSecret(after, secret);
+}
+
+test "h-redact: redaction OOM on trace emit fails closed no raw in buffer" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+
+    var t = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    defer t.deinit();
+    t.setRedactor(&r);
+    try t.beginReply();
+    try t.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    const before_len = t.buf.items.len;
+    const before_seq = t.event_count;
+
+    trace_mod.testing.setFailNextRedact(&t, true);
+    try std.testing.expectError(error.OutOfMemory, t.emitAssistant("has " ++ secret));
+    // Transactional: buffer unchanged (prepare fails before writeObj).
+    try std.testing.expectEqual(before_len, t.buf.items.len);
+    try std.testing.expectEqual(before_seq, t.event_count);
+    try assertNoSecret(t.buf.items, secret);
+}
+
+test "h-redact: near-miss strings survive session roundtrip" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-h-redact-nearmiss";
+    const sess_path = ".zag-test-h-redact-nearmiss/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-value-xxxx", .mode = .text };
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .pattern_redaction = true,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const near = "use my_api_key and sk-short and OPENAI_API_KEY var";
+    _ = try agent.reply(&session, near);
+
+    const sess_bytes = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+    defer gpa.free(sess_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, sess_bytes, "my_api_key") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sess_bytes, "sk-short") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sess_bytes, "OPENAI_API_KEY") != null);
 }

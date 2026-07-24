@@ -17,6 +17,7 @@ pub const shell_policy = @import("shell_policy.zig");
 pub const workspace = @import("workspace.zig");
 pub const tool_error = @import("tool_error.zig");
 pub const cancel = @import("cancel.zig");
+pub const redact = @import("redact.zig");
 pub const trace = @import("trace.zig");
 pub const loop = @import("loop.zig");
 

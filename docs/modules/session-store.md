@@ -21,8 +21,9 @@ The Session owner holds transcript memory, path, metadata, and the active-writer
 4. A failed load never authorizes overwriting the same path with a fresh transcript.
 5. A failed save preserves the previous good file and is visible to the caller.
 6. L2 has at most one active writer per persisted session; last-writer-wins is forbidden.
-7. Session files may contain code, command output, and secrets; `.zag/` remains sensitive local state.
+7. Session files may contain code, command output, and residual secrets; `.zag/` remains sensitive local state even after redaction.
 8. Session paths are **lexical** relative-workspace paths only (absolute/`..` rejected). This is not symlink containment.
+9. **Redaction (h-redact-001):** when `Writer.redactor` is set, every arbitrary string field (message content, tool args/ids, content parts/URLs, compaction summary) is redacted into temporary buffers **before** atomic serialize. In-memory transcript is not mutated. Redaction OOM → `OutOfMemory` with prior file bytes preserved. Null redactor is a documented low-level bypass; product Session/Agent attaches policy.
 
 ## Schema v1 (current format)
 

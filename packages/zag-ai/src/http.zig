@@ -5,6 +5,11 @@
 //! - `curl` — zig-curl / libcurl (`http_curl.zig`); see D-005
 //!
 //! Auth is explicit: Bearer vs custom headers (Anthropic `x-api-key`).
+//!
+//! **Logging (h-redact-001):** this transport does not log Authorization headers,
+//! API keys, or response bodies to stderr. If a future debug path emits body or
+//! URL previews, scrub via `redact_log.scrubForLog` / `scrubUrlForLog` with the
+//! resolved secret policy — never print raw credentials.
 
 const std = @import("std");
 const build_options = @import("build_options");

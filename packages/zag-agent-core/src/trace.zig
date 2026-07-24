@@ -10,6 +10,10 @@
 //!   appends consume only that pre-reserved capacity (no alloc after run_start).
 //! - `writeObj` is transactional (seq/buffer unchanged on failure).
 //! - `deinit` only releases memory; it never invents a successful terminal.
+//! - **Redaction (h-redact-001):** when `redactor` is set, every arbitrary string
+//!   field is redacted **before** JSON serialization. Redaction OOM →
+//!   `OutOfMemory` (fail closed; never serialize raw). Product/Agent path always
+//!   attaches a redactor; raw Trace without one is a documented low-level bypass.
 //!
 //! Containment is software check-time on a trusted host (same as workspace tools).
 //! Residual TOCTOU between Guard check and createFileAtomic is documented — not
@@ -25,6 +29,7 @@ const Io = std.Io;
 const message = @import("message.zig");
 const workspace = @import("workspace.zig");
 const context_mod = @import("context.zig");
+const redact_mod = @import("redact.zig");
 
 /// Stable exported trace schema version written on every `run_start`.
 pub const current_schema_version: u32 = 1;
@@ -100,6 +105,9 @@ pub const Trace = struct {
     cwd: Io.Dir,
     /// Relative path for JSONL output; null = memory-only.
     path: ?[]const u8 = null,
+    /// Borrowed redaction policy (product path always sets; null = low-level bypass).
+    /// Must outlive this Trace. Concurrent redact reads are safe.
+    redactor: ?*const redact_mod.Redactor = null,
     /// Current reply-run lines only.
     buf: std.ArrayList(u8) = .empty,
     event_count: u32 = 0,
@@ -111,9 +119,15 @@ pub const Trace = struct {
     fail_before_replace: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
     /// Test-only: next terminal writeObj returns TraceSerializationFailed once.
     fail_next_terminal_serialize: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
+    /// Test-only: next redaction returns OOM once (fail-closed fixture).
+    fail_next_redact: if (builtin.is_test) bool else void = if (builtin.is_test) false else {},
 
     pub fn init(gpa: std.mem.Allocator, io: Io, path: ?[]const u8, cwd: Io.Dir) Trace {
         return .{ .gpa = gpa, .io = io, .path = path, .cwd = cwd };
+    }
+
+    pub fn setRedactor(self: *Trace, r: ?*const redact_mod.Redactor) void {
+        self.redactor = r;
     }
 
     pub fn deinit(self: *Trace) void {
@@ -175,13 +189,25 @@ pub const Trace = struct {
         session: ?[]const u8 = null,
     }) Error!void {
         if (self.run_open) return;
+        const version = try prepareTracedString(self, meta.version, cap_version);
+        defer freePrepared(self, version);
+        const permission = try prepareTracedString(self, meta.permission, 16);
+        defer freePrepared(self, permission);
+        const shell_policy = try prepareTracedString(self, meta.shell_policy, 16);
+        defer freePrepared(self, shell_policy);
+        var session_prep: PreparedString = .borrowed("");
+        defer freePrepared(self, session_prep);
+        const session_field: ?[]const u8 = if (meta.session) |s| blk: {
+            session_prep = try prepareTracedString(self, s, cap_session);
+            break :blk session_prep.bytes;
+        } else null;
         try self.writeObj(.{
             .kind = .run_start,
             .schema_version = current_schema_version,
-            .version = try prepareTracedString(meta.version, cap_version),
-            .permission = try prepareTracedString(meta.permission, 16),
-            .shell_policy = try prepareTracedString(meta.shell_policy, 16),
-            .session = if (meta.session) |s| try prepareTracedString(s, cap_session) else null,
+            .version = version.bytes,
+            .permission = permission.bytes,
+            .shell_policy = shell_policy.bytes,
+            .session = session_field,
         }, .normal);
         self.run_open = true;
         self.finished = false;
@@ -193,7 +219,9 @@ pub const Trace = struct {
     }
 
     pub fn emitAssistant(self: *Trace, text: []const u8) Error!void {
-        try self.writeObj(.{ .kind = .assistant, .text = try prepareTracedString(text, cap_assistant_text) }, .normal);
+        const prep = try prepareTracedString(self, text, cap_assistant_text);
+        defer freePrepared(self, prep);
+        try self.writeObj(.{ .kind = .assistant, .text = prep.bytes }, .normal);
     }
 
     pub fn emitUsage(self: *Trace, usage: message.AssistantTurn) Error!void {
@@ -208,19 +236,27 @@ pub const Trace = struct {
     }
 
     pub fn emitProviderRetry(self: *Trace, attempt: u32, err_name: []const u8) Error!void {
+        const prep = try prepareTracedString(self, err_name, 64);
+        defer freePrepared(self, prep);
         try self.writeObj(.{
             .kind = .provider_retry,
             .attempt = attempt,
-            .error_name = try prepareTracedString(err_name, 64),
+            .error_name = prep.bytes,
         }, .normal);
     }
 
     pub fn emitToolCall(self: *Trace, call: message.ToolCall) Error!void {
+        const id = try prepareTracedString(self, call.id, cap_tool_id_name);
+        defer freePrepared(self, id);
+        const name = try prepareTracedString(self, call.name, cap_tool_id_name);
+        defer freePrepared(self, name);
+        const arguments = try prepareTracedString(self, call.arguments, cap_tool_arguments);
+        defer freePrepared(self, arguments);
         try self.writeObj(.{
             .kind = .tool_call,
-            .id = try prepareTracedString(call.id, cap_tool_id_name),
-            .name = try prepareTracedString(call.name, cap_tool_id_name),
-            .arguments = try prepareTracedString(call.arguments, cap_tool_arguments),
+            .id = id.bytes,
+            .name = name.bytes,
+            .arguments = arguments.bytes,
         }, .normal);
     }
 
@@ -231,43 +267,59 @@ pub const Trace = struct {
         allowed: bool,
         remembered: bool,
     ) Error!void {
+        const name = try prepareTracedString(self, tool_name, cap_tool_id_name);
+        defer freePrepared(self, name);
+        const risk_p = try prepareTracedString(self, risk, 16);
+        defer freePrepared(self, risk_p);
         try self.writeObj(.{
             .kind = .permission,
-            .name = try prepareTracedString(tool_name, cap_tool_id_name),
-            .risk = try prepareTracedString(risk, 16),
+            .name = name.bytes,
+            .risk = risk_p.bytes,
             .allowed = allowed,
             .remembered = remembered,
         }, .normal);
     }
 
     pub fn emitJailDeny(self: *Trace, tool_name: []const u8, path: []const u8) Error!void {
+        const name = try prepareTracedString(self, tool_name, cap_tool_id_name);
+        defer freePrepared(self, name);
+        const path_p = try prepareTracedString(self, path, cap_jail_path);
+        defer freePrepared(self, path_p);
         try self.writeObj(.{
             .kind = .jail_deny,
-            .name = try prepareTracedString(tool_name, cap_tool_id_name),
-            .path = try prepareTracedString(path, cap_jail_path),
+            .name = name.bytes,
+            .path = path_p.bytes,
         }, .normal);
     }
 
     pub fn emitShellDeny(self: *Trace, command: []const u8) Error!void {
+        const prep = try prepareTracedString(self, command, cap_shell_command);
+        defer freePrepared(self, prep);
         try self.writeObj(.{
             .kind = .shell_deny,
-            .command = try prepareTracedString(command, cap_shell_command),
+            .command = prep.bytes,
         }, .normal);
     }
 
     pub fn emitToolResult(self: *Trace, name: []const u8, body: []const u8) Error!void {
+        const name_p = try prepareTracedString(self, name, cap_tool_id_name);
+        defer freePrepared(self, name_p);
+        const body_p = try prepareTracedString(self, body, cap_tool_result_body);
+        defer freePrepared(self, body_p);
         try self.writeObj(.{
             .kind = .tool_result,
-            .name = try prepareTracedString(name, cap_tool_id_name),
-            .body = try prepareTracedString(body, cap_tool_result_body),
+            .name = name_p.bytes,
+            .body = body_p.bytes,
         }, .normal);
     }
 
     pub fn emitCompaction(self: *Trace, dropped: usize, summary: []const u8) Error!void {
+        const prep = try prepareTracedString(self, summary, cap_compaction_summary);
+        defer freePrepared(self, prep);
         try self.writeObj(.{
             .kind = .compaction,
             .dropped = dropped,
-            .summary = try prepareTracedString(summary, cap_compaction_summary),
+            .summary = prep.bytes,
         }, .normal);
     }
 
@@ -358,10 +410,12 @@ pub const Trace = struct {
     }
 
     fn appendRunEndLine(self: *Trace, info: RunEndInfo) Error!void {
-        const reason: ?[]const u8 = if (info.stop_reason) |r|
-            try prepareTracedString(r, max_stop_reason_len)
-        else
-            null;
+        var reason_prep: PreparedString = .borrowed("");
+        defer freePrepared(self, reason_prep);
+        const reason: ?[]const u8 = if (info.stop_reason) |r| blk: {
+            reason_prep = try prepareTracedString(self, r, max_stop_reason_len);
+            break :blk reason_prep.bytes;
+        } else null;
         try self.writeObj(.{
             .kind = .run_end,
             .turns = info.turns,
@@ -516,15 +570,52 @@ fn truncateUtf8(s: []const u8, max: usize) []const u8 {
     return s[0..end];
 }
 
+const PreparedString = struct {
+    bytes: []const u8,
+    owned: bool,
+
+    fn borrowed(s: []const u8) PreparedString {
+        return .{ .bytes = s, .owned = false };
+    }
+
+    fn ownedAlloc(s: []u8) PreparedString {
+        return .{ .bytes = s, .owned = true };
+    }
+};
+
+fn freePrepared(self: *Trace, prep: PreparedString) void {
+    if (prep.owned) self.gpa.free(prep.bytes);
+}
+
 /// Public string policy: require valid UTF-8 (fail `TraceSerializationFailed`);
-/// truncate on codepoint boundary. Never emit invalid JSONL or map this to OOM.
-/// Zig's default stringify would render invalid UTF-8 as a number array — we
-/// fail closed instead so field types stay strings for strict consumers.
-fn prepareTracedString(s: []const u8, max: usize) Error![]const u8 {
+/// truncate on codepoint boundary; **redact before serialize** when redactor set.
+/// Redaction OOM → `OutOfMemory` (never fall back to raw). Never emit invalid
+/// JSONL. Zig's default stringify would render invalid UTF-8 as a number array —
+/// we fail closed so field types stay strings for strict consumers.
+fn prepareTracedString(self: *Trace, s: []const u8, max: usize) Error!PreparedString {
     if (!std.unicode.utf8ValidateSlice(s)) return error.TraceSerializationFailed;
     const t = truncateUtf8(s, max);
-    // Truncation at boundary of valid input stays valid.
-    return t;
+    if (builtin.is_test and self.fail_next_redact) {
+        self.fail_next_redact = false;
+        return error.OutOfMemory;
+    }
+    if (self.redactor) |r| {
+        const red = r.redactAlloc(self.gpa, t) catch return error.OutOfMemory;
+        // Re-truncate if redaction expanded past cap (marker vs short secret).
+        if (red.len > max) {
+            const cut = truncateUtf8(red, max);
+            if (cut.len != red.len) {
+                const again = self.gpa.dupe(u8, cut) catch {
+                    self.gpa.free(red);
+                    return error.OutOfMemory;
+                };
+                self.gpa.free(red);
+                return PreparedString.ownedAlloc(again);
+            }
+        }
+        return PreparedString.ownedAlloc(red);
+    }
+    return PreparedString.borrowed(t);
 }
 
 /// Test-only fault/injection helpers. Empty in production builds (decls erased).
@@ -535,6 +626,10 @@ pub const testing = if (builtin.is_test) struct {
 
     pub fn setFailNextTerminalSerialize(t: *Trace, enabled: bool) void {
         t.fail_next_terminal_serialize = enabled;
+    }
+
+    pub fn setFailNextRedact(t: *Trace, enabled: bool) void {
+        t.fail_next_redact = enabled;
     }
 
     /// Uncapped assistant text for intentional oversize serialization tests.

@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
-| Current maturity | **L1+** — symlink-aware **file containment** is in; shell policy, redaction, doctor incomplete for full L2 |
+| Current maturity | **L1+** — symlink-aware **file containment** + secret redaction (h-redact-001); shell policy and doctor incomplete for full L2 |
 | Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
 | Reference | Hyper sandbox; Codex sandbox |
 
@@ -33,7 +33,7 @@ The file-tool jail and shell policy are different controls. `run_shell` is not m
 5. Built-in file handlers re-check containment themselves so raw `Registry.execute` cannot bypass the jail. Custom tools still follow D-007: only declared `path_field` tools are gated by the loop; their handlers must implement their own containment if they touch the FS.
 6. Shell policy defaults to `protect`; disabling it is explicit.
 7. H documentation says **no OS sandbox**.
-8. Known secrets are redacted before verbose/trace/session persistence, while `.zag/` remains sensitive (redaction still P1).
+8. Known secrets and common API-key shapes are redacted before verbose/trace/session persistence (`h-redact-001`), while `.zag/` remains sensitive (not DLP; arbitrary tool/file content cannot be proven secret-free).
 
 ## File containment contract (L2 sub-capability)
 
@@ -59,11 +59,17 @@ The file-tool jail and shell policy are different controls. `run_shell` is not m
 
 A denylist reduces accidents; it is not an adversarial sandbox.
 
-## Secret redaction (P1)
+## Secret redaction (h-redact-001)
 
-- One shared redactor consumes configured secret values plus documented common key patterns.
-- Apply before verbose logging, trace serialization, and session persistence.
-- Avoid claiming arbitrary file/tool content is secret-free; keep `.zag/` private.
+| Item | Content |
+|------|---------|
+| Code | `packages/zag-agent-core/src/redact.zig`; wired via Trace / session Writer / observer / Agent / CLI; model-plane `zag-ai/src/redact_log.zig` for HTTP diagnostics |
+| Marker | deterministic `[REDACTED]` |
+| Exact secrets | configured values (CLI wires resolved provider API key without logging it); min length guard; owned copies inside `Redactor` |
+| Patterns | conservative shapes: `sk-…`, `sk-ant-…`, GitHub PATs, AWS `AKIA…`, `Bearer …` (min lengths + alphabets) |
+| Boundaries | verbose observer logs; every arbitrary trace string before JSON; session header/messages before atomic write |
+| Failure | typed OOM fail-closed; verbose may drop line; session/trace preserve prior durable bytes |
+| Limits | no zeroization claim; not DLP; `.zag/` remains sensitive |
 
 ## Doctor/readiness
 
@@ -72,7 +78,8 @@ Report project instructions/test entry, permission mode, shell policy, lexical/r
 ## Current gaps
 
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
-- systematic redaction and doctor are not implemented.
+- ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
+- doctor is not implemented.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
 

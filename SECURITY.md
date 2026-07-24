@@ -17,7 +17,8 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
 | Workspace path check | lexical deny of absolute/`..`/drive/UNC **plus** realpath containment for file tools | **software check-time** only; residual TOCTOU under concurrent FS races; not an OS sandbox |
 | Shell policy | `protect`; blocks selected catastrophic command patterns | denylist only; shell is **not** contained by the file-path jail or OS sandbox |
-| Trace | optional local JSONL events | schema/terminal truth/I/O propagation are not L2 yet |
+| Trace | optional local JSONL events | lifecycle/schema L2; redaction before serialize (h-redact-001) |
+| Secret redaction | configured keys + common API-key shapes before verbose/trace/session | not DLP; `.zag/` still sensitive; no zeroization claim |
 
 Even with `--yolo`, the file-path jail and shell policy remain active unless shell policy is explicitly disabled. This does **not** make yolo safe against arbitrary shell access, malicious repositories that abuse shell, or secrets in tool output.
 
@@ -42,22 +43,25 @@ Built-ins declare capabilities; custom Tool names require mandatory runtime capa
 
 ### Session and audit reliability
 
-Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is still P1 — do not treat unredacted traces as secret-safe.
+Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is L2 for known keys/patterns (h-redact-001) — still treat `.zag/` as sensitive.
 
 ## Secrets
 
 - Prefer environment variables (`DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `ZAG_API_KEY`, …).
 - Never paste keys into prompts, source files, Tool arguments, or shell commands deliberately.
-- Systematic redaction is not implemented yet; verbose output, trace, session, file content, and command output may contain secrets.
+- **Redaction (h-redact-001):** the shared `redact.Redactor` in `zag-agent-core` scrubs exact configured secrets (CLI wires the resolved provider API key without logging it) and a conservative set of common API-key/token shapes before **verbose observer logs**, **trace JSONL serialize**, and **session atomic persist**. In-memory transcript and provider request bytes may remain raw; only outward copies are redacted.
+- Marker is deterministic (`[REDACTED]`). Empty/too-short configured secrets are ignored. Redaction OOM is fail-closed (no raw fallback; prior session/trace bytes preserved).
+- Model-plane HTTP does not log `Authorization` / API keys; optional `zag-ai` `redact_log` scrubs exact secrets and URL userinfo for diagnostics.
+- **Not claimed:** zeroization of freed secret buffers, DLP over arbitrary tool/file content, or proof that `.zag/` is secret-free.
 - Treat all `.zag/` files as sensitive local state and keep them out of version control.
 
-P1 redaction must run before verbose logging, trace serialization, and session persistence. Redaction will reduce known-key leakage; it will not prove arbitrary file/Tool output secret-free.
+Redaction reduces known-key and shape leakage; it will not prove arbitrary file/Tool output secret-free.
 
 ## Audit limitations
 
 Trace is versioned (`schema_version` on `run_start`, currently `1`). Each `Agent.reply` is one run; the explicit path atomically stores the **latest completed reply**. The facade commits exactly one truthful `run_end` for ordinary post-start failures and Results. Contract: [trace-observability](./docs/modules/trace-observability.md).
 
-Preflight is non-destructive (atomic temp discarded without replace) and **symlink-aware** (`Guard.checkCreate` before preflight, at persist entry, and immediately before replace). Parent symlink escape and dangling links fail closed as `InvalidPath` before provider work. Fixed-writer / event-too-large / invalid UTF-8 string failures are `TraceSerializationFailed`, not OOM. Non-finite `estimated_usd` is omitted. Terminal commit is transactional: a failed intended terminal still yields exactly one minimal `trace_error` (or `out_of_memory`) terminal when capacity allows. Final write uses atomic replace; prior destination bytes are preserved on fault; persist errors keep their typed category. Residual TOCTOU after the last Guard check is trusted-host only — not an OS sandbox. Secret redaction remains P1.
+Preflight is non-destructive (atomic temp discarded without replace) and **symlink-aware** (`Guard.checkCreate` before preflight, at persist entry, and immediately before replace). Parent symlink escape and dangling links fail closed as `InvalidPath` before provider work. Fixed-writer / event-too-large / invalid UTF-8 string failures are `TraceSerializationFailed`, not OOM. Non-finite `estimated_usd` is omitted. Terminal commit is transactional: a failed intended terminal still yields exactly one minimal `trace_error` (or `out_of_memory`) terminal when capacity allows. Final write uses atomic replace; prior destination bytes are preserved on fault; persist errors keep their typed category. Residual TOCTOU after the last Guard check is trusted-host only — not an OS sandbox. Secret redaction before serialize is applied when a redactor is attached (product Agent path).
 
 ## Provider deadline / cancel (h-provider-001)
 
@@ -78,8 +82,8 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~symlink-aware file containment~~ | **done** Phase H P0 h-workspace-001 |
 | ~~explicit Tool capabilities/fail-closed custom policy~~ | **done** Phase H P0 h-tool-runtime-001 |
 | ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
-| ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 (redaction still P1) |
-| systematic secret redaction | Phase H P1 |
+| ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 |
+| ~~systematic secret redaction~~ | **done** Phase H P1 h-redact-001 (not DLP; `.zag/` still sensitive) |
 | ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (tool/shell mid-flight cancel still open) |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |

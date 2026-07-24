@@ -247,6 +247,9 @@ pub fn run(init: std.process.Init) !void {
     }
     defer wire_prov.deinit();
 
+    // Wire resolved API key into redaction policy without logging the value.
+    // Stack-owned slice list lives for Agent.init, which copies secret bytes.
+    const secret_slots = [_][]const u8{resolved.config.api_key};
     var agent_opts: coding.agent.Options = .{
         .verbose = verbose,
         .permission_mode = permission_mode,
@@ -261,6 +264,8 @@ pub fn run(init: std.process.Init) !void {
         // End-to-end deadline shared across loop retries (not reset per attempt).
         .provider_timeout_ms = resolved.config.timeout_ms,
         .model_info = resolve_result.model_info,
+        .secrets = &secret_slots,
+        .pattern_redaction = true,
     };
     if (resolve_result.max_turns) |mt| {
         agent_opts.max_turns = mt;

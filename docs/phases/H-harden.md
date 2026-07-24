@@ -108,7 +108,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment is done (h-workspace-001); Workspace/Safety row stays **L1+** until redaction/doctor.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment is done (h-workspace-001); secret redaction is done (h-redact-001); Workspace/Safety row stays **L1+** until doctor.
 
 ## H4 — Context / Session
 
@@ -137,15 +137,17 @@ H4 Context/Compaction is **L2** in [maturity](../maturity.md). Repo map/fork/Mem
 
 Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
-Required:
+### Landed
 
-- symlink-aware containment for all file Tools (P0);
-- fixed shell-policy matrix;
-- shared secret redaction before verbose/trace/session (P1);
+- symlink-aware containment for all file Tools (P0 h-workspace-001);
+- fixed shell-policy matrix (denylist; not OS sandbox);
+- shared secret redaction before verbose/trace/session (P1 h-redact-001);
+- explicit trusted-host/non-OS-sandbox threat model in SECURITY + module docs.
+
+### Remaining
+
 - doctor/readiness output;
-- explicit trusted-host/non-OS-sandbox threat model.
-
-OS sandbox/process supervisor remains C7, but is required before higher-autonomy/background/untrusted executable-extension claims.
+- OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
 
 ## H6 — Provider
 
@@ -155,23 +157,20 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 
 - OpenAI-compatible and Anthropic wire adapters;
 - canonical errors, retry, ChatOptions, usage/cost, provider fixtures;
-- std/curl selectable transports.
+- std/curl selectable transports;
+- curl active deadline/cancel; std capability-truth `unsupported_control` (h-provider-001);
+- incomplete Tool-call fragment discard; retry ownership;
+- HTTP never logs Authorization; `redact_log` exact/URL scrub for diagnostics (h-redact-001).
 
-### Remaining (P1)
+### Remaining
 
-- public timeout is enforced or explicitly rejected;
-- cancel/deadline propagation through Provider/adapter/stream;
-- incomplete Tool-call fragment discard;
-- retry ownership/attempt traceability;
-- redaction integration.
-
-Until std deadlines are implemented, production deadline users must use the documented curl path; storing an ineffective timeout is not L2.
+- broader contract matrix / multi-key fallback (capability).
 
 ## H7 — Trace / quality
 
 Specs: [trace-observability](../modules/trace-observability.md), [evals](../quality/evals.md), [contracts](../quality/contracts.md).
 
-### Landed (h-trace-001)
+### Landed (h-trace-001 + h-redact-001)
 
 - `schema_version` on `run_start` (`current_schema_version = 1`);
 - facade-owned exactly one truthful terminal per reply-run;
@@ -180,21 +179,21 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 - transactional `writeObj`; fail-closed precedence when failure-terminal persist fails;
 - provider/save/trace/cancel/max_turns/completed + invalid_toolset fixtures;
 - typed `TraceIoFailed` / `InvalidPath` (not OOM);
-- deinit release-only (no false success).
+- deinit release-only (no false success);
+- secret redaction before serialize when redactor attached (product path).
 
 ### Remaining
 
-- timeout terminal fixtures (P1 provider);
-- P1 compaction/redaction/provider cancellation fixtures;
-- external-consumer gates in CI.
+- external-consumer gates in CI;
+- dashboard / correlation (L3).
 
 ## Dependency order
 
 ```text
 P0 session + Tool + workspace + trace
-  ├─► P1 context
-  ├─► P1 provider deadline/cancel
-  └─► P1 redaction
+  ├─► P1 context ✅
+  ├─► P1 provider deadline/cancel ✅
+  └─► P1 redaction ✅
          │
          ▼
 h-integration-001（real product composition + failure matrix）

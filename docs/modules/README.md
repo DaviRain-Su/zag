@@ -15,9 +15,9 @@
 | [permissions.md](./permissions.md) | H3 **L2** | `zag-agent-core/.../permissions.zig` | 保持 |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | core `context`；coding `project` | 保持 |
 | [session-store.md](./session-store.md) | H4 → C5 | core `session_store.zig` | 保持 |
-| [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | core `workspace` + `shell_policy` | C7 sandbox |
-| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
-| [trace-observability.md](./trace-observability.md) | H7 | core `trace.zig` | 保持 |
+| [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | core `workspace` + `shell_policy` + `redact.zig` | C7 sandbox |
+| [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` + `redact_log` | core 仅纯 Provider |
+| [trace-observability.md](./trace-observability.md) | H7 | core `trace.zig` + redaction | 保持 |
 | [memory.md](./memory.md) | **C5**（前置 H4） | —（未实现） | `.zag/memory/` + agent 挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 | — | 独立 extensions 层 |
@@ -29,7 +29,7 @@
 | `openai-zig` | `Client`、resources、transport | generated OpenAPI |
 | `zag-ai` | `resolve`、`WireAdapter`、`ChatOptions`、catalog | openai_compat |
 | `zag-types` | Message / ToolDefinition / ToolRisk / ToolCapabilities / ToolDescriptor / ChatError | — |
-| `zag-agent-core` | `loop`、**纯 `Provider` 端口**、session、permissions | 无 `Client` / 无 toolset 产品 / 无 zag-ai |
+| `zag-agent-core` | `loop`、**纯 `Provider` 端口**、session、permissions、`redact` | 无 `Client` / 无 toolset 产品 / 无 zag-ai |
 | `zag-coding-agent` | `Agent`、`WireProvider`、toolset、runtime tools | 组装 core + wire |
 | `zag-cli` | flags / REPL / one-shot | 产品壳 |
 | `src/main` | 进程入口 → `zag_cli.run` | 薄 |
