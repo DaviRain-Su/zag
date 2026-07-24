@@ -43,7 +43,7 @@ Built-ins declare capabilities; custom Tool names require mandatory runtime capa
 
 ### Session and audit reliability
 
-Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is L2 for known keys/patterns (h-redact-001) — still treat `.zag/` as sensitive.
+Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is **implemented on branch, pending Gate** for known keys/patterns (h-redact-001) — still treat `.zag/` as sensitive.
 
 ## Secrets
 
@@ -55,9 +55,10 @@ Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/termi
 - Session owns a cloned redactor at `Session.start` (create writes redacted); safe to `save` after Agent deinit. Tool-call IDs that contain secrets map to collision-safe `zag-rtid-<n>` pseudonyms (skip reserved IDs already in context / prior resume); never collapse multiple IDs to one marker; no secret material in the name.
 - Trace `stop_reason`: Agent vocabulary is allocation-free; arbitrary public stop_reason is redacted (OOM → minimal terminal). Agent clears `trace.redactor` on every reply exit.
 - Low-level unredacted session APIs are explicitly named (`createNewUnredacted` / `saveUnredacted` / …); product path always uses redaction.
-- Ask-mode permission prompt logs risk + tool name + args_len only (never raw arguments). CLI verbose/REPL do not echo session/trace/project paths.
+- Ask-mode permission prompt logs **risk + args_len only** (never tool name or raw arguments). CLI verbose/REPL do not echo session/trace/project paths.
 - Model-plane / openai-zig HTTP diagnostics print **status + body length only** — never Authorization, body text, or hex dumps.
 - Shell/jail loop warnings are generic (no raw command/path).
+- **Final assistant stdout** (one-shot/REPL answer) and **standalone openai-zig examples** are intentional user-facing output and are **outside** the verbose/diagnostic redaction gate.
 - **Not claimed:** zeroization of freed secret buffers, DLP over arbitrary tool/file content, or proof that `.zag/` is secret-free.
 - Treat all `.zag/` files as sensitive local state and keep them out of version control.
 

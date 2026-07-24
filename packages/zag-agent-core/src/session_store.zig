@@ -555,8 +555,10 @@ pub fn parseSessionBytes(
         line_start += nl + 1;
         if (line.len == 0) continue;
 
-        const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch
-            return error.InvalidSession;
+        const parsed = std.json.parseFromSlice(std.json.Value, gpa, line, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.InvalidSession,
+        };
         defer parsed.deinit();
         if (parsed.value != .object) return error.InvalidSession;
         const obj = parsed.value.object;
@@ -1731,50 +1733,255 @@ test "tool id map skips reuse after prior zag-rtid present" {
     try std.testing.expectEqualStrings("zag-rtid-1", pseudo);
 }
 
-test "buildToolIdMap allocation-index sweep no leak" {
+test "buildToolIdMap allocation-index sweep induced evidence" {
     const gpa = std.testing.allocator;
     const secret = redact_mod.testing.fake_api_key;
     // Many secret IDs + reserved names force growth paths.
     var ids_buf: [24][]const u8 = undefined;
     var calls_buf: [24]message.ToolCall = undefined;
     var owned: [24][]u8 = undefined;
-    defer for (owned[0..24]) |s| gpa.free(s);
+    var owned_n: usize = 0;
+    defer for (owned[0..owned_n]) |s| gpa.free(s);
     var i: usize = 0;
     while (i < 24) : (i += 1) {
         if (i < 4) {
-            owned[i] = try std.fmt.allocPrint(gpa, "zag-rtid-{d}", .{i});
+            owned[owned_n] = try std.fmt.allocPrint(gpa, "zag-rtid-{d}", .{i});
         } else {
-            owned[i] = try std.fmt.allocPrint(gpa, "id-{d}-{s}", .{ i, secret });
+            owned[owned_n] = try std.fmt.allocPrint(gpa, "id-{d}-{s}", .{ i, secret });
         }
-        ids_buf[i] = owned[i];
-        calls_buf[i] = .{ .id = owned[i], .name = "list_dir", .arguments = "{}" };
+        ids_buf[i] = owned[owned_n];
+        calls_buf[i] = .{ .id = owned[owned_n], .name = "list_dir", .arguments = "{}" };
+        owned_n += 1;
     }
-    const msgs = [_]message.Message{
-        .{ .role = .assistant, .content = "", .tool_calls = calls_buf[0..] },
-    };
+    // Pairing messages: assistant tool_calls + tool results share IDs.
+    var all_msgs: [21]message.Message = undefined;
+    all_msgs[0] = .{ .role = .assistant, .content = "", .tool_calls = calls_buf[0..] };
+    var tm: usize = 0;
+    while (tm < 20) : (tm += 1) {
+        all_msgs[1 + tm] = .{ .role = .tool, .content = "ok", .tool_call_id = owned[4 + tm] };
+    }
 
     var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
     defer r.deinit();
 
     var idx: usize = 0;
-    var saw_fail = false;
+    var saw_success = false;
     while (idx < 128) : (idx += 1) {
         var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
         const fa = failing.allocator();
-        if (buildToolIdMap(fa, &msgs, &r)) |map_val| {
+        if (buildToolIdMap(fa, all_msgs[0..], &r)) |map_val| {
             var map = map_val;
             defer freeToolIdMap(fa, &map);
+            try std.testing.expect(!failing.has_induced_failure);
             try std.testing.expectEqual(map.raw.items.len, map.pseudo.items.len);
             try std.testing.expect(map.raw.items.len >= 20);
-            for (map.pseudo.items) |p| {
+            // All pseudonyms unique, avoid reserved zag-rtid-0..3, no secret material.
+            var j: usize = 0;
+            while (j < map.pseudo.items.len) : (j += 1) {
+                const p = map.pseudo.items[j];
                 try std.testing.expect(std.mem.startsWith(u8, p, tool_id_pseudo_prefix));
                 try std.testing.expect(std.mem.indexOf(u8, p, secret) == null);
+                try std.testing.expect(!std.mem.eql(u8, p, "zag-rtid-0"));
+                try std.testing.expect(!std.mem.eql(u8, p, "zag-rtid-1"));
+                try std.testing.expect(!std.mem.eql(u8, p, "zag-rtid-2"));
+                try std.testing.expect(!std.mem.eql(u8, p, "zag-rtid-3"));
+                var k: usize = j + 1;
+                while (k < map.pseudo.items.len) : (k += 1) {
+                    try std.testing.expect(!std.mem.eql(u8, p, map.pseudo.items[k]));
+                }
             }
-            if (idx > 0) try std.testing.expect(saw_fail);
+            // Assistant/tool pairing: every secret tool_call_id maps.
+            tm = 0;
+            while (tm < 20) : (tm += 1) {
+                const tid = owned[4 + tm];
+                const pseudo = map.lookup(tid) orelse return error.TestUnexpectedResult;
+                try std.testing.expect(std.mem.startsWith(u8, pseudo, tool_id_pseudo_prefix));
+            }
+            saw_success = true;
             break;
-        } else |_| {
-            saw_fail = true;
+        } else |err| {
+            try std.testing.expect(err == error.OutOfMemory);
+            try std.testing.expect(failing.has_induced_failure);
         }
-    } else return error.TestUnexpectedResult;
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
 }
 
+fn sessionFileExistsOrFalse(cwd: Io.Dir, io: Io, path: []const u8) bool {
+    return sessionFileExists(cwd, io, path) catch false;
+}
+
+test "createNewWithRedactor allocation-index sweep: no partial file, lease recoverable" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+
+    var seed_arena = std.heap.ArenaAllocator.init(gpa);
+    defer seed_arena.deinit();
+    var seed = transcript_mod.Transcript.init(seed_arena.allocator());
+    try seed.appendSystem("sys");
+    const user = try std.fmt.allocPrint(seed_arena.allocator(), "key={s}", .{secret});
+    try seed.appendUser(user);
+
+    const path = "create-oom.jsonl";
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 128) : (idx += 1) {
+        // Ensure clean target for each attempt (create is exclusive).
+        tmp.dir.deleteFile(io, path) catch {};
+        tmp.dir.deleteFile(io, "create-oom.jsonl.lock") catch {};
+
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        if (createNewWithRedactor(fa, io, tmp.dir, path, seed.items(), .{}, &r)) |w_val| {
+            var w = w_val;
+            defer w.deinit();
+            try std.testing.expect(!failing.has_induced_failure);
+            const bytes = try tmp.dir.readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+            defer gpa.free(bytes);
+            try std.testing.expect(std.mem.indexOf(u8, bytes, secret) == null);
+            try std.testing.expect(std.mem.indexOf(u8, bytes, redact_mod.marker) != null);
+            saw_success = true;
+            break;
+        } else |err| {
+            try std.testing.expect(err == error.OutOfMemory);
+            try std.testing.expect(failing.has_induced_failure);
+            // Target must not exist after failed create; lock/lease recoverable.
+            try std.testing.expect(!sessionFileExistsOrFalse(tmp.dir, io, path));
+            // Real allocator can open/create after induced OOM.
+            var probe = try createNewWithRedactor(gpa, io, tmp.dir, path, seed.items(), .{}, &r);
+            probe.deinit();
+            tmp.dir.deleteFile(io, path) catch {};
+            tmp.dir.deleteFile(io, "create-oom.jsonl.lock") catch {};
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "Writer.save allocation-index sweep: prior bytes preserved, lock continues" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    var t = transcript_mod.Transcript.init(arena.allocator());
+    try t.appendSystem("sys");
+    try t.appendUser("hello");
+
+    var writer = try createNewWithRedactor(gpa, io, tmp.dir, "save-oom.jsonl", t.items(), .{}, &r);
+    defer writer.deinit();
+
+    const prior = try tmp.dir.readFileAlloc(io, "save-oom.jsonl", gpa, .limited(1024 * 1024));
+    defer gpa.free(prior);
+
+    // Plant secret in memory (must stay raw after failed and successful save).
+    const leak = try std.fmt.allocPrint(arena.allocator(), "leak {s}", .{secret});
+    try t.appendUser(leak);
+    try std.testing.expect(std.mem.indexOf(u8, t.items()[t.items().len - 1].content, secret) != null);
+
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 128) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const saved_gpa = writer.gpa;
+        writer.gpa = failing.allocator();
+        const save_result = writer.save(t.items(), .{}, &r);
+        writer.gpa = saved_gpa;
+        if (save_result) |_| {
+            try std.testing.expect(!failing.has_induced_failure);
+            const after = try tmp.dir.readFileAlloc(io, "save-oom.jsonl", gpa, .limited(1024 * 1024));
+            defer gpa.free(after);
+            try std.testing.expect(std.mem.indexOf(u8, after, secret) == null);
+            try std.testing.expect(std.mem.indexOf(u8, after, redact_mod.marker) != null);
+            // In-memory raw unchanged.
+            try std.testing.expect(std.mem.indexOf(u8, t.items()[t.items().len - 1].content, secret) != null);
+            // Writer still usable with real allocator.
+            try writer.save(t.items(), .{}, &r);
+            saw_success = true;
+            break;
+        } else |err| {
+            try std.testing.expect(err == error.OutOfMemory);
+            try std.testing.expect(failing.has_induced_failure);
+            const after = try tmp.dir.readFileAlloc(io, "save-oom.jsonl", gpa, .limited(1024 * 1024));
+            defer gpa.free(after);
+            try std.testing.expectEqualStrings(prior, after);
+            try std.testing.expect(std.mem.indexOf(u8, t.items()[t.items().len - 1].content, secret) != null);
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "resumeExisting allocation-index sweep: source intact, lease recoverable" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+
+    var seed_arena = std.heap.ArenaAllocator.init(gpa);
+    defer seed_arena.deinit();
+    var seed = transcript_mod.Transcript.init(seed_arena.allocator());
+    try seed.appendSystem("sys");
+    try seed.appendUser("hello-resume");
+    const path = "resume-oom.jsonl";
+    {
+        var w = try createNewWithRedactor(gpa, io, tmp.dir, path, seed.items(), .{}, &r);
+        w.deinit();
+    }
+    const source = try tmp.dir.readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+    defer gpa.free(source);
+
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 128) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        // Per-iteration arena/transcript — cleaned up before next idx (no leak).
+        var iter_arena = std.heap.ArenaAllocator.init(gpa);
+        defer iter_arena.deinit();
+        var t = transcript_mod.Transcript.init(iter_arena.allocator());
+        if (resumeExisting(fa, io, tmp.dir, path, &t, null)) |w_val| {
+            var w = w_val;
+            defer w.deinit();
+            try std.testing.expect(!failing.has_induced_failure);
+            try std.testing.expect(t.items().len >= 2);
+            var found = false;
+            for (t.items()) |m| {
+                if (std.mem.eql(u8, m.content, "hello-resume")) found = true;
+            }
+            try std.testing.expect(found);
+            const after = try tmp.dir.readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+            defer gpa.free(after);
+            try std.testing.expectEqualStrings(source, after);
+            saw_success = true;
+            break;
+        } else |err| {
+            try std.testing.expect(err == error.OutOfMemory);
+            try std.testing.expect(failing.has_induced_failure);
+            const after = try tmp.dir.readFileAlloc(io, path, gpa, .limited(1024 * 1024));
+            defer gpa.free(after);
+            try std.testing.expectEqualStrings(source, after);
+            // Lease not leaked: real allocator can resume + deinit.
+            var real_arena = std.heap.ArenaAllocator.init(gpa);
+            defer real_arena.deinit();
+            var t2 = transcript_mod.Transcript.init(real_arena.allocator());
+            var w2 = try resumeExisting(gpa, io, tmp.dir, path, &t2, null);
+            w2.deinit();
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}

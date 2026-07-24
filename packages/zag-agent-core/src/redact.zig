@@ -353,6 +353,25 @@ pub const testing = if (builtin.is_test) struct {
             .patterns = true,
         });
     }
+
+    /// Expose private prefix scanners for family min-length proof (no false negatives).
+    pub fn takePrefixedTokenLen(
+        rest: []const u8,
+        prefix: []const u8,
+        min_body: usize,
+        comptime kind: enum { token, github, bearer },
+    ) ?usize {
+        const cand = switch (kind) {
+            .token => takePrefixedToken(rest, prefix, min_body, isTokenChar, 0),
+            .github => takePrefixedToken(rest, prefix, min_body, isGithubPatChar, 0),
+            .bearer => takePrefixedToken(rest, prefix, min_body, isBearerChar, 0),
+        };
+        return if (cand) |c| c.len else null;
+    }
+
+    pub fn matchPatternBestLen(rest: []const u8) ?usize {
+        return if (matchPatternBest(rest)) |c| c.len else null;
+    }
 } else struct {};
 
 comptime {
@@ -611,6 +630,8 @@ test "containsSecret" {
     try std.testing.expect(!r.containsSecret("no secrets here"));
 }
 
+/// Full success path: init → addSecret → clone → redactAlloc. Caller owns `out`.
+/// All owned redactors are cleaned up before return (success or error).
 fn tryInitAddCloneRedact(fa: std.mem.Allocator, secret: []const u8) Error![]u8 {
     var r = try Redactor.init(fa, .{ .secrets = &.{secret}, .patterns = true });
     errdefer r.deinit();
@@ -627,70 +648,314 @@ fn tryInitAddCloneRedact(fa: std.mem.Allocator, secret: []const u8) Error![]u8 {
     return out;
 }
 
-test "FailingAllocator per-index helper covers init/add/clone/redact" {
+/// Assert every OOM is induced by FailingAllocator; first full success is not.
+fn expectInducedOom(err: anyerror, failing: *const std.testing.FailingAllocator) !void {
+    try std.testing.expect(err == error.OutOfMemory);
+    try std.testing.expect(failing.has_induced_failure);
+}
+
+test "FailingAllocator init sweep: induced on error, clean on first success" {
     const gpa = std.testing.allocator;
     const secret = testing.fake_api_key;
-    var saw_fail = false;
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 64) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        if (Redactor.init(fa, .{ .secrets = &.{secret}, .patterns = true })) |r_val| {
+            var r = r_val;
+            defer r.deinit();
+            try std.testing.expect(!failing.has_induced_failure);
+            saw_success = true;
+            break;
+        } else |err| {
+            try expectInducedOom(err, &failing);
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "FailingAllocator addSecret sweep: induced on error, clean on first success" {
+    const gpa = std.testing.allocator;
+    const secret = testing.fake_api_key;
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 32) : (idx += 1) {
+        var r = try Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+        defer {
+            r.gpa = gpa;
+            r.deinit();
+        }
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        r.gpa = failing.allocator();
+        if (r.addSecret(secret)) |_| {
+            try std.testing.expect(!failing.has_induced_failure);
+            saw_success = true;
+            break;
+        } else |err| {
+            try expectInducedOom(err, &failing);
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "FailingAllocator clone sweep: induced on error, clean on first success" {
+    const gpa = std.testing.allocator;
+    var src = try Redactor.init(gpa, .{ .secrets = &.{testing.fake_api_key}, .patterns = true });
+    defer src.deinit();
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 32) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        if (src.clone(fa)) |c_val| {
+            var c = c_val;
+            defer c.deinit();
+            try std.testing.expect(!failing.has_induced_failure);
+            saw_success = true;
+            break;
+        } else |err| {
+            try expectInducedOom(err, &failing);
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "FailingAllocator redactAlloc sweep: induced on error, clean on first success" {
+    const gpa = std.testing.allocator;
+    const secret = testing.fake_api_key;
+    var r = try Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+    const hay = "prefix-" ++ secret ++ "-suffix";
+    var saw_success = false;
+    var idx: usize = 0;
+    while (idx < 32) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const fa = failing.allocator();
+        if (r.redactAlloc(fa, hay)) |out| {
+            defer fa.free(out);
+            try std.testing.expect(!failing.has_induced_failure);
+            try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+            try std.testing.expectEqualStrings("prefix-" ++ marker ++ "-suffix", out);
+            saw_success = true;
+            break;
+        } else |err| {
+            try expectInducedOom(err, &failing);
+        }
+    }
+    if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "FailingAllocator combined init/add/clone/redact sweep with induced evidence" {
+    const gpa = std.testing.allocator;
+    const secret = testing.fake_api_key;
+    var saw_success = false;
     var idx: usize = 0;
     while (idx < 96) : (idx += 1) {
         var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
         const fa = failing.allocator();
         if (tryInitAddCloneRedact(fa, secret)) |out| {
             defer fa.free(out);
+            try std.testing.expect(!failing.has_induced_failure);
             try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
-            if (idx > 0) try std.testing.expect(saw_fail);
-            return;
-        } else |_| {
-            saw_fail = true;
+            saw_success = true;
+            break;
+        } else |err| {
+            try expectInducedOom(err, &failing);
         }
     }
-    return error.TestUnexpectedResult;
+    if (!saw_success) return error.TestUnexpectedResult;
 }
 
-test "pattern matrix: each family min boundary and max-run" {
+/// Assert redacted form is marker (or prefix+marker+suffix) with the whole max run replaced.
+fn expectMaxRunRedacted(out: []const u8, prefix: []const u8, suffix: []const u8) !void {
+    var expected_buf: [256]u8 = undefined;
+    const expected = try std.fmt.bufPrint(&expected_buf, "{s}{s}{s}", .{ prefix, marker, suffix });
+    try std.testing.expectEqualStrings(expected, out);
+}
+
+test "pattern proof matrix: families min/boundary/max-run+suffix" {
     const gpa = std.testing.allocator;
     var r = try Redactor.init(gpa, .{ .secrets = &.{}, .patterns = true });
     defer r.deinit();
 
-    const Case = struct { raw: []const u8, expect_redact: bool };
-    const cases = [_]Case{
-        // sk-
-        .{ .raw = "sk-" ++ "a" ** (min_sk_token_len - 1), .expect_redact = false },
-        .{ .raw = "sk-" ++ "a" ** min_sk_token_len, .expect_redact = true },
-        .{ .raw = "pre" ++ ("sk-" ++ "a" ** min_sk_token_len), .expect_redact = false }, // mid-ident
-        .{ .raw = " " ++ ("sk-" ++ "a" ** min_sk_token_len), .expect_redact = true },
-        // sk-ant- (body short enough that generic sk- also misses)
-        .{ .raw = "sk-ant-" ++ "b" ** 12, .expect_redact = false },
-        .{ .raw = "sk-ant-" ++ "b" ** min_ant_token_len, .expect_redact = true },
-        // xai-
-        .{ .raw = "xai-" ++ "c" ** (min_xai_token_len - 1), .expect_redact = false },
-        .{ .raw = "xai-" ++ "c" ** min_xai_token_len, .expect_redact = true },
-        // ghp_
-        .{ .raw = "ghp_" ++ "d" ** (min_github_pat_len - 1), .expect_redact = false },
-        .{ .raw = "ghp_" ++ "d" ** min_github_pat_len, .expect_redact = true },
-        // github_pat_
-        .{ .raw = "github_pat_" ++ "e" ** (min_github_fine_len - 1), .expect_redact = false },
-        .{ .raw = "github_pat_" ++ "e" ** min_github_fine_len, .expect_redact = true },
-        // Bearer
-        .{ .raw = "Bearer " ++ "f" ** (min_bearer_token_len - 1), .expect_redact = false },
-        .{ .raw = "Bearer " ++ "f" ** min_bearer_token_len, .expect_redact = true },
-        // AWS
-        .{ .raw = "AKIA" ++ "A" ** 15, .expect_redact = false },
-        .{ .raw = "AKIA" ++ "A" ** 16, .expect_redact = true },
-        .{ .raw = "AKIA" ++ "A" ** 17, .expect_redact = false },
-    };
-    for (cases) |c| {
-        const out = try r.redactAlloc(gpa, c.raw);
-        defer gpa.free(out);
-        if (c.expect_redact) {
-            try std.testing.expect(std.mem.indexOf(u8, out, marker) != null);
-            // Secret body should not remain fully.
-            if (c.raw.len > 8) {
-                try std.testing.expect(std.mem.indexOf(u8, out, c.raw) == null);
-            }
-        } else {
-            try std.testing.expectEqualStrings(c.raw, out);
-        }
+    // ── sk- ──────────────────────────────────────────────────────────────
+    {
+        const min1 = "sk-" ++ "a" ** (min_sk_token_len - 1);
+        const min0 = "sk-" ++ "a" ** min_sk_token_len;
+        const minp = "sk-" ++ "a" ** (min_sk_token_len + 1);
+        const o1 = try r.redactAlloc(gpa, min1);
+        defer gpa.free(o1);
+        try std.testing.expectEqualStrings(min1, o1);
+        const o0 = try r.redactAlloc(gpa, min0);
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", "");
+        const op = try r.redactAlloc(gpa, minp);
+        defer gpa.free(op);
+        try expectMaxRunRedacted(op, "", "");
+        // Left boundary blocked vs legal.
+        const emb = "pre" ++ min0;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
+        const okb = " " ++ min0;
+        const ob = try r.redactAlloc(gpa, okb);
+        defer gpa.free(ob);
+        try expectMaxRunRedacted(ob, " ", "");
+        // Maximal run + disallowed suffix preserved.
+        const max_suf = min0 ++ "!tail";
+        const om = try r.redactAlloc(gpa, max_suf);
+        defer gpa.free(om);
+        try expectMaxRunRedacted(om, "", "!tail");
+    }
+
+    // ── sk-ant- (private scanner + global fallback; no false negative) ───
+    {
+        const ant_min1 = "sk-ant-" ++ "b" ** (min_ant_token_len - 1);
+        const ant_min = "sk-ant-" ++ "b" ** min_ant_token_len;
+        const ant_minp = "sk-ant-" ++ "b" ** (min_ant_token_len + 1);
+        // Private ant scanner: min-1 misses, min/min+1 hit full run length.
+        try std.testing.expect(testing.takePrefixedTokenLen(ant_min1, "sk-ant-", min_ant_token_len, .token) == null);
+        try std.testing.expectEqual(
+            @as(usize, ant_min.len),
+            testing.takePrefixedTokenLen(ant_min, "sk-ant-", min_ant_token_len, .token).?,
+        );
+        try std.testing.expectEqual(
+            @as(usize, ant_minp.len),
+            testing.takePrefixedTokenLen(ant_minp, "sk-ant-", min_ant_token_len, .token).?,
+        );
+        // Global: ant min-1 body (19) yields sk- body "ant-" + 19 = 23 ≥ min_sk → sk- matches.
+        // Honest: not a false "no redact" claim at global level.
+        try std.testing.expect(testing.matchPatternBestLen(ant_min1) != null);
+        const g1 = try r.redactAlloc(gpa, ant_min1);
+        defer gpa.free(g1);
+        try expectMaxRunRedacted(g1, "", "");
+        // Body short enough that BOTH ant and sk miss (ant body 12 → sk body 16 < 20).
+        const both_miss = "sk-ant-" ++ "b" ** 12;
+        try std.testing.expect(testing.takePrefixedTokenLen(both_miss, "sk-ant-", min_ant_token_len, .token) == null);
+        try std.testing.expect(testing.takePrefixedTokenLen(both_miss, "sk-", min_sk_token_len, .token) == null);
+        try std.testing.expect(testing.matchPatternBestLen(both_miss) == null);
+        const om = try r.redactAlloc(gpa, both_miss);
+        defer gpa.free(om);
+        try std.testing.expectEqualStrings(both_miss, om);
+        // min / min+1 global: full run → marker; suffix preserved.
+        const o0 = try r.redactAlloc(gpa, ant_min ++ "#x");
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", "#x");
+        const op = try r.redactAlloc(gpa, ant_minp);
+        defer gpa.free(op);
+        try expectMaxRunRedacted(op, "", "");
+        const emb = "id" ++ ant_min;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
+    }
+
+    // ── xai- ─────────────────────────────────────────────────────────────
+    {
+        const min1 = "xai-" ++ "c" ** (min_xai_token_len - 1);
+        const min0 = "xai-" ++ "c" ** min_xai_token_len;
+        const minp = "xai-" ++ "c" ** (min_xai_token_len + 1);
+        const o1 = try r.redactAlloc(gpa, min1);
+        defer gpa.free(o1);
+        try std.testing.expectEqualStrings(min1, o1);
+        const o0 = try r.redactAlloc(gpa, min0 ++ ".end");
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", ".end");
+        const op = try r.redactAlloc(gpa, minp);
+        defer gpa.free(op);
+        try expectMaxRunRedacted(op, "", "");
+        const emb = "my" ++ min0;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
+    }
+
+    // ── github_pat_ ──────────────────────────────────────────────────────
+    {
+        const min1 = "github_pat_" ++ "e" ** (min_github_fine_len - 1);
+        const min0 = "github_pat_" ++ "e" ** min_github_fine_len;
+        const minp = "github_pat_" ++ "e" ** (min_github_fine_len + 1);
+        const o1 = try r.redactAlloc(gpa, min1);
+        defer gpa.free(o1);
+        try std.testing.expectEqualStrings(min1, o1);
+        const o0 = try r.redactAlloc(gpa, min0 ++ "!");
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", "!");
+        const op = try r.redactAlloc(gpa, minp);
+        defer gpa.free(op);
+        try expectMaxRunRedacted(op, "", "");
+        const emb = "x" ++ min0;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
+    }
+
+    // ── ghp_ / gho_ / ghu_ / ghs_ / ghr_ ─────────────────────────────────
+    inline for (.{ "ghp_", "gho_", "ghu_", "ghs_", "ghr_" }) |pfx| {
+        const min1 = pfx ++ "d" ** (min_github_pat_len - 1);
+        const min0 = pfx ++ "d" ** min_github_pat_len;
+        const minp = pfx ++ "d" ** (min_github_pat_len + 1);
+        const o1 = try r.redactAlloc(gpa, min1);
+        defer gpa.free(o1);
+        try std.testing.expectEqualStrings(min1, o1);
+        const o0 = try r.redactAlloc(gpa, min0 ++ "@");
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", "@");
+        const op = try r.redactAlloc(gpa, minp);
+        defer gpa.free(op);
+        try expectMaxRunRedacted(op, "", "");
+        const emb = "Z" ++ min0;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
+        try std.testing.expect(testing.takePrefixedTokenLen(min1, pfx, min_github_pat_len, .github) == null);
+        try std.testing.expectEqual(
+            @as(usize, min0.len),
+            testing.takePrefixedTokenLen(min0, pfx, min_github_pat_len, .github).?,
+        );
+    }
+
+    // ── Bearer ───────────────────────────────────────────────────────────
+    {
+        const min1 = "Bearer " ++ "f" ** (min_bearer_token_len - 1);
+        const min0 = "Bearer " ++ "f" ** min_bearer_token_len;
+        const minp = "Bearer " ++ "f" ** (min_bearer_token_len + 1);
+        const o1 = try r.redactAlloc(gpa, min1);
+        defer gpa.free(o1);
+        try std.testing.expectEqualStrings(min1, o1);
+        const o0 = try r.redactAlloc(gpa, min0 ++ " ");
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", " ");
+        const op = try r.redactAlloc(gpa, minp);
+        defer gpa.free(op);
+        try expectMaxRunRedacted(op, "", "");
+        // "Bearer" mid-ident is not a left-boundary start for pattern (space required in prefix).
+        const emb = "XBearer " ++ "f" ** min_bearer_token_len;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
+    }
+
+    // ── AWS fixed / overlong ─────────────────────────────────────────────
+    {
+        const short = "AKIA" ++ "A" ** 15;
+        const fixed = "AKIA" ++ "A0B1C8D9E2F3G4H5";
+        try std.testing.expectEqual(@as(usize, 4 + aws_akia_body_len), fixed.len);
+        const over = fixed ++ "Z";
+        const o1 = try r.redactAlloc(gpa, short);
+        defer gpa.free(o1);
+        try std.testing.expectEqualStrings(short, o1);
+        const o0 = try r.redactAlloc(gpa, fixed ++ "-tail");
+        defer gpa.free(o0);
+        try expectMaxRunRedacted(o0, "", "-tail");
+        const oo = try r.redactAlloc(gpa, over);
+        defer gpa.free(oo);
+        try std.testing.expectEqualStrings(over, oo);
+        const emb = "x" ++ fixed;
+        const oe = try r.redactAlloc(gpa, emb);
+        defer gpa.free(oe);
+        try std.testing.expectEqualStrings(emb, oe);
     }
 }
 

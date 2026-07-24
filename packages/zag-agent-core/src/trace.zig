@@ -1503,6 +1503,58 @@ test "public emitRunEnd stop_reason always uses redaction policy" {
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "out_of_memory") != null);
 }
 
+test "public emitRunEnd redacts exact secret stop_reason completed" {
+    const gpa = std.testing.allocator;
+    // Exact secret is the Agent vocabulary word itself (>= min_configured_secret_len).
+    const secret = "completed";
+    try std.testing.expect(secret.len >= redact_mod.min_configured_secret_len);
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+    var tr = Trace.init(gpa, std.testing.io, null, std.Io.Dir.cwd());
+    defer tr.deinit();
+    tr.setRedactor(&r);
+    try tr.beginReply();
+    try tr.emitRunStart(.{ .version = "0.5.0", .permission = "ask", .shell_policy = "protect" });
+    try tr.emitRunEnd(.{ .turns = 1, .ok = true, .stop_reason = "completed" });
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    // Public free-form path must emit marker, not the configured secret word.
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, redact_mod.marker) != null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"stop_reason\":\"completed\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, secret) == null);
+}
+
+test "public emitRunEnd redaction OOM + fail_before_replace: TraceIoFailed preserves prior" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const path = "term-oom.jsonl";
+    const prior_bytes = "{\"schema_version\":1,\"type\":\"prior_durable\"}\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = path, .data = prior_bytes });
+
+    const secret = "stop-reason-secret-value-xyz";
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+
+    var tr = Trace.init(gpa, io, path, tmp.dir);
+    defer tr.deinit();
+    tr.setRedactor(&r);
+    testing.setFailBeforeReplace(&tr, true);
+    try tr.beginReply();
+    try tr.emitRunStart(.{ .version = "0.5.0", .permission = "ask", .shell_policy = "protect" });
+    testing.setFailNextRedact(&tr, true);
+    const err = tr.emitRunEnd(.{ .turns = 2, .ok = true, .stop_reason = secret });
+    try std.testing.expectError(error.TraceIoFailed, err);
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "out_of_memory") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, secret) == null);
+    // Exactly one terminal line in memory.
+    try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+    const after = try tmp.dir.readFileAlloc(io, path, gpa, .limited(64 * 1024));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(prior_bytes, after);
+}
+
 test "prepareTracedString redacts before cap (cross-cap secret)" {
     const gpa = std.testing.allocator;
     const secret = redact_mod.testing.fake_api_key;

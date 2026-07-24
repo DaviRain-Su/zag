@@ -108,7 +108,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment is done (h-workspace-001); secret redaction is done (h-redact-001); Workspace/Safety row stays **L1+** until doctor.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment is done (h-workspace-001); secret redaction is **implemented on branch, pending Gate** (h-redact-001); Workspace/Safety row stays **L1+** until doctor.
 
 ## H4 — Context / Session
 
@@ -141,11 +141,15 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
 - symlink-aware containment for all file Tools (P0 h-workspace-001);
 - fixed shell-policy matrix (denylist; not OS sandbox);
-- shared secret redaction before verbose/trace/session (P1 h-redact-001 branch; pending Gate);
 - explicit trusted-host/non-OS-sandbox threat model in SECURITY + module docs.
+
+### Implemented on branch (pending Gate — not Landed)
+
+- shared secret redaction before verbose/trace/session (P1 h-redact-001); known-key/shape only; `.zag/` still sensitive; no DLP/zeroization claim.
 
 ### Remaining
 
+- h-redact-001 Gate close;
 - doctor/readiness output;
 - OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
 
@@ -160,7 +164,7 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 - std/curl selectable transports;
 - curl active deadline/cancel; std capability-truth `unsupported_control` (h-provider-001);
 - incomplete Tool-call fragment discard; retry ownership;
-- HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001).
+- HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001 branch; pending Gate).
 
 ### Remaining
 
@@ -170,7 +174,7 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 
 Specs: [trace-observability](../modules/trace-observability.md), [evals](../quality/evals.md), [contracts](../quality/contracts.md).
 
-### Landed (h-trace-001 + h-redact-001)
+### Landed (h-trace-001)
 
 - `schema_version` on `run_start` (`current_schema_version = 1`);
 - facade-owned exactly one truthful terminal per reply-run;
@@ -179,11 +183,17 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 - transactional `writeObj`; fail-closed precedence when failure-terminal persist fails;
 - provider/save/trace/cancel/max_turns/completed + invalid_toolset fixtures;
 - typed `TraceIoFailed` / `InvalidPath` (not OOM);
-- deinit release-only (no false success);
-- secret redaction before serialize when redactor attached (product path).
+- deinit release-only (no false success).
+
+### Implemented on branch (h-redact-001; pending Gate — not Landed)
+
+- secret redaction before serialize when redactor attached (product path);
+- public `stop_reason` redaction; Agent-controlled vocabulary allocation-free;
+- Agent clears `trace.redactor` on every reply exit.
 
 ### Remaining
 
+- h-redact-001 Gate close;
 - external-consumer gates in CI;
 - dashboard / correlation (L3).
 

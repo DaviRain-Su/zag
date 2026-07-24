@@ -62,6 +62,12 @@ pub const HttpErrorDetail = struct {
     detail: ?[]const u8 = null,
 };
 
+/// Pure HTTP diagnostic formatter (status + body length only).
+/// Never interpolates body bytes, Authorization, or message text.
+pub fn formatHttpStatusBodyLen(buf: []u8, status: u16, body_len: usize) []const u8 {
+    return std.fmt.bufPrint(buf, "http status {d}, body: {}\n", .{ status, body_len }) catch "http status ?, body: ?\n";
+}
+
 /// Map HTTP status to a typed error. Diagnostics print **status + body length
 /// only** (h-redact-001) — never raw body, hex dump, Authorization, or message
 /// text that may embed credentials.
@@ -74,7 +80,9 @@ pub fn unexpectedStatus(detail: HttpErrorDetail) Error {
     else
         null;
 
-    std.debug.print("http status {d}, body: {}\n", .{ detail.status, detail.body.len });
+    var diag_buf: [64]u8 = undefined;
+    const diag = formatHttpStatusBodyLen(&diag_buf, detail.status, detail.body.len);
+    std.debug.print("{s}", .{diag});
     return classifyStatus(detail.status);
 }
 
@@ -166,4 +174,19 @@ test "unexpectedStatus maps http status to specific errors" {
         const got = unexpectedStatus(.{ .status = case.status, .body = "{}" });
         try std.testing.expectEqual(case.expect, got);
     }
+}
+
+test "formatHttpStatusBodyLen never includes secret body bytes" {
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    const body = "{\"error\":{\"message\":\"invalid api key " ++ secret ++ "\",\"type\":\"auth\"}}";
+    var buf: [64]u8 = undefined;
+    const out = formatHttpStatusBodyLen(&buf, 401, body.len);
+    try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "invalid api key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "Authorization") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "401") != null);
+    // Length is numeric only.
+    var expect_buf: [32]u8 = undefined;
+    const expect_len = try std.fmt.bufPrint(&expect_buf, "body: {}", .{body.len});
+    try std.testing.expect(std.mem.indexOf(u8, out, expect_len) != null);
 }

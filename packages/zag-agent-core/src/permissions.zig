@@ -223,6 +223,20 @@ fn alwaysAllow(_: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) Decision {
     return .allow;
 }
 
+/// Pure formatter used by `StdinPrompter.promptImpl` (h-redact-001).
+/// Risk label + args length only — never tool name or argument body.
+pub fn formatPermissionPrompt(
+    buf: []u8,
+    risk_label: []const u8,
+    args_len: usize,
+) []const u8 {
+    return std.fmt.bufPrint(
+        buf,
+        "permission: allow {s} operation? (args_len={d}) [y]es / [N]o >",
+        .{ risk_label, args_len },
+    ) catch "permission: allow ? operation? (args_len=?) [y]es / [N]o >";
+}
+
 /// Interactive stdin y/N prompt for CLI ask mode.
 pub const StdinPrompter = struct {
     io: Io,
@@ -235,13 +249,10 @@ pub const StdinPrompter = struct {
         const self: *StdinPrompter = @ptrCast(@alignCast(ptr.?));
         const io = self.io;
         const risk = descriptor.capabilities.risk;
-        const tool_name = descriptor.definition.name;
         // h-redact-001: no arbitrary tool name or args content — fixed risk + args_len only.
-        _ = tool_name;
-        std.log.warn(
-            "permission: allow {s} operation? (args_len={d}) [y]es / [N]o >",
-            .{ risk.label(), arguments_json.len },
-        );
+        var line_buf: [160]u8 = undefined;
+        const line_msg = formatPermissionPrompt(&line_buf, risk.label(), arguments_json.len);
+        std.log.warn("{s}", .{line_msg});
 
         Io.File.stderr().writeStreamingAll(io, "  → type y + Enter to allow, anything else to deny: ") catch {};
 
@@ -296,6 +307,27 @@ pub fn testDescriptor(tool_name: []const u8, risk: Risk) zt.ToolDescriptor {
             .shell = .none,
         },
     };
+}
+
+test "formatPermissionPrompt omits tool name and argument secrets" {
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    const tool_name = "run_shell_with_" ++ secret;
+    const args = "{\"cmd\":\"echo " ++ secret ++ "\",\"path\":\"/tmp/" ++ secret ++ "\"}";
+    // Call site of promptImpl uses risk.label() + args.len only.
+    var buf: [160]u8 = undefined;
+    const out = formatPermissionPrompt(&buf, Risk.execute.label(), args.len);
+    try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, tool_name) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "run_shell") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "echo") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, args) == null);
+    // ToolRisk.execute.label() is human-facing "shell".
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "args_len=") != null);
+    // Length is numeric only.
+    var expect_buf: [32]u8 = undefined;
+    const expect_len = try std.fmt.bufPrint(&expect_buf, "args_len={d}", .{args.len});
+    try std.testing.expect(std.mem.indexOf(u8, out, expect_len) != null);
 }
 
 test "descriptor risk drives gate" {

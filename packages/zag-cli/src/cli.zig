@@ -70,7 +70,7 @@ pub fn run(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             permission_mode = core.permissions.Mode.parse(args[i]) orelse {
-                std.log.err("unknown permission mode", .{});
+                std.log.err("{s}", .{invalidPermissionModeMessage()});
                 std.process.exit(2);
             };
         } else if (std.mem.eql(u8, a, "--shell-policy")) {
@@ -80,7 +80,7 @@ pub fn run(init: std.process.Init) !void {
                 std.process.exit(2);
             }
             shell_policy = core.shell_policy.Mode.parse(args[i]) orelse {
-                std.log.err("unknown shell policy", .{});
+                std.log.err("{s}", .{invalidShellPolicyMessage()});
                 std.process.exit(2);
             };
         } else if (std.mem.eql(u8, a, "--session") or std.mem.eql(u8, a, "-s")) {
@@ -196,21 +196,20 @@ pub fn run(init: std.process.Init) !void {
 
     if (verbose) {
         // h-redact-001: fixed/enum/numeric metadata only — no arbitrary model/provider text.
-        std.log.info(
-            "provider ready stream={any} permission={s} session_kind={s} remember={any} shell_policy={s} wire={s} transport_retries={d} chat_retries={d} timeout_ms={any} view_max_chars={d}",
-            .{
-                use_stream,
-                permission_mode.name(),
-                session_kind.name(),
-                remember_writes,
-                shell_policy.name(),
-                resolved.api_style.jsonName(),
-                resolved.config.max_retries,
-                resolve_result.chat_retries,
-                resolved.config.timeout_ms,
-                context_opts.max_chars,
-            },
-        );
+        var ready_buf: [384]u8 = undefined;
+        const ready = formatVerboseStartup(&ready_buf, .{
+            .use_stream = use_stream,
+            .permission = permission_mode.name(),
+            .session_kind = session_kind.name(),
+            .remember = remember_writes,
+            .shell_policy = shell_policy.name(),
+            .wire = resolved.api_style.jsonName(),
+            .transport_retries = resolved.config.max_retries,
+            .chat_retries = resolve_result.chat_retries,
+            .timeout_ms = resolved.config.timeout_ms,
+            .view_max_chars = context_opts.max_chars,
+        });
+        std.log.info("{s}", .{ready});
         if (session_path != null) std.log.info("session: configured", .{});
         if (trace_path != null) std.log.info("trace: enabled", .{});
     }
@@ -396,22 +395,68 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
     try Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
+/// Generic CLI validation messages (never echo the invalid argv token).
+pub fn invalidPermissionModeMessage() []const u8 {
+    return "unknown permission mode";
+}
+
+pub fn invalidShellPolicyMessage() []const u8 {
+    return "unknown shell policy";
+}
+
+pub const VerboseStartupInfo = struct {
+    use_stream: bool,
+    permission: []const u8,
+    session_kind: []const u8,
+    remember: bool,
+    shell_policy: []const u8,
+    wire: []const u8,
+    transport_retries: u8,
+    chat_retries: u8,
+    timeout_ms: ?u64,
+    view_max_chars: usize,
+};
+
+/// Pure verbose startup formatter (enum/numeric/generic only — no model/key/path).
+pub fn formatVerboseStartup(buf: []u8, info: VerboseStartupInfo) []const u8 {
+    return std.fmt.bufPrint(
+        buf,
+        "provider ready stream={any} permission={s} session_kind={s} remember={any} shell_policy={s} wire={s} transport_retries={d} chat_retries={d} timeout_ms={any} view_max_chars={d}",
+        .{
+            info.use_stream,
+            info.permission,
+            info.session_kind,
+            info.remember,
+            info.shell_policy,
+            info.wire,
+            info.transport_retries,
+            info.chat_retries,
+            info.timeout_ms,
+            info.view_max_chars,
+        },
+    ) catch "provider ready";
+}
+
+/// Pure stream diagnostic formatter used by `streamLogHandler`.
+/// Fixed/numeric only — never raw chunk bytes (secrets may span SSE chunks).
+pub fn formatStreamLogEvent(buf: []u8, event: ai.StreamEvent) ?[]const u8 {
+    return switch (event) {
+        .content_delta => |d| {
+            if (d.len == 0) return null;
+            return std.fmt.bufPrint(buf, "stream content_delta bytes={d}", .{d.len}) catch null;
+        },
+        .finish_reason => std.fmt.bufPrint(buf, "stream finish_reason", .{}) catch null,
+        .tool_call_delta => |tc| std.fmt.bufPrint(buf, "stream tool_call_delta index={d}", .{tc.index}) catch null,
+        .done => std.fmt.bufPrint(buf, "stream done", .{}) catch null,
+    };
+}
+
 /// Verbose stream diagnostics: fixed/numeric events only (never raw chunk bytes;
 /// secrets may span SSE chunks so per-chunk redaction is insufficient).
 fn streamLogHandler(_: ?*anyopaque, event: ai.StreamEvent) anyerror!void {
-    switch (event) {
-        .content_delta => |d| {
-            if (d.len > 0) std.log.info("stream content_delta bytes={d}", .{d.len});
-        },
-        .finish_reason => {
-            std.log.info("stream finish_reason", .{});
-        },
-        .tool_call_delta => |tc| {
-            std.log.info("stream tool_call_delta index={d}", .{tc.index});
-        },
-        .done => {
-            std.log.info("stream done", .{});
-        },
+    var buf: [96]u8 = undefined;
+    if (formatStreamLogEvent(&buf, event)) |line| {
+        std.log.info("{s}", .{line});
     }
 }
 
@@ -481,4 +526,62 @@ test "looksLikeTracePath" {
     try std.testing.expect(!looksLikeTracePath("list_dir"));
     try std.testing.expect(!looksLikeTracePath("--yolo"));
     try std.testing.expect(!looksLikeTracePath("hello world"));
+}
+
+test "invalid permission/shell-policy messages are generic" {
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    try std.testing.expectEqualStrings("unknown permission mode", invalidPermissionModeMessage());
+    try std.testing.expectEqualStrings("unknown shell policy", invalidShellPolicyMessage());
+    // Helpers must not interpolate argv; secret fixtures never appear.
+    try std.testing.expect(std.mem.indexOf(u8, invalidPermissionModeMessage(), secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, invalidShellPolicyMessage(), secret) == null);
+}
+
+test "formatVerboseStartup uses enums/numerics only even with secret fixtures" {
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    const model = "gpt-secret-" ++ secret;
+    const path = ".zag/sessions/" ++ secret ++ ".jsonl";
+    _ = model;
+    _ = path;
+    var buf: [384]u8 = undefined;
+    const out = formatVerboseStartup(&buf, .{
+        .use_stream = true,
+        .permission = "ask",
+        .session_kind = "agent",
+        .remember = true,
+        .shell_policy = "protect",
+        .wire = "openai_compat",
+        .transport_retries = 2,
+        .chat_retries = 1,
+        .timeout_ms = 5000,
+        .view_max_chars = 8000,
+    });
+    try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "permission=ask") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell_policy=protect") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "view_max_chars=8000") != null);
+}
+
+test "formatStreamLogEvent emits kind/length/index only" {
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    // Cross-chunk fake token: content may contain secret material; formatter uses length only.
+    const chunk_a = secret[0 .. secret.len / 2];
+    const chunk_b = secret[secret.len / 2 ..];
+    var buf: [96]u8 = undefined;
+    const a = formatStreamLogEvent(&buf, .{ .content_delta = chunk_a }) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, a, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, a, chunk_a) == null);
+    try std.testing.expect(std.mem.indexOf(u8, a, "content_delta") != null);
+    const b = formatStreamLogEvent(&buf, .{ .content_delta = chunk_b }) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, b, chunk_b) == null);
+    const fr = formatStreamLogEvent(&buf, .{ .finish_reason = "stop" }) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("stream finish_reason", fr);
+    try std.testing.expect(std.mem.indexOf(u8, fr, "stop") == null);
+    const tc = formatStreamLogEvent(&buf, .{
+        .tool_call_delta = .{ .index = 3, .id = secret, .name = "run_" ++ secret, .arguments_delta = secret },
+    }) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, tc, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, tc, "index=3") != null);
+    const done = formatStreamLogEvent(&buf, .done) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("stream done", done);
 }

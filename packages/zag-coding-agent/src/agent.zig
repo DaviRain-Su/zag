@@ -547,6 +547,9 @@ pub const Agent = struct {
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
         // Fresh run-local cost ledger each reply.
         self.ledger = .{};
+        // Drop any stale borrowed redactor **before** fallible ensure/bind so a
+        // clone OOM cannot leave a prior-reply pointer on the Trace.
+        self.clearTraceRedactor();
         try self.ensureSessionRedactor(session);
         // Trace borrows session policy only for this synchronous reply.
         if (self.trace) |*tr| tr.setRedactor(session.activeRedactor());
@@ -3102,6 +3105,222 @@ test "h-redact: reply clears trace redactor on success and failure" {
     agent.provider = .{ .ptr = &fail, .vtable = &.{ .chat = FailChat.chat } };
     try std.testing.expectError(error.ProviderFailed, agent.reply(&session, "again"));
     try std.testing.expect(tr.redactor == null);
+}
+
+test "h-redact: ensure/clone OOM clears stale trace redactor before bind" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-xx", .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .secrets = &.{redact_mod.testing.fake_api_key},
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    // Force ensureSessionRedactor clone path.
+    if (session.owned_redactor) |*old| {
+        old.deinit();
+        session.owned_redactor = null;
+    }
+    // Plant a stale borrowed pointer that must not survive ensure OOM.
+    var stale = try redact_mod.Redactor.init(gpa, .{
+        .secrets = &.{"stale-secret-value-zz"},
+        .patterns = false,
+    });
+    defer stale.deinit();
+    if (agent.trace) |*tr| tr.setRedactor(&stale);
+    try std.testing.expect(agent.trace.?.redactor != null);
+
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const saved = session.gpa;
+    session.gpa = failing.allocator();
+    const err = agent.reply(&session, "hi");
+    session.gpa = saved;
+    try std.testing.expectError(error.OutOfMemory, err);
+    try std.testing.expect(failing.has_induced_failure);
+    // beginRun clears before ensure; ensure OOM never re-binds — no stale pointer.
+    try std.testing.expect(agent.trace.?.redactor == null);
+}
+
+test "h-redact: run_start redaction OOM clears trace redactor" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-xx", .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .secrets = &.{redact_mod.testing.fake_api_key},
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    // Fail first prepareTracedString inside emitRunStart (version field).
+    if (agent.trace) |*tr| trace_mod.testing.setFailNextRedact(tr, true);
+    try std.testing.expectError(error.OutOfMemory, agent.reply(&session, "hi"));
+    try std.testing.expect(agent.trace.?.redactor == null);
+}
+
+test "h-redact: preflight failure clears trace redactor" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-h-redact-preflight-clear";
+    const blocker = ".zag-test-h-redact-preflight-clear/not-a-dir";
+    const bad_path = ".zag-test-h-redact-preflight-clear/not-a-dir/trace.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = blocker, .data = "file-not-dir" });
+
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-xx", .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .trace_path = bad_path,
+        .secrets = &.{redact_mod.testing.fake_api_key},
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expect(err == error.TraceIoFailed or err == error.InvalidPath);
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try std.testing.expect(tr.redactor == null);
+}
+
+test "h-redact: invalid_context terminal clears trace redactor" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-xx", .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{ .permission_mode = .yolo, .pattern_redaction = true });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    const calls_tc = try session.arena_impl.allocator().alloc(message.ToolCall, 2);
+    calls_tc[0] = .{
+        .id = try session.arena_impl.allocator().dupe(u8, "a1"),
+        .name = try session.arena_impl.allocator().dupe(u8, "list_dir"),
+        .arguments = try session.arena_impl.allocator().dupe(u8, "{}"),
+    };
+    calls_tc[1] = .{
+        .id = try session.arena_impl.allocator().dupe(u8, "a2"),
+        .name = try session.arena_impl.allocator().dupe(u8, "read_file"),
+        .arguments = try session.arena_impl.allocator().dupe(u8, "{}"),
+    };
+    try session.transcript.appendUser("ask");
+    try session.transcript.appendAssistantTurn(.{
+        .content = "tools",
+        .tool_calls = calls_tc,
+        .finish_reason = "tool_calls",
+    });
+    try session.transcript.appendToolResult("a1", "partial");
+
+    try std.testing.expectError(error.InvalidContext, agent.reply(&session, "continue"));
+    try std.testing.expect(agent.trace.?.redactor == null);
+}
+
+test "h-redact: session-save failure clears trace redactor" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+    const dir_name = ".zag-test-h-redact-save-clear";
+    const sess_path = ".zag-test-h-redact-save-clear/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var mock: EchoSecretChat = .{ .secret = secret, .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .secrets = &.{secret},
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    if (session.writer) |*w| session_store.testing.setFailNextRedact(w, true);
+    try std.testing.expectError(error.OutOfMemory, agent.reply(&session, "hi"));
+    try std.testing.expect(agent.trace.?.redactor == null);
+}
+
+test "h-redact: terminal persist fault clears trace redactor" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-h-redact-term-persist";
+    const tr_path = ".zag-test-h-redact-term-persist/t.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var mock: EchoSecretChat = .{ .secret = "unused-secret-xx", .mode = .text };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = EchoSecretChat.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .trace_path = tr_path,
+        .pattern_redaction = true,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+
+    if (agent.trace) |*tr| trace_mod.testing.setFailBeforeReplace(tr, true);
+    try std.testing.expectError(error.TraceIoFailed, agent.reply(&session, "hi"));
+    try std.testing.expect(agent.trace.?.redactor == null);
 }
 
 test "h-redact: save/resume then new secret id avoids prior zag-rtid" {
