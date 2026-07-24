@@ -7,6 +7,7 @@ Product coding harness (Pi `pi-coding-agent` analogue).
 | `agent` | Session + Agent facade |
 | `toolset` | Phase0/1 default tools |
 | `project` | AGENTS.md injection |
+| `doctor` | Provider-independent readiness report (h-doctor-001) |
 | `wire_provider` | `WireAdapter` → core `Provider` |
 | `runtime/*` | list/read/write/shell handlers |
 

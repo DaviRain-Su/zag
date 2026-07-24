@@ -23,6 +23,16 @@ pub const Loaded = struct {
     body: []u8,
 };
 
+/// Presence probe only — does not open/read any candidate body.
+/// Used by doctor readiness; load success is a separate later step.
+pub fn anyCandidatePresent(io: Io, cwd: Io.Dir) bool {
+    for (candidates) |name| {
+        cwd.access(io, name, .{}) catch continue;
+        return true;
+    }
+    return false;
+}
+
 /// Load project instructions from cwd. Returns null if none found.
 pub fn load(
     gpa: std.mem.Allocator,
@@ -60,6 +70,16 @@ pub fn composeSystemPrompt(
         , .{ base_system, p.source, p.body });
     }
     return gpa.dupe(u8, base_system);
+}
+
+test "anyCandidatePresent is presence-only" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try std.testing.expect(!anyCandidatePresent(io, tmp.dir));
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    try tmp.dir.writeFile(io, .{ .sub_path = "AGENTS.md", .data = secret });
+    try std.testing.expect(anyCandidatePresent(io, tmp.dir));
 }
 
 test "composeSystemPrompt without project" {

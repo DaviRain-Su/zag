@@ -19,7 +19,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 |------|--------|
 | Phase H | **Not complete.** Functional foundations exist; P0/P1 correctness gates remain. |
 | P0 | **Complete:** session durability, Tool descriptor, file symlink containment, and truthful trace lifecycle |
-| P1 | Compaction, provider lifecycle, and redaction are complete; doctor/readiness is ready, integration waits on it, then Zig SDK and headless gates follow |
+| P1 | Compaction, provider lifecycle, and redaction are complete; doctor/readiness is **in-progress** (implemented), integration waits on its Gate, then Zig SDK and headless gates follow |
 | P2 | Sandbox/process supervisor and capability work after their dependencies |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
@@ -30,7 +30,7 @@ Priority definitions live only in the assessment. Module contracts live under `d
 done: h-tool-runtime-001 + h-workspace-001 + h-redact-001
                               │
                               ▼
-                         ready: h-doctor-001
+                    in-progress: h-doctor-001
                               │
 all done P0/P1 module tasks ──┤
                               ▼
@@ -54,7 +54,7 @@ Doctor has only the three dependencies shown above. Integration is the convergen
 | [h-context-001](./tasks/h-context-001.md) | P1 | done | Compaction accounting |
 | [h-provider-001](./tasks/h-provider-001.md) | P1 | done | Deadline/in-flight cancellation |
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | done | Secret redaction |
-| [h-doctor-001](./tasks/h-doctor-001.md) | P1 | ready | Provider-independent readiness/control report |
+| [h-doctor-001](./tasks/h-doctor-001.md) | P1 | in-progress | Provider-independent readiness/control report |
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | pending | Phase H real-composition/E2E closeout after doctor |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |

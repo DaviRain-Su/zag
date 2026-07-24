@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
-| Current maturity | **L1+** — symlink-aware **file containment** + secret redaction (h-redact-001); doctor/readiness is specified but not implemented |
+| Current maturity | **L1+** — symlink-aware **file containment** + secret redaction (h-redact-001) + doctor report **implemented** (h-doctor-001 in-progress); overall row still L1+ until independent review + integration |
 | Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
 | Reference | Hyper sandbox; Codex sandbox |
 
@@ -76,9 +76,11 @@ A denylist reduces accidents; it is not an adversarial sandbox.
 
 ## Doctor/readiness
 
-Task: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**ready**).
+Task: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**in-progress** — implemented; acceptance after independent review).
 
-`zag --doctor` is a provider-independent, human-readable readiness report. It runs before API-key/provider resolution and reports only fixed, path-free statuses for project-instruction/test-entry **candidate presence**, permission mode, shell policy, lexical jail, real/symlink-aware file containment, product redaction-on-run, and OS-sandbox enforcement. Candidate detection reads no body and is not proof that instructions load or tests pass.
+Code: `packages/zag-coding-agent/src/doctor.zig` (typed report); CLI adapter `zag --doctor` in `packages/zag-cli`.
+
+`zag --doctor` is a provider-independent, human-readable readiness report. It runs after flag validation and **before** API-key/provider resolution, wire, Agent/session/trace construction, or network work. It reports only fixed, path-free statuses for project-instruction/test-entry **candidate presence**, permission mode, shell policy, lexical jail, real/symlink-aware file containment, product redaction-on-run, and OS-sandbox enforcement. Candidate detection uses presence/metadata probes only (no body read) and is not proof that instructions load or tests pass.
 
 Doctor reports; it does not silently change policy. `ready` real containment means the current workspace root resolved and the file Tool Guard is applicable—it does not mean shell containment or OS enforcement. Failure to resolve the root reports `unavailable_fail_closed`. H reports exactly `os_sandbox=not_implemented`; the separate shell field is `shell_containment=not_path_contained`. Provider-key redaction binding is `deferred_until_provider_resolve` because doctor intentionally performs no provider resolution. The text report is not the stable machine protocol owned by `headless-001`.
 
@@ -86,7 +88,7 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
 - ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
-- doctor is specified in h-doctor-001 but not implemented.
+- ~~doctor not implemented~~ **Implemented** h-doctor-001 (path-free report + no-key CLI seam); L2 row acceptance still waits independent review + h-integration-001.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
 
@@ -96,8 +98,8 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 - [x] normal contained paths and documented contained symlinks work.
 - [x] policy matrix tests pass (shell denylist; file fixtures in evals).
 - [x] secret fixtures do not appear in verbose/trace/session output (h-redact-001).
-- [ ] doctor exposes active controls without provider/API-key resolution (h-doctor-001 ready).
-- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (file containment and redaction complete; Workspace/Safety row still blocked by doctor).
+- [ ] doctor exposes active controls without provider/API-key resolution *(code + fixtures landed in h-doctor-001; formal acceptance after independent review / main-branch Gate)*.
+- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (file containment, redaction, doctor implementation evidence; Workspace/Safety row still L1+ until review + integration).
 
 ## L3 (C7)
 

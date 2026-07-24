@@ -84,7 +84,7 @@ These remain useful but do not cover the assessment blockers.
 2. fake configured secrets do not appear in verbose, trace, or session bytes. ✅ h-redact-001 (longest/boundary/pattern + allocator sweeps; initial create; Session after Agent deinit; collision-safe Tool IDs across resume; mid-trace OOM terminal; outward diagnostic helpers).
 3. timeout enforced on **curl**; **std** configured timeout → `unsupported_control` before network (default null = no timeout). ✅ h-provider-001 capability-truth
 4. stream requires protocol completion; incomplete tool args reject whole turn. ✅ h-provider-001
-5. doctor runs without provider/API key and reports fixed, path-free project/test/policy/containment/redaction/sandbox states before provider resolution. **Ready:** h-doctor-001.
+5. doctor runs without provider/API key and reports fixed, path-free project/test/policy/containment/redaction/sandbox states before provider resolution. ✅ h-doctor-001 (coding-agent `doctor.zig` + CLI stage seam; candidate matrix; unresolvable root → `unavailable_fail_closed`; secret non-leak; formal row acceptance still after independent review).
 6. default Agent policy denial and escaping-symlink containment denial agree across unchanged outside/target bytes, machine-readable Tool result, transcript, persisted/resumed session, permission/jail trace, and truthful terminal. **Pending:** h-integration-001.
 7. cancel between accepted Tools preserves original IDs, skips pending handlers, writes cancelled bodies for every pending call, and agrees across Result/transcript/save-resume/one trace terminal. **Pending:** h-integration-001. This is not mid-flight Tool/shell preemption.
 

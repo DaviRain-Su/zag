@@ -1,7 +1,7 @@
 ---
 id: h-doctor-001
 scope: phase-h/doctor-readiness
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-tool-runtime-001, h-workspace-001, h-redact-001]
 ---

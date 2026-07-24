@@ -39,7 +39,7 @@ Teaching 0  loop + 只读                 ✅ tutorial
 Teaching 1  write/shell + ask|yolo      ✅ tutorial
 Teaching 2  会话 / AGENTS.md / context  ✅ tutorial
 Teaching 3  jail / shell policy / trace ✅ tutorial（≠ 生产完成）
-Phase H     硬化到 maturity L2          ❌ h-doctor-001 → h-integration-001
+Phase H     硬化到 maturity L2          ❌ h-doctor-001（in-progress）→ h-integration-001
 C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
 ```
 
@@ -48,6 +48,11 @@ C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
 Zig **0.16**。
 
 ```bash
+# 无需 API key：固定、path-free 的 readiness 报告（h-doctor-001）
+zig build run -- --doctor
+# 显式选择也会被报告（不改其它 policy）：
+zig build run -- --yolo --shell-policy off --no-project --doctor
+
 export DEEPSEEK_API_KEY=sk-...
 
 zig build test
@@ -62,6 +67,7 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 |------|------|
 | `--ask` / `--yolo` | 人工权限（默认 ask；生产勿默认 yolo） |
 | `--shell-policy protect\|off` | 命令策略（默认 protect） |
+| `--doctor` | 就绪/控件报告（无 API key / provider / network；不改 policy） |
 | `-s PATH` / `--session PATH` | 创建会话 JSONL（已存在则失败；相对路径） |
 | `-c` / `--continue` | 续聊（默认 `.zag/sessions/default.jsonl`） |
 | `--trace` / `--trace=PATH` | 审计 JSONL（默认 `.zag/traces/latest.jsonl`；裸词不当路径） |

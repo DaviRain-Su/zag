@@ -47,6 +47,7 @@ pub fn run(init: std.process.Init) !void {
     var enable_trace = false;
     var want_stream = false;
     var config_path: ?[]const u8 = null;
+    var want_doctor = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -55,6 +56,8 @@ pub fn run(init: std.process.Init) !void {
             show_help = true;
         } else if (std.mem.eql(u8, a, "-v") or std.mem.eql(u8, a, "--verbose")) {
             verbose = true;
+        } else if (std.mem.eql(u8, a, "--doctor")) {
+            want_doctor = true;
         } else if (std.mem.eql(u8, a, "--yolo")) {
             permission_mode = .yolo;
         } else if (std.mem.eql(u8, a, "--ask")) {
@@ -136,6 +139,17 @@ pub fn run(init: std.process.Init) !void {
 
     if (show_help) {
         try printUsage();
+        return;
+    }
+
+    // h-doctor-001: after flag validation, before provider resolve / wire / Agent /
+    // session / trace / network. No API key required. Does not mutate policy.
+    if (want_doctor) {
+        try runDoctor(gpa, io, .{
+            .permission = permission_mode,
+            .shell_policy = shell_policy,
+            .load_project_instructions = !no_project,
+        });
         return;
     }
 
@@ -278,11 +292,107 @@ pub fn selectOpenMode(continue_session: bool) coding.OpenMode {
     return if (continue_session) .resume_existing else .create_new;
 }
 
+/// Product stages after flags are known. Doctor stops before any provider work.
+pub const ProductStage = enum {
+    args_validated,
+    doctor_report,
+    provider_resolve,
+    wire,
+    agent_session_trace,
+};
+
+/// Deterministic stage plan (no I/O). Proves `--doctor` never enters resolve/wire/session.
+pub fn productStagesAfterFlags(want_doctor: bool) []const ProductStage {
+    if (want_doctor) {
+        return &.{ .args_validated, .doctor_report };
+    }
+    return &.{ .args_validated, .provider_resolve, .wire, .agent_session_trace };
+}
+
+/// Build doctor options from already-parsed flags (report only; no policy mutation).
+pub fn doctorOptionsFromFlags(
+    permission: core.permissions.Mode,
+    shell_policy: core.shell_policy.Mode,
+    no_project: bool,
+) coding.doctor.Options {
+    return .{
+        .permission = permission,
+        .shell_policy = shell_policy,
+        .load_project_instructions = !no_project,
+    };
+}
+
+fn runDoctor(gpa: std.mem.Allocator, io: Io, opts: coding.doctor.Options) !void {
+    const report = coding.doctor.collect(gpa, io, Io.Dir.cwd(), opts);
+    var buf: [512]u8 = undefined;
+    const text = coding.doctor.formatReport(&buf, report);
+    try writeStdout(io, text);
+}
+
 test "CLI selectOpenMode: -s is create_new, -c is resume_existing" {
     // -s PATH alone (or no session flags) → create_new
     try std.testing.expectEqual(coding.OpenMode.create_new, selectOpenMode(false));
     // -c / --continue → resume_existing
     try std.testing.expectEqual(coding.OpenMode.resume_existing, selectOpenMode(true));
+}
+
+test "doctor product stages never enter provider resolve/wire/session" {
+    const doctor_path = productStagesAfterFlags(true);
+    try std.testing.expectEqual(@as(usize, 2), doctor_path.len);
+    try std.testing.expectEqual(ProductStage.args_validated, doctor_path[0]);
+    try std.testing.expectEqual(ProductStage.doctor_report, doctor_path[1]);
+    for (doctor_path) |s| {
+        try std.testing.expect(s != .provider_resolve);
+        try std.testing.expect(s != .wire);
+        try std.testing.expect(s != .agent_session_trace);
+    }
+
+    const normal = productStagesAfterFlags(false);
+    try std.testing.expectEqual(ProductStage.provider_resolve, normal[1]);
+    try std.testing.expectEqual(ProductStage.wire, normal[2]);
+    try std.testing.expectEqual(ProductStage.agent_session_trace, normal[3]);
+}
+
+test "doctorOptionsFromFlags reports explicit selections without side effects" {
+    const def = doctorOptionsFromFlags(.ask, .protect, false);
+    try std.testing.expectEqual(core.permissions.Mode.ask, def.permission);
+    try std.testing.expectEqual(core.shell_policy.Mode.protect, def.shell_policy);
+    try std.testing.expect(def.load_project_instructions);
+
+    const expl = doctorOptionsFromFlags(.yolo, .off, true);
+    try std.testing.expectEqual(core.permissions.Mode.yolo, expl.permission);
+    try std.testing.expectEqual(core.shell_policy.Mode.off, expl.shell_policy);
+    try std.testing.expect(!expl.load_project_instructions);
+}
+
+test "CLI doctor fixture: no-key path formats path-free report" {
+    // Deterministic fixture: collect+format without ai.resolve / wire / Agent.
+    // Proves the doctor seam needs no provider env (stage plan above).
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const secret = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
+    try tmp.dir.writeFile(io, .{ .sub_path = "AGENTS.md", .data = secret ++ "\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "build.zig", .data = secret ++ "\n" });
+
+    const opts = doctorOptionsFromFlags(.ask, .protect, false);
+    const report = coding.doctor.collect(gpa, io, tmp.dir, opts);
+    var buf: [512]u8 = undefined;
+    const out = coding.doctor.formatReport(&buf, report);
+
+    try std.testing.expect(std.mem.indexOf(u8, out, "permission=ask") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell_policy=protect") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "project_instructions=enabled_present") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "test_entry=zig_build") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "os_sandbox=not_implemented") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "shell_containment=not_path_contained") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "AGENTS.md") == null);
+    try std.testing.expect(std.mem.indexOf(u8, out, "build.zig") == null);
+    // Stage seam: doctor path never schedules provider work.
+    try std.testing.expect(productStagesAfterFlags(true).len == 2);
 }
 
 fn runOneShot(
@@ -476,6 +586,7 @@ fn printUsage() !void {
         \\  --plan                     plan session: read + plan.md only (H3 stub)
         \\  --no-remember              re-prompt every write path in ask mode
         \\  --shell-policy MODE        protect (default) | off
+        \\  --doctor                   readiness report (no API key / provider / network)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection

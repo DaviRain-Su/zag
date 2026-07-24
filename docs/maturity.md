@@ -27,7 +27,7 @@
 | Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff；create/write 经 Guard 祖先 walk；escape/dangling deny | containment 下 stale/ambiguous 可恢复且不误写 | hashline/apply_patch、hunk review |
 | Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox；policy 选 shell 靠 descriptor.shell 非名称 | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |
 | Permissions | **L2** | D-007: Gate/Ask/plan/remember 消费 descriptor.risk；custom write/execute 与 built-in 同 gate；无 `riskOf(name)` | descriptor-derived risk；custom Tool 与 built-in 同一 gate；missing risk fail-closed | path/domain policies、Plan UX |
-| Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）+ **secret redaction**（h-redact-001）；descriptor 选 path/shell；shell 仍 denylist；doctor 已规格化但未实现（h-doctor-001 ready） | file containment ✅；redaction ✅；provider-independent doctor；诚实 threat model 文档齐 | OS sandbox/network/worktree |
+| Workspace / Safety | **L1+** | lexical + **symlink-aware file containment**（Root/Guard、loop+handler 双检、`code=jail_deny`）+ **secret redaction**（h-redact-001）+ **doctor report implemented**（h-doctor-001 in-progress：no-key path-free CLI + candidate matrix fixtures）；descriptor 选 path/shell；shell 仍 denylist；**不得**因 doctor 实现单独升 L2 | file containment ✅；redaction ✅；doctor 实现证据 ✅（正式验收/集成 Gate 后）；诚实 threat model 文档齐 | OS sandbox/network/worktree |
 | Context / Compaction | **L2** | h-context-001: fixed-point final-view；ID 精确 tool bundle fail-closed→`invalid_context`；lineage 截断有 digest/marker；共享 summary_cap=800；UTF-8 sanitize；session/trace 成功路径 byte-equal；soft min_tail；OOM 不静默 | final returned view 与 dropped/summary/session/trace 一致 ✅ | repo map、智能选文件 |
 | Session / Resume | **L2** | D-006: create/resume distinct; open_or_create SDK-only; atomic save + per-Writer test fault preserves prior bytes; `Agent.reply` save IoFailed fixture; one active writer via reusable `{path}.lock`; strict header (version required on typed header); lexical session path; P0 fixtures (create-existing, resume missing/invalid/unsupported/general-I/O, fault-save, busy, stale sidecar, CLI open-mode). Not claimed: fsync/power-loss, symlink containment, hostile Writer-copy defense | explicit create/resume; atomic preservation; visible save errors; exclusive writer/conflict | fork/tree/journal as needed |
 | Provider / zag-ai | **L1+** | two wire styles、retry/usage/cost；**curl** active deadline/cancel；**std** ordinary OK + controlled lifecycle fail-closed `unsupported_control`；strict stream/tool atomic（h-provider-001）；HTTP 诊断仅 status+body length（h-redact-001） | capability-truth deadline/cancel ✅；redaction diagnostics ✅；contract matrix | fallback/multi-key/third protocol on demand |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；module-level tool-policy + session + symlink + trace + context + provider deadline/cancel + redaction 已进；doctor 与两条 Agent 组合链仍待 | doctor + P0/P1 real-composition matrix 进入 CI；不得削弱断言 | edit/cost/performance baselines |
+| Quality / Evals | **L1+** | goldens、provider fixtures、dual backend CI；module-level tool-policy + session + symlink + trace + context + provider deadline/cancel + redaction + **doctor no-key/matrix fixtures**（h-doctor-001 in-progress）已进；两条 Agent 组合链仍待 h-integration-001 | doctor formal Gate + P0/P1 real-composition matrix 进入 CI；不得削弱断言 | edit/cost/performance baselines |
 
 ## Phase H production-floor exit
 
@@ -45,7 +45,7 @@
 
 1. **Session durability**：create/resume 分离；invalid/unsupported/I/O 不回退新会话；save 原文件保护；错误可见；并发 writer 冲突。
 2. **Tool contract**：Tool 有 instance state 和 mandatory runtime descriptor；risk/path/cancel 不按名称猜测；缺失 metadata fail-closed。
-3. **Filesystem containment/readiness**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace（file sub-capability done h-workspace-001）；shell 边界单独诚实说明；provider-independent doctor 必须暴露 active/degraded controls（h-doctor-001 ready）。
+3. **Filesystem containment/readiness**：read/list/search/write/edit 不能经 symlink/alias 离开 workspace（file sub-capability done h-workspace-001）；shell 边界单独诚实说明；provider-independent doctor 暴露 active/degraded controls（h-doctor-001 **implemented / in-progress**；正式验收与集成 Gate 后关闭）。
 4. **Truthful lifecycle**：每个 started run 恰有一个 terminal；provider/save/trace 失败不得记为 completed success（h-trace-001 ✅；timeout/in-flight cancel h-provider-001 ✅）。
 5. **Context accounting**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致（h-context-001 ✅）。
 6. **Secrets**：fake configured key 不出现在 verbose、trace、session fixtures（h-redact-001 ✅）；`.zag/` 仍标敏感；无 zeroization/DLP 声称。

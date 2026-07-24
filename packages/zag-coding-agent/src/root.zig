@@ -27,6 +27,7 @@ pub const loop = core.loop;
 pub const agent = @import("agent.zig");
 pub const toolset = @import("toolset.zig");
 pub const project = @import("project.zig");
+pub const doctor = @import("doctor.zig");
 pub const wire_provider = @import("wire_provider.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
