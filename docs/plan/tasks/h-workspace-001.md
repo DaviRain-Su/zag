@@ -1,7 +1,7 @@
 ---
 id: h-workspace-001
 scope: phase-h/workspace
-status: pending
+status: ready
 priority: P0
 depends-on: [h-tool-runtime-001]
 ---
