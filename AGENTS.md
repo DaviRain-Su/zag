@@ -11,6 +11,7 @@ Zig coding-agent: **tutorial harness + production floor**. Zig **0.16**.
 | Coding product | `packages/zag-coding-agent/` |
 | Model plane | `packages/zag-ai/` |
 | CLI | `packages/zag-cli/` |
+| Third-party (path-vendored) | `packages/third_party/` |
 | Thin `main` | `src/main.zig` |
 
 Package rules: [docs/packaging.md](docs/packaging.md).
