@@ -10,6 +10,10 @@
         .zag_types = .{
             .path = "../zag-types",
         },
+        .curl = .{
+            .path = "../zig-curl",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",

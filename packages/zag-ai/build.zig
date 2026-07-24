@@ -1,8 +1,15 @@
 const std = @import("std");
 
+pub const HttpBackend = enum { std, curl };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const http_backend = b.option(
+        HttpBackend,
+        "http_backend",
+        "Outbound HTTP for zag-ai (std.http or zig-curl)",
+    ) orelse .std;
 
     const openai_dep = b.dependency("openai_zig", .{
         .target = target,
@@ -16,6 +23,9 @@ pub fn build(b: *std.Build) void {
     });
     const types_mod = types_dep.module("zag-types");
 
+    const opts = b.addOptions();
+    opts.addOption(HttpBackend, "http_backend", http_backend);
+
     const mod = b.addModule("zag-ai", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -24,6 +34,16 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-types", .module = types_mod },
         },
     });
+    mod.addOptions("build_options", opts);
+    var curl_dep: ?*std.Build.Dependency = null;
+    if (http_backend == .curl) {
+        curl_dep = b.lazyDependency("curl", .{
+            .target = target,
+            .optimize = optimize,
+            .link_vendor = false,
+        }) orelse return;
+        attachCurl(mod, curl_dep.?);
+    }
 
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -36,9 +56,20 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    tests.root_module.addOptions("build_options", opts);
+    if (curl_dep) |dep| {
+        attachCurl(tests.root_module, dep);
+    }
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run zag-ai unit tests");
     test_step.dependOn(&run_tests.step);
 
-    _ = mod;
+    // Keep module registered for dependents (`b.dependency("zag_ai").module("zag-ai")`).
+    _ = .{mod};
+}
+
+fn attachCurl(mod: *std.Build.Module, curl_dep: *std.Build.Dependency) void {
+    mod.addImport("curl", curl_dep.module("curl"));
+    mod.link_libc = true;
+    mod.linkSystemLibrary("curl", .{});
 }

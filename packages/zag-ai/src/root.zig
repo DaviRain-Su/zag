@@ -1,7 +1,7 @@
 //! zag-ai — multi-wire LLM client for Zag (canonical messages + adapters).
 //!
-//! - Shared: `config`, `wire`, `http` (std.http), `factory`, `stream` (event types only)
-//! - Adapters: `openai_compat` (openai-zig resources), `anthropic_messages` (http only)
+//! - Shared: `config`, `wire`, `http` (std.http or zig-curl via `-Dhttp_backend`), `factory`, `stream` (event types only)
+//! - Adapters: `openai_compat` (openai-zig resources), `anthropic_messages` (http facade)
 //! - Independent of agent harness (packages/zag-agent-core).
 
 const std = @import("std");

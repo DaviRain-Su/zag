@@ -45,6 +45,13 @@ jobs:
       - name: zig build test (monorepo)
         run: zig build test --summary all
 
+      - name: Install libcurl headers (Linux, curl backend)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+
+      - name: zig build test (http_backend=curl)
+        run: zig build test -Dhttp_backend=curl --summary all
+
       - name: zig build (install zag)
         run: zig build
 

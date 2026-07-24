@@ -15,7 +15,7 @@ zag-coding-agent/wire_provider       ← WireAdapter → Provider 桥
         → zag-ai
              factory.createWire · resolve · catalog · ChatOptions
                 ├─ openai_compat → openai-zig
-                └─ anthropic_messages → std.http only
+                └─ anthropic_messages → zag-ai `http` (`std` \| `-Dhttp_backend=curl`)
 ```
 
 | 层 | 路径 | 职责 |
@@ -43,7 +43,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
         ┌───────┴────────────────┐
         ▼                        ▼
   openai_compat              anthropic_messages
-  (openai-zig resources)     (std.http only)
+  (openai-zig resources)     (http facade: std \| curl)
 ```
 
 | 项 | 现状 |
@@ -53,7 +53,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | `api_style` | ✅ presets + `ZAG_API_STYLE` / `ZAG_PROVIDER=anthropic` |
 | OpenAI Chat Completions + SSE | ✅ `openai_compat`（唯一 openai-zig chat 消费者） |
 | Anthropic Messages + SSE | ✅ `anthropic_messages` |
-| 共享 `Config` + `http.Client` | ✅ `http` 仅 `std.http` |
+| 共享 `Config` + `http.Client` | ✅ facade；默认 `std.http`，可选 zig-curl（D-005） |
 | 共享 `wire.Error` | ✅；`mapSdkError` 仅 OpenAI 适配器 |
 | `WireAdapter.embed` | ✅ OpenAI 实现；Anthropic → `NotSupported` |
 | presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning） |

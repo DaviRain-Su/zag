@@ -1,0 +1,111 @@
+#+TITLE: zig-curl
+#+DATE: 2023-09-16T23:16:15+0800
+#+LASTMOD: 2026-04-18T15:36:32+0800
+#+OPTIONS: toc:nil num:nil
+#+STARTUP: content
+
+[[https://img.shields.io/badge/zig%20version-0.16.0-blue.svg]]
+[[https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml][https://github.com/jiacai2050/zig-curl/actions/workflows/CI.yml/badge.svg]]
+
+#+html: <p align="center"><img src="docs/logo.svg" width="35%"/></p>
+
+Zig bindings for [[https://curl.haxx.se/libcurl/][libcurl]], a free and easy-to-use client-side URL transfer library.
+
+This package targets Zig =0.16=.
+For Zig =0.15=, use the [[https://github.com/jiacai2050/zig-curl/tree/0.15][0.15 branch]].
+
+The vendored libraries consist of:
+| Library | Version |
+|---------+---------|
+| libcurl | [[https://github.com/curl/curl/tree/curl-8_19_0][8.19.0]]   |
+| zlib    | [[https://github.com/madler/zlib/tree/v1.3.1][1.3.1]]   |
+| mbedtls | [[https://github.com/Mbed-TLS/mbedtls/tree/v3.6.0][3.6.0]]   |
+
+* Usage
+#+begin_src bash :results verbatim :exports results :wrap src zig
+cat examples/basic.zig
+#+end_src
+
+#+RESULTS:
+#+begin_src zig
+const std = @import("std");
+const curl = @import("curl");
+
+const URL = "https://edgebin.liujiacai.net/anything";
+
+pub fn main(init: std.process.Init) !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer if (gpa.deinit() != .ok) @panic("leak");
+    const allocator = gpa.allocator();
+
+    var ca_bundle = try curl.allocCABundle(allocator, init.io);
+    defer ca_bundle.deinit(allocator);
+    var easy = try curl.Easy.init(.{
+        .ca_bundle = ca_bundle,
+    });
+    defer easy.deinit();
+
+    {
+        std.debug.print("GET without body\n", .{});
+        const resp = try easy.fetch(URL, .{});
+        std.debug.print("Status code: {d}\n", .{resp.status_code});
+    }
+
+    {
+        std.debug.print("\nGET with fixed buffer as body\n", .{});
+        var buffer: [1024]u8 = undefined;
+        var writer = std.Io.Writer.fixed(&buffer);
+        const resp = try easy.fetch(URL, .{ .writer = &writer });
+        std.debug.print("Status code: {d}\nBody: {s}\n", .{ resp.status_code, writer.buffered() });
+    }
+}
+#+end_src
+
+Check [[file:examples]] for more examples.
+
+** Diagnostics
+When a curl operation fails, it returns a generic =error.Curl=. To get more detailed information, you can use the =diagnostics= field in =Easy= or =Multi=.
+
+#+begin_src zig
+    var easy = try curl.Easy.init(.{ ... });
+    defer easy.deinit();
+
+    easy.perform() catch |err| {
+        if (err == error.Curl) {
+            if (easy.diagnostics.getMessage()) |msg| {
+                std.log.err("curl failed: {s}", .{msg});
+            }
+        }
+        return err;
+    };
+#+end_src
+
+** Documentation
+See https://jiacai2050.github.io/zig-curl/
+
+** Installation
+#+begin_src bash
+# Latest version
+zig fetch --save git+https://github.com/jiacai2050/zig-curl.git
+# Tagged version
+zig fetch --save git+https://github.com/jiacai2050/zig-curl.git#v0.5.0
+#+end_src
+
+The latest tag can be found on [[https://github.com/jiacai2050/zig-curl/releases/][release page]].
+
+After fetch, import =curl= like this in your =build.zig=:
+#+begin_src zig
+const dep_curl = b.dependency("curl", .{});
+exe.root_module.addImport("curl", dep_curl.module("curl"));
+exe.root_module.link_libc = true;
+#+end_src
+
+This library will link to a vendored libcurl by default, you can disable it and link to system-wide with this
+#+begin_src zig
+const dep_curl = b.dependency("curl", .{ .link_vendor = false });
+exe.root_module.linkSystemLibrary("curl", .{});
+exe.root_module.link_libc = true;
+#+end_src
+
+* License
+[[file:LICENSE][MIT]]

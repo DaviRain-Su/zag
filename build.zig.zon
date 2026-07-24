@@ -50,6 +50,10 @@
         .zag_cli = .{
             .path = "packages/zag-cli",
         },
+        .curl = .{
+            .path = "packages/zig-curl",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",

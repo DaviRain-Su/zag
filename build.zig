@@ -1,8 +1,15 @@
 const std = @import("std");
 
+const HttpBackend = enum { std, curl };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const http_backend = b.option(
+        HttpBackend,
+        "http_backend",
+        "Outbound HTTP for zag-ai (std.http or zig-curl)",
+    ) orelse .std;
 
     const openai_dep = b.dependency("openai_zig", .{
         .target = target,
@@ -19,6 +26,7 @@ pub fn build(b: *std.Build) void {
     const ai_dep = b.dependency("zag_ai", .{
         .target = target,
         .optimize = optimize,
+        .http_backend = http_backend,
     });
     const ai_mod = ai_dep.module("zag-ai");
 
@@ -31,14 +39,19 @@ pub fn build(b: *std.Build) void {
     const coding_dep = b.dependency("zag_coding_agent", .{
         .target = target,
         .optimize = optimize,
+        .http_backend = http_backend,
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
 
     const cli_dep = b.dependency("zag_cli", .{
         .target = target,
         .optimize = optimize,
+        .http_backend = http_backend,
     });
     const cli_mod = cli_dep.module("zag-cli");
+
+    const ai_opts = b.addOptions();
+    ai_opts.addOption(HttpBackend, "http_backend", http_backend);
 
     _ = b.addModule("openai_zig", .{
         .root_source_file = b.path("packages/openai-zig/src/root.zig"),
@@ -48,7 +61,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("packages/zag-types/src/root.zig"),
         .target = target,
     });
-    _ = b.addModule("zag-ai", .{
+    const zag_ai_named = b.addModule("zag-ai", .{
         .root_source_file = b.path("packages/zag-ai/src/root.zig"),
         .target = target,
         .imports = &.{
@@ -56,6 +69,16 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-types", .module = types_mod },
         },
     });
+    zag_ai_named.addOptions("build_options", ai_opts);
+    var root_curl_dep: ?*std.Build.Dependency = null;
+    if (http_backend == .curl) {
+        root_curl_dep = b.lazyDependency("curl", .{
+            .target = target,
+            .optimize = optimize,
+            .link_vendor = false,
+        }) orelse return;
+        attachCurl(zag_ai_named, root_curl_dep.?);
+    }
     _ = b.addModule("zag-agent-core", .{
         .root_source_file = b.path("packages/zag-agent-core/src/root.zig"),
         .target = target,
@@ -136,6 +159,10 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    ai_tests.root_module.addOptions("build_options", ai_opts);
+    if (root_curl_dep) |dep| {
+        attachCurl(ai_tests.root_module, dep);
+    }
     const run_ai_tests = b.addRunArtifact(ai_tests);
 
     const types_tests = b.addTest(.{
@@ -240,4 +267,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(openai_coverage_step);
     test_step.dependOn(catalog_check_step);
     test_step.dependOn(docs_lint_step);
+}
+
+fn attachCurl(mod: *std.Build.Module, curl_dep: *std.Build.Dependency) void {
+    mod.addImport("curl", curl_dep.module("curl"));
+    mod.link_libc = true;
+    mod.linkSystemLibrary("curl", .{});
 }

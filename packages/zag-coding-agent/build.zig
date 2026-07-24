@@ -1,8 +1,15 @@
 const std = @import("std");
 
+const HttpBackend = enum { std, curl };
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const http_backend = b.option(
+        HttpBackend,
+        "http_backend",
+        "Outbound HTTP for zag-ai (std.http or zig-curl)",
+    ) orelse .std;
 
     const core_dep = b.dependency("zag_agent_core", .{
         .target = target,
@@ -13,6 +20,7 @@ pub fn build(b: *std.Build) void {
     const ai_dep = b.dependency("zag_ai", .{
         .target = target,
         .optimize = optimize,
+        .http_backend = http_backend,
     });
     const ai_mod = ai_dep.module("zag-ai");
 

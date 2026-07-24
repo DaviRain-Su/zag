@@ -11,7 +11,7 @@ Auth is env + JSON config only (no OAuth).
 | `types` | Canonical Message / ToolCall / Usage / ChatOptions / StreamEvent |
 | `config` | Shared `Config` (base_url / key / model / retries) |
 | `wire` | `WireAdapter` vtable, `ApiStyle`, shared `Error` |
-| `http` | Neutral `std.http` client (Bearer or header auth) |
+| `http` | Neutral HTTP facade (`-Dhttp_backend=std|curl`; default std.http) |
 | `factory` | `createWire(style)` — vendor-neutral |
 | `stream` | Re-export stream **types** only (no vendor impl) |
 | `openai_compat` | OpenAI Chat Completions + SSE (**only** openai-zig consumer for chat) |
@@ -25,10 +25,11 @@ Auth is env + JSON config only (no OAuth).
 ```
 agent-core / coding-agent / cli
         → zag-ai  (wire + factory + adapters)
-              ├─ openai_compat → openai-zig
-              └─ anthropic_messages → std.http only
+              ├─ openai_compat → openai-zig (still std.http transport)
+              └─ anthropic_messages → zag-ai http (std | curl)
 ```
 
+Build: `zig build -Dhttp_backend=curl` (needs system libcurl; see D-005).
 ## Preferred API
 
 ```zig
