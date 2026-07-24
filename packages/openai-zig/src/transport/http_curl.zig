@@ -240,14 +240,27 @@ pub const Transport = struct {
                 if (!shared.isRetryableMethod(method) or attempt == active_opts.max_retries) {
                     return shared.mapTransportError(err);
                 }
-                shared.sleepForRetry(self.io, attempt, null, active_opts);
+                // Lifecycle-aware backoff: shared absolute deadline; Cancelled/Timeout stop retries.
+                lifecycle.sleepRetryBounded(
+                    self.io,
+                    attempt,
+                    null,
+                    active_opts.retry_base_delay_ms,
+                    control,
+                ) catch |se| return shared.mapTransportError(se);
                 continue;
             };
 
             if (outcome.status < 200 or outcome.status >= 300) {
                 if (shared.isRetryableStatus(outcome.status) and attempt < active_opts.max_retries and shared.isRetryableMethod(method)) {
                     if (outcome.body.len > 0) self.allocator.free(outcome.body);
-                    shared.sleepForRetry(self.io, attempt, outcome.retry_after_ms, active_opts);
+                    lifecycle.sleepRetryBounded(
+                        self.io,
+                        attempt,
+                        outcome.retry_after_ms,
+                        active_opts.retry_base_delay_ms,
+                        control,
+                    ) catch |se| return shared.mapTransportError(se);
                     continue;
                 }
                 const err = errors.unexpectedStatus(.{

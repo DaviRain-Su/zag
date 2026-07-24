@@ -412,19 +412,24 @@ fn StreamEventParser(comptime T: type) type {
         }
 
         fn flush(self: *@This()) errors.Error!void {
-            // Leftover unterminated line or event buffer → incomplete SSE.
+            // Finish any incomplete line, then dispatch a pending data buffer once
+            // (servers often omit a trailing blank line after the final data frame).
             if (self.line_buf.items.len > 0) {
                 const line = @This().trimLine(self.line_buf.items);
                 try self.consumeLine(line);
                 self.line_buf.clearRetainingCapacity();
             }
+            if (self.ready_to_dispatch and self.data_buf.items.len > 0) {
+                try self.dispatch();
+                self.data_buf.clearRetainingCapacity();
+                self.ready_to_dispatch = false;
+            }
             if (self.data_buf.items.len > 0) {
-                // Unterminated event (no blank-line dispatch) at EOF: fail closed.
+                // Still holding bytes without a complete frame.
                 return errors.Error.HttpError;
             }
 
-            // Strict: require explicit `[DONE]` (or other path that set `done`).
-            // Do not fabricate completion on premature EOF.
+            // Strict: require explicit `[DONE]`. Do not fabricate completion.
             if (!self.done) {
                 return errors.Error.HttpError;
             }
@@ -454,13 +459,21 @@ fn StreamEventParser(comptime T: type) type {
                 return;
             }
 
+            // SSE comments may appear after DONE (EOF padding); ignore only comments/empty.
+            if (std.mem.startsWith(u8, line, ":")) return;
+
             if (!std.mem.startsWith(u8, line, "data:")) {
+                // After explicit [DONE], any non-comment protocol line is an error.
+                if (self.done) return errors.Error.HttpError;
                 return;
             }
 
             const raw_event_payload = line[5..];
             const event_payload = std.mem.trimStart(u8, raw_event_payload, " \t");
             if (event_payload.len == 0) return;
+
+            // After [DONE], any non-empty data payload is protocol error.
+            if (self.done) return errors.Error.HttpError;
 
             if (self.data_buf.items.len > 0) {
                 self.data_buf.append(self.allocator, '\n') catch {
@@ -483,14 +496,15 @@ fn StreamEventParser(comptime T: type) type {
                 return;
             }
 
+            if (self.done) return errors.Error.HttpError;
+
             self.has_dispatched_events = true;
 
             if (std.mem.eql(u8, event_payload, "[DONE]")) {
-                if (!self.done) {
-                    self.done = true;
-                    if (self.on_done) |handler| {
-                        try handler(self.done_ctx);
-                    }
+                // Exactly once: second [DONE] is an error (done already set above check).
+                self.done = true;
+                if (self.on_done) |handler| {
+                    try handler(self.done_ctx);
                 }
                 self.data_buf.clearRetainingCapacity();
                 self.ready_to_dispatch = false;
@@ -508,6 +522,102 @@ fn StreamEventParser(comptime T: type) type {
             try self.handler(self.user_ctx, parsed);
         }
     };
+}
+
+/// Test/public helper: feed SSE bytes through the same strict StreamEventParser
+/// used by chat completion streams. `T` is the event JSON type.
+pub fn feedStrictSseForTest(
+    allocator: std.mem.Allocator,
+    comptime T: type,
+    bytes: []const u8,
+    on_event: *const fn (?*anyopaque, std.json.Parsed(T)) errors.Error!void,
+    user_ctx: ?*anyopaque,
+    on_done: ?StreamDoneHandler,
+    done_ctx: ?*anyopaque,
+) errors.Error!void {
+    var parser = try StreamEventParser(T).initWithDone(allocator, on_event, user_ctx, on_done, done_ctx);
+    defer parser.deinit();
+    try parser.onChunk(bytes);
+    try parser.flush();
+}
+
+const SseProbeEvent = struct {
+    id: ?[]const u8 = null,
+};
+
+fn noopSseEvent(_: ?*anyopaque, p: std.json.Parsed(SseProbeEvent)) errors.Error!void {
+    // Parser owns Parsed lifetime (defer deinit in dispatch).
+    _ = p;
+}
+
+test "sse strict: missing DONE is HttpError" {
+    const gpa = std.testing.allocator;
+    feedStrictSseForTest(gpa, SseProbeEvent,
+        \\data: {"id":"1"}
+        \\
+    , noopSseEvent, null, null, null) catch |err| {
+        try std.testing.expect(err == error.HttpError);
+        return;
+    };
+    return error.TestUnexpectedResult;
+}
+
+test "sse strict: DONE then more data is HttpError" {
+    const gpa = std.testing.allocator;
+    feedStrictSseForTest(gpa, SseProbeEvent,
+        \\data: {"id":"1"}
+        \\
+        \\data: [DONE]
+        \\
+        \\data: {"id":"2"}
+        \\
+    , noopSseEvent, null, null, null) catch |err| {
+        try std.testing.expect(err == error.HttpError);
+        return;
+    };
+    return error.TestUnexpectedResult;
+}
+
+test "sse strict: clean DONE succeeds and on_done once" {
+    const gpa = std.testing.allocator;
+    var done_count: u32 = 0;
+    try feedStrictSseForTest(gpa, SseProbeEvent,
+        \\data: {"id":"1"}
+        \\
+        \\data: [DONE]
+        \\
+    , noopSseEvent, null, struct {
+        fn d(ctx: ?*anyopaque) errors.Error!void {
+            const c: *u32 = @ptrCast(@alignCast(ctx.?));
+            c.* += 1;
+        }
+    }.d, &done_count);
+    try std.testing.expectEqual(@as(u32, 1), done_count);
+}
+
+test "sse strict: unterminated event at EOF is HttpError" {
+    const gpa = std.testing.allocator;
+    feedStrictSseForTest(gpa, SseProbeEvent,
+        \\data: {"id":"1"}
+    , noopSseEvent, null, null, null) catch |err| {
+        try std.testing.expect(err == error.HttpError);
+        return;
+    };
+    return error.TestUnexpectedResult;
+}
+
+test "sse strict: malformed JSON is DeserializeError" {
+    const gpa = std.testing.allocator;
+    feedStrictSseForTest(gpa, SseProbeEvent,
+        \\data: {not-json
+        \\
+        \\data: [DONE]
+        \\
+    , noopSseEvent, null, null, null) catch |err| {
+        try std.testing.expect(err == error.DeserializeError);
+        return;
+    };
+    return error.TestUnexpectedResult;
 }
 
 pub fn appendQueryParam(
@@ -759,7 +869,7 @@ test "multipart builder emits boundary and fields consistently" {
     try std.testing.expectEqualStrings(expected, body);
 }
 
-test "sse parser ignores [DONE], dispatches on blank line, and supports split chunks" {
+test "sse parser dispatches on blank line, supports multi data: lines, and [DONE]" {
     const EventPayload = struct {
         a: i64,
         b: i64,
@@ -789,8 +899,9 @@ test "sse parser ignores [DONE], dispatches on blank line, and supports split ch
     );
     defer parser.deinit();
 
+    // SSE multi-line events use multiple `data:` lines (joined with \n).
     try parser.onChunk("data: { \"a\": 1,\r\n");
-    try parser.onChunk(" \"b\": 2 }\r\n");
+    try parser.onChunk("data:  \"b\": 2 }\r\n");
     try parser.onChunk("\r\n");
     try std.testing.expectEqual(@as(usize, 1), state.count);
     try std.testing.expectEqual(@as(i64, 1), state.a);
@@ -798,9 +909,8 @@ test "sse parser ignores [DONE], dispatches on blank line, and supports split ch
 
     try parser.onChunk("data: [DONE]\r\n");
     try parser.onChunk("\r\n");
+    try std.testing.expect(parser.done);
     try std.testing.expectEqual(@as(usize, 1), state.count);
-    try std.testing.expectEqual(@as(i64, 1), state.a);
-    try std.testing.expectEqual(@as(i64, 2), state.b);
 }
 
 test "sse parser reports stream completion via done callback" {
@@ -847,7 +957,7 @@ test "sse parser reports stream completion via done callback" {
     try std.testing.expect(parser.done);
 }
 
-test "sse parser marks stream complete on flush when no [DONE] token" {
+test "sse parser requires [DONE]; flush without marker is HttpError" {
     const EventPayload = struct {
         value: i64,
     };
@@ -884,10 +994,11 @@ test "sse parser marks stream complete on flush when no [DONE] token" {
 
     try parser.onChunk("data: {\"value\": 100}\r\n");
     try parser.onChunk("\r\n");
-    try parser.flush();
+    // Strict: do not fabricate completion on EOF without [DONE].
+    try std.testing.expectError(error.HttpError, parser.flush());
     try std.testing.expectEqual(@as(i64, 100), state.value);
-    try std.testing.expectEqual(@as(usize, 1), state.done_called);
-    try std.testing.expect(parser.done);
+    try std.testing.expectEqual(@as(usize, 0), state.done_called);
+    try std.testing.expect(!parser.done);
 }
 
 test "sse parser propagates callback errors" {

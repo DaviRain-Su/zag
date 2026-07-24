@@ -100,7 +100,10 @@ pub fn main(init: std.process.Init) !void {
     const content_for_followup = first[0] orelse "I am a helpful assistant.";
     const followup_extra_body = if (is_deepseek) null else extra_body;
     const follow_messages = [_]sdk.resources.chat.ChatMessage{
-        .{ .role = "user", .content = "你是一位诗歌写作助手。", },
+        .{
+            .role = "user",
+            .content = "你是一位诗歌写作助手。",
+        },
         .{
             .role = "assistant",
             .content = content_for_followup,

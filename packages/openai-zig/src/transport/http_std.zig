@@ -706,18 +706,17 @@ fn hasChatPrefixFlag(payload: []const u8, alloc: std.mem.Allocator) bool {
 }
 
 fn deepSeekBetaBase(allocator: std.mem.Allocator, base_url: []const u8) ![]u8 {
-    const trimmed_base = std.mem.trim(u8, base_url, " \t\n\r");
+    var trimmed_base = std.mem.trim(u8, base_url, " \t\n\r");
 
     if (trimmed_base.len == 0) {
         return allocator.dupe(u8, "https://api.deepseek.com/beta");
     }
 
+    // Strip trailing slash first so `/v1/` and `/v1` normalize identically.
+    trimmed_base = std.mem.trimEnd(u8, trimmed_base, "/");
+
     if (std.mem.endsWith(u8, trimmed_base, "/beta")) {
         return allocator.dupe(u8, trimmed_base);
-    }
-
-    if (std.mem.endsWith(u8, trimmed_base, "/")) {
-        return std.fmt.allocPrint(allocator, "{s}/beta", .{std.mem.trimEnd(u8, trimmed_base, "/")});
     }
 
     if (std.mem.endsWith(u8, trimmed_base, "/v1")) {
@@ -729,8 +728,7 @@ fn deepSeekBetaBase(allocator: std.mem.Allocator, base_url: []const u8) ![]u8 {
         return std.fmt.allocPrint(allocator, "{s}/beta", .{normalized_host_base});
     }
 
-    const normalized_base = std.mem.trimEnd(u8, trimmed_base, "/");
-    return std.fmt.allocPrint(allocator, "{s}/beta", .{normalized_base});
+    return std.fmt.allocPrint(allocator, "{s}/beta", .{trimmed_base});
 }
 
 pub fn resolveRequestBaseUrl(
@@ -1067,8 +1065,9 @@ test "nextRetryDelayMs uses exponential backoff, retry-after, and timeout cap" {
 
     opts.timeout_ms = null;
     try std.testing.expectEqual(@as(u64, 2500), nextRetryDelayMs(0, 2500, opts));
+    // base 500, retry-after 200 → delay 500; timeout cap 700 → still 500
     opts.timeout_ms = 700;
-    try std.testing.expectEqual(@as(u64, 700), nextRetryDelayMs(0, 200, opts));
+    try std.testing.expectEqual(@as(u64, 500), nextRetryDelayMs(0, 200, opts));
 }
 
 test "resolveRequestOptions uses transport defaults and per-request override" {

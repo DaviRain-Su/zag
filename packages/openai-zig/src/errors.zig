@@ -273,7 +273,8 @@ test "unexpectedStatus maps http status to specific errors" {
     };
 
     inline for (cases) |case| {
-        const got = try unexpectedStatus(.{ .status = case.status, .body = "{}" });
+        // unexpectedStatus returns an Error value (not an error-union).
+        const got = unexpectedStatus(.{ .status = case.status, .body = "{}" });
         try std.testing.expectEqual(case.expect, got);
     }
 }

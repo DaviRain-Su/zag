@@ -14,7 +14,7 @@ fn printToolCalls(allocator: std.mem.Allocator, tool_calls: []const sdk.generate
         std.debug.print("  [{d}] id={s} type={s} function={s}\n", .{
             index,
             tool_call.id,
-            tool_call.@"type",
+            tool_call.type,
             fn_obj.name,
         });
 

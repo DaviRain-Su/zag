@@ -308,6 +308,14 @@ pub fn feedSseBytes(state: *StreamState, chunk: []const u8) Error!void {
 fn handleSseLine(state: *StreamState, line: []const u8) Error!void {
     if (line.len == 0) return;
     if (std.mem.startsWith(u8, line, ":")) return; // comment
+    // After message_stop, only blank/comment lines are allowed.
+    if (state.saw_message_stop) {
+        if (std.mem.startsWith(u8, line, "event:") or std.mem.startsWith(u8, line, "data:")) {
+            state.err = error.InvalidResponse;
+            return error.InvalidResponse;
+        }
+        return;
+    }
     if (std.mem.startsWith(u8, line, "event:")) return; // type is also in data JSON
     if (!std.mem.startsWith(u8, line, "data:")) return;
     const data = std.mem.trim(u8, line["data:".len..], " \t");
@@ -326,6 +334,11 @@ fn handleSseLine(state: *StreamState, line: []const u8) Error!void {
 
 fn handleSseEvent(state: *StreamState, root: std.json.Value) Error!void {
     if (root != .object) return;
+    // No state mutation after terminal message_stop.
+    if (state.saw_message_stop) {
+        state.err = error.InvalidResponse;
+        return error.InvalidResponse;
+    }
     const o = root.object;
     const typ = if (o.get("type")) |t| (if (t == .string) t.string else "") else "";
 
@@ -435,6 +448,10 @@ fn handleSseEvent(state: *StreamState, root: std.json.Value) Error!void {
             }
         }
     } else if (std.mem.eql(u8, typ, "message_stop")) {
+        if (state.saw_message_stop) {
+            state.err = error.InvalidResponse;
+            return error.InvalidResponse;
+        }
         state.saw_message_stop = true;
         if (state.handler) |h| {
             h(state.handler_ctx, .done) catch {

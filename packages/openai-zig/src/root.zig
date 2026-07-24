@@ -7,3 +7,10 @@ pub const pagination = @import("pagination.zig");
 pub const Client = lib.Client;
 pub const initClient = lib.initClient;
 pub const _model_compatibility_tests = @import("model_compatibility_tests.zig");
+
+test {
+    // Pull SSE strict + lifecycle unit tests into the package suite.
+    _ = @import("resources/common.zig");
+    _ = @import("transport/lifecycle.zig");
+    _ = @import("transport/http.zig");
+}

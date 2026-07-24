@@ -413,3 +413,119 @@ test "contract: retryDelayMs saturates" {
 test "contract: mapSdkError Cancelled" {
     try std.testing.expectEqual(error.Cancelled, openai_compat.mapSdkError(error.Cancelled));
 }
+
+test "contract: anthropic event after message_stop is invalid" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var state: anthropic_messages.StreamState = .{
+        .arena = arena_impl.allocator(),
+        .handler = null,
+        .handler_ctx = null,
+    };
+    // message_stop then further content in same feed must error.
+    try std.testing.expectError(error.InvalidResponse, anthropic_messages.feedSseBytes(&state,
+        \\data: {"type":"message_stop"}
+        \\
+        \\data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}
+        \\
+    ));
+}
+
+test "contract: anthropic duplicate message_stop is invalid" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var state: anthropic_messages.StreamState = .{
+        .arena = arena_impl.allocator(),
+        .handler = null,
+        .handler_ctx = null,
+    };
+    try anthropic_messages.feedSseBytes(&state,
+        \\data: {"type":"message_stop"}
+        \\
+    );
+    try std.testing.expect(state.saw_message_stop);
+    try std.testing.expectError(error.InvalidResponse, anthropic_messages.feedSseBytes(&state,
+        \\data: {"type":"message_stop"}
+        \\
+    ));
+}
+
+test "contract: ordinary std no-control loopback 200" {
+    // Ordinary no-timeout request must work on both backends (capability PASS for std).
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    const ServerCtx = struct {
+        io: std.Io,
+        server: *std.Io.net.Server,
+        fn run(self: *@This()) void {
+            const stream = self.server.accept(self.io) catch return;
+            defer stream.close(self.io);
+            var rbuf: [2048]u8 = undefined;
+            var reader = stream.reader(self.io, &rbuf);
+            // Drain request lines until empty
+            while (true) {
+                const line = reader.interface.takeDelimiterInclusive('\n') catch break;
+                if (line.len <= 2) break; // \r\n
+            }
+            var w = stream.writer(self.io, &.{});
+            _ = w.interface.writeAll("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok") catch {};
+            w.interface.flush() catch {};
+        }
+    };
+    var ctx: ServerCtx = .{ .io = io, .server = &server };
+    const thr = try std.Thread.spawn(.{}, ServerCtx.run, .{&ctx});
+    defer thr.join();
+
+    var base_buf: [64]u8 = undefined;
+    const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
+    var client = try http.Client.initBearer(gpa, io, .{
+        .base_url = base_url,
+        .api_key = "k",
+        .model = "m",
+        .max_retries = 0,
+        .timeout_ms = null,
+    });
+    defer client.deinit();
+    const resp = try client.postJsonControl("/echo", "{}", types.RequestControl.none());
+    defer client.freeBody(resp.body);
+    try std.testing.expectEqual(@as(u16, 200), resp.status);
+    try std.testing.expectEqualStrings("ok", resp.body);
+}
+
+test "contract: OpenAI SSE strict via public feed helper" {
+    const openai = @import("openai_zig");
+    const gpa = std.testing.allocator;
+    const Ev = struct { id: ?[]const u8 = null };
+    openai.resources.common.feedStrictSseForTest(
+        gpa,
+        Ev,
+        "data: {\"id\":\"1\"}\n\n",
+        struct {
+            fn h(_: ?*anyopaque, p: std.json.Parsed(Ev)) openai.errors.Error!void {
+                _ = p; // parser owns Parsed deinit
+            }
+        }.h,
+        null,
+        null,
+        null,
+    ) catch |err| {
+        try std.testing.expect(err == error.HttpError);
+        return;
+    };
+    return error.TestUnexpectedResult;
+}
+
+test "contract: atomic tool reject empty name among multi" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectError(error.InvalidResponse, types.validateCompleteToolCalls(gpa, &.{
+        .{ .id = "a", .name = "ok", .arguments = "{}" },
+        .{ .id = "b", .name = "", .arguments = "{}" },
+    }));
+}

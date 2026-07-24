@@ -643,7 +643,10 @@ test "create message request content serializes text and parts variants" {
     var text_buf: [256]u8 = undefined;
     var text_fbs: std.Io.Writer = .fixed(&text_buf);
     const text_writer = &text_fbs;
-    { var __js: std.json.Stringify = .{ .writer = text_writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request_text); }
+    {
+        var __js: std.json.Stringify = .{ .writer = text_writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request_text);
+    }
     const text_json = text_fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, text_json, "\"content\":\"hello world\"") != null);
 
@@ -665,7 +668,10 @@ test "create message request content serializes text and parts variants" {
     var parts_buf: [256]u8 = undefined;
     var parts_fbs: std.Io.Writer = .fixed(&parts_buf);
     const parts_writer = &parts_fbs;
-    { var __js: std.json.Stringify = .{ .writer = parts_writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request_parts); }
+    {
+        var __js: std.json.Stringify = .{ .writer = parts_writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request_parts);
+    }
     const parts_json = parts_fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, parts_json, "\"content\":[") != null);
     try std.testing.expect(std.mem.indexOf(u8, parts_json, "\"type\":\"text\"") != null);
@@ -681,7 +687,10 @@ test "create moderation request input serializes scalar and array forms" {
     var text_buf: [256]u8 = undefined;
     var text_fbs: std.Io.Writer = .fixed(&text_buf);
     const text_writer = &text_fbs;
-    { var __js: std.json.Stringify = .{ .writer = text_writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request_text); }
+    {
+        var __js: std.json.Stringify = .{ .writer = text_writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request_text);
+    }
     const text_json = text_fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, text_json, "\"input\":\"A short statement.\"") != null);
 
@@ -697,7 +706,10 @@ test "create moderation request input serializes scalar and array forms" {
     var multi_buf: [256]u8 = undefined;
     var multi_fbs: std.Io.Writer = .fixed(&multi_buf);
     const multi_writer = &multi_fbs;
-    { var __js: std.json.Stringify = .{ .writer = multi_writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request_multi); }
+    {
+        var __js: std.json.Stringify = .{ .writer = multi_writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request_multi);
+    }
     const multi_json = multi_fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, multi_json, "\"input\":[\"First text.\",\"Second text.\"]") != null);
 }
@@ -1099,7 +1111,10 @@ test "generated create completion request serializes structured logit_bias map" 
     var fbs: [256]u8 = undefined;
     var stream: std.Io.Writer = .fixed(&fbs);
     const writer = &stream;
-    { var __js: std.json.Stringify = .{ .writer = writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request); }
+    {
+        var __js: std.json.Stringify = .{ .writer = writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request);
+    }
     const json = stream.buffered();
     try std.testing.expect(std.mem.indexOf(u8, json, "\"logit_bias\":{\"50256\":-100}") != null);
 }
@@ -1140,7 +1155,10 @@ test "generated create completion request serializes raw logit_bias passthrough"
     var fbs: [256]u8 = undefined;
     var stream: std.Io.Writer = .fixed(&fbs);
     const writer = &stream;
-    { var __js: std.json.Stringify = .{ .writer = writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request); }
+    {
+        var __js: std.json.Stringify = .{ .writer = writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request);
+    }
     const json = stream.buffered();
     try std.testing.expect(std.mem.indexOf(u8, json, "\"logit_bias\":{\"token\":\"value\"}") != null);
 }
@@ -1159,7 +1177,10 @@ test "generated chunking strategy request serializes static variant" {
     var fbs: [256]u8 = undefined;
     var stream: std.Io.Writer = .fixed(&fbs);
     const writer = &stream;
-    { var __js: std.json.Stringify = .{ .writer = writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request); }
+    {
+        var __js: std.json.Stringify = .{ .writer = writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request);
+    }
     const json = stream.buffered();
     try std.testing.expect(std.mem.indexOf(u8, json, "\"type\":\"static\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"static\":{\"max_chunk_size_tokens\":800,\"chunk_overlap_tokens\":128}") != null);
@@ -1622,7 +1643,10 @@ test "create embedding request input serializes scalar and array forms" {
     var text_buf: [256]u8 = undefined;
     var text_fbs: std.Io.Writer = .fixed(&text_buf);
     const text_writer = &text_fbs;
-    { var __js: std.json.Stringify = .{ .writer = text_writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request_text); }
+    {
+        var __js: std.json.Stringify = .{ .writer = text_writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request_text);
+    }
     const text_json = text_fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, text_json, "\"input\":\"Hello, world.\"") != null);
 
@@ -1641,7 +1665,10 @@ test "create embedding request input serializes scalar and array forms" {
     var multi_buf: [256]u8 = undefined;
     var multi_fbs: std.Io.Writer = .fixed(&multi_buf);
     const multi_writer = &multi_fbs;
-    { var __js: std.json.Stringify = .{ .writer = multi_writer, .options = .{ .emit_null_optional_fields = false } }; try __js.write(request_multi); }
+    {
+        var __js: std.json.Stringify = .{ .writer = multi_writer, .options = .{ .emit_null_optional_fields = false } };
+        try __js.write(request_multi);
+    }
     const multi_json = multi_fbs.buffered();
     try std.testing.expect(std.mem.indexOf(u8, multi_json, "\"input\":[\"first sentence\",\"second sentence\"]") != null);
 }

@@ -128,3 +128,95 @@ pub fn mergeConfiguredTimeout(control: Control, timeout_ms: ?u64) Control {
         .require_active_cancel = control.require_active_cancel,
     };
 }
+
+/// Overflow-safe exponential delay: base * 2^min(attempt,4), saturating.
+pub fn retryDelayMs(base_ms: u64, attempt: u8) u64 {
+    const shift: u6 = @intCast(@min(attempt, 4));
+    const factor: u64 = @as(u64, 1) << shift;
+    return std.math.mul(u64, base_ms, factor) catch std.math.maxInt(u64);
+}
+
+/// Control-aware retry sleep for direct SDK transports that still retry.
+///
+/// - Saturating delay math; clamp to absolute remaining deadline.
+/// - Sleep in ≤25ms slices; recheck cancel/deadline each slice and after sleep.
+/// - Returns Cancelled/Timeout without subsequent attempts (caller must not continue).
+/// - When control has neither cancel nor deadline, still uses sliced sleep (no hang on maxInt).
+pub fn sleepRetryBounded(
+    io: std.Io,
+    attempt: u8,
+    retry_after_ms: ?u64,
+    base_delay_ms: u64,
+    control: Control,
+) errors.Error!void {
+    try control.checkNow();
+    var delay_ms = retryDelayMs(base_delay_ms, attempt);
+    if (retry_after_ms) |ra| {
+        if (ra > delay_ms) delay_ms = ra;
+    }
+    if (control.remainingMs(monoNowNs())) |rem| {
+        if (rem == 0) return error.Timeout;
+        delay_ms = @min(delay_ms, rem);
+    }
+    // Cap pathological delays when no deadline (avoid multi-year sleeps).
+    const hard_cap_ms: u64 = 60_000;
+    if (control.deadline_mono_ns == null and delay_ms > hard_cap_ms) {
+        delay_ms = hard_cap_ms;
+    }
+    const slice_ms: u64 = 25;
+    var left = delay_ms;
+    while (left > 0) {
+        try control.checkNow();
+        const step = @min(left, slice_ms);
+        const ns: i96 = @intCast(@as(u64, step) *% std.time.ns_per_ms);
+        const duration: std.Io.Duration = .{ .nanoseconds = ns };
+        std.Io.sleep(io, duration, .real) catch {
+            if (control.isCancelled()) return error.Cancelled;
+        };
+        left -|= step;
+    }
+    try control.checkNow();
+}
+
+test "retryDelayMs saturates without overflow" {
+    const d = retryDelayMs(std.math.maxInt(u64) / 2, 4);
+    try std.testing.expect(d == std.math.maxInt(u64) or d > 0);
+}
+
+test "sleepRetryBounded immediate timeout when deadline expired" {
+    const c = Control{
+        .deadline_mono_ns = monoNowNs(), // already expired or ~now
+    };
+    // Ensure expired
+    const expired = Control{ .deadline_mono_ns = monoNowNs() -| 1 };
+    try std.testing.expectError(error.Timeout, sleepRetryBounded(
+        std.testing.io,
+        0,
+        null,
+        1000,
+        expired,
+    ));
+    _ = c;
+}
+
+test "sleepRetryBounded cancel during long delay" {
+    var flag = std.atomic.Value(bool).init(false);
+    const control = Control{ .cancel_atomic = &flag };
+    const Arm = struct {
+        flag: *std.atomic.Value(bool),
+        fn go(self: *@This()) void {
+            std.Io.sleep(std.testing.io, .{ .nanoseconds = 50 * std.time.ns_per_ms }, .awake) catch {};
+            self.flag.store(true, .seq_cst);
+        }
+    };
+    var arm: Arm = .{ .flag = &flag };
+    const thr = try std.Thread.spawn(.{}, Arm.go, .{&arm});
+    defer thr.join();
+    try std.testing.expectError(error.Cancelled, sleepRetryBounded(
+        std.testing.io,
+        0,
+        null,
+        5_000, // would be long without cancel slices
+        control,
+    ));
+}

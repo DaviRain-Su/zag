@@ -26,14 +26,17 @@ pub fn main(init: std.process.Init) !void {
     });
     defer client.deinit();
 
-    const messages = [_]sdk.resources.chat.ChatMessage{ .{ .role = "user", .content = "用中文说你是谁" } };
+    const messages = [_]sdk.resources.chat.ChatMessage{.{ .role = "user", .content = "用中文说你是谁" }};
     var body_writer: std.Io.Writer.Allocating = .init(gpa);
     defer body_writer.deinit();
     const req = struct {
         model: []const u8,
         messages: []const sdk.resources.chat.ChatMessage,
     }{ .model = conf.model, .messages = &messages };
-    { var __js: std.json.Stringify = .{ .writer = &body_writer.writer, .options = .{} }; try __js.write(req); }
+    {
+        var __js: std.json.Stringify = .{ .writer = &body_writer.writer, .options = .{} };
+        try __js.write(req);
+    }
     const payload = body_writer.written();
 
     const headers = [_]std.http.Header{

@@ -359,7 +359,9 @@ fn buildCreateFileMultipartPayload(
     };
     defer file.close(file_io);
 
-    const file_size = file.stat(file_io) catch { return errors.Error.SerializeError; };
+    const file_size = file.stat(file_io) catch {
+        return errors.Error.SerializeError;
+    };
     const file_len = std.math.cast(usize, file_size.size) orelse return errors.Error.SerializeError;
     var __file_reader = file.reader(file_io, &.{});
     const file_data = __file_reader.interface.allocRemaining(allocator, .limited(file_len)) catch {

@@ -1004,9 +1004,9 @@ test "h-trace: max_turns terminal ok=true stop_reason=max_turns" {
     try expectRunEnd(tr, true, "max_turns");
 }
 
-test "h-provider: unsupported_control timeout on mock" {
-    // When provider returns UnsupportedControl, loop Result is ok=false category.
+test "h-provider: unsupported_control exact run_end once" {
     const gpa = std.testing.allocator;
+    const io = std.testing.io;
     const Mock = struct {
         calls: *u32,
         fn chat(
@@ -1023,41 +1023,109 @@ test "h-provider: unsupported_control timeout on mock" {
     };
     var calls: u32 = 0;
     var mock: Mock = .{ .calls = &calls };
-    var agent = Agent.init(gpa, std.testing.io, .{
+    var agent = Agent.init(gpa, io, .{
         .ptr = &mock,
         .vtable = &.{ .chat = Mock.chat },
-    }, .{ .permission_mode = .yolo, .chat_retries = 3 });
+    }, .{ .permission_mode = .yolo, .chat_retries = 3, .verbose = false });
     defer agent.deinit();
-    var session = try Session.start(gpa, std.testing.io, .{ .base_system = "sys" });
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
     defer session.deinit();
     const result = try agent.reply(&session, "hi");
     try std.testing.expectEqual(loop.StopReason.unsupported_control, result.stop_reason);
     try std.testing.expectEqual(@as(u32, 1), calls); // not retried
+    // system + user only; no assistant/tool after failure.
+    for (session.transcript.items()) |m| {
+        try std.testing.expect(m.role == .system or m.role == .user);
+    }
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "unsupported_control");
 }
 
-test "h-provider: timeout terminal ok=false" {
+test "h-provider: timeout exact run_end once" {
     const gpa = std.testing.allocator;
+    const io = std.testing.io;
     const Mock = struct {
+        calls: *u32,
         fn chat(
-            _: *anyopaque,
+            ptr: *anyopaque,
             _: std.mem.Allocator,
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
         ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
             return error.Timeout;
         }
     };
-    var agent = Agent.init(gpa, std.testing.io, .{
-        .ptr = undefined,
+    var calls: u32 = 0;
+    var mock: Mock = .{ .calls = &calls };
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &mock,
         .vtable = &.{ .chat = Mock.chat },
-    }, .{ .permission_mode = .yolo, .trace_path = null });
+    }, .{ .permission_mode = .yolo, .chat_retries = 5, .verbose = false });
     defer agent.deinit();
-    // Memory-only trace via force buffer - use null path but still check stop_reason
-    var session = try Session.start(gpa, std.testing.io, .{ .base_system = "sys" });
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
     defer session.deinit();
     const result = try agent.reply(&session, "hi");
     try std.testing.expectEqual(loop.StopReason.timeout, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), calls);
+    for (session.transcript.items()) |m| {
+        try std.testing.expect(m.role == .system or m.role == .user);
+    }
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "timeout");
+}
+
+test "h-provider: retryable error exact chat_retries+1 attempts" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const Mock = struct {
+        calls: *u32,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
+            return error.RateLimited;
+        }
+    };
+    var calls: u32 = 0;
+    var mock: Mock = .{ .calls = &calls };
+    const retries: u8 = 2;
+    var agent = Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .chat_retries = retries,
+        .retry_base_delay_ms = 1,
+        .verbose = false,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.ProviderFailed, err);
+    try std.testing.expectEqual(@as(u32, retries + 1), calls);
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "provider_error");
 }
 
 test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {

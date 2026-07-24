@@ -35,6 +35,7 @@ const user_balance_mod = @import("resources/user_balance.zig");
 const skills_mod = @import("resources/skills.zig");
 const spend_mod = @import("resources/spend.zig");
 
+pub const common = @import("resources/common.zig");
 pub const audio = audio_mod;
 pub const chat = chat_mod;
 pub const models = models_mod;
