@@ -4,7 +4,7 @@
 |------|---------|
 | Code | `packages/zag-agent-core/src/loop.zig` |
 | Layer | Agent Core Kernel |
-| Current maturity | **L1+** — core loop/goldens exist; truthful failure/cancel lifecycle still open |
+| Current maturity | **L1+** — core loop/goldens + truthful failure terminals via facade; in-flight cancel still open |
 | Target | L2 (H) → L3 steer/read-only parallelism (C6) |
 | Reference | Pi agent loop; Nanocodex Turn |
 
@@ -27,7 +27,12 @@ Run one agent loop: build model view, request one assistant turn, execute reques
 
 Stable stop categories include:
 
-`completed | max_turns | cancelled | provider_error`
+`completed | max_turns | cancelled | provider_error | session_error | trace_error`
+
+- Loop returns Result for `completed` / `max_turns` / `cancelled`.
+- Loop returns `error.ProviderFailed` for provider/auth failures (facade commits `ok=false`, `provider_error`).
+- `session_error` / `trace_error` terminals are committed by the **facade** (session save / trace persistence), not scattered across loop return sites.
+- Mid-run trace emit failures surface as `error.TraceFailed` (never swallowed); they are distinct from explicit-path `TraceIoFailed`.
 
 Deadline/transport distinctions may be structured error details while preserving a stable top-level category.
 
@@ -59,7 +64,6 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 ## Current gaps
 
-- Provider failure is returned as `ProviderFailed`, while facade deinit may emit a successful trace terminal state.
 - In-flight provider/stream/tool cancellation is not supported.
 - High-level Observer event lifecycle is not yet an SDK contract.
 
@@ -69,10 +73,10 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 - [x] serial Tool order is tested.
 - [x] cancel between calls fills pending Tool results and remains resume-safe.
 - [x] at least two golden transcripts exist.
-- [ ] every normal/error path has one matching terminal state across API and trace.
+- [x] every normal/error path has one matching terminal state across API and trace (facade owner; h-trace-001).
 - [ ] in-flight provider cancellation/deadline is contract-tested.
 - [ ] partial Tool calls never execute after stream cancellation.
-- [ ] max-turns and failure trace semantics are stable.
+- [x] max-turns and failure trace semantics are stable.
 
 ## Loop vs Graph
 

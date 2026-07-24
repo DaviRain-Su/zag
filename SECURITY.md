@@ -42,7 +42,7 @@ Built-ins declare capabilities; custom Tool names require mandatory runtime capa
 
 ### Session and audit reliability
 
-Session durability is L2 (h-session-001). Trace lifecycle/schema and truthful terminal events remain open until the P0 trace task lands — do not treat incomplete trace as authoritative evidence of success.
+Session durability is L2 (h-session-001). Trace lifecycle is L2 for schema/terminal/persistence (h-trace-001): every started run has one truthful terminal; explicit path I/O is fail-closed (`TraceIoFailed`). Secret redaction before write is still P1 — do not treat unredacted traces as secret-safe.
 
 ## Secrets
 
@@ -55,9 +55,9 @@ P1 redaction must run before verbose logging, trace serialization, and session p
 
 ## Audit limitations
 
-Trace event order can help debug a run, but current trace has no schema version and does not yet guarantee exactly one truthful terminal state. The L2 contract is defined in [trace-observability](./docs/modules/trace-observability.md).
+Trace is versioned (`schema_version` on `run_start`, currently `1`) and the facade guarantees exactly one truthful `run_end` per started run. Contract: [trace-observability](./docs/modules/trace-observability.md).
 
-After H7 closes, a strict reader must be able to reconstruct permission, containment, shell policy, provider retry/usage, compaction, and terminal outcome. Explicit trace write failure must be observable.
+A strict reader can reconstruct permission, containment, shell policy, provider retry/usage, compaction, and terminal outcome from JSONL. Explicit path preflight/flush failure surfaces as `TraceIoFailed` / `InvalidPath` (not silent, not OOM). Paths are relative/workspace-lexical only — not an OS sandbox.
 
 ## OS sandbox boundary
 
@@ -72,7 +72,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~symlink-aware file containment~~ | **done** Phase H P0 h-workspace-001 |
 | ~~explicit Tool capabilities/fail-closed custom policy~~ | **done** Phase H P0 h-tool-runtime-001 |
 | ~~safe session open/save/concurrency~~ | **done** Phase H P0 h-session-001 |
-| truthful/versioned trace lifecycle | Phase H P0/P1 |
+| ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 (redaction still P1) |
 | systematic secret redaction | Phase H P1 |
 | enforced deadline/in-flight cancellation | Phase H P1 |
 | OS sandbox/network/process-tree enforcement | C7 |

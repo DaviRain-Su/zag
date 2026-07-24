@@ -64,11 +64,10 @@ Spec: [loop-turn](../modules/loop-turn.md).
 
 ### Remaining
 
-- provider/error/facade/trace terminal state agreement (P0 trace task);
 - in-flight provider/stream cancellation/deadline (P1 provider task);
 - partial Tool-call discard after cancellation.
 
-H1 remains **L1+**, not closed L2.
+Truthful API/error/trace terminals landed via facade (h-trace-001). H1 remains **L1+** until in-flight cancel closes.
 
 ## H2 — Edit/search/shell
 
@@ -169,14 +168,19 @@ Until std deadlines are implemented, production deadline users must use the docu
 
 Specs: [trace-observability](../modules/trace-observability.md), [evals](../quality/evals.md), [contracts](../quality/contracts.md).
 
-Required:
+### Landed (h-trace-001)
 
-- trace schema version;
-- exactly one truthful terminal event;
-- provider/save/trace/cancel/timeout terminal fixtures;
-- P0 persistence/tool/workspace failure fixtures;
+- `schema_version` on `run_start` (`current_schema_version = 1`);
+- facade-owned exactly one truthful terminal;
+- provider/save/trace/cancel/max_turns/completed fixtures;
+- typed `TraceIoFailed` / `InvalidPath` (not OOM);
+- deinit release-only (no false success).
+
+### Remaining
+
+- timeout terminal fixtures (P1 provider);
 - P1 compaction/redaction/provider cancellation fixtures;
-- std/curl and external-consumer gates in CI.
+- external-consumer gates in CI.
 
 ## Dependency order
 

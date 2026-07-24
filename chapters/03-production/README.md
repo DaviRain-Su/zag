@@ -103,17 +103,19 @@ execute → tool result → transcript + trace
 
 ## 4. Trace 字段
 
-每行 JSON：
+每行 JSON（`schema_version` 必现于 `run_start`；当前 = 1）：
 
 ```json
-{"seq":0,"kind":"run_start","version":"0.3.0","permission":"yolo","shell_policy":"protect"}
+{"seq":0,"kind":"run_start","schema_version":1,"version":"0.5.0","permission":"yolo","shell_policy":"protect"}
 {"seq":1,"kind":"turn","turn":1}
 {"seq":2,"kind":"tool_call","id":"…","name":"list_dir","arguments":"…"}
 {"seq":3,"kind":"jail_deny","name":"read_file","path":"/etc/passwd"}
-{"seq":4,"kind":"run_end","turns":1,"ok":true}
+{"seq":4,"kind":"run_end","turns":1,"ok":true,"stop_reason":"completed"}
 ```
 
-`kind` 全集：`run_start` · `turn` · `assistant` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `run_end`。
+`kind` 全集：`run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`。
+
+Production 合同（h-trace-001）：每个 started run 恰一个 `run_end`；provider/session/trace 失败 `ok=false`；显式 path 写失败 → `TraceIoFailed`（非静默）；`Agent.deinit` 不发明成功终态。详见 [trace-observability](../../docs/modules/trace-observability.md)。
 
 ---
 
@@ -141,7 +143,7 @@ execute → tool result → transcript + trace
 
 ## 8. 生产缺口
 
-File **symlink-aware containment** 已在 Phase H（h-workspace-001）落地；shell denylist + trace 仍未整行 L2。离 Workspace/Safety L2 见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**（redact、trace schema、doctor；OS sandbox 属 C7）。不要把 file jail 称为 OS sandbox。
+File **symlink-aware containment**（h-workspace-001）与 **truthful/versioned trace**（h-trace-001）已在 Phase H 落地；shell denylist + redaction 仍未整行 Safety L2。见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**（redact、doctor；OS sandbox 属 C7）。不要把 file jail 称为 OS sandbox。
 
 ---
 

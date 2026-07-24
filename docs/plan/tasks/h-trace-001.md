@@ -10,6 +10,8 @@ depends-on: []
 
 Make trace/run lifecycle truthful: exactly one terminal event, correct failure stop reasons, versioned schema, and observable trace persistence errors when tracing is explicitly enabled.
 
+> Implementation note (local worktree): facade-owned single terminal; `schema_version=1`; typed `TraceIoFailed`/`InvalidPath` (not OOM); save-before-success-terminal; deinit release-only; dual-backend suite green. **Keep status `in-progress`** — orchestrator marks done only after merge.
+
 # context
 
 - `docs/modules/loop-turn.md`

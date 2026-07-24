@@ -16,9 +16,9 @@
 |-----|--------------------|----------|
 | ~~lexical jail follows escaping workspace symlinks~~ | **closed** realpath Guard + handler dual enforcement | done `h-workspace-001` |
 | ~~custom Tool risk unknown→read~~ | **closed** D-007: mandatory capabilities | done |
-| failed provider run may be finalized `ok=true/completed` | audit says success for failure | P0 `h-trace-001` |
-| explicit trace I/O is swallowed | caller believes audit exists when it does not | P0 `h-trace-001` |
-| trace schema absent | readers cannot evolve safely | P0/P1 trace task |
+| ~~failed provider run finalized `ok=true/completed`~~ | **closed** facade single terminal | done `h-trace-001` |
+| ~~explicit trace I/O swallowed~~ | **closed** `TraceIoFailed` / preflight | done `h-trace-001` |
+| ~~trace schema absent~~ | **closed** `schema_version=1` on `run_start` | done `h-trace-001` |
 | no shared secret redaction | known keys may enter verbose/trace/session | P1 `h-redact-001` |
 | policy/containment/fault matrix incomplete | safety story is not regression evidence | [quality/evals](../quality/evals.md) |
 | no doctor/readiness | active controls/degradation are not visible | H5 |
@@ -29,4 +29,4 @@ OS sandbox/network/process-tree enforcement is C7, not Phase H. Trusted-host L2 
 
 ## Next
 
-Complete P0 Tool/workspace/trace tasks, then redaction/doctor and the security fixtures. See [Phase H](../phases/H-harden.md) and [C7](../phases/C7-sandbox.md).
+P0 Tool/workspace/trace closed. Next: redaction/doctor and remaining security fixtures. See [Phase H](../phases/H-harden.md) and [C7](../phases/C7-sandbox.md).

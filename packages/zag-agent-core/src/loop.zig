@@ -66,6 +66,9 @@ pub const RunError = error{
     OutOfMemory,
     /// Toolset failed closed validation before any provider call.
     InvalidToolset,
+    /// Mid-run trace event emission failed (not a silent drop).
+    /// Distinct from explicit-path flush failure (`trace.Error.TraceIoFailed`) owned by the facade.
+    TraceFailed,
 };
 
 pub const StopReason = enum {
@@ -73,6 +76,10 @@ pub const StopReason = enum {
     max_turns,
     cancelled,
     provider_error,
+    /// Session save failed after loop Result; terminal ok=false (facade).
+    session_error,
+    /// Trace persistence/preflight failure category for terminals (facade).
+    trace_error,
 
     pub fn name(self: StopReason) []const u8 {
         return switch (self) {
@@ -80,9 +87,19 @@ pub const StopReason = enum {
             .max_turns => "max_turns",
             .cancelled => "cancelled",
             .provider_error => "provider_error",
+            .session_error => "session_error",
+            .trace_error => "trace_error",
         };
     }
 };
+
+/// Map in-memory trace emit failures into the loop error set (never swallow).
+fn mapTraceEmit(err: trace_mod.Error) RunError {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.TraceIoFailed, error.InvalidPath => error.TraceFailed,
+    };
+}
 
 pub const Result = struct {
     final_text: []const u8,
@@ -140,7 +157,7 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
 
         turns += 1;
         if (deps_run.options.trace) |tr| {
-            tr.emitTurn(turns) catch {};
+            tr.emitTurn(turns) catch |err| return mapTraceEmit(err);
         }
 
         var turn_arena_impl: std.heap.ArenaAllocator = .init(deps_run.gpa);
@@ -162,7 +179,7 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
                 cb(deps_run.options.compaction_ctx, ev);
             }
             if (deps_run.options.trace) |tr| {
-                tr.emitCompaction(ev.dropped, ev.summary) catch {};
+                tr.emitCompaction(ev.dropped, ev.summary) catch |err| return mapTraceEmit(err);
             }
         }
 
@@ -172,8 +189,8 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         last_text = transcript.items()[transcript.items().len - 1].content;
         deps_run.options.observer.emit(.{ .assistant_text = last_text });
         if (deps_run.options.trace) |tr| {
-            tr.emitAssistant(last_text) catch {};
-            tr.emitUsage(turn) catch {};
+            tr.emitAssistant(last_text) catch |err| return mapTraceEmit(err);
+            tr.emitUsage(turn) catch |err| return mapTraceEmit(err);
         }
         if (turn.usage) |u| {
             usage_total.add(u);
@@ -259,7 +276,7 @@ fn executeOneTool(
 ) RunError!void {
     deps.options.observer.emit(.{ .tool_call = call });
     if (deps.options.trace) |tr| {
-        tr.emitToolCall(call) catch {};
+        tr.emitToolCall(call) catch |err| return mapTraceEmit(err);
     }
 
     // Unknown model-requested tool: soft-fail without name-based permission/jail.
@@ -300,7 +317,7 @@ fn executeOneTool(
         },
     });
     if (deps.options.trace) |tr| {
-        tr.emitPermission(call.name, caps.risk.name(), allowed, outcome.remembered) catch {};
+        tr.emitPermission(call.name, caps.risk.name(), allowed, outcome.remembered) catch |err| return mapTraceEmit(err);
     }
 
     if (!allowed) {
@@ -341,7 +358,7 @@ fn executeOneTool(
 
         if (shell_policy.check(deps.options.shell_policy, command) == .deny) {
             if (deps.options.trace) |tr| {
-                tr.emitShellDeny(command) catch {};
+                tr.emitShellDeny(command) catch |err| return mapTraceEmit(err);
             }
             if (deps.options.observer.on_event != null) {
                 std.log.warn("shell policy deny: {s}", .{command});
@@ -404,7 +421,7 @@ fn chatWithRetry(
             if (!retryable or !more) return error.ProviderFailed;
 
             if (deps.options.trace) |tr| {
-                tr.emitProviderRetry(attempt + 1, @errorName(err)) catch {};
+                tr.emitProviderRetry(attempt + 1, @errorName(err)) catch |terr| return mapTraceEmit(terr);
             }
             if (deps.options.observer.on_event != null) {
                 std.log.warn(
@@ -430,7 +447,7 @@ fn finishTool(
         .tool_result = .{ .name = call.name, .body = body },
     });
     if (deps.options.trace) |tr| {
-        tr.emitToolResult(call.name, body) catch {};
+        tr.emitToolResult(call.name, body) catch |err| return mapTraceEmit(err);
     }
     try transcript.appendToolResult(call.id, body);
 }
@@ -484,7 +501,7 @@ fn pathJailCheckOwned(
 
 fn emitJailDeny(deps: Deps, tool_name: []const u8, path: []const u8) RunError![]u8 {
     if (deps.options.trace) |tr| {
-        tr.emitJailDeny(tool_name, path) catch {};
+        tr.emitJailDeny(tool_name, path) catch |err| return mapTraceEmit(err);
     }
     if (deps.options.observer.on_event != null) {
         std.log.warn("jail deny {s} path={s}", .{ tool_name, path });

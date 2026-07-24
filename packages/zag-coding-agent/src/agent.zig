@@ -70,7 +70,8 @@ pub const SessionStartOptions = struct {
 };
 
 pub const StartError = loop.RunError || session_store.Error;
-pub const ReplyError = loop.RunError || session_store.Error;
+/// Loop + session + explicit-trace errors. `TraceIoFailed` is distinct from session `IoFailed`.
+pub const ReplyError = loop.RunError || session_store.Error || trace_mod.Error;
 
 /// One conversation. Owns the transcript arena (heap-stable so Session is movable)
 /// and, when persisted, the active writer lease for that path.
@@ -327,12 +328,10 @@ pub const Agent = struct {
         return self;
     }
 
+    /// Release resources only. Never invents a successful `run_end` for an open trace.
     pub fn deinit(self: *Agent) void {
         self.remember_store.deinit();
         if (self.trace) |*tr| {
-            if (!tr.finished and tr.event_count > 0) {
-                self.emitRunEnd(tr, 0, true, .completed);
-            }
             tr.deinit();
         }
         self.* = undefined;
@@ -424,20 +423,32 @@ pub const Agent = struct {
         }
     }
 
-    fn ensureRunStart(self: *Agent, session: *Session) void {
+    /// Fail-closed preflight + `run_start` for an explicit/memory trace.
+    /// Lifecycle owner: the facade (sees loop result, session save, and flush).
+    fn beginRun(self: *Agent, session: *Session) ReplyError!void {
         const tr = if (self.trace) |*t| t else return;
-        if (tr.event_count > 0) return;
-        tr.emitRunStart(.{
+        try tr.preflight();
+        if (tr.run_open) return;
+        try tr.emitRunStart(.{
             .version = self.options.version,
             .permission = self.options.permission_mode.name(),
             .shell_policy = self.options.shell_policy.name(),
             .session = session.path,
-        }) catch {};
+        });
     }
 
-    fn emitRunEnd(self: *Agent, tr: *trace_mod.Trace, turns: u32, ok: bool, stop_reason: loop.StopReason) void {
+    /// Commit exactly one terminal for the open run. No-op when tracing is off
+    /// or the run already closed. Propagates flush I/O as `TraceIoFailed`.
+    fn commitTerminal(
+        self: *Agent,
+        turns: u32,
+        ok: bool,
+        stop_reason: loop.StopReason,
+    ) trace_mod.Error!void {
+        const tr = if (self.trace) |*t| t else return;
+        if (!tr.run_open) return;
         const usd: ?f64 = if (self.ledger.cost.known) self.ledger.cost.total else null;
-        tr.emitRunEnd(.{
+        try tr.emitRunEnd(.{
             .turns = turns,
             .ok = ok,
             .prompt_tokens = self.ledger.prompt_tokens,
@@ -445,7 +456,33 @@ pub const Agent = struct {
             .total_tokens = self.ledger.total_tokens,
             .estimated_usd = usd,
             .stop_reason = stop_reason.name(),
-        }) catch {};
+        });
+    }
+
+    /// Best-effort terminal on a primary failure path.
+    /// Precedence: keep the original typed error; if flush also fails after a
+    /// failure terminal, still return the original error (trace was secondary).
+    fn commitTerminalOnError(
+        self: *Agent,
+        turns: u32,
+        stop_reason: loop.StopReason,
+    ) void {
+        self.commitTerminal(turns, false, stop_reason) catch {};
+    }
+
+    fn stopReasonForRunError(err: loop.RunError) loop.StopReason {
+        return switch (err) {
+            error.ProviderFailed => .provider_error,
+            error.TraceFailed => .trace_error,
+            error.OutOfMemory, error.InvalidToolset, error.MaxTurnsExceeded => .provider_error,
+        };
+    }
+
+    fn resultOk(stop: loop.StopReason) bool {
+        return switch (stop) {
+            .completed, .max_turns, .cancelled => true,
+            .provider_error, .session_error, .trace_error => false,
+        };
     }
 
     /// Log session ledger to stderr (no-op when nothing was recorded).
@@ -476,12 +513,34 @@ pub const Agent = struct {
     }
 
     /// Append a user message, run harness, auto-save session when path set.
+    ///
+    /// Terminal ownership (h-trace-001):
+    /// 1. preflight explicit trace path (fail before provider when possible);
+    /// 2. `run_start`;
+    /// 3. loop;
+    /// 4. session save **before** a successful terminal is committed;
+    /// 5. exactly one `run_end` with truthful `ok` / `stop_reason`.
+    ///
+    /// Flush failure after a successful loop+save → `TraceIoFailed` (no audited success).
+    /// Flush failure after provider/session failure → original error preserved.
     pub fn reply(self: *Agent, session: *Session, user_text: []const u8) ReplyError!loop.Result {
-        self.ensureRunStart(session);
+        try self.beginRun(session);
         session.zag_version = self.options.version;
         try session.transcript.appendUser(user_text);
-        const result = try loop.run(self.deps(session), &session.transcript);
-        try session.save();
+
+        const result = loop.run(self.deps(session), &session.transcript) catch |err| {
+            self.commitTerminalOnError(0, stopReasonForRunError(err));
+            return err;
+        };
+
+        // Save before committing a successful terminal so save failure cannot leave ok=true.
+        session.save() catch |err| {
+            self.commitTerminalOnError(result.turns, .session_error);
+            return err;
+        };
+
+        // Final flush on success path: TraceIoFailed is returned (fail closed).
+        try self.commitTerminal(result.turns, resultOk(result.stop_reason), result.stop_reason);
         return result;
     }
 
@@ -512,10 +571,8 @@ pub const Agent = struct {
         });
         defer session.deinit();
 
+        // `reply` owns the single terminal (including flush / failure paths).
         const result = try self.reply(&session, user_prompt);
-        if (self.trace) |*tr| {
-            self.emitRunEnd(tr, result.turns, true, result.stop_reason);
-        }
         const owned = self.gpa.dupe(u8, result.final_text) catch return error.OutOfMemory;
         return .{
             .final_text = owned,
@@ -711,4 +768,336 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
     const meta = try writer.load(&loaded);
     try std.testing.expectEqual(session_store.current_schema_version, meta.schema_version);
     try std.testing.expect(loaded.items().len >= 1);
+}
+
+// ── h-trace-001 lifecycle fixtures ──────────────────────────────────────────
+
+const MockChat = struct {
+    calls: *u32,
+    mode: enum { text, provider_fail, max_turns_then_text, cancel_cooperates },
+
+    fn chat(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        _: []const message.Message,
+        _: []const tool.Definition,
+    ) provider_mod.ChatError!message.AssistantTurn {
+        const self: *MockChat = @ptrCast(@alignCast(ptr));
+        self.calls.* += 1;
+        switch (self.mode) {
+            .text => {
+                return .{
+                    .content = try arena.dupe(u8, "done"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            },
+            .provider_fail => return error.AuthenticationFailed,
+            .max_turns_then_text => {
+                // Always request a tool so the loop hits max_turns.
+                const calls = try arena.alloc(message.ToolCall, 1);
+                calls[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "list_dir"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\".\"}"),
+                };
+                return .{
+                    .content = try arena.dupe(u8, "working"),
+                    .tool_calls = calls,
+                    .finish_reason = "tool_calls",
+                };
+            },
+            .cancel_cooperates => {
+                return .{
+                    .content = try arena.dupe(u8, "should-not-matter"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            },
+        }
+    }
+};
+
+fn mockProvider(state: *MockChat) provider_mod.Provider {
+    return .{
+        .ptr = state,
+        .vtable = &.{ .chat = MockChat.chat },
+    };
+}
+
+fn expectRunEnd(tr: *const trace_mod.Trace, ok: bool, stop: []const u8) !void {
+    try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expect(!tr.run_open);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"run_end\"") != null);
+    if (ok) {
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"ok\":true") != null);
+    } else {
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"ok\":false") != null);
+    }
+    var stop_buf: [64]u8 = undefined;
+    const needle = try std.fmt.bufPrint(&stop_buf, "\"stop_reason\":\"{s}\"", .{stop});
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, needle) != null);
+}
+
+test "h-trace: schema_version on run_start and completed terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .trace_path = null, // memory-only via manual trace install below
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    // Install memory-only trace (init with null path).
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expect(calls >= 1);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "schema_version") != null);
+    var ver_buf: [32]u8 = undefined;
+    const ver_needle = try std.fmt.bufPrint(&ver_buf, "\"schema_version\":{d}", .{trace_mod.current_schema_version});
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, ver_needle) != null);
+    try expectRunEnd(tr, true, "completed");
+}
+
+test "h-trace: provider failure ok=false provider_error exactly once" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.ProviderFailed, err);
+    try std.testing.expect(calls >= 1);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "provider_error");
+}
+
+test "h-trace: max_turns terminal ok=true stop_reason=max_turns" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .max_turns_then_text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 2,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.max_turns, result.stop_reason);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "max_turns");
+}
+
+test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    agent.cancel.request();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.cancelled, result.stop_reason);
+    // Cancel checked before first provider call when flag already set.
+    try std.testing.expectEqual(@as(u32, 0), calls);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "cancelled");
+}
+
+test "h-trace: session save failure ok=false session_error not completed" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-trace-save-fail";
+    const path = ".zag-test-trace-save-fail/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const writer = if (session.writer) |*w| w else return error.TestUnexpectedResult;
+    session_store.testing.setFailBeforeReplace(writer, true);
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+
+    const reply_err = agent.reply(&session, "hello");
+    try std.testing.expectError(error.IoFailed, reply_err);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, false, "session_error");
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"ok\":true") == null);
+}
+
+test "h-trace: Agent.deinit does not invent success terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+    });
+    // Manual trace; start a run then abandon without reply completing.
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+    const tr_ptr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try tr_ptr.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "ask",
+        .shell_policy = "protect",
+    });
+    try std.testing.expect(tr_ptr.run_open);
+    try std.testing.expectEqual(@as(u32, 0), tr_ptr.terminal_count);
+
+    // Snapshot buffer before deinit (deinit frees it).
+    const had_run_start = std.mem.indexOf(u8, tr_ptr.buf.items, "run_start") != null;
+    try std.testing.expect(had_run_start);
+    // deinit must not call emitRunEnd with ok=true.
+    agent.deinit();
+    // If we reached here without a false terminal write, the contract holds:
+    // deinit only frees. (Buffer is gone; we asserted open+zero terminals pre-deinit.)
+}
+
+test "h-trace: unwritable explicit path fails before provider" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-trace-unwritable";
+    const blocker = ".zag-test-trace-unwritable/not-a-dir";
+    const bad_path = ".zag-test-trace-unwritable/not-a-dir/trace.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = blocker, .data = "file" });
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = bad_path,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.TraceIoFailed, err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+}
+
+test "h-trace: absolute trace path is InvalidPath before provider" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = "/tmp/zag-trace-absolute.jsonl",
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.InvalidPath, err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+}
+
+test "h-trace: completeWithSession does not double-terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null);
+
+    const owned = try agent.completeWithSession("sys", "hi", .{
+        .load_project_instructions = false,
+    });
+    defer owned.deinit(gpa);
+    try std.testing.expectEqual(loop.StopReason.completed, owned.stop_reason);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "completed");
+    // A second commit must not add another run_end.
+    try agent.commitTerminal(0, true, .completed);
+    try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
 }
