@@ -4,6 +4,19 @@
 //! capabilities (`ToolDescriptor` / `ToolCapabilities`). Permission, workspace
 //! jail, shell policy, and tracing consume the descriptor — never tool names.
 //!
+//! ## API boundary (D-007)
+//!
+//! | Surface | Role |
+//! |---------|------|
+//! | `buildTool` / `Registration` | Recommended fallible registration for dynamic adapters |
+//! | `Toolset.initValidated` | Optional fallible wrap of a tool slice |
+//! | `loop.run` | **Security policy boundary** — always re-runs `validateTools` before any provider call |
+//! | `Registry.execute` / `executeTool` | Low-level raw dispatch only — no permission / jail / shell |
+//!
+//! Zig cannot prevent a host from forging a `Tool` literal with nonsense
+//! capabilities. Normal product path (`buildTool` → toolset → `loop.run`) cannot
+//! bypass validation: `loop.run` revalidates every time.
+//!
 //! ## Lifetime / ownership
 //!
 //! - **Instance** (`?*anyopaque`): borrowed. The caller owns the pointed-to
@@ -14,12 +27,22 @@
 //! - **`Tool` is copyable** (move-friendly by value). Copies share the same
 //!   borrowed instance pointer and string slices; there is no deep clone.
 //! - **Registration does not take ownership** of strings or the instance.
+//!
+//! ## Cancellation metadata
+//!
+//! `CancellationCapability` is explicit host-declared metadata (`.none` /
+//! `.cooperative`). Built-ins are `.none`. `.cooperative` means the handler
+//! claims it can observe cancel/deadline when the host provides that context —
+//! it is **not** proof that mid-flight cancel is implemented (see h-provider-001).
+//! `Context` does not currently carry a cancel flag.
 
 const std = @import("std");
 const Io = std.Io;
 const zt = @import("zag-types");
 
 pub const max_result_bytes: usize = 64 * 1024;
+/// Provider-facing tool name: 1..=max_tool_name_len, `[A-Za-z0-9_.-]`.
+pub const max_tool_name_len: usize = 64;
 
 /// Function tool definition (canonical; from zag-types).
 pub const Definition = zt.ToolDefinition;
@@ -40,6 +63,8 @@ pub const HandlerError = error{
 pub const RegistrationError = error{
     /// Dynamic adapter omitted capabilities (fail closed — never default risk).
     MissingCapabilities,
+    /// Present but contradictory / empty path_field / shell vs risk mismatch, etc.
+    InvalidCapabilities,
     InvalidName,
     InvalidSchema,
     DuplicateName,
@@ -60,8 +85,8 @@ pub const Handler = *const fn (
     arguments_json: []const u8,
 ) HandlerError![]u8;
 
-/// Validated local tool: mandatory descriptor + borrowed instance + handler.
-/// Capabilities are never optional on a registered Tool.
+/// Local tool value. Prefer constructing via `buildTool` so capabilities are checked.
+/// `loop.run` revalidates the slice regardless of construction path.
 pub const Tool = struct {
     descriptor: ToolDescriptor,
     instance: ?*anyopaque = null,
@@ -90,10 +115,11 @@ pub const Registration = struct {
     handler: Handler,
 };
 
-/// Build a validated `Tool` from a registration. Fail closed on missing metadata.
+/// Build a validated `Tool` from a registration. Fail closed on missing/invalid metadata.
 pub fn buildTool(allocator: std.mem.Allocator, reg: Registration) RegistrationError!Tool {
     const caps = reg.capabilities orelse return error.MissingCapabilities;
     try validateDefinition(allocator, reg.definition);
+    try validateCapabilities(caps);
     return .{
         .descriptor = .{
             .definition = reg.definition,
@@ -105,6 +131,7 @@ pub fn buildTool(allocator: std.mem.Allocator, reg: Registration) RegistrationEr
 }
 
 /// Convenience: stateless tool with a fully-specified descriptor (built-ins).
+/// Does **not** validate — call `validateTools` / use via `loop.run` for the policy boundary.
 pub fn stateless(descriptor: ToolDescriptor, handler: Handler) Tool {
     return .{
         .descriptor = descriptor,
@@ -113,9 +140,28 @@ pub fn stateless(descriptor: ToolDescriptor, handler: Handler) Tool {
     };
 }
 
-fn validateDefinition(allocator: std.mem.Allocator, def: Definition) RegistrationError!void {
-    const name = std.mem.trim(u8, def.name, " \t\r\n");
-    if (name.len == 0) return error.InvalidName;
+/// Validate capability fields (fail closed on contradictions / empty path claims).
+pub fn validateCapabilities(caps: ToolCapabilities) RegistrationError!void {
+    switch (caps.workspace) {
+        .none => {},
+        .path_field => |field| {
+            if (field.len == 0) return error.InvalidCapabilities;
+            if (std.mem.indexOfScalar(u8, field, 0) != null) return error.InvalidCapabilities;
+            // Reject leading/trailing whitespace and pure-whitespace names.
+            const trimmed = std.mem.trim(u8, field, " \t\r\n");
+            if (trimmed.len == 0 or trimmed.len != field.len) return error.InvalidCapabilities;
+        },
+    }
+
+    // Shell policy only applies to execute-risk tools that declare command args.
+    if (caps.shell == .command_argument and caps.risk != .execute) {
+        return error.InvalidCapabilities;
+    }
+}
+
+/// Validate model-visible definition: legal identifier + JSON object schema.
+pub fn validateDefinition(allocator: std.mem.Allocator, def: Definition) RegistrationError!void {
+    try validateToolName(def.name);
     if (def.parameters_json.len == 0) return error.InvalidSchema;
 
     const parsed = std.json.parseFromSlice(
@@ -126,12 +172,38 @@ fn validateDefinition(allocator: std.mem.Allocator, def: Definition) Registratio
     ) catch return error.InvalidSchema;
     defer parsed.deinit();
     if (parsed.value != .object) return error.InvalidSchema;
+
+    // If a JSON Schema `type` is present it must be the string "object"
+    // (compatible with built-ins and with bare `{}` test schemas).
+    if (parsed.value.object.get("type")) |type_val| {
+        switch (type_val) {
+            .string => |s| {
+                if (!std.mem.eql(u8, s, "object")) return error.InvalidSchema;
+            },
+            else => return error.InvalidSchema,
+        }
+    }
+}
+
+fn validateToolName(name: []const u8) RegistrationError!void {
+    if (name.len == 0 or name.len > max_tool_name_len) return error.InvalidName;
+    // No leading/trailing whitespace (exact identity for providers).
+    const trimmed = std.mem.trim(u8, name, " \t\r\n");
+    if (trimmed.len != name.len) return error.InvalidName;
+    if (std.mem.indexOfScalar(u8, name, 0) != null) return error.InvalidName;
+
+    for (name) |c| {
+        const ok = std.ascii.isAlphanumeric(c) or c == '_' or c == '-' or c == '.';
+        if (!ok) return error.InvalidName;
+    }
 }
 
 /// Validate a tool slice before the first provider call (fail closed).
+/// Always invoked by `loop.run`; also usable by hosts before assembly.
 pub fn validateTools(allocator: std.mem.Allocator, tools: []const Tool) RegistrationError!void {
     for (tools, 0..) |t, i| {
         try validateDefinition(allocator, t.descriptor.definition);
+        try validateCapabilities(t.descriptor.capabilities);
         const name = t.descriptor.definition.name;
         for (tools[0..i]) |prev| {
             if (std.mem.eql(u8, prev.descriptor.definition.name, name)) {
@@ -147,6 +219,12 @@ pub const Toolset = struct {
 
     pub fn registry(self: Toolset) Registry {
         return .{ .tools = self.tools };
+    }
+
+    /// Recommended fallible construction: validate then wrap (does not allocate/copy tools).
+    pub fn initValidated(allocator: std.mem.Allocator, tools: []const Tool) RegistrationError!Toolset {
+        try validateTools(allocator, tools);
+        return .{ .tools = tools };
     }
 };
 
@@ -170,9 +248,8 @@ pub const Registry = struct {
         return out;
     }
 
-    /// Run a tool by name. On unknown tools or handler errors, returns an
-    /// allocated soft-fail string (`error: code=… message=…`) so the loop never
-    /// hard-fails on tool mistakes.
+    /// Raw dispatch by name. **Does not** apply permission, jail, or shell policy
+    /// (those are `loop.run` responsibilities). Soft-fails unknown tools.
     pub fn execute(
         self: Registry,
         ctx: Context,
@@ -188,7 +265,7 @@ pub const Registry = struct {
         return self.executeTool(ctx, found, arguments_json);
     }
 
-    /// Execute a resolved tool (instance passed to handler).
+    /// Raw dispatch of a resolved tool (instance → handler). No policy gates.
     pub fn executeTool(
         self: Registry,
         ctx: Context,
@@ -332,14 +409,64 @@ test "buildTool rejects empty name and non-object schema" {
         .capabilities = caps,
         .handler = noop,
     }));
+    try std.testing.expectError(error.InvalidName, buildTool(gpa, .{
+        .definition = .{ .name = "bad name", .description = "", .parameters_json = "{}" },
+        .capabilities = caps,
+        .handler = noop,
+    }));
     try std.testing.expectError(error.InvalidSchema, buildTool(gpa, .{
         .definition = .{ .name = "t", .description = "", .parameters_json = "[]" },
         .capabilities = caps,
         .handler = noop,
     }));
+    try std.testing.expectError(error.InvalidSchema, buildTool(gpa, .{
+        .definition = .{ .name = "t2", .description = "", .parameters_json = "{\"type\":\"array\"}" },
+        .capabilities = caps,
+        .handler = noop,
+    }));
 }
 
-test "validateTools detects duplicates" {
+test "validateCapabilities rejects empty path_field and shell/risk mismatch" {
+    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+        .risk = .read,
+        .workspace = .{ .path_field = "" },
+        .cancellation = .none,
+        .shell = .none,
+    }));
+    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+        .risk = .read,
+        .workspace = .{ .path_field = "  " },
+        .cancellation = .none,
+        .shell = .none,
+    }));
+    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+        .risk = .read,
+        .workspace = .{ .path_field = "path\x00" },
+        .cancellation = .none,
+        .shell = .none,
+    }));
+    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+        .risk = .read,
+        .workspace = .none,
+        .cancellation = .none,
+        .shell = .command_argument,
+    }));
+    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+        .risk = .write,
+        .workspace = .none,
+        .cancellation = .none,
+        .shell = .command_argument,
+    }));
+    // execute + command_argument is valid.
+    try validateCapabilities(.{
+        .risk = .execute,
+        .workspace = .none,
+        .cancellation = .none,
+        .shell = .command_argument,
+    });
+}
+
+test "validateTools detects duplicates and invalid forged tools" {
     const gpa = std.testing.allocator;
     const noop = struct {
         fn h(_: Context, _: ?*anyopaque, _: []const u8) HandlerError![]u8 {
@@ -359,6 +486,43 @@ test "validateTools detects duplicates" {
     });
     const tools = [_]Tool{ t, t };
     try std.testing.expectError(error.DuplicateName, validateTools(gpa, &tools));
+
+    // Direct literal forge with bad path_field — validateTools still fails closed.
+    const forged: Tool = .{
+        .descriptor = .{
+            .definition = .{ .name = "forged", .description = "", .parameters_json = "{}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .{ .path_field = "" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .handler = noop,
+    };
+    try std.testing.expectError(error.InvalidCapabilities, validateTools(gpa, &[_]Tool{forged}));
+}
+
+test "Toolset.initValidated rejects invalid caps" {
+    const gpa = std.testing.allocator;
+    const noop = struct {
+        fn h(_: Context, _: ?*anyopaque, _: []const u8) HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    }.h;
+    const forged: Tool = .{
+        .descriptor = .{
+            .definition = .{ .name = "x", .description = "", .parameters_json = "{}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .command_argument,
+            },
+        },
+        .handler = noop,
+    };
+    try std.testing.expectError(error.InvalidCapabilities, Toolset.initValidated(gpa, &[_]Tool{forged}));
 }
 
 test "registry definitions exclude runtime fields" {

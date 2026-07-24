@@ -22,7 +22,7 @@
 | Subsystem | Current | Evidence and blocker | L2 exit | L3 direction |
 |-----------|:-------:|----------------------|---------|--------------|
 | Loop / Turn | **L1+** | soft Tool errors、serial order、goldens、between-call cancel 已有；provider failure/terminal trace 与 in-flight cancel 未闭合 | API/error/trace terminal 一致；cancel/deadline 有界；≥2 goldens | steer、parallel read-only |
-| Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；Registration 缺 metadata fail-closed；Provider 仅收 ToolDefinition；unknown tool soft `unknown_tool` | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
+| Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；`buildTool`+`validateTools`+`loop.run` 对 missing/invalid caps fail-closed；path/shell 参数校验；Provider/WireProvider 仅 ToolDefinition；`.cooperative` 仅为声明（mid-flight cancel 属 h-provider-001） | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
 | Tools · read/search | **L1** | list/read/grep/glob + budgets 已有；symlink 可越界 | 所有 file Tool 经真实 containment；结果有界 | LSP/repo map integration |
 | Tools · write/edit | **L1+** | search_replace 唯一锚点、write_file、可选 diff 已有 | containment 下 stale/ambiguous 可恢复且不误写 | hashline/apply_patch、hunk review |
 | Tools · shell | **L1** | timeout/truncation/exit 基础存在；denylist 不是 sandbox；policy 选 shell 靠 descriptor.shell 非名称 | 统一错误形状、deadline/cancel、policy matrix | background job/process supervisor |

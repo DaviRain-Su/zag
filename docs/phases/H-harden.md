@@ -91,22 +91,26 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 ## H3 — Tool runtime / permissions
 
 Specs: [tool-runtime](../modules/tool-runtime.md), [permissions](../modules/permissions.md).
+Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [h-tool-runtime-001](../plan/tasks/h-tool-runtime-001.md) (**in-progress** until merge).
 
-### Landed
+### Landed (L2)
 
-- built-in read/write/execute matrix;
-- write-path remember and `--no-remember`;
-- Plan stub and permission trace event.
+- model `ToolDefinition` separated from runtime `ToolCapabilities` / `ToolDescriptor`;
+- stateful Tool instance pointer + instance-aware handler;
+- mandatory risk / workspace / cancellation / shell metadata (no default-to-read);
+- `buildTool` + `validateTools` fail closed; `loop.run` revalidates before provider;
+- Gate / plan / remember / jail / shell selection are descriptor-driven (no `riskOf(name)`);
+- custom write/execute/path/shell Tools share the same policy surface as built-ins;
+- Provider port / WireProvider receive only `[]ToolDefinition`;
+- write-path remember, Plan stub, permission trace with descriptor risk.
 
-### Remaining (P0)
+### Remaining (not H3 L2 blockers)
 
-- separate model `ToolDefinition` from runtime capabilities;
-- stateful Tool instance pointer/callback;
-- descriptor-derived risk/path/cancel metadata;
-- missing/invalid capability fails registration rather than defaulting to read;
-- custom mutating Tool follows the same gate as built-ins.
+- mid-flight cancel for `.cooperative` handlers (P1 [h-provider-001](../plan/tasks/h-provider-001.md));
+- full Plan UX / path-domain policies (L3 / capability);
+- opaque/C ABI plugins (non-goal for H).
 
-H3 remains **L1+**, not closed L2.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). Workspace symlink containment remains **L1** (H5 / h-workspace-001).
 
 ## H4 — Context / Session
 

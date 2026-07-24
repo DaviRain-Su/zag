@@ -49,24 +49,45 @@ A validated Tool owns or borrows:
 
 **Lifetime:** caller owns the instance and all borrowed descriptor strings (name, description, schema, `path_field` name). They must outlive every invocation. `Tool` is copyable by value; copies share the same borrowed pointers (no deep clone). Registration does not take ownership.
 
+## API boundary
+
+| Surface | Role |
+|---------|------|
+| `buildTool` / `Registration` | Recommended fallible registration for dynamic adapters |
+| `Toolset.initValidated` | Optional fallible wrap of a tool slice |
+| `loop.run` | **Security policy boundary** — always re-runs `validateTools` before any provider call |
+| `Registry.execute` / `executeTool` | Raw dispatch only — **no** permission / jail / shell |
+
+Zig cannot prevent a host from forging a `Tool` literal. Normal product path cannot bypass policy: `loop.run` revalidates definition **and** capabilities every run.
+
 ## Registration and execution
 
-1. **Public fallible boundary:** `tool.Registration` may carry optional `capabilities`; `tool.buildTool` validates name/schema and **fails with `MissingCapabilities`** when risk metadata is omitted. Static struct field omission is not enough for dynamic adapters.
-2. **Toolset validation:** `tool.validateTools` rejects invalid name/schema and duplicate names before the first provider call (`loop.run` → `error.InvalidToolset`).
-3. Validated `Tool` never carries optional capability fields.
-4. Send only `ToolDefinition[]` to the Provider (built per turn from the registry).
-5. `Registry.find` returns `?*const Tool`. Loop uses the same descriptor for permission, path jail, shell policy, trace, and execute.
-6. Unknown model-requested tools soft-fail as `unknown_tool` **without** name-based risk inference.
-7. Expected handler failures map to stable machine-readable tool-result shapes.
+1. **Public fallible boundary:** `tool.Registration` may carry optional `capabilities`; `tool.buildTool` validates name/schema/capabilities and fails with `MissingCapabilities` / `InvalidCapabilities` / `InvalidName` / `InvalidSchema`.
+2. **`validateCapabilities`** (called from `buildTool` and `validateTools`): rejects empty/whitespace/NUL `path_field`; rejects `.shell=.command_argument` unless `risk=execute`; other contradictions fail closed.
+3. **Toolset validation:** `tool.validateTools` also rejects duplicates; `loop.run` maps failure → `error.InvalidToolset` (provider call count = 0).
+4. Validated runtime path never carries optional capability fields.
+5. Send only `ToolDefinition[]` to the Provider (built per turn from the registry).
+6. `Registry.find` returns `?*const Tool`. Loop uses the **same** extracted path for permission + jail (single parse).
+7. When `workspace=path_field`, missing/non-string/malformed path args → soft `invalid_arguments` **before** permission/handler.
+8. When `shell=command_argument`, missing/non-string command → soft `invalid_arguments`; denylist deny → soft `shell_deny`; handler runs only after allow.
+9. Unknown model-requested tools soft-fail as `unknown_tool` **without** name-based risk inference.
+10. Expected handler failures map to stable machine-readable tool-result shapes.
+
+## Cancellation metadata
+
+`cancellation` is required metadata. Built-ins are `.none`. `.cooperative` declares that a handler **claims** it can observe cancel/deadline when the host supplies context — it does **not** implement mid-flight cancel by itself (P1 h-provider-001). `tool.Context` does not currently carry a cancel flag.
 
 ## Errors
 
 | Error | Boundary behavior |
 |-------|-------------------|
-| Missing/invalid risk or capabilities | Fail registration (`RegistrationError`); never infer read |
+| Missing capabilities | `MissingCapabilities` at `buildTool` |
+| Invalid capabilities (empty path_field, shell≠execute, …) | `InvalidCapabilities` at `buildTool` / `validateTools` |
+| Invalid name / non-object schema | `InvalidName` / `InvalidSchema` |
 | Duplicate / invalid toolset | `error.InvalidToolset` before provider (call count 0) |
 | Unknown requested tool | Soft tool result `unknown_tool` |
-| Invalid arguments | Soft tool result `invalid_arguments` |
+| Invalid path/command args (descriptor-required fields) | Soft `invalid_arguments` before handler |
+| Other invalid arguments | Soft tool result `invalid_arguments` |
 | Handler failure | Soft tool result `tool_failed` |
 | Host allocation failure | Typed run error |
 | Cancellation | Handler observes cancel per capability; between-tool cancel is soft `cancelled` |
@@ -76,10 +97,12 @@ A validated Tool owns or borrows:
 - [x] external stateful Tool increments instance state without globals;
 - [x] custom write/execute Tool is denied by a dangerous-tool deny gate;
 - [x] missing capability registration fails closed;
-- [x] malformed toolset fails before provider (provider call count = 0);
+- [x] invalid capabilities (forged Tool / empty path_field / shell≠execute) fail `validateTools` + `loop.run` before provider;
+- [x] invalid name/schema/duplicate fail closed;
+- [x] custom path: missing/non-string/malformed/escape → soft error, handler count 0;
+- [x] custom shell (non-`run_shell` name): missing/non-string/denied/allowed descriptor-driven;
 - [x] built-ins all declare descriptors (risk/workspace/cancellation/shell);
-- [x] provider serialization / port contains definition only;
-- [x] workspace enforcement selected by descriptor, not tool name;
+- [x] provider port + WireProvider→WireAdapter composition: definitions only;
 - [x] unknown model tool remains soft `unknown_tool`.
 
 ## Non-goals for H

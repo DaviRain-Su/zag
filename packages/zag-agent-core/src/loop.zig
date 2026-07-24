@@ -254,14 +254,22 @@ fn executeOneTool(
     const desc = found.descriptor;
     const caps = desc.capabilities;
 
-    const path_for_perm = workspace.pathFromDescriptor(
+    // Single path extraction for permission + jail (no re-parse drift).
+    // path_field tools: missing/non-string/malformed → soft invalid_arguments (handler never runs).
+    const path_owned = workspace.pathFromDescriptor(
         deps.tool_ctx.allocator,
         caps,
         call.arguments,
-    ) catch return error.OutOfMemory;
-    defer if (path_for_perm) |p| deps.tool_ctx.allocator.free(p);
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidArguments => {
+            try softInvalidArguments(deps, transcript, call, "path");
+            return;
+        },
+    };
+    defer if (path_owned) |p| deps.tool_ctx.allocator.free(p);
 
-    const outcome = deps.options.permission_gate.check(desc, call.arguments, path_for_perm);
+    const outcome = deps.options.permission_gate.check(desc, call.arguments, path_owned);
     const allowed = outcome.decision == .allow;
     deps.options.observer.emit(.{
         .permission = .{
@@ -288,7 +296,12 @@ fn executeOneTool(
     }
 
     if (caps.workspace.usesPath()) {
-        if (try pathJailCheck(deps, call, caps)) |deny_body| {
+        // path_owned is required when path_field is declared (validated above).
+        const path = path_owned orelse {
+            try softInvalidArguments(deps, transcript, call, "path");
+            return;
+        };
+        if (try pathJailCheckOwned(deps, call.name, path)) |deny_body| {
             defer deps.tool_ctx.allocator.free(deny_body);
             try finishTool(deps, transcript, call, deny_body);
             return;
@@ -296,7 +309,25 @@ fn executeOneTool(
     }
 
     if (caps.shell == .command_argument) {
-        if (try shellPolicyCheck(deps, call.arguments)) |deny_body| {
+        // Required command string; missing/non-string → soft invalid_arguments (handler never runs).
+        const command = tool.requireStringField(deps.tool_ctx.allocator, call.arguments, "command") catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidArguments, error.ToolFailed => {
+                try softInvalidArguments(deps, transcript, call, "command");
+                return;
+            },
+        };
+        defer deps.tool_ctx.allocator.free(command);
+
+        if (shell_policy.check(deps.options.shell_policy, command) == .deny) {
+            if (deps.options.trace) |tr| {
+                tr.emitShellDeny(command) catch {};
+            }
+            if (deps.options.observer.on_event != null) {
+                std.log.warn("shell policy deny: {s}", .{command});
+            }
+            const deny_body = shell_policy.deniedMessage(deps.tool_ctx.allocator, command) catch
+                return error.OutOfMemory;
             defer deps.tool_ctx.allocator.free(deny_body);
             try finishTool(deps, transcript, call, deny_body);
             return;
@@ -307,6 +338,24 @@ fn executeOneTool(
         return error.OutOfMemory;
     defer deps.tool_ctx.allocator.free(raw);
     try finishTool(deps, transcript, call, raw);
+}
+
+fn softInvalidArguments(
+    deps: Deps,
+    transcript: *transcript_mod.Transcript,
+    call: message.ToolCall,
+    field: []const u8,
+) RunError!void {
+    const detail = std.fmt.allocPrint(
+        deps.tool_ctx.allocator,
+        "invalid arguments for '{s}': missing or non-string required field '{s}'",
+        .{ call.name, field },
+    ) catch return error.OutOfMemory;
+    defer deps.tool_ctx.allocator.free(detail);
+    const body = tool_error.format(deps.tool_ctx.allocator, .invalid_arguments, detail) catch
+        return error.OutOfMemory;
+    defer deps.tool_ctx.allocator.free(body);
+    try finishTool(deps, transcript, call, body);
 }
 
 fn chatWithRetry(
@@ -366,52 +415,28 @@ fn finishTool(
     try transcript.appendToolResult(call.id, body);
 }
 
-/// Returns owned deny message, or null if path is OK / absent.
-fn pathJailCheck(
+/// Jail check on an already-extracted path (no second parse).
+/// Returns owned deny message, or null if path is OK.
+fn pathJailCheckOwned(
     deps: Deps,
-    call: message.ToolCall,
-    caps: zt.ToolCapabilities,
+    tool_name: []const u8,
+    path: []const u8,
 ) RunError!?[]u8 {
-    const path = workspace.pathFromDescriptor(
-        deps.tool_ctx.allocator,
-        caps,
-        call.arguments,
-    ) catch return error.OutOfMemory;
-    if (path == null) return null;
-    defer deps.tool_ctx.allocator.free(path.?);
-
-    workspace.checkToolPath(path.?) catch {
+    workspace.checkToolPath(path) catch {
         if (deps.options.trace) |tr| {
-            tr.emitJailDeny(call.name, path.?) catch {};
+            tr.emitJailDeny(tool_name, path) catch {};
         }
         if (deps.options.observer.on_event != null) {
-            std.log.warn("jail deny {s} path={s}", .{ call.name, path.? });
+            std.log.warn("jail deny {s} path={s}", .{ tool_name, path });
         }
-        return try workspace.deniedMessage(deps.tool_ctx.allocator, path.?);
+        return try workspace.deniedMessage(deps.tool_ctx.allocator, path);
     };
     return null;
 }
 
-fn shellPolicyCheck(deps: Deps, arguments_json: []const u8) RunError!?[]u8 {
-    const command = tool.requireStringField(deps.tool_ctx.allocator, arguments_json, "command") catch {
-        return null; // let the tool report invalid args
-    };
-    defer deps.tool_ctx.allocator.free(command);
-
-    if (shell_policy.check(deps.options.shell_policy, command) == .allow) return null;
-
-    if (deps.options.trace) |tr| {
-        tr.emitShellDeny(command) catch {};
-    }
-    if (deps.options.observer.on_event != null) {
-        std.log.warn("shell policy deny: {s}", .{command});
-    }
-    return try shell_policy.deniedMessage(deps.tool_ctx.allocator, command);
-}
-
 fn readOnlyDesc(name: []const u8) zt.ToolDescriptor {
     return .{
-        .definition = .{ .name = name, .description = "", .parameters_json = "{}" },
+        .definition = .{ .name = name, .description = "", .parameters_json = "{\"type\":\"object\"}" },
         .capabilities = .{
             .risk = .read,
             .workspace = .{ .path_field = "path" },
@@ -423,7 +448,7 @@ fn readOnlyDesc(name: []const u8) zt.ToolDescriptor {
 
 fn writeDesc(name: []const u8) zt.ToolDescriptor {
     return .{
-        .definition = .{ .name = name, .description = "", .parameters_json = "{}" },
+        .definition = .{ .name = name, .description = "", .parameters_json = "{\"type\":\"object\"}" },
         .capabilities = .{
             .risk = .write,
             .workspace = .{ .path_field = "path" },
@@ -1280,4 +1305,298 @@ test "unknown model tool soft-fails without permission inference" {
         }
     }
     try std.testing.expect(found);
+}
+
+test "forged invalid capabilities skip provider" {
+    const gpa = std.testing.allocator;
+    const noop = struct {
+        fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    }.h;
+
+    // Direct Tool literal with empty path_field — not via buildTool.
+    const forged: tool.Tool = .{
+        .descriptor = .{
+            .definition = .{ .name = "forged_path", .description = "", .parameters_json = "{}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .{ .path_field = "" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .handler = noop,
+    };
+    try std.testing.expectError(error.InvalidCapabilities, tool.validateTools(gpa, &[_]tool.Tool{forged}));
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return error.Unexpected;
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    try std.testing.expectError(error.InvalidToolset, run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &[_]tool.Tool{forged} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+    }, &transcript));
+    try std.testing.expectEqual(@as(u32, 0), mock.calls);
+
+    // shell/risk mismatch also blocked.
+    const shell_read: tool.Tool = .{
+        .descriptor = .{
+            .definition = .{ .name = "bad_shell", .description = "", .parameters_json = "{}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .command_argument,
+            },
+        },
+        .handler = noop,
+    };
+    mock.calls = 0;
+    try std.testing.expectError(error.InvalidToolset, run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &[_]tool.Tool{shell_read} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+    }, &transcript));
+    try std.testing.expectEqual(@as(u32, 0), mock.calls);
+}
+
+test "custom path tool missing path soft invalid_arguments without handler" {
+    const gpa = std.testing.allocator;
+
+    const PathTool = struct {
+        ran: bool = false,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.ran = true;
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var state: PathTool = .{};
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "my_path_reader",
+            .description = "custom",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = &state,
+        .handler = PathTool.handle,
+    })};
+
+    const cases = [_][]const u8{
+        "{}",
+        "{\"path\":1}",
+        "not-json",
+        "[]",
+    };
+
+    for (cases) |args| {
+        state.ran = false;
+        const Mock = struct {
+            calls: u32 = 0,
+            args: []const u8,
+            fn chat(
+                ptr: *anyopaque,
+                arena: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.calls += 1;
+                if (self.calls == 1) {
+                    const tc = try arena.alloc(message.ToolCall, 1);
+                    tc[0] = .{
+                        .id = try arena.dupe(u8, "c1"),
+                        .name = try arena.dupe(u8, "my_path_reader"),
+                        .arguments = try arena.dupe(u8, self.args),
+                    };
+                    return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+                }
+                return .{
+                    .content = try arena.dupe(u8, "soft"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+        };
+        var mock: Mock = .{ .args = args };
+        const provider = provider_mod.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        };
+        var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_impl.deinit();
+        var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+        try transcript.appendUser("x");
+        const result = try run(.{
+            .gpa = gpa,
+            .provider = provider,
+            .toolset = .{ .tools = &tools },
+            .tool_ctx = .{
+                .allocator = gpa,
+                .io = std.testing.io,
+                .cwd = std.Io.Dir.cwd(),
+            },
+            .options = .{ .permission_gate = .yolo() },
+        }, &transcript);
+        try std.testing.expectEqualStrings("soft", result.final_text);
+        try std.testing.expect(!state.ran);
+        var found = false;
+        for (transcript.items()) |m| {
+            if (m.role == .tool and tool_error.hasCode(m.content, .invalid_arguments)) found = true;
+        }
+        try std.testing.expect(found);
+    }
+}
+
+test "custom shell tool policy is descriptor driven not name" {
+    const gpa = std.testing.allocator;
+
+    const ShellTool = struct {
+        ran: bool = false,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            const cmd = try tool.requireStringField(ctx.allocator, arguments_json, "command");
+            defer ctx.allocator.free(cmd);
+            self.ran = true;
+            return std.fmt.allocPrint(ctx.allocator, "ran:{s}", .{cmd}) catch return error.OutOfMemory;
+        }
+    };
+    var state: ShellTool = .{};
+
+    // Intentionally not named run_shell — policy comes from shell=.command_argument.
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "my_exec",
+            .description = "custom shell",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .execute,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .command_argument,
+        },
+        .instance = &state,
+        .handler = ShellTool.handle,
+    })};
+
+    const Case = struct {
+        args: []const u8,
+        expect_code: []const u8,
+        expect_ran: bool,
+    };
+    const cases = [_]Case{
+        .{ .args = "{}", .expect_code = "invalid_arguments", .expect_ran = false },
+        .{ .args = "{\"command\":1}", .expect_code = "invalid_arguments", .expect_ran = false },
+        .{ .args = "{\"command\":\"rm -rf /\"}", .expect_code = "shell_deny", .expect_ran = false },
+        .{ .args = "{\"command\":\"echo ok\"}", .expect_code = "", .expect_ran = true },
+    };
+
+    for (cases) |c| {
+        state.ran = false;
+        const Mock = struct {
+            calls: u32 = 0,
+            args: []const u8,
+            fn chat(
+                ptr: *anyopaque,
+                arena: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.calls += 1;
+                if (self.calls == 1) {
+                    const tc = try arena.alloc(message.ToolCall, 1);
+                    tc[0] = .{
+                        .id = try arena.dupe(u8, "c1"),
+                        .name = try arena.dupe(u8, "my_exec"),
+                        .arguments = try arena.dupe(u8, self.args),
+                    };
+                    return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+                }
+                return .{
+                    .content = try arena.dupe(u8, "done"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+        };
+        var mock: Mock = .{ .args = c.args };
+        const provider = provider_mod.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        };
+        var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_impl.deinit();
+        var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+        try transcript.appendUser("shell");
+        const result = try run(.{
+            .gpa = gpa,
+            .provider = provider,
+            .toolset = .{ .tools = &tools },
+            .tool_ctx = .{
+                .allocator = gpa,
+                .io = std.testing.io,
+                .cwd = std.Io.Dir.cwd(),
+            },
+            .options = .{
+                .permission_gate = .yolo(),
+                .shell_policy = .protect,
+            },
+        }, &transcript);
+        try std.testing.expectEqualStrings("done", result.final_text);
+        try std.testing.expect(state.ran == c.expect_ran);
+        if (c.expect_code.len > 0) {
+            var found = false;
+            for (transcript.items()) |m| {
+                if (m.role == .tool and std.mem.indexOf(u8, m.content, c.expect_code) != null) found = true;
+            }
+            try std.testing.expect(found);
+        } else {
+            var found_ok = false;
+            for (transcript.items()) |m| {
+                if (m.role == .tool and std.mem.indexOf(u8, m.content, "ran:echo ok") != null) found_ok = true;
+            }
+            try std.testing.expect(found_ok);
+        }
+    }
 }

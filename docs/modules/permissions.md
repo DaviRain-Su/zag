@@ -20,7 +20,7 @@ ToolDescriptor → permission → workspace containment → shell policy → exe
 
 1. Product default is `ask`; production documentation never defaults to yolo.
 2. Write/execute cannot become read because a tool name is unknown.
-3. Every registered Tool has explicit runtime risk metadata; missing metadata fails closed at registration / toolset validation.
+3. Every registered Tool has explicit runtime risk metadata; missing/invalid metadata fails closed at `buildTool` / `validateTools` / `loop.run` (before provider).
 4. Denial is a machine-readable soft Tool result so the model may adapt.
 5. yolo bypasses confirmation only; it does not bypass workspace or shell/sandbox enforcement.
 6. `SessionKind.plan` blocks general write/execute even under yolo.
