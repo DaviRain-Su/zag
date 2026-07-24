@@ -18,8 +18,8 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 | Area | Status |
 |------|--------|
 | Phase H | **Not complete.** Functional foundations exist; P0/P1 correctness gates remain. |
-| P0 | Session, Tool descriptor, and **file symlink containment** complete; truthful trace lifecycle is in progress |
-| P1 | Compaction accounting, redaction, deadlines/cancel, Zig SDK gate, headless process gate |
+| P0 | **Complete:** session durability, Tool descriptor, file symlink containment, and truthful trace lifecycle |
+| P1 | Compaction accounting, provider deadline/cancel, and redaction are ready; integration, Zig SDK, and headless gates follow |
 | P2 | Sandbox/process supervisor and capability work after their dependencies |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
@@ -27,17 +27,16 @@ Priority definitions live only in the assessment. Module contracts live under `d
 ## Task DAG
 
 ```text
-done
+done P0
   h-session-001
   h-tool-runtime-001
   h-workspace-001
-in-progress P0
   h-trace-001
         │
-        ├─ h-session-001 + h-trace-001 ─► h-context-001
-        ├─ h-trace-001 ─────────────────► h-provider-001
-        └─ h-session-001 + h-trace-001 ─► h-redact-001
-                                                   │
+        ├─ ready P1: h-context-001
+        ├─ ready P1: h-provider-001
+        └─ ready P1: h-redact-001
+                         │
 all module P0/P1 tasks ─► h-integration-001
                               ├───────────────────► sdk-contract-001
                               └───────────────────► headless-001
@@ -52,10 +51,10 @@ all module P0/P1 tasks ─► h-integration-001
 | [h-session-001](./tasks/h-session-001.md) | P0 | done | Session open/save/concurrency |
 | [h-tool-runtime-001](./tasks/h-tool-runtime-001.md) | P0 | done | Tool descriptor + permission |
 | [h-workspace-001](./tasks/h-workspace-001.md) | P0 | done | Filesystem containment after Tool descriptor |
-| [h-trace-001](./tasks/h-trace-001.md) | P0 | in-progress | Trace/run terminal lifecycle |
-| [h-context-001](./tasks/h-context-001.md) | P1 | pending | Compaction accounting |
-| [h-provider-001](./tasks/h-provider-001.md) | P1 | pending | Deadline/in-flight cancellation |
-| [h-redact-001](./tasks/h-redact-001.md) | P1 | pending | Secret redaction |
+| [h-trace-001](./tasks/h-trace-001.md) | P0 | done | Trace/run terminal lifecycle |
+| [h-context-001](./tasks/h-context-001.md) | P1 | ready | Compaction accounting |
+| [h-provider-001](./tasks/h-provider-001.md) | P1 | ready | Deadline/in-flight cancellation |
+| [h-redact-001](./tasks/h-redact-001.md) | P1 | ready | Secret redaction |
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | pending | Phase H real-composition/E2E closeout |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |

@@ -1,7 +1,7 @@
 ---
 id: h-trace-001
 scope: phase-h/trace-lifecycle
-status: in-progress
+status: done
 priority: P0
 depends-on: []
 ---
@@ -10,7 +10,7 @@ depends-on: []
 
 Make trace/run lifecycle truthful: exactly one terminal event, correct failure stop reasons, versioned schema, and observable trace persistence errors when tracing is explicitly enabled.
 
-> Implementation note (local worktree): facade-owned single terminal; schema v1; Guard jail; `TraceSerializationFailed` ≠ OOM; UTF-8 fail-closed; non-finite USD omitted; transactional emitRunEnd with minimal fallback terminal; 8KiB stack / 1KiB reserve. **Keep status `in-progress`** — orchestrator marks done only after merge.
+> Completion: merged to `main`; facade-owned single terminal, schema v1, Guard jail, typed serialization/I/O failures, UTF-8 fail-closed handling, atomic persistence, and allocation-reserved fallback terminals pass under both HTTP backends.
 
 # context
 
