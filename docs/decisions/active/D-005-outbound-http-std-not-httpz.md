@@ -71,9 +71,18 @@ Evaluated 2026-07-24: [jiacai2050/zig-curl](https://github.com/jiacai2050/zig-cu
 
 - Build flag: **`-Dhttp_backend=std|curl`** (default **`std`**)
 - Facade: `packages/zag-ai/src/http.zig` → `http_std.zig` / `http_curl.zig`
-- Vendored bindings: `packages/zig-curl/` (v0.5.0 snapshot; see `ZAG.md`)
+- Dependency: **URL** in `build.zig.zon` → [zig-curl v0.5.0](https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz) (not vendored in-tree)
 - Scope: **zag-ai** HTTP only (Anthropic path). `openai-zig` transport still `std.http`
 - Link mode: `link_vendor=false` (system libcurl) for fast iteration
+
+If local `zig fetch` cannot reach GitHub, seed the cache then build:
+
+```bash
+curl -fsSL -o /tmp/zig-curl-0.5.0.tar.gz \
+  https://github.com/jiacai2050/zig-curl/archive/refs/tags/v0.5.0.tar.gz
+zig fetch file:///tmp/zig-curl-0.5.0.tar.gz
+zig build test -Dhttp_backend=curl
+```
 
 **Stance:** default stays std. Curl is an **opt-in** backend for comparison / unblock. Flip default only after live SSE + timeout bake-off and openai-zig parity (or shared transport).
 

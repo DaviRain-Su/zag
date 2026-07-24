@@ -29,7 +29,7 @@ agent-core / coding-agent / cli
               └─ anthropic_messages → zag-ai http (std | curl)
 ```
 
-Build: `zig build -Dhttp_backend=curl` (needs system libcurl; see D-005).
+Build: `zig build -Dhttp_backend=curl` (needs system libcurl + zig-curl via `build.zig.zon` URL; see D-005).
 ## Preferred API
 
 ```zig
