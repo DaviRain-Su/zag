@@ -1,7 +1,7 @@
 ---
 id: h-trace-001
 scope: phase-h/trace-lifecycle
-status: ready
+status: in-progress
 priority: P0
 depends-on: []
 ---

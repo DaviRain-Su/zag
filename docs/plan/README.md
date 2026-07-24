@@ -18,7 +18,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 | Area | Status |
 |------|--------|
 | Phase H | **Not complete.** Functional foundations exist; P0/P1 correctness gates remain. |
-| P0 | Session, Tool descriptor, and **file symlink containment** complete on branch; truthful trace lifecycle remains |
+| P0 | Session, Tool descriptor, and **file symlink containment** complete; truthful trace lifecycle is in progress |
 | P1 | Compaction accounting, redaction, deadlines/cancel, Zig SDK gate, headless process gate |
 | P2 | Sandbox/process supervisor and capability work after their dependencies |
 
@@ -30,9 +30,8 @@ Priority definitions live only in the assessment. Module contracts live under `d
 done
   h-session-001
   h-tool-runtime-001
-in-progress P0
   h-workspace-001
-ready P0
+in-progress P0
   h-trace-001
         │
         ├─ h-session-001 + h-trace-001 ─► h-context-001
@@ -52,8 +51,8 @@ all module P0/P1 tasks ─► h-integration-001
 |----|----------|--------|-------|
 | [h-session-001](./tasks/h-session-001.md) | P0 | done | Session open/save/concurrency |
 | [h-tool-runtime-001](./tasks/h-tool-runtime-001.md) | P0 | done | Tool descriptor + permission |
-| [h-workspace-001](./tasks/h-workspace-001.md) | P0 | in-progress | Filesystem containment after Tool descriptor |
-| [h-trace-001](./tasks/h-trace-001.md) | P0 | ready | Trace/run terminal lifecycle |
+| [h-workspace-001](./tasks/h-workspace-001.md) | P0 | done | Filesystem containment after Tool descriptor |
+| [h-trace-001](./tasks/h-trace-001.md) | P0 | in-progress | Trace/run terminal lifecycle |
 | [h-context-001](./tasks/h-context-001.md) | P1 | pending | Compaction accounting |
 | [h-provider-001](./tasks/h-provider-001.md) | P1 | pending | Deadline/in-flight cancellation |
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | pending | Secret redaction |
