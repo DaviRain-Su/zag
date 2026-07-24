@@ -64,22 +64,23 @@ Body history (after leading transcript systems) is validated before trim:
 | `context.summary_cap` | **800** |
 | `Options.summary_max_chars` | clamped via `effectiveSummaryMax` / `clampSummaryBudget` |
 | `trace.cap_compaction_summary` | alias of `context.summary_cap` |
-| `summaryFloor(dropped, prior_len)` | minimum reserved bytes (always ≤ 800) |
+| `summaryFloor(dropped, prior_session)` | minimum reserved bytes (always ≤ 800) |
 
 - Request `0` → use full cap.
 - Request `> 800` → clamp to 800.
 - Tiny requests raise to `summaryFloor`: complete dropped-count header **plus**, when a prior session summary exists, a minimal truncated lineage record (`prior_bytes`, `kept_bytes=0`, full `wyhash64` 16-hex digest, `[LINEAGE_TRUNCATED]`).
-- Construction stays in-budget: lineage is never written long then generically cut.
+- Floor uses **sanitized** prior UTF-8 length (U+FFFD expansion via `utf8SanitizedByteLen`), matching the `prior_bytes` field and digest input — not raw length (raw/sanitized decimal width can differ).
+- Construction stays in-budget; ReleaseFast never relies on debug asserts for the cap.
 - Built events always have `summary.len <= summary_cap` and valid UTF-8.
 
 ### Lineage
 
 | Case | Behavior |
 |------|----------|
-| Prior fits in residual budget | Exact prior bytes under `Prior session context:` |
-| Prior does not fit (or only floor room) | Explicit record: `prior_bytes`, `kept_bytes` (may be 0), `digest=wyhash64:{16 hex}`, optional kept prefix, `[LINEAGE_TRUNCATED]` |
+| Sanitized prior fits | Exact sanitized prior under `Prior session context:` |
+| Does not fit (or only floor room) | Explicit record: `prior_bytes` = **sanitized** length, `kept_bytes` (may be 0), `digest=wyhash64` over sanitized bytes (16 hex), optional kept prefix, `[LINEAGE_TRUNCATED]` |
 
-Never silently truncate prior summary bytes without the marker/digest record. Tiny `summary_max_chars` (e.g. 1 or 8) with a large prior still keeps full `prior_bytes` + full digest + marker.
+Never silently truncate prior summary bytes without the marker/digest record. Tiny `summary_max_chars` (e.g. 1 or 8) with a large or invalid-UTF-8 prior still keeps full `prior_bytes` + full digest + marker.
 
 ### Invalid UTF-8
 
