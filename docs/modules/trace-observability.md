@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{trace,observer}.zig`; run facade in coding-agent `agent.zig` |
-| Current maturity | **L2** (lifecycle/schema/persistence) — redaction still P1 (`h-redact-001`) |
+| Current maturity | **L2** (lifecycle/schema/atomic persistence) — redaction still P1 (`h-redact-001`) |
 | Target | L2 (H) → L3 dashboard (C9) |
 | Reference | Hyper telemetry/dashboard; SECURITY audit |
 
@@ -13,82 +13,79 @@ Trace is a versioned audit channel for reconstructing run decisions. Observer is
 
 ## Lifecycle invariants
 
-1. Every started run has exactly one terminal event (`run_end`).
-2. Terminal state is derived from the actual result/error, never from destructor fallback assumptions.
-3. `completed`, `max_turns`, `cancelled`, `provider_error`, `session_error`, and `trace_error` are distinguishable stop reasons.
-4. `run_end.ok=false` for every failed run (provider/session/trace failures; not for cooperative `cancelled` / normal `max_turns` / `completed`).
-5. `Agent.deinit` may release resources but must not invent `ok=true/completed`.
-6. If an explicit trace path cannot be persisted, the caller receives `error.TraceIoFailed` (or `InvalidPath`); silent audit loss is forbidden.
-7. Redaction occurs before event serialization/persistence (P1 `h-redact-001`).
+1. Every **started** run (`run_start` succeeded) has exactly one committed terminal event (`run_end`) for ordinary post-start failures and normal Results.
+2. Terminal state is derived from the actual result/error; `Agent.deinit` / `Trace.deinit` only release memory.
+3. Stable `stop_reason` values: `completed | max_turns | cancelled | provider_error | session_error | trace_error | out_of_memory | invalid_toolset`.
+4. `run_end.ok=false` for harness failures; clean cooperative `cancelled` and normal `max_turns` / `completed` use `ok=true`.
+5. Explicit path persistence is fail-closed: typed `TraceIoFailed` / `InvalidPath` (never OOM-mapped filesystem errors).
+6. **One reply = one run.** Explicit path atomically holds the **latest completed reply** only (not a lifetime accumulation).
+7. Redaction before serialize/persist is P1 (`h-redact-001`).
 
 ## Lifecycle owner
 
-The **coding-agent facade** (`Agent.reply` / `completeWithSession`) owns terminals because it sees:
+The **coding-agent facade** (`Agent.reply` / `completeWithSession`) owns terminals:
 
-- loop `Result` / `RunError`;
-- session save;
-- trace preflight + final flush.
+1. Reset run-local ledger + trace buffer; non-destructive preflight; reserve buffer capacity.
+2. `run_start` (run is started).
+3. `appendUser` / loop / session save — each caught; no terminal gaps on ordinary errors.
+4. Session save **before** a successful terminal is committed.
+5. Exactly one `run_end` with truthful `ok` / `stop_reason`.
 
-The loop emits mid-run events only; it does not scatter `run_end`. Duplicate `emitRunEnd` is a no-op (single terminal guard).
+The loop emits mid-run events only and propagates emit errors (`TraceFailed` / `OutOfMemory`); it does not scatter `run_end`.
 
-### Order on success
+### Stop-reason mapping (facade)
 
-1. preflight explicit path (if any);
-2. `run_start`;
-3. loop;
-4. **session save**;
-5. `run_end` + flush.
+| Primary error | `stop_reason` |
+|---------------|---------------|
+| `ProviderFailed` | `provider_error` |
+| `OutOfMemory` (incl. appendUser) | `out_of_memory` |
+| `InvalidToolset` | `invalid_toolset` |
+| Session save `IoFailed` | `session_error` |
+| Trace preflight/persist | `trace_error` (or no run if preflight before start) |
+| Mid-run emit `TraceFailed` | `trace_error` |
 
-Save failure cannot leave `ok=true/completed`: save runs before the success terminal is committed.
+Never map OOM / invalid toolset to `provider_error`.
 
-### Failure terminals
+### Fail-closed error precedence
 
-| Path | API error | `ok` | `stop_reason` |
-|------|-----------|:----:|---------------|
-| Provider/auth | `ProviderFailed` | false | `provider_error` |
-| Session save | `IoFailed` (session) | false | `session_error` |
-| Explicit path preflight/flush | `TraceIoFailed` / `InvalidPath` | — / false | preflight: no run; flush after success: error; flush after failure: original error kept |
-| Cancelled Result | (none) | true | `cancelled` |
-| Max turns Result | (none) | true | `max_turns` |
-| Completed Result | (none) | true | `completed` |
+If committing the **failure** terminal itself fails (serialization OOM or explicit-path `TraceIoFailed`), the **trace** error is returned rather than silently keeping only the primary. Documented so callers can distinguish “primary failed and audit also failed.”
 
-### Flush / preflight precedence
+### Flush / preflight / atomic design
 
-- **Preflight** (explicit path): validate relative workspace-safe path, create parents, probe write. Failure → typed error **before** provider work. No `run_start` when preflight fails first.
-- **Final flush after successful loop+save**: `TraceIoFailed` is returned (cannot report audited success without durable write). In-memory buffer still holds the truthful terminal.
-- **Final flush after provider/session failure**: original typed error is preserved; terminal is best-effort in memory. Trace I/O was secondary.
-- **Memory-only** (`path=null`): no filesystem; events stay in `Trace.buf` for tests/SDK.
+| Step | Behavior |
+|------|----------|
+| **Preflight** | Validate relative workspace-safe path; `createFileAtomic(..., replace=true)` then **deinit without replace**. Destination bytes unchanged. |
+| **Final persist** | Serialize full buffer → atomic temp (`replace=true`) → write → file-writer flush → optional test fault → `atomic.replace`. Failure → `TraceIoFailed`; prior destination unchanged. |
+| **Success persist fail** | Roll back in-memory `ok=true` line; keep one in-memory `ok=false, stop_reason=trace_error` when capacity allows; return `TraceIoFailed`. |
+| **Memory-only** (`path=null`) | No filesystem; events in `Trace.buf` for tests/SDK. |
+
+**Unavoidable limit:** an unwritable filesystem cannot durably record its own failure. Prior durable content is preserved; the failure terminal is best-effort in memory only.
+
+### Transactional `writeObj`
+
+Serialize a complete JSON line first, then `ensureUnusedCapacity`, then append and increment `event_count`. On any failure, buffer length and seq are unchanged (no sequence gap). Terminal commit does **not** mark finished/closed/count until serialization and (for explicit paths) atomic persistence succeed—or until the rolled-back in-memory failure terminal is committed after a persist fault.
 
 ### Path policy
 
-Trace paths use the same lexical relative/workspace rules as session paths (`workspace.checkToolPath`). Absolute, `..` escape, empty, and NUL paths → `InvalidPath`. This is **not** an OS sandbox and does not claim TOCTOU immunity (trusted-host model).
+Same lexical relative/workspace rules as session paths. Absolute / `..` / empty / NUL → `InvalidPath`. Not an OS sandbox; no TOCTOU claim (trusted-host).
+
+### Allocator honesty
+
+Before `run_start`, the facade reserves ~2KiB buffer capacity so a failure terminal can usually serialize under mild pressure. **Total allocator exhaustion after start may still leave no terminal** if even the reserved path cannot complete serialization; that case returns `OutOfMemory` and is not claimed as a hard L2 guarantee. Ordinary non-OOM failures always get one terminal in tests.
 
 ## Schema (L2)
 
-Exported constant: `trace.current_schema_version` (**1**).
+Exported: `trace.current_schema_version` (**1**).
 
-Every `run_start` includes:
+Every `run_start` includes `schema_version`, Zag `version`, `permission`, `shell_policy`, optional `session`.
 
-- `schema_version` (integer);
-- `version` (Zag package version string);
-- `permission`, `shell_policy`, optional `session`.
+### Compatibility
 
-### Compatibility policy
+- Additive optional fields within a version: OK; strict readers ignore unknown fields.
+- Unknown `schema_version`: fail in strict readers.
+- Breaking renames require a new schema version.
 
-- **Additive** optional fields within a schema version are allowed; strict readers ignore unknown fields.
-- **Unknown `schema_version`** must fail explicitly in strict readers (this package is a writer; readers are consumer-side).
-- Breaking field renames/removals require a new schema version.
-
-Minimum event kinds:
-
-`run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`
-
-`run_end` contains:
-
-- `turns`;
-- `ok`;
-- stable `stop_reason`;
-- available usage/cost totals (`prompt_tokens`, `completion_tokens`, `total_tokens`, optional `estimated_usd`).
+Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`.
 
 ## Public errors
 
@@ -96,33 +93,28 @@ Minimum event kinds:
 trace.Error = OutOfMemory | TraceIoFailed | InvalidPath
 ```
 
-- `TraceIoFailed` — create/write/flush/preflight filesystem failure (not mapped to OOM).
-- `InvalidPath` — non-relative / escape path.
-- Facade `ReplyError` includes `trace.Error` so CLI/SDK can distinguish session `IoFailed` from trace I/O.
+Facade `ReplyError` includes `trace.Error` so session `IoFailed` stays distinct from `TraceIoFailed`.
 
 ## Observer contract
 
-Observer already supports an opaque `ptr`; high-level Agent injection and lifecycle compatibility are part of the SDK gate. H stabilizes run/turn/tool terminal semantics before adding a broader event surface.
-
-Callbacks must not own borrowed event slices after the callback returns unless they copy them.
+Callbacks must not own borrowed event slices after return unless they copy them.
 
 ## L2 acceptance
 
-- [x] provider/auth failure produces exactly one `ok=false`, `provider_error` terminal event.
-- [x] complete/max-turns/cancel/save failure each produce one truthful terminal state.
-- [x] schema version and compatibility are contract-tested.
-- [x] permission, jail, shell, usage, compaction, and Tool results are replayable (events exist; redaction P1).
-- [x] explicit trace-path I/O failure is observable (`TraceIoFailed` / preflight).
-- [ ] secret fixtures are redacted before write (`h-redact-001`).
-- [x] SECURITY links to this schema/limitation.
+- [x] provider/auth failure → one `ok=false`, `provider_error`.
+- [x] complete / max_turns / cancel / session save / trace persist paths truthful.
+- [x] schema version contract-tested.
+- [x] non-destructive preflight + atomic replace; prior bytes preserved on fault.
+- [x] per-reply latest-run file/buffer semantics + run-local ledger.
+- [x] transactional writeObj under allocator failure.
+- [x] fail-closed precedence when failure-terminal persist fails.
+- [ ] secret redaction before write (`h-redact-001`).
+- [x] SECURITY links to this contract.
 
 ## L3
 
-- local usage/timing dashboard;
-- CI artifact conventions;
-- subagent correlation after C6.
+- local usage/timing dashboard; CI artifact conventions; subagent correlation after C6.
 
 ## Non-goals for H
 
-- Mandatory cloud telemetry
-- TUI/dashboard rendering
+- Mandatory cloud telemetry; TUI/dashboard rendering.

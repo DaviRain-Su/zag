@@ -10,7 +10,7 @@ depends-on: []
 
 Make trace/run lifecycle truthful: exactly one terminal event, correct failure stop reasons, versioned schema, and observable trace persistence errors when tracing is explicitly enabled.
 
-> Implementation note (local worktree): facade-owned single terminal; `schema_version=1`; typed `TraceIoFailed`/`InvalidPath` (not OOM); save-before-success-terminal; deinit release-only; dual-backend suite green. **Keep status `in-progress`** — orchestrator marks done only after merge.
+> Implementation note (local worktree): facade-owned single terminal; `schema_version=1`; non-destructive preflight + atomic replace; per-reply latest-run; transactional writeObj; fail-closed terminal precedence; truthful stop_reason map (incl. `out_of_memory` / `invalid_toolset`); deinit release-only. **Keep status `in-progress`** — orchestrator marks done only after merge.
 
 # context
 

@@ -27,12 +27,13 @@ Run one agent loop: build model view, request one assistant turn, execute reques
 
 Stable stop categories include:
 
-`completed | max_turns | cancelled | provider_error | session_error | trace_error`
+`completed | max_turns | cancelled | provider_error | session_error | trace_error | out_of_memory | invalid_toolset`
 
 - Loop returns Result for `completed` / `max_turns` / `cancelled`.
-- Loop returns `error.ProviderFailed` for provider/auth failures (facade commits `ok=false`, `provider_error`).
-- `session_error` / `trace_error` terminals are committed by the **facade** (session save / trace persistence), not scattered across loop return sites.
-- Mid-run trace emit failures surface as `error.TraceFailed` (never swallowed); they are distinct from explicit-path `TraceIoFailed`.
+- Loop returns `error.ProviderFailed` for provider/auth failures (facade → `ok=false`, `provider_error`).
+- Loop returns `error.InvalidToolset` / `error.OutOfMemory` / `error.TraceFailed` as typed errors (facade maps to `invalid_toolset` / `out_of_memory` / `trace_error` — **never** misclassified as `provider_error`).
+- `session_error` / `trace_error` terminals are committed by the **facade** only.
+- Mid-run trace emit failures are never swallowed (`mapTraceEmit` → `OutOfMemory` or `TraceFailed`).
 
 Deadline/transport distinctions may be structured error details while preserving a stable top-level category.
 

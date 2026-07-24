@@ -115,7 +115,7 @@ execute → tool result → transcript + trace
 
 `kind` 全集：`run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`。
 
-Production 合同（h-trace-001）：每个 started run 恰一个 `run_end`；provider/session/trace 失败 `ok=false`；显式 path 写失败 → `TraceIoFailed`（非静默）；`Agent.deinit` 不发明成功终态。详见 [trace-observability](../../docs/modules/trace-observability.md)。
+Production 合同（h-trace-001）：每 reply 一 run；显式 path 原子写 **最新完成 reply**；非破坏 preflight + atomic replace；provider/session/trace 失败 `ok=false` 且 stop_reason 不误标；写失败 → `TraceIoFailed`（不静默、不 OOM 伪装）；`Agent.deinit` 不发明成功终态。详见 [trace-observability](../../docs/modules/trace-observability.md)。
 
 ---
 

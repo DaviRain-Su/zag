@@ -80,6 +80,10 @@ pub const StopReason = enum {
     session_error,
     /// Trace persistence/preflight failure category for terminals (facade).
     trace_error,
+    /// Allocator exhaustion after run_start (facade).
+    out_of_memory,
+    /// Toolset failed closed validation (facade).
+    invalid_toolset,
 
     pub fn name(self: StopReason) []const u8 {
         return switch (self) {
@@ -89,6 +93,8 @@ pub const StopReason = enum {
             .provider_error => "provider_error",
             .session_error => "session_error",
             .trace_error => "trace_error",
+            .out_of_memory => "out_of_memory",
+            .invalid_toolset => "invalid_toolset",
         };
     }
 };

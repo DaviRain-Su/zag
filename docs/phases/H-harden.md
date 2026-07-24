@@ -171,8 +171,11 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 ### Landed (h-trace-001)
 
 - `schema_version` on `run_start` (`current_schema_version = 1`);
-- facade-owned exactly one truthful terminal;
-- provider/save/trace/cancel/max_turns/completed fixtures;
+- facade-owned exactly one truthful terminal per reply-run;
+- non-destructive preflight + atomic final replace (prior bytes preserved on fault);
+- per-reply buffer/ledger reset; durable path = latest completed reply;
+- transactional `writeObj`; fail-closed precedence when failure-terminal persist fails;
+- provider/save/trace/cancel/max_turns/completed + invalid_toolset fixtures;
 - typed `TraceIoFailed` / `InvalidPath` (not OOM);
 - deinit release-only (no false success).
 

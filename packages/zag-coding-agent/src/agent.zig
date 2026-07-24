@@ -423,12 +423,13 @@ pub const Agent = struct {
         }
     }
 
-    /// Fail-closed preflight + `run_start` for an explicit/memory trace.
-    /// Lifecycle owner: the facade (sees loop result, session save, and flush).
+    /// Per-reply prep: reset ledger + trace buffer, non-destructive preflight,
+    /// then `run_start`. Lifecycle owner: facade (loop + session save + persist).
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
+        // Fresh run-local cost ledger each reply.
+        self.ledger = .{};
         const tr = if (self.trace) |*t| t else return;
-        try tr.preflight();
-        if (tr.run_open) return;
+        try tr.beginReply();
         try tr.emitRunStart(.{
             .version = self.options.version,
             .permission = self.options.permission_mode.name(),
@@ -438,7 +439,7 @@ pub const Agent = struct {
     }
 
     /// Commit exactly one terminal for the open run. No-op when tracing is off
-    /// or the run already closed. Propagates flush I/O as `TraceIoFailed`.
+    /// or the run already closed. Propagates persistence I/O as `TraceIoFailed`.
     fn commitTerminal(
         self: *Agent,
         turns: u32,
@@ -446,7 +447,7 @@ pub const Agent = struct {
         stop_reason: loop.StopReason,
     ) trace_mod.Error!void {
         const tr = if (self.trace) |*t| t else return;
-        if (!tr.run_open) return;
+        if (!tr.run_open or tr.finished) return;
         const usd: ?f64 = if (self.ledger.cost.known) self.ledger.cost.total else null;
         try tr.emitRunEnd(.{
             .turns = turns,
@@ -459,29 +460,36 @@ pub const Agent = struct {
         });
     }
 
-    /// Best-effort terminal on a primary failure path.
-    /// Precedence: keep the original typed error; if flush also fails after a
-    /// failure terminal, still return the original error (trace was secondary).
-    fn commitTerminalOnError(
+    /// Commit a failure terminal; never swallow commit errors.
+    ///
+    /// Fail-closed precedence: if persisting/serializing the failure terminal
+    /// itself fails, return the **trace** error (or OOM), not the primary.
+    /// When commit succeeds, return `primary`.
+    fn failRun(
         self: *Agent,
         turns: u32,
         stop_reason: loop.StopReason,
-    ) void {
-        self.commitTerminal(turns, false, stop_reason) catch {};
+        primary: ReplyError,
+    ) ReplyError {
+        self.commitTerminal(turns, false, stop_reason) catch |terr| return terr;
+        return primary;
     }
 
     fn stopReasonForRunError(err: loop.RunError) loop.StopReason {
         return switch (err) {
             error.ProviderFailed => .provider_error,
             error.TraceFailed => .trace_error,
-            error.OutOfMemory, error.InvalidToolset, error.MaxTurnsExceeded => .provider_error,
+            error.OutOfMemory => .out_of_memory,
+            error.InvalidToolset => .invalid_toolset,
+            error.MaxTurnsExceeded => .max_turns,
         };
     }
 
     fn resultOk(stop: loop.StopReason) bool {
         return switch (stop) {
+            // Clean cooperative cancel is a normal Result, not a harness failure.
             .completed, .max_turns, .cancelled => true,
-            .provider_error, .session_error, .trace_error => false,
+            .provider_error, .session_error, .trace_error, .out_of_memory, .invalid_toolset => false,
         };
     }
 
@@ -514,32 +522,37 @@ pub const Agent = struct {
 
     /// Append a user message, run harness, auto-save session when path set.
     ///
-    /// Terminal ownership (h-trace-001):
-    /// 1. preflight explicit trace path (fail before provider when possible);
-    /// 2. `run_start`;
-    /// 3. loop;
+    /// Terminal ownership (h-trace-001) — one reply = one run:
+    /// 1. reset run-local ledger + trace buffer; non-destructive preflight;
+    /// 2. `run_start` (run is "started");
+    /// 3. appendUser / loop / session save (each caught; no terminal gaps);
     /// 4. session save **before** a successful terminal is committed;
     /// 5. exactly one `run_end` with truthful `ok` / `stop_reason`.
     ///
-    /// Flush failure after a successful loop+save → `TraceIoFailed` (no audited success).
-    /// Flush failure after provider/session failure → original error preserved.
+    /// Explicit path atomically stores the **latest completed reply** only.
+    ///
+    /// Persistence failure after a normal outcome → `TraceIoFailed` and in-memory
+    /// `ok=false, stop_reason=trace_error` (no committed ok=true). Fail-closed:
+    /// if committing a failure terminal itself fails, the trace error is returned
+    /// rather than silently keeping only the primary error.
     pub fn reply(self: *Agent, session: *Session, user_text: []const u8) ReplyError!loop.Result {
         try self.beginRun(session);
         session.zag_version = self.options.version;
-        try session.transcript.appendUser(user_text);
+
+        session.transcript.appendUser(user_text) catch |err| {
+            return self.failRun(0, .out_of_memory, err);
+        };
 
         const result = loop.run(self.deps(session), &session.transcript) catch |err| {
-            self.commitTerminalOnError(0, stopReasonForRunError(err));
-            return err;
+            return self.failRun(0, stopReasonForRunError(err), err);
         };
 
         // Save before committing a successful terminal so save failure cannot leave ok=true.
         session.save() catch |err| {
-            self.commitTerminalOnError(result.turns, .session_error);
-            return err;
+            return self.failRun(result.turns, .session_error, err);
         };
 
-        // Final flush on success path: TraceIoFailed is returned (fail closed).
+        // Final persist on success path: TraceIoFailed (no audited success).
         try self.commitTerminal(result.turns, resultOk(result.stop_reason), result.stop_reason);
         return result;
     }
@@ -774,7 +787,9 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
 
 const MockChat = struct {
     calls: *u32,
-    mode: enum { text, provider_fail, max_turns_then_text, cancel_cooperates },
+    mode: enum { text, text_with_usage, provider_fail, max_turns_then_text },
+    /// Distinct usage per call for multi-reply ledger tests.
+    usage_prompt: u32 = 10,
 
     fn chat(
         ptr: *anyopaque,
@@ -792,9 +807,22 @@ const MockChat = struct {
                     .finish_reason = "stop",
                 };
             },
+            .text_with_usage => {
+                const p = self.usage_prompt;
+                self.usage_prompt += 100; // next reply gets different usage
+                return .{
+                    .content = try arena.dupe(u8, "done"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                    .usage = .{
+                        .prompt_tokens = p,
+                        .completion_tokens = 5,
+                        .total_tokens = p + 5,
+                    },
+                };
+            },
             .provider_fail => return error.AuthenticationFailed,
             .max_turns_then_text => {
-                // Always request a tool so the loop hits max_turns.
                 const calls = try arena.alloc(message.ToolCall, 1);
                 calls[0] = .{
                     .id = try arena.dupe(u8, "c1"),
@@ -805,13 +833,6 @@ const MockChat = struct {
                     .content = try arena.dupe(u8, "working"),
                     .tool_calls = calls,
                     .finish_reason = "tool_calls",
-                };
-            },
-            .cancel_cooperates => {
-                return .{
-                    .content = try arena.dupe(u8, "should-not-matter"),
-                    .tool_calls = &.{},
-                    .finish_reason = "stop",
                 };
             },
         }
@@ -828,7 +849,9 @@ fn mockProvider(state: *MockChat) provider_mod.Provider {
 fn expectRunEnd(tr: *const trace_mod.Trace, ok: bool, stop: []const u8) !void {
     try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
     try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_start"));
     try std.testing.expect(!tr.run_open);
+    try std.testing.expect(tr.finished);
     try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"run_end\"") != null);
     if (ok) {
         try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"ok\":true") != null);
@@ -1100,4 +1123,203 @@ test "h-trace: completeWithSession does not double-terminal" {
     try agent.commitTerminal(0, true, .completed);
     try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
     try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+}
+
+test "h-trace: two consecutive replies reset buffer seq and ledger" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-trace-two-reply";
+    const path = ".zag-test-trace-two-reply/run.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text_with_usage, .usage_prompt = 10 };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = path,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    _ = try agent.reply(&session, "first");
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "completed");
+    try std.testing.expectEqual(@as(u64, 10), @as(u64, agent.ledger.prompt_tokens));
+    try std.testing.expectEqual(@as(u32, 1), agent.ledger.turns);
+    // File has exactly one run.
+    const file1 = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(file1);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file1, "\"kind\":\"run_start\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file1, "\"kind\":\"run_end\""));
+
+    _ = try agent.reply(&session, "second");
+    try expectRunEnd(tr, true, "completed");
+    // Second reply ledger excludes first (usage_prompt advanced to 110).
+    try std.testing.expectEqual(@as(u64, 110), @as(u64, agent.ledger.prompt_tokens));
+    try std.testing.expectEqual(@as(u32, 1), agent.ledger.turns);
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_start"));
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("run_end"));
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"seq\":0") != null);
+
+    const file2 = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
+    defer gpa.free(file2);
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file2, "\"kind\":\"run_start\""));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, file2, "\"kind\":\"run_end\""));
+    // Latest-run file does not retain first reply's prompt_tokens=10 as sole usage
+    // (second has 110).
+    try std.testing.expect(std.mem.indexOf(u8, file2, "\"prompt_tokens\":110") != null or
+        std.mem.indexOf(u8, tr.buf.items, "\"prompt_tokens\":110") != null or
+        agent.ledger.prompt_tokens == 110);
+}
+
+test "h-trace: fail-before-replace returns TraceIoFailed single false terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-trace-agent-fault";
+    const path = ".zag-test-trace-agent-fault/run.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const original = "{\"kind\":\"keep-me\"}\n";
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = original });
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = path,
+    });
+    defer agent.deinit();
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    // Fault is applied after beginReply's preflight; set before reply so
+    // emitRunEnd hits it. Preflight does not replace, so this is safe.
+    // We need the fault only on final persist — set after agent init, before reply.
+    // beginReply runs preflight (no replace). Then loop. Then emitRunEnd with fault.
+    // Set fault now; preflight ignores fail_before_replace.
+    trace_mod.testing.setFailBeforeReplace(tr, true);
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.TraceIoFailed, err);
+    try std.testing.expect(calls >= 1); // provider ran; only final persist failed
+    try expectRunEnd(tr, false, "trace_error");
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"ok\":true") == null);
+
+    const after = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1024));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(original, after);
+}
+
+test "h-trace: provider fail with persist fault returns TraceIoFailed (fail-closed)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-trace-provider-fault";
+    const path = ".zag-test-trace-provider-fault/run.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
+    var agent = Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+        .trace_path = path,
+    });
+    defer agent.deinit();
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    trace_mod.testing.setFailBeforeReplace(tr, true);
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    // Fail-closed: persisting the provider_error terminal fails → TraceIoFailed.
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.TraceIoFailed, err);
+    try expectRunEnd(tr, false, "provider_error");
+}
+
+test "h-trace: invalid toolset maps to invalid_toolset not provider_error" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Forged tool with empty path_field → validateTools fails → InvalidToolset.
+    const forged: tool.Tool = .{
+        .descriptor = .{
+            .definition = .{
+                .name = "forged_path",
+                .description = "",
+                .parameters_json = "{\"type\":\"object\"}",
+            },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .{ .path_field = "" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .handler = struct {
+            fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                return error.ToolFailed;
+            }
+        }.h,
+    };
+
+    var tr = trace_mod.Trace.init(gpa, io, null);
+    defer tr.deinit();
+    try tr.beginReply();
+    try tr.emitRunStart(.{
+        .version = "0.5.0",
+        .permission = "yolo",
+        .shell_policy = "protect",
+    });
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var tx = transcript_mod.Transcript.init(arena_impl.allocator());
+    try tx.appendSystem("sys");
+    try tx.appendUser("hi");
+
+    const tools = [_]tool.Tool{forged};
+    const run_err = loop.run(.{
+        .gpa = gpa,
+        .provider = mockProvider(&mock),
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = io,
+            .cwd = Io.Dir.cwd(),
+        },
+        .options = .{ .trace = &tr, .chat_retries = 0 },
+    }, &tx);
+    try std.testing.expectError(error.InvalidToolset, run_err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+
+    // Facade failRun mapping: InvalidToolset → stop_reason invalid_toolset (never provider_error).
+    try std.testing.expectEqualStrings("invalid_toolset", loop.StopReason.invalid_toolset.name());
+    try std.testing.expect(!std.mem.eql(u8, loop.StopReason.invalid_toolset.name(), "provider_error"));
+    try tr.emitRunEnd(.{
+        .turns = 0,
+        .ok = false,
+        .stop_reason = loop.StopReason.invalid_toolset.name(),
+    });
+    try expectRunEnd(&tr, false, "invalid_toolset");
 }

@@ -55,9 +55,9 @@ P1 redaction must run before verbose logging, trace serialization, and session p
 
 ## Audit limitations
 
-Trace is versioned (`schema_version` on `run_start`, currently `1`) and the facade guarantees exactly one truthful `run_end` per started run. Contract: [trace-observability](./docs/modules/trace-observability.md).
+Trace is versioned (`schema_version` on `run_start`, currently `1`). Each `Agent.reply` is one run; the explicit path atomically stores the **latest completed reply**. The facade commits exactly one truthful `run_end` for ordinary post-start failures and Results. Contract: [trace-observability](./docs/modules/trace-observability.md).
 
-A strict reader can reconstruct permission, containment, shell policy, provider retry/usage, compaction, and terminal outcome from JSONL. Explicit path preflight/flush failure surfaces as `TraceIoFailed` / `InvalidPath` (not silent, not OOM). Paths are relative/workspace-lexical only — not an OS sandbox.
+Preflight is non-destructive (atomic temp discarded without replace). Final write uses atomic replace; prior destination bytes are preserved on fault. Fail-closed: if the failure terminal cannot be persisted, the caller gets `TraceIoFailed` / OOM rather than a silent primary-only return. An unwritable filesystem cannot durably record its own failure — memory may hold `ok=false, stop_reason=trace_error` while disk is unchanged. Paths are relative/workspace-lexical only — not an OS sandbox.
 
 ## OS sandbox boundary
 
