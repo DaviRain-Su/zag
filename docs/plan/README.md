@@ -13,14 +13,14 @@ docs/plan/
 
 ## Current baseline
 
-The accepted planning baseline is [the 2026-07-24 production-floor assessment](./analysis/2026-07-24-production-floor-assessment.md).
+The accepted planning baseline is [the 2026-07-24 production-floor assessment](./analysis/2026-07-24-production-floor-assessment.md), including its dated planning corrections.
 
 | Area | Status |
 |------|--------|
-| Phase H | **Not complete.** Functional foundations exist; P0/P1 correctness gates remain. |
-| P0 | **Complete:** session durability, Tool descriptor, file symlink containment, and truthful trace lifecycle |
-| P1 | Module tasks and doctor/readiness are complete; integration is ready, then Zig SDK and headless gates follow |
-| P2 | Sandbox/process supervisor and capability work after their dependencies |
+| Phase H | **Not complete.** Integration composition evidence passed its Gate, but synchronous shell runtime/observability remains an L2 blocker. |
+| P0 | **Complete:** session durability, Tool descriptor, file symlink containment, and truthful trace lifecycle. |
+| P1 | Context/provider/redaction/doctor and the original integration evidence are complete; `h-shell-001` is ready, then integration closeout resumes. |
+| Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
 
@@ -31,16 +31,24 @@ done: h-tool-runtime-001 + h-workspace-001 + h-redact-001
                               │
                               ▼
                            done: h-doctor-001
+
+ done: h-tool-runtime-001 + h-trace-001
                               │
-all done P0/P1 module tasks ──┤
                               ▼
-                           in-progress: h-integration-001
-                           (package composition evidence; Gate 待)
+                         ready: h-shell-001
+                              │
+                              ▼
+all completed P0/P1 modules + doctor + shell
+                              │
+                              ▼
+                        blocked: h-integration-001
+                        (composition evidence merged and verified;
+                         final Phase H audit waits for shell)
                               ├───────────────────► sdk-contract-001
                               └───────────────────► headless-001
 ```
 
-Doctor has only the three dependencies shown above. Integration is the convergence point for every completed P0/P1 module task plus doctor.
+Doctor has only the three dependencies shown above. Shell has only Tool runtime and trace dependencies. Integration remains the convergence point: its original package evidence is complete, but its closeout dependency on shell is not.
 
 `ready` means dependencies are satisfied, not that tasks may safely edit one shared checkout in parallel. Use task `path` overlap rules.
 
@@ -56,7 +64,8 @@ Doctor has only the three dependencies shown above. Integration is the convergen
 | [h-provider-001](./tasks/h-provider-001.md) | P1 | done | Deadline/in-flight cancellation |
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | done | Secret redaction |
 | [h-doctor-001](./tasks/h-doctor-001.md) | P1 | done | Provider-independent readiness/control report |
-| [h-integration-001](./tasks/h-integration-001.md) | P1 | in-progress | Phase H real-composition/E2E closeout (package evidence; Gate 待) |
+| [h-shell-001](./tasks/h-shell-001.md) | P1 | ready | Synchronous shell result/budget/direct-child evidence |
+| [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Verified composition evidence; final Phase H closeout waits for shell |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
 
@@ -92,3 +101,4 @@ depends-on: []
 - Blocking review findings must be fixed before merge; non-blocking findings go to `backlog.md`.
 - Behavior changes update the relevant module doc, maturity row, and teaching chapter in the same delivery.
 - No task may claim Phase H, SDK-ready, or headless-ready until its full gate passes.
+- A green integration fixture cannot waive a different open module exit; `h-shell-001` must pass before final Phase H audit.

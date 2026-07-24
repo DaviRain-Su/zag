@@ -13,10 +13,10 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 | Control | Default/current behavior | Important limitation |
 |---------|--------------------------|----------------------|
 | Human permission | `ask`; write/execute risk from validated `ToolDescriptor` (custom tools included) | not an OS sandbox; shell still broad |
-| Permission remember | enabled for an approved built-in write path; `--no-remember` disables | path identity follows real containment for file tools |
+| Permission remember | enabled for an approved built-in write path; `--no-remember` disables | canonical remembered-path identity is not yet claimed to be shared with real containment |
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
 | Workspace path check | lexical deny of absolute/`..`/drive/UNC **plus** realpath containment for file tools | **software check-time** only; residual TOCTOU under concurrent FS races; not an OS sandbox |
-| Shell policy | `protect`; blocks selected catastrophic command patterns | denylist only; shell is **not** contained by the file-path jail or OS sandbox |
+| Shell policy | `protect`; blocks selected catastrophic command patterns | denylist only; shell is **not** contained by the file-path jail or OS sandbox; stable runtime outcome Gate is open in `h-shell-001` |
 | Trace | optional local JSONL events | lifecycle/schema L2; redaction before serialize (h-redact-001) |
 | Secret redaction | configured keys + common API-key shapes before verbose/trace/session | not DLP; `.zag/` still sensitive; no zeroization claim |
 
@@ -34,6 +34,14 @@ Built-in file tools (`read_file`, `list_dir`, `grep`, `glob`, `write_file`, `sea
 - handlers re-check so raw registry dispatch of built-ins cannot skip the jail.
 
 **Trust boundary:** the host OS account is trusted; **workspace contents (including pre-seeded symlinks) are not**. This is check-time software enforcement, **not** an OS sandbox. A concurrent process under the same account can still race paths between check and use (TOCTOU residual). Shell is a separate boundary.
+
+## Shell/process boundary (`h-shell-001` open)
+
+`run_shell` is foreground and synchronous. It passes execute permission and descriptor-selected `protect|off` policy, then invokes Zig 0.16 `std.process.run`. The current handler does not provide an OS sandbox or workspace path containment.
+
+Zig's post-spawn error unwind installs `defer child.kill(io)`, which synchronously kills/reaps the spawned **direct child** on timeout/output-limit errors. `h-shell-001` must pin that behavior with deterministic fixtures and expose stable `shell-v1` success/nonzero/signal/timeout/output-limit/process-failure headers. Until it lands, those failures still collapse to generic Tool diagnostics and the combined stdout/stderr Tool-body budget is not an L2 claim.
+
+Direct-child cleanup is **not** process-tree ownership. Descendants, detached/background commands, PTY, network isolation, and mid-flight user cancellation of an already running Tool remain unsupported. No trace event or timeout result may be interpreted as proving those capabilities.
 
 ## Known release blockers
 
@@ -96,7 +104,9 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~truthful/versioned trace lifecycle~~ | **done** Phase H P0 h-trace-001 |
 | ~~systematic secret redaction~~ | **done** Phase H P1 h-redact-001 (not DLP; `.zag/` still sensitive) |
 | ~~enforced deadline/in-flight provider cancellation~~ | **done** Phase H P1 h-provider-001 (already-running Tool/shell preemption is separate post-H process work) |
-| ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001; default Agent policy/containment composition evidence in h-integration-001; Workspace/Safety still L1+ until independent/main Gate |
+| ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001 |
+| ~~default Agent policy/containment composition~~ | **done evidence** h-integration-001; independent review + main std/curl passed |
+| stable synchronous shell outcomes/body budget/direct-child trace evidence | **open** Phase H P1 h-shell-001 |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |
 
@@ -109,4 +119,4 @@ A security/correctness fix must:
 3. implement the fix without weakening the default `ask` policy;
 4. update [maturity](./docs/maturity.md) and the relevant teaching chapter in the same delivery.
 
-[h-doctor-001](./docs/plan/tasks/h-doctor-001.md) implements `zag --doctor`: a provider-independent, path-free human-readable control report that runs **before** API-key/provider resolve, wire, Agent/session/trace, or network work. It reports fixed enum statuses only (project/test candidate presence, permission, shell policy, lexical jail, real file containment, redaction-on-run, `os_sandbox=not_implemented`, `shell_containment=not_path_contained`). Doctor never mutates policy and never claims an OS sandbox. It is not the stable JSON/exit protocol of headless-001. [h-integration-001](./docs/plan/tasks/h-integration-001.md) adds Agent.reply composition fixtures for default policy denial and escaping-symlink jail denial; Workspace/Safety remains **L1+** until independent review and main-branch Gate (not claimed L2 here).
+[h-doctor-001](./docs/plan/tasks/h-doctor-001.md) implements `zag --doctor`: a provider-independent, path-free human-readable control report that runs **before** API-key/provider resolve, wire, Agent/session/trace, or network work. It reports fixed enum statuses only (project/test candidate presence, permission, shell policy, lexical jail, real file containment, redaction-on-run, `os_sandbox=not_implemented`, `shell_containment=not_path_contained`). Doctor never mutates policy and never claims an OS sandbox. It is not the stable JSON/exit protocol of headless-001. [h-integration-001](./docs/plan/tasks/h-integration-001.md) Agent.reply policy/containment and between-Tool cancellation evidence passed independent review and main std/curl; its final Phase H closeout is now blocked on [h-shell-001](./docs/plan/tasks/h-shell-001.md), not on those retained fixtures.

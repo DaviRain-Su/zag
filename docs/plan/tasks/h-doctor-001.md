@@ -65,4 +65,4 @@ Add a reusable typed readiness report and `zag --doctor` text command that expos
 - `zig build test --summary all`;
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
-- only after independent review and main-branch verification may Workspace/Safety doctor acceptance be checked; Phase H remains open until `h-integration-001` passes.
+- doctor and the retained policy/containment integration evidence have passed independent/main verification; Phase H remains open because `h-integration-001` final closeout is blocked on `h-shell-001`.

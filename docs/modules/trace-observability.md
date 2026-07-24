@@ -115,6 +115,12 @@ Every `run_start` includes `schema_version`, Zag `version`, `permission`, `shell
 
 Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`.
 
+### Shell result projection (`h-shell-001` open)
+
+Shell policy denial emits `shell_deny` and a matching Tool result without invoking the handler. Synchronous runtime outcomes emit ordinary `tool_result`; the stable `shell-v1` classification is the first line of its bounded body so it survives trace body capping. Runtime `shell_timeout` is a recoverable Tool soft result and does **not** change the Agent terminal to provider `stop_reason=timeout`.
+
+The shell module owns outcome codes, capture limits, and direct-child cleanup claims. Trace owns only truthful projection and the unique run terminal. Agent composition fixtures must parse the trace and bind the expected policy/runtime result to exactly one same-object `run_end`; they must not infer process-tree cleanup or mid-flight Tool cancellation from trace presence.
+
 ### Compaction event (h-context-001)
 
 | Field | Cap / rule |

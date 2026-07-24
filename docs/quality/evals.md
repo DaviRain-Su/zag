@@ -11,6 +11,7 @@
 | Security | Permission, containment, policy, and redaction cannot regress | P0/P1 |
 | Provider contract | Fixed bytes map to canonical turn/error/cancel behavior | H6 |
 | Edit eval | Anchor/patch correctness and recovery | H2/C4 |
+| Shell runtime | Stable policy/runtime outcomes, capture budget, direct-child cleanup, and Agent trace composition | H2/P1 |
 | External consumer | Public source SDK composition compiles and runs outside product defaults | SDK gate |
 | Headless E2E | Stable process output/errors/exit status | Headless gate |
 
@@ -87,9 +88,15 @@ These remain useful but do not cover the assessment blockers.
 5. doctor runs without provider/API key and reports fixed, path-free project/test/policy/containment/redaction/sandbox states before provider resolution. ✅ h-doctor-001:
    - library: coding-agent `doctor.zig` candidate matrix, fail-closed format (`NoSpaceLeft` on tiny buffer), shared obtain→map body with injected `ResolveFailed`/`OutOfMemory` → `unavailable_fail_closed` + full path-free format, secret non-leak;
    - **process fixture** `doctor_process_fixture` (root `zig build test`, both HTTP backends): spawns built `zag` with **empty env** (no API keys/config) under isolated cwd — default `--doctor` exit 0 + full fixed keys; `--yolo --shell-policy off --no-project --doctor`; legal `-s`/`--trace` + `--doctor` creates **no** session/trace files; absolute/`../` session + `--doctor` exit 2 with generic validation error and **no** path/secret echo.
-   - Independent review and main std/curl verification passed; Workspace/Safety remains L1+ until h-integration-001 independent/main composition Gate (package evidence already landed).
-6. default Agent policy denial and escaping-symlink containment denial agree across unchanged outside/target bytes, machine-readable Tool result, transcript, persisted/resumed session, permission/jail trace, and truthful terminal. **Evidence:** h-integration-001 coding-agent Agent.reply fixtures (`h-integration: default Agent ask-deny write…`, `…yolo escaping-symlink jail_deny…`); **pending independent review + main std/curl Gate** (do not mark L2).
-7. cancel between accepted Tools preserves original IDs, skips pending handlers, writes cancelled bodies for every pending call, and agrees across Result/transcript/save-resume/one trace terminal. **Evidence:** h-integration-001 (`h-integration: cancel between accepted Tools…`); **pending independent review + main Gate**. This is not mid-flight Tool/shell preemption.
+   - Independent review and main std/curl verification passed.
+6. default Agent policy denial and escaping-symlink containment denial agree across unchanged outside/target bytes, machine-readable Tool result, transcript, persisted/resumed session, permission/jail trace, and truthful terminal. ✅ h-integration-001 coding-agent `Agent.reply` fixtures (`h-integration: default Agent ask-deny write…`, `…yolo escaping-symlink jail_deny…`); independent verification and both main backend suites passed.
+7. cancel between accepted Tools preserves original IDs, skips pending handlers, writes cancelled bodies for every pending call, and agrees across Result/transcript/save-resume/one trace terminal. ✅ h-integration-001 (`h-integration: cancel between accepted Tools…`); independent verification and both main backend suites passed. This is not mid-flight Tool/shell preemption.
+8. synchronous shell-v1 matrix is stable and bounded. ⬜ h-shell-001:
+   - module: success with both streams, exit 7, POSIX signal, short absolute capture timeout, tiny per-stream output cap, invalid test shell path/process failure, direct stopped/unknown formatter cases, maximum 30 KiB + 30 KiB formatter, and OOM;
+   - first lines distinguish `shell_success | shell_nonzero | shell_signal | shell_timeout | shell_output_limit | shell_process_failure`; process failure fixes `stage=run|term` plus stopped/unknown fields; policy remains `shell_deny`;
+   - timeout/output-limit report no fake partial stream and return after Zig std direct-child kill/reap; no end-to-end wall-clock, process-tree, or mid-flight cancellation claim;
+   - Agent: policy denial plus required runtime outcomes retain exact Tool IDs through transcript/session/resume, appear in parsed trace, and recover through exactly one `completed` terminal without becoming provider timeout/error;
+   - checked arithmetic proves each Tool body is `<= 64 KiB`; the maximum first line is `<= trace.cap_tool_result_body` and survives parsed trace capping.
 
 ## Independent post-H gate fixtures
 

@@ -21,8 +21,8 @@
 | ~~无 plan 模式语义~~ | — | ✅ `SessionKind.plan` stub；完整 UX → C6 |
 | ~~custom Tool risk 按名称且 unknown→read~~ | **closed** D-007 / h-tool-runtime-001：descriptor risk fail-closed | done |
 | ~~file Tool 仅 lexical jail~~ | **closed** h-workspace-001：symlink-aware Guard + handler recheck | done |
-| shell 错误/deadline/cancel 形状未闭合 | exit/timeout/policy/cancel 难统一审计 | H P1 · [tools-shell](../modules/tools-shell.md) |
-| edit/failure golden matrix | 端到端回归需覆盖 custom deny/containment | H Quality |
+| shell-v1 outcome/body/cleanup/trace 未闭合 | timeout/output-limit/process failure 仍 generic；direct-child 与总预算未形成永久证据 | H P1 · [h-shell-001](../plan/tasks/h-shell-001.md) |
+| write/edit fault matrix | containment 与 Agent deny/jail 组合已验收；一般 atomic/no-partial write fault 仍不能声称 | H exit audit / C4 |
 
 ## 非本阶段
 
@@ -33,4 +33,4 @@
 
 ## 下一步
 
-`h-tool-runtime-001`、`h-workspace-001` 与 `h-doctor-001` 已完成；Permissions 已达 L2，file containment 与 active-control report 已关闭。下一步由 ready `h-integration-001` 贯通 default Agent policy/containment failure chain；shell mid-flight lifecycle 与更强 edit UX 仍按各自后续合同推进。
+`h-tool-runtime-001`、`h-workspace-001`、`h-doctor-001` 与原 h-integration Agent policy/containment evidence 已完成并通过独立/main Gate；Permissions 与 trusted-host Workspace/Safety 已达各自 L2。下一步是 ready `h-shell-001` 收口同步 shell outcome/budget/direct-child/trace 合同，再恢复 blocked `h-integration-001` 做最终 Phase H audit。Mid-flight shell cancellation、process tree、atomic edit fault guarantee 与更强 edit UX 均未宣称。

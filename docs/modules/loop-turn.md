@@ -4,7 +4,7 @@
 |------|---------|
 | Code | `packages/zag-agent-core/src/loop.zig` |
 | Layer | Agent Core Kernel |
-| Current maturity | **L1+** — core loop/goldens + truthful terminals; provider in-flight cancel/deadline landed; Agent accepted multi-Tool between-call composition evidence in h-integration-001; L2 still needs independent/main Gate |
+| Current maturity | **L2** — core loop/goldens + truthful terminals + provider control + accepted multi-Tool between-call Agent composition passed independent/main Gate |
 | Target | L2 (H) → L3 steer/read-only parallelism (C6) |
 | Reference | Pi agent loop; Nanocodex Turn |
 
@@ -66,8 +66,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 ## Current gaps
 
-- h-integration-001 Agent.reply fixture verifies the accepted multi-Tool between-call cancellation chain across Agent/session/trace (package evidence; independent/main Gate pending before L2).
-- Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work.
+- Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work and is not an H L2 requirement.
 - High-level Observer event lifecycle is not yet an SDK contract.
 
 ## L2 acceptance
@@ -75,7 +74,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 - [x] stable machine-readable Tool errors for built-in paths.
 - [x] serial Tool order is tested.
 - [x] module-level cancel between calls fills pending Tool results and remains resume-safe.
-- [ ] Agent-level accepted multi-Tool cancel preserves IDs and agrees across persisted resume + one terminal (**package evidence landed** in h-integration-001; **Gate pending** — do not check until independent review + main std/curl).
+- [x] Agent-level accepted multi-Tool cancel preserves IDs and agrees across persisted resume + one parsed terminal (h-integration-001; independent review + main std/curl passed).
 - [x] at least two golden transcripts exist.
 - [x] every normal/error path has one matching terminal state across API and trace (facade owner; h-trace-001).
 - [x] in-flight provider cancellation/deadline is contract-tested (h-provider-001).

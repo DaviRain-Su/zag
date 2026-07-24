@@ -179,8 +179,8 @@ role=tool  content="error: code=permission_denied message=…"
 ## 8. 生产缺口
 
 整文件 `write_file` + 全局 ask/yolo 只够 **Teaching** 演示编辑路径。
-**D-007 / h-tool-runtime-001 已补：** 强制 capabilities、instance-aware handler、Provider 只见 definitions。
-**仍缺：** 完整 Plan UX、path-domain 细策略。symlink-aware file containment 见 Chapter 3 / h-workspace-001。
+**D-007 / h-tool-runtime-001 已补：** 强制 capabilities、instance-aware handler、Provider 只见 definitions；h-workspace-001 已补 symlink-aware file containment。
+**仍缺/不宣称：** `h-shell-001` 的 shell-v1 runtime/budget/direct-child/trace Gate、mid-flight shell cancellation/process-tree ownership、一般 atomic write-fault guarantee、完整 Plan UX 与 path-domain 细策略。
 
 ---
 

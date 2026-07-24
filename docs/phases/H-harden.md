@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2** |
+| Status | **In progress; not L2 — `h-shell-001` ready, integration closeout blocked** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
@@ -34,7 +34,7 @@ Therefore **feature landed ≠ L2 closed**. Current truth is `maturity.md`; prio
 | Priority | Phase H meaning |
 |----------|-----------------|
 | **P0** | Data preservation, fail-closed permission, filesystem containment, truthful terminal/audit state |
-| **P1** | Compaction accounting, redaction, deadline/cancel, SDK/headless gates |
+| **P1** | Compaction accounting, redaction, provider control, synchronous shell observability, then integration/SDK/headless gates |
 | **P2** | Capability/packaging work after the contracts above |
 
 Canonical table: [assessment § priorities](../plan/analysis/2026-07-24-production-floor-assessment.md#priority-meanings).
@@ -62,11 +62,11 @@ Spec: [loop-turn](../modules/loop-turn.md).
 - pending Tool-call cancellation results keep transcript resume-safe;
 - golden transcripts.
 
-### Remaining for H
+### Closed for the H Loop boundary
 
-- h-integration-001 Agent composition fixture proves a complete accepted multi-Tool turn cancelled **between** invocations remains ID-paired, save/resume-safe, and truthfully terminal across the Agent product path (**evidence in coding-agent suite; independent/main Gate still required before L2**).
+- h-integration-001 proves a complete accepted multi-Tool turn cancelled **between** invocations remains ID-paired, save/resume-safe, and truthfully terminal across the Agent product path; independent review and both main backend suites passed.
 
-Provider in-flight cancel/deadline landed in h-provider-001. Preempting an already running Tool/shell handler requires process ownership and bounded cleanup; it remains explicit post-H shell/process work and is not assigned to h-provider-001. H1 remains **L1+** until the real-composition Gate passes, not because H claims mid-flight handler preemption.
+Provider in-flight cancel/deadline landed in h-provider-001. Preempting an already running Tool/shell handler requires process ownership and bounded cleanup; it remains explicit post-H process-supervisor work and is not assigned to h-provider-001 or h-shell-001. H1 is **L2** for its documented between-Tool boundary.
 
 ## H2 — Edit/search/shell
 
@@ -79,12 +79,13 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 - `write_file` for create/full replacement;
 - optional post-write diff;
 - all built-in file Tools use descriptor-selected real containment (h-workspace-001);
-- shell policy/timeout/truncation basics.
+- shell permission, descriptor-selected policy, and synchronous `std.process.run` basics.
 
 ### Remaining
 
-- shell error/deadline/cancel shape must align with H lifecycle contracts;
-- C4 edit sharpness/change review remains post-H capability.
+- [h-shell-001](../plan/tasks/h-shell-001.md) (**ready**) implements `shell-v1`: stable success/nonzero/signal/timeout/output-limit/process-failure headers, 30 KiB per-stream and 64 KiB total body bounds, honest no-partial overflow, direct-child timeout/output-limit cleanup evidence, and Agent/session/trace composition;
+- h-shell-001 does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, or OS sandbox;
+- canonical permission-path identity and general write-fault atomic/no-partial-mutation guarantees remain unclaimed; C4 edit sharpness/change review remains post-H capability.
 
 ## H3 — Tool runtime / permissions
 
@@ -108,7 +109,7 @@ Decision: [D-007](../decisions/active/D-007-tool-runtime-descriptor.md). Task: [
 - full Plan UX / path-domain policies (L3 / capability);
 - opaque/C ABI plugins (non-goal for H).
 
-H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, and doctor/readiness are complete (h-workspace-001, h-redact-001, h-doctor-001); default Agent policy/containment composition evidence is in h-integration-001 package fixtures. Workspace/Safety stays **L1+** until independent/main Gate.
+H3 tool-runtime + permissions are **L2** in [maturity](../maturity.md). File symlink containment, secret redaction, doctor/readiness, and default Agent policy/containment composition are complete (h-workspace-001, h-redact-001, h-doctor-001, h-integration-001); the integration evidence passed independent review and main std/curl. Workspace/Safety is **L2** for its trusted-host/non-OS-sandbox contract; shell runtime remains the separate H2 blocker.
 
 ## H4 — Context / Session
 
@@ -151,10 +152,10 @@ Spec: [workspace-sandbox](../modules/workspace-sandbox.md).
 
 - provider-independent, path-free doctor/readiness output: [h-doctor-001](../plan/tasks/h-doctor-001.md) (**done** — typed report + permanent no-key process/matrix/unresolvable/secret fixtures; main std/curl passed).
 
-### Remaining
+### Closed for H trusted-host safety
 
-- default Agent policy/containment real-composition evidence: [h-integration-001](../plan/tasks/h-integration-001.md) (**in-progress** — package fixtures landed; independent review + main std/curl Gate pending; not L2);
-- OS sandbox/process supervisor remains C7 (required before higher-autonomy claims).
+- default Agent policy/containment real-composition evidence: h-integration-001 Agent fixtures passed independent review and main std/curl;
+- OS sandbox/process supervisor remains C7 and is required before higher-autonomy claims; its absence does not reopen the explicitly scoped trusted-host file boundary.
 
 ## H6 — Provider
 
@@ -196,6 +197,7 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 
 ### Remaining
 
+- h-shell-001 must prove shell policy/runtime first-line classifications survive matching transcript/session/trace projection and end in one recovered terminal;
 - external-consumer gates in CI;
 - dashboard / correlation (L3).
 
@@ -205,16 +207,18 @@ Specs: [trace-observability](../modules/trace-observability.md), [evals](../qual
 P0 session + Tool + workspace + trace
   ├─► P1 context ✅
   ├─► P1 provider deadline/cancel ✅
-  └─► P1 redaction ✅
+  └─► P1 redaction ✅ ─► h-doctor-001 ✅
+
+Tool runtime + trace
          │
          ▼
-h-doctor-001（provider-independent readiness truth）✅
+h-shell-001（synchronous shell-v1 + direct-child/trace evidence）ready
          │
          ▼
-h-integration-001（two Agent composition chains — package evidence；Gate 待）in-progress
+h-integration-001（original Agent chains verified；final closeout blocked on shell）
          │
          ▼
-Phase H L2 exit decision
+full Phase H exit audit + main std/curl Gate
   ├─► Zig SDK-ready gate
   ├─► headless/process gate
   ├─► C4 edit sharpness
@@ -222,8 +226,8 @@ Phase H L2 exit decision
   └─► C7 sandbox/process supervisor
 ```
 
-This is a DAG. Independent P0 work may overlap in isolated worktrees when task paths do not overlap; shared truth docs may require serialized merges.
+This is a DAG. Independent P0 work may overlap in isolated worktrees when task paths do not overlap; shared truth docs may require serialized merges. The integration task keeps its already verified evidence while blocked; it does not rerun as `ready` until shell is done.
 
 ## Exit
 
-Phase H exits only when h-doctor-001 and h-integration-001 pass independent review, both backends pass again on main, and all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) remain true. A green current test suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler.
+Phase H exits only after h-shell-001 passes independent review and main std/curl, h-integration-001 returns to ready for the final sentence-by-sentence audit, both backends pass again on main, and all [maturity production-floor conditions](../maturity.md#phase-h-production-floor-exit) remain true. A green current suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.

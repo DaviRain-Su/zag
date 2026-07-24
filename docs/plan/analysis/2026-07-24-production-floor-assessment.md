@@ -71,12 +71,13 @@ These are **delivery priorities**, not vulnerability severity labels.
 | **P1-SDK** | Zig source SDK | Low-level composition works, but Tool handlers lack instance state and high-level Agent cannot accept caller toolset/observer. Ownership and compatibility commitments are not documented. | An external consumer test uses a stateful custom Tool, Provider, Observer, policy, cancellation, and session path through supported APIs. |
 | **P1-HEADLESS** | Process SDK/automation | One-shot CLI exists, but structured JSON/events, stable errors, and stable exit codes do not. | JSON stdout is machine-clean and auth/session/save/cancel failures have documented structured errors and exit codes. |
 
-### 2026-07-25 planning correction
+### 2026-07-25 planning corrections
 
-Post-module composition audit found two planning omissions without changing the original assessment evidence:
+Post-module composition and exit audits found three planning omissions without changing the original assessment evidence:
 
-1. H5 already required a doctor/readiness report, but the task DAG had no owner. [h-doctor-001](../tasks/h-doctor-001.md) now owns a provider/API-key-independent, fixed/path-free control report and must land before integration closeout.
-2. h-provider-001 delivered provider deadline/active cancellation and partial-stream Tool safety. It does **not** implement preemption of an already running Tool/shell handler. H integration verifies cancellation **between** accepted Tools; mid-flight handler/process ownership and cleanup remain explicit post-H shell/process work.
+1. H5 already required a doctor/readiness report, but the task DAG had no owner. [h-doctor-001](../tasks/h-doctor-001.md) now owns a provider/API-key-independent, fixed/path-free control report and is complete.
+2. h-provider-001 delivered provider deadline/active cancellation and partial-stream Tool safety. It does **not** implement preemption of an already running Tool/shell handler. H integration verifies cancellation **between** accepted Tools; mid-flight handler/process ownership and process-tree cleanup remain explicit post-H process-supervisor work.
+3. After the original h-integration composition evidence passed independent review and both main backend suites, the sentence-by-sentence H exit audit found that synchronous shell timeout/output-limit/process outcomes, total result budget, direct-child cleanup evidence, and shell trace reconstruction still had no task owner. [h-shell-001](../tasks/h-shell-001.md) now owns that P1 gate. Integration retains its verified evidence but remains blocked for final closeout until shell lands.
 
 P1 does not authorize semver publication. SDK publication requires the independent gate in [packaging.md](../../packaging.md).
 
@@ -107,7 +108,11 @@ P1 Phase H closeout
   ├─ redaction
   ├─ provider timeout + in-flight cancellation
   ├─ versioned trace/events
-  └─ doctor/readiness → real-composition Gate
+  ├─ doctor/readiness
+  └─ synchronous shell runtime/observability
+        │
+        ▼
+  real-composition final Gate
         │
         ├────────► SDK-ready gate ─────► source-package publication decision
         ├────────► headless/process protocol gate ─► ACP/editor integration later
@@ -135,7 +140,8 @@ This is a dependency graph, not a mandatory single-thread sequence. C4, C5.1, an
 | P1 | [h-provider-001](../tasks/h-provider-001.md) | Enforced deadlines and in-flight cancellation |
 | P1 | [h-redact-001](../tasks/h-redact-001.md) | Shared secret redaction at persistence/log boundaries |
 | P1 | [h-doctor-001](../tasks/h-doctor-001.md) | Provider-independent readiness/control truth |
-| P1 | [h-integration-001](../tasks/h-integration-001.md) | Two missing Agent composition chains, matrix audit, and closeout |
+| P1 | [h-shell-001](../tasks/h-shell-001.md) | Stable synchronous shell outcomes, body budget, direct-child cleanup, and trace evidence |
+| P1 | [h-integration-001](../tasks/h-integration-001.md) | Retain verified Agent composition chains and perform final Phase H closeout after shell |
 | P1 | [sdk-contract-001](../tasks/sdk-contract-001.md) | External stateful consumer and public ownership/event contract |
 | P1 | [headless-001](../tasks/headless-001.md) | Stable structured process interface |
 

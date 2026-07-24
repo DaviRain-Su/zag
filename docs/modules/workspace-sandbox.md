@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
-| Current maturity | **L1+** — symlink-aware **file containment**, secret redaction, and doctor/readiness are complete; default Agent policy/containment composition evidence is in h-integration-001 package fixtures; L2 still needs independent/main Gate |
+| Current maturity | **L2** — symlink-aware file containment, redaction, doctor/readiness, and default Agent policy/containment composition passed independent/main Gate |
 | Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
 | Reference | Hyper sandbox; Codex sandbox |
 
@@ -89,7 +89,7 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
 - ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
 - ~~doctor not implemented~~ **Closed** h-doctor-001 (path-free report + permanent no-key process fixture).
-- ~~default Agent policy/containment composition missing~~ **Package evidence** h-integration-001 (`Agent.reply` ask-deny write + yolo escaping-symlink jail); row still waits independent/main Gate before L2.
+- ~~default Agent policy/containment composition missing~~ **Closed** h-integration-001 (`Agent.reply` ask-deny write + yolo escaping-symlink jail); independent review + main std/curl passed.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
 
@@ -100,7 +100,7 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 - [x] policy matrix tests pass (shell denylist; file fixtures in evals).
 - [x] secret fixtures do not appear in verbose/trace/session output (h-redact-001).
 - [x] doctor exposes active controls without provider/API-key resolution (h-doctor-001; permanent process fixture).
-- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary (Workspace/Safety row still L1+ until independent/main Gate).
+- [x] SECURITY and maturity state the same trusted-host/non-sandbox boundary; Agent composition passed independent/main Gate.
 
 ## L3 (C7)
 

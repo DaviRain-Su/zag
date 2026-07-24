@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **L1+** — search/anchor edit landed; real containment/failure matrix open |
+| Current maturity | **L1+** — descriptors and symlink-aware containment landed; write-fault and shell integration gates remain |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -12,7 +12,7 @@
 1. Every file/search Tool declares a D-007 runtime descriptor and uses real workspace containment.
 2. Default editing is not limited to whole-file overwrite.
 3. Anchor failure is machine-readable and non-mutating.
-4. Results/output have byte budgets and truncation markers.
+4. Results/output have byte budgets and explicit limit semantics.
 5. A denied/failed operation does not partially mutate without an explicit partial-success contract.
 
 ## Current Tool surface
@@ -26,19 +26,25 @@
 
 `search_replace` requires exactly one `old_string`; zero → `anchor_not_found`, multiple → `ambiguous_anchor`, oversize → `too_large`.
 
-## Current gap
+## Current gaps
 
-The Tools call lexical path validation, so a workspace symlink may resolve outside the root. Existing absolute/`..` tests do not prove containment. Tool descriptors and symlink fixtures are P0 prerequisites for L2.
+D-007 descriptors and h-workspace-001 symlink-aware containment are complete for every built-in file/search Tool. The remaining L2 claims are narrower:
+
+- canonical contained-path identity is not yet shared/proven for permission remember;
+- write/edit fault fixtures do not yet establish an atomic truncate-write or general no-partial-write guarantee;
+- synchronous shell outcomes still need the separate [`shell-v1` contract](./tools-shell.md) and Agent/trace evidence in `h-shell-001`.
+
+Do not infer an atomic write guarantee merely from containment success. Read/search containment evidence may be promoted independently after its row is audited; it does not waive write/edit failure requirements.
 
 ## L2 acceptance
 
 - [x] default descriptions prefer `search_replace` over large overwrite.
 - [x] zero/multiple anchor failures do not mutate and are tested.
 - [x] grep/glob/output budgets exist.
-- [ ] all file/search Tools declare descriptors and use symlink-aware containment.
+- [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] contained-path identity is shared with permission remember.
 - [ ] write/edit failure fixtures prove no unintended partial mutation.
-- [ ] shell/error integration uses the common lifecycle contract.
+- [ ] shell/error integration passes the common lifecycle contract (`h-shell-001`).
 
 ## L3 (C4)
 
