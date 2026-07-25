@@ -363,14 +363,11 @@ pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
     errdefer body.deinit();
 
-    const scope_root = try normalizeRelativeForGlob(ctx.allocator, root);
-    defer ctx.allocator.free(scope_root);
-
     var hits: u32 = 0;
     try walkTree(ctx, &guard, root, .{
         .kind = .grep,
         .pattern = pattern,
-        .scope_root = scope_root,
+        .scope_root = ".",
         .body = &body,
         .hits = &hits,
         .hits_max = limits.grep_hits,
@@ -794,8 +791,8 @@ fn globFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErro
 }
 
 fn normalizeRelativeForGlob(gpa: std.mem.Allocator, raw: []const u8) error{ OutOfMemory, InvalidArguments }![]u8 {
-    var out: std.ArrayList(u8) = .empty;
-    errdefer out.deinit(gpa);
+    var components: std.ArrayList([]const u8) = .empty;
+    defer components.deinit(gpa);
 
     var start: usize = 0;
     while (start <= raw.len) {
@@ -803,14 +800,23 @@ fn normalizeRelativeForGlob(gpa: std.mem.Allocator, raw: []const u8) error{ OutO
         while (end < raw.len and !isHostPathSep(raw[end])) : (end += 1) {}
         const part = raw[start..end];
         if (part.len != 0 and !std.mem.eql(u8, part, ".")) {
-            if (std.mem.eql(u8, part, "..")) return error.InvalidArguments;
-            if (out.items.len != 0) try out.append(gpa, '/');
-            try out.appendSlice(gpa, part);
+            if (std.mem.eql(u8, part, "..")) {
+                if (components.items.len == 0) return error.InvalidArguments;
+                _ = components.pop();
+            } else {
+                try components.append(gpa, part);
+            }
         }
         if (end == raw.len) break;
         start = end + 1;
     }
 
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    for (components.items, 0..) |part, i| {
+        if (i != 0) try out.append(gpa, '/');
+        try out.appendSlice(gpa, part);
+    }
     if (out.items.len == 0) try out.append(gpa, '.');
     return out.toOwnedSlice(gpa) catch return error.OutOfMemory;
 }
@@ -986,6 +992,10 @@ test "grep and glob in tmp dir" {
     defer gpa.free(abs);
     try std.testing.expect(std.mem.indexOf(u8, abs, "code=jail_deny") != null);
 
+    const grep_interior = try grep(ctx, null, "{\"pattern\":\"findme\",\"path\":\"src/../src\"}");
+    defer gpa.free(grep_interior);
+    try std.testing.expect(std.mem.indexOf(u8, grep_interior, "findme here") != null);
+
     const paths = try glob(ctx, null, "{\"pattern\":\"**/*.zig\"}");
     defer gpa.free(paths);
     try std.testing.expect(std.mem.indexOf(u8, paths, "src/a.zig") != null);
@@ -1005,6 +1015,15 @@ test "grep and glob in tmp dir" {
     const scoped_dot = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"./src\"}");
     defer gpa.free(scoped_dot);
     try std.testing.expect(std.mem.indexOf(u8, scoped_dot, "src/a.zig") != null);
+
+    const scoped_interior = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/../src\"}");
+    defer gpa.free(scoped_interior);
+    try std.testing.expect(std.mem.indexOf(u8, scoped_interior, "src/../src/a.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, scoped_interior, "src/../src/nested/c.zig") == null);
+
+    const escape = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/../../src\"}");
+    defer gpa.free(escape);
+    try std.testing.expect(std.mem.indexOf(u8, escape, "code=jail_deny") != null);
 
     const nested_trailing = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/nested/\"}");
     defer gpa.free(nested_trailing);
