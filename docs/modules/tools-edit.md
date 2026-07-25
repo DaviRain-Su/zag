@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **Split:** write/edit **L2** after h-edit-integrity-001; read/search **L1+** while h-read-search-bounds-001 develop-stage evidence awaits independent verification |
+| Current maturity | **Split:** write/edit **L2** after h-edit-integrity-001; read/search **L2** after h-read-search-bounds-001 closeout; overall Phase H still awaits fresh integration audit |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -31,13 +31,13 @@
 D-007 descriptors and h-workspace-001 symlink-aware containment are complete for every built-in file/search Tool. `list_dir`, `read_file`, `write_file`, and `search_replace` use required `path_field` descriptors; missing or present-empty required paths are `invalid_arguments` rather than cwd aliases. `grep` and `glob` use the explicit defaulted path descriptor (`field="path", default_path="."`) so provider calls that omit `path` or pass an empty `path` still pass through permission and jail as `.`. Unknown tool results use a generic bounded `unknown_tool` body that does not echo the model-supplied name. The final `h-integration-001` audit found two independent L2 counterexamples:
 
 1. direct truncate/write could destroy prior bytes or publish a partial file — **closed** by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md);
-2. count caps did not prove the shared result-byte ceiling, and walker/search cutoffs could look complete — [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) is **in progress** with develop-stage code/tests pending independent verification and main Gate evidence.
+2. count caps did not prove the shared result-byte ceiling, and walker/search cutoffs could look complete — **closed** by [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md).
 
 ### Edit-integrity delivery evidence
 
 Both production truncate writes are gone. One same-parent `Io.File.Atomic` helper validates endpoint shape, proves canonical target/parent containment, preallocates mandatory success and staged-failure bodies, writes complete bytes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies and chooses prepared result ownership allocation-free. Contained final file symlinks retain their entry/text while the resolved target changes. A real signaled optional-diff child proves post-commit enrichment cannot replace mandatory success.
 
-The independent reviews 01–04 review/fix cycle drove and verified endpoint/outside-staging, cleanup truth, post-staging OOM, and stdout-ownership fixes; final Oracle re-review shipped the cleanup boundary. After ff-only merge, main passed default **402/402** and curl **401/401**, with supported macOS fixtures reporting no skips. Write/edit is therefore L2 for the scoped contract below. Read/search and overall Phase H remain open; shell stays separately L2 under [`shell-v1`](./tools-shell.md).
+The independent reviews 01–04 review/fix cycle drove and verified endpoint/outside-staging, cleanup truth, post-staging OOM, and stdout-ownership fixes; final Oracle re-review shipped the cleanup boundary. After ff-only merge, main passed default **402/402** and curl **401/401**, with supported macOS fixtures reporting no skips. Write/edit is therefore L2 for the scoped contract below. Read/search is also L2 for the bounded-output contract below after its reviews 01–10 review/fix cycle, final review 10 PASS, final adversarial ship panel SHIP, and merged-main Gates. Overall Phase H remains open pending fresh integration audit; shell stays separately L2 under [`shell-v1`](./tools-shell.md).
 
 ## H read/search contract
 
@@ -57,7 +57,7 @@ A runtime cutoff that omits otherwise eligible output ends with exactly one comp
 
 Private test-only limits or pure helpers may shrink boundaries for deterministic fixtures. They do not enter Tool JSON, Agent/Tool options, CLI, provider ABI, or production descriptors.
 
-Develop-stage evidence in `task/h-read-search-bounds-001` implements shared `fs-v1` marker reservation, bounded read prefixes, explicit walker/source/pattern reasons, and small private-limit fixtures. This is not yet a task closeout or read/search L2 promotion until independent verification and the required main Gates pass.
+Closeout evidence in `h-read-search-bounds-001` implements and verifies shared `fs-v1` marker reservation, bounded read prefixes, exact N/N+1 and growth behavior, walker node/depth/per-directory/I/O reasons, source-size/binary-probe/pattern-limit reasons, fixed `.git`/build-directory exclusions, generic bounded path/name-free jail/unknown bodies, and required/defaulted descriptors with real Agent evidence. The task passed reviews 01–10 review/fix cycle, final review 10 PASS, final adversarial ship panel SHIP, and merged-main default/curl Gates. This is scoped read/search L2, not exhaustive concurrent traversal or generic enforcement for third-party Tool bodies.
 
 ## H write/edit integrity contract
 
@@ -102,7 +102,7 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] default descriptions prefer `search_replace` over large overwrite.
 - [x] zero/multiple anchor failures do not mutate and are tested.
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
-- [ ] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
+- [x] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
 - [x] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`).
 - [x] write/edit faults preserve exact prior target state and expose cleanup-truthful `edit-v1` results with allocation-free post-staging selection (`h-edit-integrity-001`).
 - [x] non-exited optional diff capture with owned stdout cannot abort or replace mandatory post-commit success (`h-edit-integrity-001`).

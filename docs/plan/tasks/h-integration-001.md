@@ -1,7 +1,7 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: blocked
+status: ready
 priority: P1
 depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001, h-shell-001, h-edit-integrity-001, h-read-search-bounds-001]
 ---
@@ -28,14 +28,14 @@ The prior Phase H audit found a missing shell module gate, and independent shell
 
 Shell is **done** and remains L2 for its scoped synchronous contract.
 
-# final-audit blockers
+# final-audit blockers closed; fresh audit pending
 
 The 2026-07-25 executable final audit passed both full backend suites but returned **FAIL** on two default file-surface counterexamples:
 
-1. `write_file` / `search_replace` publish through in-place truncate/write and lack target-preserving write/flush/replace fault evidence;
-2. `list_dir` / `read_file` / `grep` / `glob` do not yet prove the shared byte ceiling and can hide walker/source cutoffs as complete output.
+1. `write_file` / `search_replace` published through in-place truncate/write and lacked target-preserving write/flush/replace fault evidence;
+2. `list_dir` / `read_file` / `grep` / `glob` did not yet prove the shared byte ceiling and could hide walker/source cutoffs as complete output.
 
-[h-edit-integrity-001](./h-edit-integrity-001.md) now closes the mutator contract after the reviews 01–04 review/fix cycle plus final Oracle/main Gate. [h-read-search-bounds-001](./h-read-search-bounds-001.md) still owns the remaining read/search contract. This task is **blocked** only until that dependency is done. Its retained Agent policy/containment/cancellation, shell, and edit evidence remains valid; afterward integration returns to `ready` for a fresh sentence-by-sentence audit. No Phase H, SDK-ready, or headless-ready claim is made before that audit.
+Both historical file blockers are now closed. [h-edit-integrity-001](./h-edit-integrity-001.md) closed the mutator contract after the reviews 01–04 review/fix cycle plus final Oracle/main Gate. [h-read-search-bounds-001](./h-read-search-bounds-001.md) closed the read/search contract after ff-only merge to `main`, the reviews 01–10 review/fix cycle, final independent review 10 **PASS**, final adversarial ship panel **SHIP**, and merged-main Gates. This task is now **ready** for a fresh 11-sentence audit. Its retained Agent policy/containment/cancellation, shell, edit, and read/search evidence remains valid. No Phase H, SDK-ready, or headless-ready claim is made before that audit.
 
 # context
 

@@ -90,7 +90,7 @@ Doctor reports; it does not silently change policy. `ready` real containment mea
 - ~~`checkToolPath` is string-only and built-in file operations follow workspace symlinks outside the root.~~ **Closed** h-workspace-001: `workspace.Root` / `Guard` + handler enforcement.
 - ~~systematic redaction~~ **Closed** h-redact-001 (known keys/patterns only; not DLP).
 - ~~doctor not implemented~~ **Closed** h-doctor-001 (path-free report + permanent no-key process fixture).
-- ~~default Agent policy/containment composition missing~~ **Closed** h-integration-001 (`Agent.reply` ask-deny write + yolo escaping-symlink jail); independent review + main std/curl passed.
+- ~~default Agent policy/containment composition missing~~ **Closed evidence retained** h-integration-001 (`Agent.reply` ask-deny write + yolo escaping-symlink jail); independent review + main std/curl passed; fresh final audit pending after file blockers closed.
 - OS sandbox is intentionally absent.
 - Shell remains a separate, non-path-jail boundary.
 

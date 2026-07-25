@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — edit integrity closed; read/search bounds has develop-stage evidence but still blocks integration pending independent verification** |
+| Status | **In progress; not L2 — edit integrity and read/search bounds are closed; fresh integration audit pending** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
@@ -93,7 +93,7 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 ### Reopened by final audit
 
 - [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) is **done**: direct truncate/write is gone; strict endpoints/selected-parent containment, observable cleanup, allocation-free staged results, contained final symlink, yolo Agent/session/trace, core ask/remember, and real signaled optional-diff fixtures completed the reviews 01–04 review/fix cycle and passed final Oracle/main Gate.
-- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) is in progress: this branch adds checked 64 KiB body enforcement and complete `fs-v1` cutoff metadata for read/list/grep/glob, with small deterministic fixtures; it remains open until independent verification and root Gates pass.
+- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) is **done**: checked 64 KiB body enforcement and complete `fs-v1` cutoff metadata for read/list/grep/glob passed reviews 01–10 review/fix cycle, final review 10 PASS, final adversarial ship panel SHIP, and merged-main Gates.
 - Permission remember is exact lexical request-path scoped for H; aliases re-prompt and Guard remains mandatory. Canonical object/path-domain authorization is post-H.
 - h-shell-001 remains closed and does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline.
 
@@ -226,11 +226,11 @@ original P0/P1 + doctor + shell ✅
        ┌─────────┴─────────┐
        ▼                   ▼
 h-edit-integrity-001   h-read-search-bounds-001
-      done                 in-progress
+      done                 done
        └─────────┬─────────┘
                  ▼
-       h-integration-001 blocked
-       retained evidence + fresh audit
+        h-integration-001 ready
+        retained evidence + fresh 11-sentence audit
                  │
                  ▼
   ├─► Zig SDK-ready gate
@@ -240,8 +240,8 @@ h-edit-integrity-001   h-read-search-bounds-001
   └─► C7 sandbox/process supervisor
 ```
 
-This is a DAG. Original module evidence remains valid. Edit integrity now passes independently; read/search bounds has only develop-stage evidence in this branch, so integration resumes only after independent verification also passes. Green existing suites cannot waive that remaining counterexample.
+This is a DAG. Original module evidence remains valid. Edit integrity and read/search bounds now pass independently, so integration is ready to resume the fresh audit. Green existing suites cannot waive that remaining counterexample.
 
 ## Exit
 
-Phase H exits only after read/search bounds is done and a newly ready h-integration-001 independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.
+Phase H exits only after the newly ready h-integration-001 independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.

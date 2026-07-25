@@ -23,7 +23,7 @@
 | ~~file Tool 仅 lexical jail~~ | **closed** h-workspace-001：symlink-aware Guard + handler recheck | done |
 | ~~shell-v1 outcome/body/cleanup/trace Gate~~ | **closed:** fixed deny、UTF-8/base64、scoped limits、N/N+1、direct-PID、Agent parsed-trace；independent/Oracle/main passed | done [h-shell-001](../plan/tasks/h-shell-001.md) |
 | ~~single-file write/edit fault preservation~~ | **closed:** atomic target preservation、cleanup truth、final symlink、Agent/remember 与 signaled-diff fixtures passed reviews/Oracle/main | done [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) |
-| read/search body + cutoff truth | count caps do not prove 64 KiB；walker/source/pattern limits may look complete | open [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) |
+| ~~read/search body + cutoff truth~~ | **closed:** four handler bodies bounded; `fs-v1` marker; walker/source/binary/pattern/defaulted-descriptor/Agent evidence passed reviews 01–10 cycle + final PASS/SHIP + main Gate | done [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) |
 
 ## 非本阶段
 
@@ -34,4 +34,4 @@
 
 ## 下一步
 
-既有 Tool/workspace/doctor/shell/edit 与原 Agent evidence 保持通过。`h-read-search-bounds-001` 是当前唯一 file blocker；完成后 `h-integration-001` 再 fresh audit。Mid-flight shell cancellation、process tree、power-loss durability 与更强 edit UX 仍未宣称。
+既有 Tool/workspace/doctor/shell/edit 与原 Agent evidence 保持通过。`h-read-search-bounds-001` 已关闭当前 file blocker；`h-integration-001` 现在 ready 并需 fresh 11-sentence audit。Mid-flight shell cancellation、process tree、power-loss durability 与更强 edit UX 仍未宣称。

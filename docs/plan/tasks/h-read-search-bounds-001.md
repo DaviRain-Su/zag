@@ -1,7 +1,7 @@
 ---
 id: h-read-search-bounds-001
 scope: phase-h/read-search-bounds
-status: in-progress
+status: done
 priority: P1
 depends-on: [h-tool-runtime-001, h-workspace-001]
 ---
@@ -82,9 +82,27 @@ Fixtures must cover:
 - `chapters/01-edit-permissions/README.md`
 - `chapters/H-harden/README.md`
 
-# develop-stage evidence
+# closeout evidence
 
-This branch adds a private bounded-body helper with complete `fs-v1` marker reservation, rewires `list_dir`, `read_file`, `grep`, and `glob` to the shared body budget, and adds deterministic private-limit fixtures for exact/N+1 read, list/grep/glob count and byte limits, walker node/depth/per-directory limits, source/pattern/io markers, symlink containment retention, and OOM propagation. Review follow-ups distinguish nested containment exclusions from runtime resolve/I/O skips, drive handler-level list iterator plus grep stat/read I/O failures through private production-path seams, close read-file N/N+1/TOCTOU body races with one-handle sentinel reads, match glob patterns relative to normalized optional scope path spellings including contained interior normalization, keep oversized NUL-bearing binary files as intentional grep exclusions before source-size cutoff including short-read binary-probe continuation, fix the cross-layer descriptor blocker by giving `grep`/`glob` an explicit defaulted path (`path` missing or empty → `.`) while preserving required `path_field` semantics for list/read/write/edit, normalize walker depth by host path components so equivalent contained spellings with repeated trailing separators still reach eligible children while genuine deep nodes still report `depth_limit`, reject present-empty required paths before permission/jail/handler (including raw `list_dir`), and make unknown-tool bodies generic, bounded, and model-name-free even for oversized requested names. This is **not** task closeout; independent verification, root default/curl Gates, and final integration audit remain pending.
+Task commits have been ff-only merged to local `main`. The delivery completed the reviews 01–10 review/fix cycle plus the final adversarial ship panel; the final independent review 10 verdict was **PASS** and the final adversarial ship panel verdict was **SHIP**. Earlier reviews and panels blocked several times and drove fixes, so this record intentionally does not claim that every intermediate review passed.
+
+Merged-main evidence:
+
+- `packages/zag-types`: **12/12**;
+- `packages/zag-agent-core`: **157/157**;
+- `packages/zag-coding-agent`: **138/138**;
+- root default Gate: **432/432**;
+- curl Gate: **431/431**;
+- docs lint passed;
+- readability **91/100**;
+- security-awareness **65/100**;
+- OpenAPI **287/287**;
+- catalog **40** passed;
+- required summaries had no explicit skips.
+
+The closed scoped contract covers four handler bodies `<= 64 KiB`, complete first `fs-v1` incomplete markers, `read_file` N/N+1/growth evidence, walker node/depth/per-directory/I/O cutoffs, source/binary/pattern evidence, fixed search-scope exclusions, generic bounded path/name-free jail and unknown-tool bodies, required/defaulted descriptor behavior, and real Agent evidence. Fixed `.git` and build-directory exclusions are intentional search-scope exclusions, and likely-binary detection remains a probe heuristic. Generic bounded jail/unknown bodies are Tool body contracts only; trace/audit fields keep their separate redacted/capped path contract. Provider-visible schemas still contain only `ToolDefinition`; the public union surface is not SDK-ready.
+
+This closes the read/search L2 blocker only. Phase H overall remains **in progress** until `h-integration-001` performs a fresh 11-sentence audit. This task does not claim OS sandboxing, process-tree ownership, mid-flight Tool preemption, exhaustive concurrent traversal, or generic third-party handler-body enforcement.
 
 # verification
 
@@ -97,4 +115,4 @@ This branch adds a private bounded-body helper with complete `fs-v1` marker rese
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
 - independent worktree review and merged-main std/curl Gate pass;
-- `h-edit-integrity-001` is done; only after this task passes may `h-integration-001` return to `ready`.
+- `h-edit-integrity-001` is done; this task has passed, so `h-integration-001` is `ready` for the fresh audit.

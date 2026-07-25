@@ -7,7 +7,7 @@
 | Track | Status | Meaning |
 |-------|--------|---------|
 | Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
-| Production Floor Phase H | ❌ **read/search blocker active** | edit integrity done；read/search bounds in-progress；integration blocked |
+| Production Floor Phase H | ❌ **fresh integration audit pending** | edit integrity done；read/search bounds done；integration ready |
 | Zig SDK-ready gate | ❌ 未达 | low-level composition 已证明；支持契约未闭合 |
 | Headless/process gate | ❌ 未达 | one-shot 存在；结构化协议/exit matrix 未闭合 |
 | Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
@@ -72,10 +72,10 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-redact-001](./plan/tasks/h-redact-001.md) | session + trace | shared pre-persistence redaction |
 | [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | **done:** no-key readiness/control truth; no policy mutation or OS-sandbox claim |
 | [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **done:** fixed-deny/encoding/scoped-limit/direct-PID/Agent matrix passed re-review, Oracle, and main std/curl |
-| [h-read-search-bounds-001](./plan/tasks/h-read-search-bounds-001.md) | Tool runtime + workspace | **in-progress:** shared 64 KiB body budget + explicit `fs-v1` incomplete outcomes under develop-stage verification |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all prior modules + read/search bounds | **blocked:** retained Agent evidence; repeat final audit after read/search task |
+| [h-read-search-bounds-001](./plan/tasks/h-read-search-bounds-001.md) | Tool runtime + workspace | **done:** shared 64 KiB body budget + explicit `fs-v1` incomplete outcomes passed reviews 01–10 cycle, final PASS/SHIP, merged-main Gate |
+| [h-integration-001](./plan/tasks/h-integration-001.md) | all prior modules + read/search bounds | **ready:** retained Agent evidence; repeat fresh 11-sentence final audit |
 
-Phase H exits only after read/search bounds passes and integration independently repeats the sentence-by-sentence closeout against [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit). Shell/provider completion alone is not the overall verdict.
+Phase H exits only after integration independently repeats the fresh 11-sentence closeout against [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit). Shell/provider/edit/read-search completion alone is not the overall verdict.
 
 ## Post-H gates
 

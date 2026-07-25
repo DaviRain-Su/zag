@@ -34,7 +34,7 @@ The handlers have count/node limits but not a complete shared result contract:
 
 - **Provider / zag-ai → L2.** The audit found no H6 behavior blocker. Curl enforces configured deadline/active cancel; std ordinary no-control requests work and requested unsupported controls fail closed before network. Dual-wire, retry/error/usage, strict SSE/Tool completion, and redacted diagnostics are covered.
 - **Permission remember stays L2 with a narrower contract.** H keys approval by exact lexical request path. Aliases conservatively re-prompt and execution always re-enters Guard. Canonical filesystem-object/path-domain authorization is L3, not an H promise; focused alias/jail evidence is attached to the edit task.
-- **Quality remains L1+.** Existing tests are green but do not contain the two newly required failure matrices.
+- **Quality remains L1+ until integration.** The edit and read/search failure matrices now exist and passed merged-main evidence; quality still cannot promote overall Phase H before the fresh integration audit.
 
 ## Exit sentence disposition
 
@@ -47,10 +47,10 @@ The handlers have count/node limits but not a complete shared result contract:
 | 5 Context accounting | PASS |
 | 6 Secrets | PASS |
 | 7 Deadline/cancel within H boundary | PASS |
-| 8 Editing/runtime | **BLOCKED** by both file tasks |
+| 8 Editing/runtime | PASS after file-task closeouts |
 | 9 Observability | PASS |
-| 10 Regression evidence | **BLOCKED** by missing file fault/boundary fixtures |
-| 11 Documentation truth | **BLOCKED** until tasks and fresh audit agree |
+| 10 Regression evidence | PASS after file-task closeouts |
+| 11 Documentation truth | **BLOCKED** until fresh integration audit agrees |
 
 ## Delivery correction
 
@@ -66,7 +66,7 @@ The tasks are independent in code but overlap global truth/teaching documents, s
 
 ## Subsequent delivery status
 
-`h-edit-integrity-001` is now done after the reviews 01–04 review/fix cycle, final Oracle, ff-only merge, and main default/curl Gate. `h-read-search-bounds-001` remains ready and is the only remaining file dependency; `h-integration-001` stays blocked until it passes.
+`h-edit-integrity-001` is done after the reviews 01–04 review/fix cycle, final Oracle, ff-only merge, and main default/curl Gate. `h-read-search-bounds-001` is also done after the reviews 01–10 review/fix cycle, final independent review 10 PASS, final adversarial ship panel SHIP, ff-only merge, and merged-main Gate. `h-integration-001` is now ready for the fresh 11-sentence audit. The original FAIL verdict remains until that audit passes.
 
 ## Explicit exclusions
 

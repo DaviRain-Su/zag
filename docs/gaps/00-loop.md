@@ -33,4 +33,4 @@
 
 ## Next
 
-The documented H Loop boundary is L2: Tool runtime, truthful terminal, provider capability-truth/stream safety, and accepted between-Tool Agent composition are closed. [h-shell-001](../plan/tasks/h-shell-001.md) also passed its independent/main Gate. The later final audit found two file-surface tasks; edit integrity is now done, and integration resumes after read/search bounds passes. The SDK external-consumer Gate remains separate. See [Phase H](../phases/H-harden.md).
+The documented H Loop boundary is L2: Tool runtime, truthful terminal, provider capability-truth/stream safety, and accepted between-Tool Agent composition are closed. [h-shell-001](../plan/tasks/h-shell-001.md) also passed its independent/main Gate. The later final audit found two file-surface tasks; edit integrity and read/search bounds are now done, and integration is ready for the fresh audit. The SDK external-consumer Gate remains separate. See [Phase H](../phases/H-harden.md).
