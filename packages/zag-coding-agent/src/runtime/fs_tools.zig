@@ -363,11 +363,14 @@ pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
     errdefer body.deinit();
 
+    const scope_root = try normalizeRelativeForGlob(ctx.allocator, root);
+    defer ctx.allocator.free(scope_root);
+
     var hits: u32 = 0;
     try walkTree(ctx, &guard, root, .{
         .kind = .grep,
         .pattern = pattern,
-        .scope_root = root,
+        .scope_root = scope_root,
         .body = &body,
         .hits = &hits,
         .hits_max = limits.grep_hits,
@@ -398,11 +401,14 @@ pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
     errdefer body.deinit();
 
+    const scope_root = try normalizeRelativeForGlob(ctx.allocator, root);
+    defer ctx.allocator.free(scope_root);
+
     var hits: u32 = 0;
     try walkTree(ctx, &guard, root, .{
         .kind = .glob,
         .pattern = pattern,
-        .scope_root = root,
+        .scope_root = scope_root,
         .body = &body,
         .hits = &hits,
         .hits_max = limits.glob_hits,
@@ -615,7 +621,7 @@ fn resolveRealOwned(ctx: tool.Context, rel: []const u8) error{ OutOfMemory, IoSk
 fn visitFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
     switch (opts.kind) {
         .grep => try grepFile(ctx, rel, opts),
-        .glob => try globFile(rel, opts),
+        .glob => try globFile(ctx, rel, opts),
     }
 }
 
@@ -762,8 +768,16 @@ fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErro
     }
 }
 
-fn globFile(rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
-    const candidate = scopedGlobCandidate(opts.scope_root, rel);
+fn globFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
+    const rel_norm = normalizeRelativeForGlob(ctx.allocator, rel) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidArguments => {
+            opts.body.setIncomplete(.io_skip);
+            return;
+        },
+    };
+    defer ctx.allocator.free(rel_norm);
+    const candidate = scopedGlobCandidate(opts.scope_root, rel_norm);
     const matched = matchGlobDetailed(opts.pattern, candidate, opts.limits.glob_frames) catch |err| switch (err) {
         error.PatternLimit => {
             opts.body.setIncomplete(.pattern_limit);
@@ -779,10 +793,32 @@ fn globFile(rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
     opts.hits.* = std.math.add(u32, opts.hits.*, 1) catch return error.OutOfMemory;
 }
 
+fn normalizeRelativeForGlob(gpa: std.mem.Allocator, raw: []const u8) error{ OutOfMemory, InvalidArguments }![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+
+    var start: usize = 0;
+    while (start <= raw.len) {
+        var end = start;
+        while (end < raw.len and !isHostPathSep(raw[end])) : (end += 1) {}
+        const part = raw[start..end];
+        if (part.len != 0 and !std.mem.eql(u8, part, ".")) {
+            if (std.mem.eql(u8, part, "..")) return error.InvalidArguments;
+            if (out.items.len != 0) try out.append(gpa, '/');
+            try out.appendSlice(gpa, part);
+        }
+        if (end == raw.len) break;
+        start = end + 1;
+    }
+
+    if (out.items.len == 0) try out.append(gpa, '.');
+    return out.toOwnedSlice(gpa) catch return error.OutOfMemory;
+}
+
 fn scopedGlobCandidate(scope_root: []const u8, rel: []const u8) []const u8 {
     if (std.mem.eql(u8, scope_root, ".")) return rel;
     if (std.mem.eql(u8, scope_root, rel)) return std.fs.path.basename(rel);
-    if (std.mem.startsWith(u8, rel, scope_root) and rel.len > scope_root.len and isHostPathSep(rel[scope_root.len])) {
+    if (std.mem.startsWith(u8, rel, scope_root) and rel.len > scope_root.len and rel[scope_root.len] == '/') {
         return rel[scope_root.len + 1 ..];
     }
     return rel;
@@ -929,9 +965,10 @@ test "grep and glob in tmp dir" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.createDirPath(io, "src/nested");
     try tmp.dir.writeFile(io, .{ .sub_path = "src/a.zig", .data = "const x = 1;\nfindme here\n" });
     try tmp.dir.writeFile(io, .{ .sub_path = "src/b.md", .data = "nope\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/nested/c.zig", .data = "const c = 1;\n" });
     try tmp.dir.writeFile(io, .{ .sub_path = "readme.txt", .data = "findme top\n" });
 
     const ctx: tool.Context = .{
@@ -957,7 +994,21 @@ test "grep and glob in tmp dir" {
     const scoped = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src\"}");
     defer gpa.free(scoped);
     try std.testing.expect(std.mem.indexOf(u8, scoped, "src/a.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, scoped, "src/nested/c.zig") == null);
     try std.testing.expect(std.mem.indexOf(u8, scoped, "readme.txt") == null);
+
+    const scoped_trailing = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/\"}");
+    defer gpa.free(scoped_trailing);
+    try std.testing.expect(std.mem.indexOf(u8, scoped_trailing, "src/a.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, scoped_trailing, "src/nested/c.zig") == null);
+
+    const scoped_dot = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"./src\"}");
+    defer gpa.free(scoped_dot);
+    try std.testing.expect(std.mem.indexOf(u8, scoped_dot, "src/a.zig") != null);
+
+    const nested_trailing = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/nested/\"}");
+    defer gpa.free(nested_trailing);
+    try std.testing.expect(std.mem.indexOf(u8, nested_trailing, "src/nested/c.zig") != null);
 
     const scoped_file = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/a.zig\"}");
     defer gpa.free(scoped_file);
@@ -1070,6 +1121,10 @@ test "symlink containment: read/list/grep/glob deny escape, allow contained" {
     defer gpa.free(glob_all);
     try std.testing.expect(std.mem.indexOf(u8, glob_all, "OUTSIDE_SECRET") == null);
     try std.testing.expect(std.mem.indexOf(u8, glob_all, "secret.txt") == null);
+
+    const glob_link_scoped = try glob(ctx, null, "{\"pattern\":\"*.txt\",\"path\":\"link_dir/\"}");
+    defer gpa.free(glob_link_scoped);
+    try std.testing.expect(std.mem.indexOf(u8, glob_link_scoped, "link_dir/nested.txt") != null);
 
     // dangling path deny
     const dang = try readFile(ctx, null, "{\"path\":\"dangling\"}");
