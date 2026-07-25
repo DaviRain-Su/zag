@@ -28,7 +28,7 @@ The owning contract is [`docs/modules/tools-edit.md`](../../modules/tools-edit.m
 - Existing ordinary files and contained final-symlink targets keep exact prior bytes on any pre-commit or replace failure.
 - A previously absent `write_file` target remains absent on failure.
 - Once a temporary exists, failure handling explicitly closes it, attempts deletion, and verifies absence when possible. Confirmed cleanup reports `temp_artifact=absent`; inability to confirm deletion reports `stage=temp_cleanup ... temp_artifact=may_remain`. No temporary name is exposed in Tool output.
-- Success exposes the complete requested/replaced bytes. No allocation or optional diff enrichment after commit may turn a completed mutation into a reported hard failure.
+- Success exposes the complete requested/replaced bytes. No allocation or optional diff enrichment after commit may turn a completed mutation into a reported hard failure. Captured optional-diff stdout has exactly one owner on exited, non-exited, and error terms; child-term, capture, or format failure retains the preallocated mandatory success body.
 - `flush` here is the Zig writer flush before rename. This task does not claim file `fsync`, parent-directory `fsync`, power-loss durability, or protection from a hostile concurrent filesystem actor.
 
 ## contained final symlinks
@@ -88,8 +88,9 @@ Fixtures must cover:
 9. missing-parent `write_file` failure with only the declared directory residue;
 10. `new-dir/.`, `alias.txt/`, `sub/..`, `.`, `./`, directory endpoints, and contained directory/root aliases are rejected before create/staging; fixtures enumerate inside and outside parents. Valid `dir/../file` remains contained and usable;
 11. stale/missing/ambiguous/oversize `search_replace` remains non-mutating;
-12. post-commit success reporting cannot fail ambiguously;
-13. lexical remember aliases re-prompt and remembered approval cannot bypass jail.
+12. post-commit success reporting cannot fail ambiguously; the existing early enrichment-fault seam continues to cover its distinct bypass/allocation path;
+13. on macOS/Linux, a private executable seam runs a real fake `git` that writes nonempty stdout then terminates by signal; stdout is released once, optional diff is omitted, exact committed bytes and mandatory success survive, and the term path cannot crash or leak;
+14. lexical remember aliases re-prompt and remembered approval cannot bypass jail.
 
 Add one real coding-product Agent fixture for a recoverable injected edit failure: preserve the original Tool-call ID in transcript and persisted/resumed session, retain the exact `edit-v1` body, project the matching Tool events into parsed trace using schema-true correlation, preserve the target, clean the temporary, and end in one truthful recovered `completed` terminal.
 
@@ -133,9 +134,9 @@ Add one real coding-product Agent fixture for a recoverable injected edit failur
 
 # develop evidence (pending independent verification)
 
-The task branch routes both handlers through one `Io.File.Atomic` commit helper: validated file endpoint, canonical target/parent containment proof, complete write, Zig writer flush, final Guard recheck, and atomic replace. Review-01 remediation added exact public-handler endpoint repro fixtures, explicit close/delete/absence verification, cleanup-failure precedence, and a replace seam after the temporary is closed at the rename boundary; independent review 02 passed those corrections. Oracle then found that formatting the cleanup-precedence body could OOM after an artifact became known. The third remediation preallocates every stable post-selection body before opening the parent and makes staged failure selection allocation-free, with an allocator-boundary fixture over a real partial temporary.
+The task branch routes both handlers through one `Io.File.Atomic` commit helper: validated file endpoint, canonical target/parent containment proof, complete write, Zig writer flush, final Guard recheck, and atomic replace. Review-01 remediation added exact public-handler endpoint repro fixtures, explicit close/delete/absence verification, cleanup-failure precedence, and a replace seam after the temporary is closed at the rename boundary; independent review 02 passed those corrections. Oracle then required preallocated post-staging results, implemented with an allocator-boundary fixture over a real partial temporary. Fresh review 03 found a separate post-publication double-free when optional `git diff` had nonempty stdout and a non-exited term; the fourth remediation gives stdout one owner and adds a real signaled fake-git handler fixture without mutating `PATH`.
 
-This is develop-stage evidence only. The third remediation requires re-verification. Task status remains `in-progress`; merged-main std/curl Gate is still required, and `h-integration-001` remains blocked.
+This is develop-stage evidence only. The review-03 remediation requires fresh verification. Task status remains `in-progress`; merged-main std/curl Gate is still required, and `h-integration-001` remains blocked.
 
 # verification
 
@@ -143,6 +144,7 @@ This is develop-stage evidence only. The third remediation requires re-verificat
 - invalid endpoint/root/directory aliases create no target or temporary inside or outside root; valid interior normalization remains contained;
 - every deterministic fault satisfies the target, symlink, parent-residue, and cleanup-truth contract, including observable `temp_cleanup` failure;
 - all stable bodies exist before parent open, and a fail-next allocator proves staged cleanup/result selection performs no allocation that could mask `temp_artifact=may_remain`;
+- a real signaled fake-git child with nonempty stdout executes after publication and still returns only the mandatory success body with exact target bytes and balanced ownership;
 - the exact ordinary `edit-v1` stage plus `temp_artifact=absent` survives the yolo Agent transcript/session/resume/single-call trace chain with one recovered terminal;
 - existing containment, anchor, diff-enrichment, permission, session, and trace fixtures do not regress;
 - focused core/coding-agent tests pass under applicable backends;

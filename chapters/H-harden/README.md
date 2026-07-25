@@ -41,7 +41,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | Slice | Spec | Current truth |
 |-------|------|---------------|
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | L2：soft errors/serial/goldens + facade terminal；provider active control；accepted multi-Tool between-call Agent composition 已通过独立/main Gate；mid-flight Tool preemption post-H |
-| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 保持；edit review-01 endpoint/outside-staging + cleanup-truth remediation 与 yolo Agent/separate core fixtures 在 branch，待 re-review/main Gate；read/search task 仍 ready |
+| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 保持；edit review-02 已通过 endpoint/cleanup，Oracle preallocation 修复后 review-03 发现 optional diff stdout ownership blocker；修复与 real signaled-child fixture 在 branch，待 fresh verification/main Gate；read/search task 仍 ready |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
@@ -66,7 +66,7 @@ Tool runtime + trace
 h-shell-001（re-review + Oracle + main std/curl）✅
   ↓
 final audit FAIL（existing suites green）
-  ├─ h-edit-integrity-001 in-progress（review-01 BLOCKED；remediation 待 re-review/main）
+  ├─ h-edit-integrity-001 in-progress（review-02 PASS → Oracle prealloc fix → review-03 diff-ownership BLOCKED；remediation 待 fresh verification/main）
   └─ h-read-search-bounds-001 ready
   ↓
 h-integration-001 blocked → 两者 done 后 fresh sentence audit

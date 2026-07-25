@@ -37,7 +37,7 @@ These are owned by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md)
 
 ### Edit-integrity delivery state
 
-The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes, mandatory success text, and stable failure bodies are allocated before parent open/staging; endpoint checks and canonical target/parent proofs run before parent creation or temp open; the helper writes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies instead of relying on `Atomic.deinit`'s swallowed deletion error, then selects prepared result ownership allocation-free. Contained final file symlinks keep their link entry/text while the resolved target changes. Review 02 passed the endpoint/cleanup corrections; Oracle's later result-OOM blocker has a third develop fix and allocator-boundary fixture pending re-verification and merged-main std/curl Gate, so the module and Phase H do not advance yet.
+The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes, mandatory success text, and stable failure bodies are allocated before parent open/staging; endpoint checks and canonical target/parent proofs run before parent creation or temp open; the helper writes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies instead of relying on `Atomic.deinit`'s swallowed deletion error, then selects prepared result ownership allocation-free. Contained final file symlinks keep their link entry/text while the resolved target changes. Review 02 passed endpoint/cleanup; Oracle's preallocated-result correction landed; fresh review 03 then found non-exited optional-diff stdout double-free after publication. The fourth develop fix gives stdout one owner and adds a real signaled-child fixture, pending fresh verification and merged-main std/curl Gate, so the module and Phase H do not advance yet.
 
 ## H read/search contract
 
@@ -69,7 +69,7 @@ After staging, cleanup classification and owned-body selection are allocation-fr
 - Absent `write_file` target: failure preserves absence.
 - Once a temporary exists, failure handling explicitly closes it, attempts deletion, and verifies absence when possible. Confirmed deletion reports `temp_artifact=absent`; unconfirmed deletion reports `stage=temp_cleanup` and `temp_artifact=may_remain` without exposing the name.
 - A contained final file symlink resolves to its contained real target; commit changes that target and leaves the symlink object/link text intact. Escaping, dangling, looping, or unresolvable links remain `jail_deny`.
-- Success exposes complete bytes and cannot later become an ambiguous hard failure because success text or optional diff enrichment could not allocate.
+- Success exposes complete bytes and cannot later become an ambiguous hard failure. Optional diff stdout has one owner: exited capture transfers it to enrichment; capture/non-exited term frees it once and retains the mandatory success body; merge-format allocation failure also retains that body.
 - Missing parent directories created by `write_file` may remain after a later failure; rollback is forbidden. The target is still preserved/absent and this residue is reported as `parent_dirs=may_remain`; temporary state is reported independently by `temp_artifact`.
 - `search_replace` never creates parent directories; missing/ambiguous/stale/oversized pre-commit outcomes remain non-mutating.
 
@@ -102,7 +102,8 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
 - [ ] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`; review 02 passed, merged-main Gate pending).
-- [ ] write/edit faults preserve exact prior target state and expose stable cleanup-truthful `edit-v1` results without post-staging result allocation (`h-edit-integrity-001`; third fix awaits re-verification).
+- [ ] write/edit faults preserve exact prior target state and expose stable cleanup-truthful `edit-v1` results without post-staging result allocation (`h-edit-integrity-001`; Oracle correction landed).
+- [ ] non-exited optional diff capture with owned stdout cannot abort or replace mandatory post-commit success (`h-edit-integrity-001`; review-03 fix awaits fresh verification).
 - [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; review 02 passed, merged-main Gate pending).
 - [ ] lexical remember alias/jail fixtures prove the documented conservative H boundary (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
 - [x] shell/error integration passes its separate lifecycle contract and independent/main Gate (`h-shell-001`).

@@ -95,6 +95,7 @@ pub const run_shell_def: tool.Definition = .{
 const max_write_bytes: u32 = 512 * 1024;
 const max_read_for_edit: u32 = max_write_bytes + 1;
 const production_shell_path = "/bin/sh";
+const production_git_executable = "git";
 const shell_capture_timeout_ms: u32 = 30_000;
 const max_shell_stream_bytes: usize = 30 * 1024;
 const max_shell_envelope_bytes: usize = 4 * 1024;
@@ -126,10 +127,19 @@ var test_fail_temp_cleanup_delete: if (builtin.is_test) bool else void =
     if (builtin.is_test) false else {};
 var test_replace_observed_closed: if (builtin.is_test) bool else void =
     if (builtin.is_test) false else {};
+var test_git_executable: if (builtin.is_test) ?[]const u8 else void =
+    if (builtin.is_test) null else {};
+var test_git_term_signal_stdout_observed: if (builtin.is_test) bool else void =
+    if (builtin.is_test) false else {};
 
 fn activeShellConfig() ShellConfig {
     if (builtin.is_test) return test_shell_config;
     return .{};
+}
+
+fn activeGitExecutable() []const u8 {
+    if (builtin.is_test) return test_git_executable orelse production_git_executable;
+    return production_git_executable;
 }
 
 fn takeEditFault(comptime expected: TestEditFault) bool {
@@ -179,11 +189,23 @@ pub const testing = if (builtin.is_test) struct {
         return test_replace_observed_closed;
     }
 
+    fn configureGitExecutable(executable: []const u8) void {
+        std.debug.assert(executable.len > 0);
+        test_git_executable = executable;
+        test_git_term_signal_stdout_observed = false;
+    }
+
+    fn gitTermSignalStdoutObserved() bool {
+        return test_git_term_signal_stdout_observed;
+    }
+
     pub fn reset() void {
         test_shell_config = .{};
         test_edit_fault = .none;
         test_fail_temp_cleanup_delete = false;
         test_replace_observed_closed = false;
+        test_git_executable = null;
+        test_git_term_signal_stdout_observed = false;
     }
 } else struct {};
 
@@ -1109,7 +1131,7 @@ fn maybeAppendGitDiff(ctx: tool.Context, path: []const u8, base: []u8) []u8 {
 
 fn captureGitDiff(ctx: tool.Context, path: []const u8) ![]u8 {
     std.debug.assert(path.len > 0);
-    const argv = [_][]const u8{ "git", "diff", "--", path };
+    const argv = [_][]const u8{ activeGitExecutable(), "diff", "--", path };
     const result = try std.process.run(ctx.allocator, ctx.io, .{
         .argv = &argv,
         .cwd = .{ .dir = ctx.cwd },
@@ -1123,16 +1145,20 @@ fn captureGitDiff(ctx: tool.Context, path: []const u8) ![]u8 {
         },
     });
     defer ctx.allocator.free(result.stderr);
+    // Error returns free stdout once; `.exited` transfers its sole ownership.
     errdefer ctx.allocator.free(result.stdout);
 
     switch (result.term) {
-        .exited => {},
-        else => {
-            ctx.allocator.free(result.stdout);
+        .exited => return result.stdout,
+        .signal => |signal| {
+            if (builtin.is_test) {
+                test_git_term_signal_stdout_observed =
+                    signal == .TERM and result.stdout.len > 0;
+            }
             return error.ToolFailed;
         },
+        else => return error.ToolFailed,
     }
-    return result.stdout;
 }
 
 const ShellResultCode = enum {
@@ -2408,6 +2434,46 @@ test "post-commit enrichment failure remains successful with complete target byt
         try expectFileBytes(gpa, io, tmp.dir, "target.txt", expected);
         try expectDirEntries(io, tmp.dir, &.{"target.txt"});
     }
+}
+
+test "post-commit signaled git stdout retains mandatory success" {
+    try requireRealPosixShellFixture();
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    testing.reset();
+    defer testing.reset();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "fake-git",
+        .data =
+        \\#!/bin/sh
+        \\printf forced-git-stdout
+        \\kill -TERM $$
+        \\
+        ,
+        .flags = .{ .permissions = .executable_file },
+    });
+    var executable_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const executable_len = try tmp.dir.realPathFile(io, "fake-git", &executable_buf);
+    testing.configureGitExecutable(executable_buf[0..executable_len]);
+
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const body = try writeFile(
+        ctx,
+        null,
+        "{\"path\":\"target.txt\",\"content\":\"committed bytes\\n\"}",
+    );
+    defer gpa.free(body);
+
+    try std.testing.expectEqualStrings("ok: wrote 16 bytes to target.txt", body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "forced-git-stdout") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "git diff") == null);
+    try std.testing.expect(testing.gitTermSignalStdoutObserved());
+    try expectFileBytes(gpa, io, tmp.dir, "target.txt", "committed bytes\n");
+    try expectDirEntries(io, tmp.dir, &.{ "fake-git", "target.txt" });
 }
 
 test "search_replace write_file run_shell in tmp dir" {

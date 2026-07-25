@@ -11,7 +11,7 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**总状态（2026-07-25 final audit；2026-07-25 edit develop update）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。最终审计发现两个 file-surface L2 反例。`h-edit-integrity-001` 的 review-02 已通过 endpoint/outside-staging 与 cleanup-truth 修复，但 Oracle 随后发现 cleanup 后 result allocation OOM 可遮蔽 `may_remain` artifact；第三次 allocation-free selection 修复在 in-progress task branch，仍待 re-verification 与 merged-main Gate。read/search 预算/截断 blocker 仍 open，`h-integration-001` 在两者完成前 blocked。
+**总状态（2026-07-25 final audit；2026-07-25 edit develop update）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2**；Capability = 未开始。最终审计发现两个 file-surface L2 反例。`h-edit-integrity-001` review-02 已通过 endpoint/cleanup，Oracle 的 preallocated-result 修复已落地；fresh review-03 随后发现 optional diff non-exited stdout 在 commit 后 double-free。第四次 single-owner 修复与 real signaled-child fixture 在 in-progress task branch，仍待 fresh verification 与 merged-main Gate。read/search 预算/截断 blocker 仍 open，`h-integration-001` 在两者完成前 blocked。
 
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
@@ -24,7 +24,7 @@
 | Loop / Turn | **L2** | soft Tool errors、serial order、goldens、facade 单 terminal、provider in-flight cancel/deadline；accepted multi-Tool between-call cancel 的 Agent/transcript/session/trace 组合 fixture 已独立验收并通过 main std/curl Gate；Tool/shell mid-flight preemption 明确为 post-H process work | API/error/trace terminal 一致 ✅；provider cancel/deadline 有界 ✅；≥2 goldens ✅；真实组合 cancel fixture ✅ | steer、parallel read-only |
 | Tool runtime / registry | **L2** | D-007: instance-aware Tool + mandatory ToolDescriptor/Capabilities；`buildTool`+`validateTools`+`loop.run` 对 missing/invalid caps fail-closed；path/shell 参数校验；Provider/WireProvider 仅 ToolDefinition；`.cooperative` 仅为声明（handler preemption 属 post-H shell/process work） | stateful Tool；mandatory descriptor；missing capability fail-closed | progress、concurrency、behavior version |
 | Tools · read/search | **L1+** | containment 已落地；final audit 反例：list/glob 仅 count cap 可超 64 KiB，read oversized prefix 与 Zig 0.16 limit 语义不一致，walker/source/pattern cutoffs 可静默不完整；`h-read-search-bounds-001` ready | 四类 body ≤64 KiB；每个 runtime cutoff 有完整 `fs-v1` marker；N/N+1/walker 矩阵 | LSP/repo map integration |
-| Tools · write/edit | **L1+** | `h-edit-integrity-001` review-02 已通过 endpoint/strict target-parent、cleanup-truth 与 post-close replace；Oracle 的 post-cleanup OOM blocker 以 preallocated bodies + allocation-free ownership selection 修复并加入 allocator-boundary fixture；待 re-verification 与 merged-main Gate | target-preserving single-file commit；contained final symlink；stable `edit-v1` fault + Agent chain | hashline/apply_patch、hunk review |
+| Tools · write/edit | **L1+** | review-02 endpoint/cleanup PASS；Oracle preallocated-result fix landed；review-03 post-commit optional-diff stdout ownership 以 single-owner unwind + real signaled-child fixture 修复；待 fresh verification 与 merged-main Gate | target-preserving single-file commit；contained final symlink；stable `edit-v1` fault + Agent chain | hashline/apply_patch、hunk review |
 | Tools · shell | **L2** | fixed generic deny；UTF-8/base64 + scoped capture/body limits；real N/N+1；checked 64 KiB body；direct-PID + Agent/session/parsed-trace chain；independent re-review + Oracle + main std/curl passed；非 sandbox | synchronous shell-v1 matrix、bounded body、direct-child evidence、truthful recovered terminal ✅ | process supervisor |
 | Permissions | **L2** | D-007 descriptor-derived gate；remember 明确定义为 exact lexical request-path key，alias 保守 re-prompt 且 execution-time Guard 不可绕过；focused alias/jail evidence 跟随 h-edit-integrity-001 | descriptor-derived risk；custom Tool 同 gate；missing risk fail-closed；lexical remember boundary | canonical path/domain policies、Plan UX |
 | Workspace / Safety | **L2** | lexical + symlink-aware file containment（Root/Guard、loop+handler 双检、`code=jail_deny`）+ secret redaction + provider-independent doctor；default Agent ask-deny write / yolo escaping-symlink jail composition 已独立验收并通过 main std/curl；shell 是单独非 path-jail 边界；无 OS sandbox claim | file containment ✅；redaction ✅；doctor ✅；Agent policy/containment composition ✅ | OS sandbox/network/worktree |
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | 既有 module/doctor/Agent/shell matrices 均通过；edit review-02 已通过，第三次修复新增 fail-next allocator fixture 证明 staged cleanup/result selection 无 allocation；仍待 re-verification，read/search budget/walker fixtures 仍缺 | existing composition ✅；shell matrix ✅；两项 file-surface fixtures + fresh integration audit | edit/cost/perf baselines |
+| Quality / Evals | **L1+** | 既有 module/doctor/Agent/shell matrices 均通过；edit 保留 review-02/Oracle fixtures，第四次修复新增 fake-git nonempty stdout + signal real-term ownership fixture；仍待 fresh verification，read/search budget/walker fixtures 仍缺 | existing composition ✅；shell matrix ✅；两项 file-surface fixtures + fresh integration audit | edit/cost/perf baselines |
 
 ## Phase H production-floor exit
 
@@ -50,9 +50,9 @@
 5. **Context accounting ✅**：compaction event、summary/lineage、session meta、trace 与最终 model view 一致。
 6. **Secrets ✅**：fake configured key 不出现在 verbose、trace、session fixtures；`.zag/` 仍标敏感；无 zeroization/DLP 声称。
 7. **Deadline/cancel ✅（按 H 边界）**：curl 真正执行 provider deadline/active cancel；std 配置 deadline 显式 `unsupported_control`；半截 Tool call 不执行；accepted multi-Tool turn 的 between-Tool cancel 组合 fixture 已验收。已运行 Tool/shell 的 mid-flight preemption 不属于 H，作为 post-H process work 保持显式 open。
-8. **Editing/runtime ❌**：shell 子合同已通过；edit review-02 已通过 endpoint/outside-staging 与 cleanup-truth，Oracle 后续 post-cleanup OOM blocker 的 preallocation 修复已在 task branch，但 re-verification/main Gate 未完成；`h-read-search-bounds-001` 仍须证明四类 body 有界且所有 cutoff 显式 `fs-v1` incomplete。
+8. **Editing/runtime ❌**：shell 子合同已通过；edit review-02/Oracle corrections 已落地，review-03 post-publication diff stdout double-free 的 single-owner 修复在 task branch，但 fresh verification/main Gate 未完成；`h-read-search-bounds-001` 仍须证明四类 body 有界且所有 cutoff 显式 `fs-v1` incomplete。
 9. **Observability ✅**：real invalid UTF-8 shell fixture 经 transcript/session/resume/parsed single-call trace 后以 recovered `completed` 收口；trace 用 exact-one counts，不假设 result call ID；shell policy/runtime replay Gate 已通过。
-10. **Regression evidence ❌**：mutator endpoint/preservation/cleanup、post-staging allocation boundary、yolo Agent composition 与 separate core remember 永久 fixtures 已在 edit task branch 增加但待 re-verification；read/search budget/walker boundary fixtures 仍缺。
+10. **Regression evidence ❌**：mutator endpoint/preservation/cleanup、post-staging allocation boundary、post-commit signaled diff ownership、yolo Agent composition 与 separate core remember 永久 fixtures 已在 edit task branch 增加但待 fresh verification；read/search budget/walker boundary fixtures 仍缺。
 11. **Documentation truth ❌（delivery 状态）**：负面能力边界保持诚实；edit task 保持 `in-progress`，integration 保持 blocked。只有两 file task 完成且 fresh integration audit 通过后才能重新勾选本句。
 
 L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。

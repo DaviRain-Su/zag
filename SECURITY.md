@@ -16,7 +16,7 @@ Do not describe the current build as an OS sandbox, production-ready, or safe fo
 | Permission remember | exact lexical request-path key for one Agent lifetime; `--no-remember` disables | aliases re-prompt; canonical filesystem-object policy is not claimed; Guard still revalidates every execution |
 | Plan session | blocks general built-in write/shell, even under yolo | product UX is still a stub |
 | Workspace path check | lexical deny of absolute/`..`/drive/UNC **plus** realpath containment for file tools | **software check-time** only; residual TOCTOU under concurrent FS races; not an OS sandbox |
-| Edit commit | in-progress review-01 fix validates file endpoints/selected parent, stages complete bytes inside root, writer-flushes, Guard-rechecks, atomically replaces, and explicitly reports cleanup outcome | re-review/main Gate pending; no fsync/power-loss, metadata, multi-file, or hostile-FS-race claim |
+| Edit commit | in-progress review-03 fix retains review-02 endpoint/cleanup and Oracle preallocated-result corrections, then gives optional post-commit diff stdout single ownership on every child term | fresh re-verification/main Gate pending; no fsync/power-loss, metadata, multi-file, or hostile-FS-race claim |
 | Shell policy/runtime | `protect`; stable synchronous `shell-v1`; 30 KiB/stream + bounded body; h-shell-001 Gate passed | denylist only; shell is **not** contained by the file-path jail or OS sandbox; no process-tree or mid-flight cancellation claim |
 | Trace | optional local JSONL events | lifecycle/schema L2; redaction before serialize (h-redact-001) |
 | Secret redaction | configured keys + common API-key shapes before verbose/trace/session | not DLP; `.zag/` still sensitive; no zeroization claim |
@@ -108,7 +108,7 @@ A product mode that requires sandbox enforcement must fail closed when the platf
 | ~~doctor/readiness control report~~ | **done** Phase H P1 h-doctor-001 |
 | ~~default Agent policy/containment composition~~ | **done evidence** h-integration-001; independent review + main std/curl passed |
 | ~~stable synchronous shell outcomes/body budget/direct-child trace evidence~~ | **done** Phase H P1 h-shell-001; fixed deny + encoding/budget/cleanup/Agent Gate passed |
-| target-preserving `write_file` / `search_replace` commit faults | **in-progress P0** h-edit-integrity-001; review-01 endpoint/cleanup blockers remediated on task branch, re-review/main Gate pending |
+| target-preserving `write_file` / `search_replace` commit faults | **in-progress P0** h-edit-integrity-001; review-02 passed endpoint/cleanup, Oracle preallocation fix landed, review-03 post-commit diff-ownership remediation awaits fresh verification/main Gate |
 | bounded read/list/grep/glob bodies + explicit incomplete cutoffs | **open P1** h-read-search-bounds-001 |
 | OS sandbox/network/process-tree enforcement | C7 |
 | multi-tenant isolation | Out of scope |
