@@ -21,6 +21,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 | P0 | Original queue is done; `h-edit-integrity-001` review 02 passed endpoint/cleanup, Oracle's preallocation correction landed, and review-03 optional diff-ownership remediation is on the task branch pending fresh verification/main Gate. |
 | P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is ready; retained integration evidence remains valid. |
 | Integration | `h-integration-001` is blocked on both file-surface tasks, then must repeat the sentence-by-sentence audit. |
+| Product CLI | `cli-repl-001` is ready to fix the persistent-reader delimiter bug that exits after one turn; independent from the H file DAG. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
@@ -66,6 +67,7 @@ Doctor and shell keep their completed dependency contracts. Integration remains 
 | [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | in-progress | Target-preserving single-file write/edit commit |
 | [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | ready | Bounded read/search bodies and explicit incomplete results |
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Fresh Phase H sentence audit after both file tasks |
+| [cli-repl-001](./tasks/cli-repl-001.md) | P1 | ready | Multi-turn interactive input delimiter consumption |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
 
