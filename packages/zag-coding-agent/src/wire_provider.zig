@@ -157,6 +157,8 @@ test "loop via WireProvider forwards only ToolDefinition to WireAdapter" {
                 std.mem.indexOf(u8, body, "capabilities") == null and
                 std.mem.indexOf(u8, body, "cooperative") == null and
                 std.mem.indexOf(u8, body, "path_field") == null and
+                std.mem.indexOf(u8, body, "path_field_default") == null and
+                std.mem.indexOf(u8, body, "default_path") == null and
                 std.mem.indexOf(u8, body, "command_argument") == null;
             if (!self.clean_payload) return error.InvalidResponse;
 

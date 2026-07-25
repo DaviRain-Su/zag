@@ -58,11 +58,12 @@ test "every built-in declares complete descriptor capabilities" {
         risk: tool.ToolRisk,
         uses_path: bool,
         shell: tool.ShellPolicyKind,
+        default_path: ?[]const u8 = null,
     }{
         .{ .name = "list_dir", .risk = .read, .uses_path = true, .shell = .none },
         .{ .name = "read_file", .risk = .read, .uses_path = true, .shell = .none },
-        .{ .name = "grep", .risk = .read, .uses_path = true, .shell = .none },
-        .{ .name = "glob", .risk = .read, .uses_path = true, .shell = .none },
+        .{ .name = "grep", .risk = .read, .uses_path = true, .shell = .none, .default_path = "." },
+        .{ .name = "glob", .risk = .read, .uses_path = true, .shell = .none, .default_path = "." },
         .{ .name = "search_replace", .risk = .write, .uses_path = true, .shell = .none },
         .{ .name = "write_file", .risk = .write, .uses_path = true, .shell = .none },
         .{ .name = "run_shell", .risk = .execute, .uses_path = false, .shell = .command_argument },
@@ -73,6 +74,11 @@ test "every built-in declares complete descriptor capabilities" {
         try std.testing.expectEqualStrings(exp.name, t.descriptor.definition.name);
         try std.testing.expect(t.descriptor.capabilities.risk == exp.risk);
         try std.testing.expect(t.descriptor.capabilities.workspace.usesPath() == exp.uses_path);
+        if (exp.default_path) |default_path| {
+            try std.testing.expectEqualStrings(default_path, t.descriptor.capabilities.workspace.defaultPath().?);
+        } else {
+            try std.testing.expect(t.descriptor.capabilities.workspace.defaultPath() == null);
+        }
         try std.testing.expect(t.descriptor.capabilities.shell == exp.shell);
         try std.testing.expect(t.descriptor.capabilities.cancellation == .none);
         try std.testing.expect(t.instance == null);

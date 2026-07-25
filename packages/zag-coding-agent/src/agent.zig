@@ -1007,6 +1007,111 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
     try std.testing.expect(loaded.items().len >= 1);
 }
 
+test "Agent Phase1Storage grep and glob default missing path in tmp cwd" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws/src");
+    try parent.dir.writeFile(io, .{ .sub_path = "ws/src/hit.zig", .data = "pub const needle = true;\n" });
+
+    var old_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const old_n = try Io.Dir.cwd().realPathFile(io, ".", &old_buf);
+    const old_cwd = try gpa.dupeZ(u8, old_buf[0..old_n]);
+    defer gpa.free(old_cwd);
+
+    var ws_buf: [Io.Dir.max_path_bytes]u8 = undefined;
+    const ws_n = try parent.dir.realPathFile(io, "ws", &ws_buf);
+    const ws_cwd = try gpa.dupeZ(u8, ws_buf[0..ws_n]);
+    defer gpa.free(ws_cwd);
+
+    if (std.c.chdir(ws_cwd.ptr) != 0) return error.SkipZigTest;
+    defer _ = std.c.chdir(old_cwd.ptr);
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            defs: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                var saw_grep = false;
+                var saw_glob = false;
+                for (defs) |def| {
+                    if (std.mem.eql(u8, def.name, "grep")) saw_grep = true;
+                    if (std.mem.eql(u8, def.name, "glob")) saw_glob = true;
+                }
+                if (!saw_grep or !saw_glob) return error.InvalidResponse;
+                const tc = try arena.alloc(message.ToolCall, 2);
+                tc[0] = .{ .id = try arena.dupe(u8, "grep-1"), .name = try arena.dupe(u8, "grep"), .arguments = try arena.dupe(u8, "{\"pattern\":\"needle\"}") };
+                tc[1] = .{ .id = try arena.dupe(u8, "glob-1"), .name = try arena.dupe(u8, "glob"), .arguments = try arena.dupe(u8, "{\"pattern\":\"**/*.zig\"}") };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+
+            var saw_grep_hit = false;
+            var saw_glob_hit = false;
+            var saw_invalid = false;
+            var saw_grep_id = false;
+            var saw_glob_id = false;
+            for (messages) |m| {
+                if (m.role == .tool) {
+                    const id = m.tool_call_id orelse "";
+                    if (std.mem.eql(u8, id, "grep-1")) saw_grep_id = true;
+                    if (std.mem.eql(u8, id, "glob-1")) saw_glob_id = true;
+                    if (std.mem.indexOf(u8, m.content, "src/hit.zig") != null and std.mem.indexOf(u8, m.content, "needle") != null) saw_grep_hit = true;
+                    if (std.mem.indexOf(u8, m.content, "src/hit.zig") != null) saw_glob_hit = true;
+                    if (std.mem.indexOf(u8, m.content, "invalid_arguments") != null) saw_invalid = true;
+                }
+            }
+            if (!saw_grep_id or !saw_glob_id or !saw_grep_hit or !saw_glob_hit or saw_invalid) return error.InvalidResponse;
+            return .{ .content = try arena.dupe(u8, "terminal"), .tool_calls = &.{}, .finish_reason = "stop" };
+        }
+    };
+
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var agent = try Agent.init(gpa, io, provider, .{ .permission_mode = .yolo, .max_turns = 3, .chat_retries = 0 });
+    defer agent.deinit();
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = ".zag/sessions/default-search.jsonl",
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "search without path");
+    try std.testing.expectEqualStrings("terminal", result.final_text);
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+
+    var saw_grep = false;
+    var saw_glob = false;
+    for (session.transcript.items()) |m| {
+        if (m.role == .tool) {
+            try std.testing.expect(std.mem.indexOf(u8, m.content, "invalid_arguments") == null);
+            const id = m.tool_call_id orelse "";
+            if (std.mem.eql(u8, id, "grep-1") and std.mem.indexOf(u8, m.content, "src/hit.zig") != null and std.mem.indexOf(u8, m.content, "needle") != null) saw_grep = true;
+            if (std.mem.eql(u8, id, "glob-1") and std.mem.indexOf(u8, m.content, "src/hit.zig") != null) saw_glob = true;
+        }
+    }
+    try std.testing.expect(saw_grep);
+    try std.testing.expect(saw_glob);
+
+    const saved = try Io.Dir.cwd().readFileAlloc(io, ".zag/sessions/default-search.jsonl", gpa, .limited(64 * 1024));
+    defer gpa.free(saved);
+    try std.testing.expect(std.mem.indexOf(u8, saved, "grep-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, saved, "glob-1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, saved, "terminal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, saved, "invalid_arguments") == null);
+}
+
 // ── h-trace-001 lifecycle fixtures ──────────────────────────────────────────
 
 const MockChat = struct {

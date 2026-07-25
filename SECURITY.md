@@ -48,7 +48,7 @@ Direct-child cleanup is **not** process-tree ownership. Descendants, detached/ba
 
 ### Custom Tool fail-open classification
 
-Built-ins declare capabilities; custom Tool names require mandatory runtime capabilities at registration (D-007). A mutating custom Tool without write/execute risk fails closed at registration. Custom tools that touch the filesystem without `workspace.path_field` (or without their own containment) are outside the loop path gate — do not treat the registry as a full multi-tenant security boundary. Contract: [D-007](./docs/decisions/active/D-007-tool-runtime-descriptor.md).
+Built-ins declare capabilities; custom Tool names require mandatory runtime capabilities at registration (D-007). A mutating custom Tool without write/execute risk fails closed at registration. Custom tools that touch the filesystem without a declared workspace path capability (`path_field` or explicit `path_field_default`) or without their own containment are outside the loop path gate — do not treat the registry as a full multi-tenant security boundary. Contract: [D-007](./docs/decisions/active/D-007-tool-runtime-descriptor.md).
 
 ### Session and audit reliability
 

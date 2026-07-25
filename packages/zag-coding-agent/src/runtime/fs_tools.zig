@@ -1024,6 +1024,13 @@ const path_read_caps: tool.ToolCapabilities = .{
     .shell = .none,
 };
 
+const defaulted_search_path_caps: tool.ToolCapabilities = .{
+    .risk = .read,
+    .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "." } },
+    .cancellation = .none,
+    .shell = .none,
+};
+
 pub fn phase0Tools() [2]tool.Tool {
     return .{
         tool.stateless(.{ .definition = list_dir_def, .capabilities = path_read_caps }, listDir),
@@ -1033,8 +1040,8 @@ pub fn phase0Tools() [2]tool.Tool {
 
 pub fn searchTools() [2]tool.Tool {
     return .{
-        tool.stateless(.{ .definition = grep_def, .capabilities = path_read_caps }, grep),
-        tool.stateless(.{ .definition = glob_def, .capabilities = path_read_caps }, glob),
+        tool.stateless(.{ .definition = grep_def, .capabilities = defaulted_search_path_caps }, grep),
+        tool.stateless(.{ .definition = glob_def, .capabilities = defaulted_search_path_caps }, glob),
     };
 }
 

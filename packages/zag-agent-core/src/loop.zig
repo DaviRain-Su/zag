@@ -1446,6 +1446,176 @@ test "custom path tool jails without built-in name" {
     try std.testing.expect(found);
 }
 
+fn alwaysAllow(_: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8) permissions.Decision {
+    return .allow;
+}
+
+test "defaulted path descriptor gates missing path as dot before handler" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+
+    const State = struct {
+        ran: bool = false,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.ran = true;
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var state: State = .{};
+
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "defaulted_writer",
+            .description = "custom defaulted path",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .write,
+            .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "." } },
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = &state,
+        .handler = State.handle,
+    })};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "defaulted_writer"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{ .content = try arena.dupe(u8, "done"), .tool_calls = &.{}, .finish_reason = "stop" };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+
+    var remember = permissions.Remember.init(gpa, true);
+    defer remember.deinit();
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("default path");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{ .allocator = gpa, .io = io, .cwd = ws },
+        .options = .{ .permission_gate = .{ .mode = .ask, .ask_fn = alwaysAllow, .remember = &remember } },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("done", result.final_text);
+    try std.testing.expect(state.ran);
+    try std.testing.expect(remember.contains("."));
+    var saw_ran = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and std.mem.eql(u8, m.content, "ran")) saw_ran = true;
+        if (m.role == .tool and tool_error.hasCode(m.content, .invalid_arguments)) try std.testing.expect(false);
+    }
+    try std.testing.expect(saw_ran);
+}
+
+test "defaulted path descriptor still denies escape and non-string before handler" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+
+    const State = struct {
+        ran: bool = false,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.ran = true;
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{ .name = "defaulted_reader", .description = "custom", .parameters_json = "{\"type\":\"object\"}" },
+        .capabilities = .{ .risk = .read, .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "." } }, .cancellation = .none, .shell = .none },
+        .instance = &state,
+        .handler = State.handle,
+    })};
+
+    const Case = struct { args: []const u8, code: tool_error.Code };
+    const cases = [_]Case{
+        .{ .args = "{\"path\":\"../escape\"}", .code = .jail_deny },
+        .{ .args = "{\"path\":1}", .code = .invalid_arguments },
+    };
+
+    for (cases) |case| {
+        state.ran = false;
+        const Mock = struct {
+            calls: u32 = 0,
+            args: []const u8,
+            fn chat(
+                ptr: *anyopaque,
+                arena: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+                _: provider_mod.RequestControl,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.calls += 1;
+                if (self.calls == 1) {
+                    const tc = try arena.alloc(message.ToolCall, 1);
+                    tc[0] = .{ .id = try arena.dupe(u8, "c1"), .name = try arena.dupe(u8, "defaulted_reader"), .arguments = try arena.dupe(u8, self.args) };
+                    return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+                }
+                return .{ .content = try arena.dupe(u8, "done"), .tool_calls = &.{}, .finish_reason = "stop" };
+            }
+        };
+        var mock: Mock = .{ .args = case.args };
+        const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+        var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_impl.deinit();
+        var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+        try transcript.appendUser("x");
+
+        _ = try run(.{
+            .gpa = gpa,
+            .provider = provider,
+            .toolset = .{ .tools = &tools },
+            .tool_ctx = .{ .allocator = gpa, .io = io, .cwd = ws },
+            .options = .{ .permission_gate = .yolo() },
+        }, &transcript);
+
+        try std.testing.expect(!state.ran);
+        var found = false;
+        for (transcript.items()) |m| {
+            if (m.role == .tool and tool_error.hasCode(m.content, case.code)) found = true;
+        }
+        try std.testing.expect(found);
+    }
+}
+
 test "provider receives definitions only (no risk field)" {
     const gpa = std.testing.allocator;
 
@@ -1495,6 +1665,8 @@ test "provider receives definitions only (no risk field)" {
             if (std.mem.indexOf(u8, body, "capabilities") != null) return error.InvalidResponse;
             if (std.mem.indexOf(u8, body, "cooperative") != null) return error.InvalidResponse;
             if (std.mem.indexOf(u8, body, "path_field") != null) return error.InvalidResponse;
+            if (std.mem.indexOf(u8, body, "path_field_default") != null) return error.InvalidResponse;
+            if (std.mem.indexOf(u8, body, "default_path") != null) return error.InvalidResponse;
             if (std.mem.indexOf(u8, body, "command_argument") != null) return error.InvalidResponse;
             return .{
                 .content = try arena.dupe(u8, "ok"),

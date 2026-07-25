@@ -28,7 +28,7 @@
 
 ## Final-audit disposition
 
-D-007 descriptors and h-workspace-001 symlink-aware containment are complete for every built-in file/search Tool. The final `h-integration-001` audit found two independent L2 counterexamples:
+D-007 descriptors and h-workspace-001 symlink-aware containment are complete for every built-in file/search Tool. `list_dir`, `read_file`, `write_file`, and `search_replace` use required `path_field` descriptors; `grep` and `glob` use the explicit defaulted path descriptor (`field="path", default_path="."`) so provider calls that omit `path` still pass through permission and jail as `.`. The final `h-integration-001` audit found two independent L2 counterexamples:
 
 1. direct truncate/write could destroy prior bytes or publish a partial file — **closed** by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md);
 2. count caps did not prove the shared result-byte ceiling, and walker/search cutoffs could look complete — [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) is **in progress** with develop-stage code/tests pending independent verification and main Gate evidence.

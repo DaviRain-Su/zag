@@ -21,9 +21,10 @@
 //!
 //! - **Instance** (`?*anyopaque`): borrowed. The caller owns the pointed-to
 //!   state; it must outlive every `handler` invocation for this `Tool`.
-//! - **Descriptor strings** (name, description, schema, `path_field` name):
-//!   borrowed. They must remain valid for the lifetime of every copy of the
-//!   `Tool` / `Toolset` that references them (typically static or arena-owned).
+//! - **Descriptor strings** (name, description, schema, `path_field` name and
+//!   default path): borrowed. They must remain valid for the lifetime of every
+//!   copy of the `Tool` / `Toolset` that references them (typically static or
+//!   arena-owned).
 //! - **`Tool` is copyable** (move-friendly by value). Copies share the same
 //!   borrowed instance pointer and string slices; there is no deep clone.
 //! - **Registration does not take ownership** of strings or the instance.
@@ -39,6 +40,7 @@
 const std = @import("std");
 const Io = std.Io;
 const zt = @import("zag-types");
+const workspace = @import("workspace.zig");
 
 pub const max_result_bytes: usize = 64 * 1024;
 /// Provider-facing tool name: 1..=max_tool_name_len, `[A-Za-z0-9_.-]`.
@@ -144,16 +146,30 @@ pub fn stateless(descriptor: ToolDescriptor, handler: Handler) Tool {
     };
 }
 
+fn validatePathFieldName(field: []const u8) RegistrationError!void {
+    if (field.len == 0) return error.InvalidCapabilities;
+    if (std.mem.indexOfScalar(u8, field, 0) != null) return error.InvalidCapabilities;
+    // Reject leading/trailing whitespace and pure-whitespace names.
+    const trimmed = std.mem.trim(u8, field, " \t\r\n");
+    if (trimmed.len == 0 or trimmed.len != field.len) return error.InvalidCapabilities;
+}
+
+fn validateDefaultPath(default_path: []const u8) RegistrationError!void {
+    if (default_path.len == 0) return error.InvalidCapabilities;
+    if (std.mem.indexOfScalar(u8, default_path, 0) != null) return error.InvalidCapabilities;
+    const trimmed = std.mem.trim(u8, default_path, " \t\r\n");
+    if (trimmed.len == 0 or trimmed.len != default_path.len) return error.InvalidCapabilities;
+    workspace.checkToolPath(default_path) catch return error.InvalidCapabilities;
+}
+
 /// Validate capability fields (fail closed on contradictions / empty path claims).
 pub fn validateCapabilities(caps: ToolCapabilities) RegistrationError!void {
     switch (caps.workspace) {
         .none => {},
-        .path_field => |field| {
-            if (field.len == 0) return error.InvalidCapabilities;
-            if (std.mem.indexOfScalar(u8, field, 0) != null) return error.InvalidCapabilities;
-            // Reject leading/trailing whitespace and pure-whitespace names.
-            const trimmed = std.mem.trim(u8, field, " \t\r\n");
-            if (trimmed.len == 0 or trimmed.len != field.len) return error.InvalidCapabilities;
+        .path_field => |field| try validatePathFieldName(field),
+        .path_field_default => |d| {
+            try validatePathFieldName(d.field);
+            try validateDefaultPath(d.default_path);
         },
     }
 
@@ -430,25 +446,46 @@ test "buildTool rejects empty name and non-object schema" {
     }));
 }
 
-test "validateCapabilities rejects empty path_field and shell/risk mismatch" {
-    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+test "validateCapabilities rejects invalid path metadata and shell/risk mismatch" {
+    const invalid_fields = [_][]const u8{ "", "  ", " path", "path ", "path\x00" };
+    for (invalid_fields) |field| {
+        try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+            .risk = .read,
+            .workspace = .{ .path_field = field },
+            .cancellation = .none,
+            .shell = .none,
+        }));
+        try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+            .risk = .read,
+            .workspace = .{ .path_field_default = .{ .field = field, .default_path = "." } },
+            .cancellation = .none,
+            .shell = .none,
+        }));
+    }
+
+    const invalid_defaults = [_][]const u8{ "", "  ", " ./x", "./x ", "a\x00b", "/tmp", "../x", "a/../../b", "C:tmp", "//server/share", "\\\\server\\share" };
+    for (invalid_defaults) |default_path| {
+        try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+            .risk = .read,
+            .workspace = .{ .path_field_default = .{ .field = "path", .default_path = default_path } },
+            .cancellation = .none,
+            .shell = .none,
+        }));
+    }
+
+    try validateCapabilities(.{
         .risk = .read,
-        .workspace = .{ .path_field = "" },
+        .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "." } },
         .cancellation = .none,
         .shell = .none,
-    }));
-    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
+    });
+    try validateCapabilities(.{
         .risk = .read,
-        .workspace = .{ .path_field = "  " },
+        .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "src/../src" } },
         .cancellation = .none,
         .shell = .none,
-    }));
-    try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
-        .risk = .read,
-        .workspace = .{ .path_field = "path\x00" },
-        .cancellation = .none,
-        .shell = .none,
-    }));
+    });
+
     try std.testing.expectError(error.InvalidCapabilities, validateCapabilities(.{
         .risk = .read,
         .workspace = .none,
@@ -505,6 +542,21 @@ test "validateTools detects duplicates and invalid forged tools" {
         .handler = noop,
     };
     try std.testing.expectError(error.InvalidCapabilities, validateTools(gpa, &[_]Tool{forged}));
+
+    // Direct literal forge with bad defaulted path metadata also fails closed.
+    const forged_default: Tool = .{
+        .descriptor = .{
+            .definition = .{ .name = "forged_default", .description = "", .parameters_json = "{}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "../escape" } },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .handler = noop,
+    };
+    try std.testing.expectError(error.InvalidCapabilities, validateTools(gpa, &[_]Tool{forged_default}));
 }
 
 test "Toolset.initValidated rejects invalid caps" {

@@ -13,8 +13,12 @@
 //! not a built-in name list (D-007).
 //!
 //! When `workspace = path_field`, the named JSON field is **required** and must
-//! be a string — missing/non-string/malformed JSON → `error.InvalidArguments`
-//! (loop turns this into a soft `invalid_arguments` tool result before the handler).
+//! be a string — missing/non-string/malformed JSON → `error.InvalidArguments`.
+//! When `workspace = path_field_default`, missing field uses the descriptor
+//! default; a present empty string also uses the default so loop preflight and raw
+//! handlers do not drift. Present non-string or malformed JSON remains invalid.
+//! The loop turns invalid extraction into a soft `invalid_arguments` tool result
+//! before the handler.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -364,18 +368,43 @@ pub fn requireStringArgument(
     return try allocator.dupe(u8, val.string);
 }
 
+fn optionalStringArgumentOrDefault(
+    allocator: std.mem.Allocator,
+    arguments_json: []const u8,
+    field: []const u8,
+    default_path: []const u8,
+) PathExtractError![]const u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch
+        return error.InvalidArguments;
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidArguments;
+    const val = parsed.value.object.get(field) orelse return try allocator.dupe(u8, default_path);
+    if (val != .string) return error.InvalidArguments;
+    if (val.string.len == 0) return try allocator.dupe(u8, default_path);
+    return try allocator.dupe(u8, val.string);
+}
+
 /// Extract path using descriptor workspace metadata.
 ///
 /// - `workspace.none` → `null` (no path claim).
 /// - `workspace.path_field` → required string field; missing/non-string/bad JSON → `InvalidArguments`.
+/// - `workspace.path_field_default` → missing field or present empty string returns an owned default;
+///   present non-empty string returns an owned value; non-string/bad JSON → `InvalidArguments`.
 pub fn pathFromDescriptor(
     allocator: std.mem.Allocator,
     capabilities: zt.ToolCapabilities,
     arguments_json: []const u8,
 ) PathExtractError!?[]const u8 {
-    const field = capabilities.workspace.pathField() orelse return null;
-    const path = try requireStringArgument(allocator, arguments_json, field);
-    return path;
+    return switch (capabilities.workspace) {
+        .none => null,
+        .path_field => |field| try requireStringArgument(allocator, arguments_json, field),
+        .path_field_default => |d| try optionalStringArgumentOrDefault(
+            allocator,
+            arguments_json,
+            d.field,
+            d.default_path,
+        ),
+    };
 }
 
 /// Build a Guard from Context-like inputs (cached root optional).
@@ -471,6 +500,31 @@ test "pathFromDescriptor requires string field when path claimed" {
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "{\"path\":1}"));
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "not-json"));
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "[]"));
+}
+
+fn expectExtractedPath(caps: zt.ToolCapabilities, args: []const u8, expected: []const u8) !void {
+    const gpa = std.testing.allocator;
+    const p = try pathFromDescriptor(gpa, caps, args);
+    defer if (p) |s| gpa.free(s);
+    try std.testing.expect(p != null);
+    try std.testing.expectEqualStrings(expected, p.?);
+}
+
+test "pathFromDescriptor defaulted path handles missing empty explicit and invalid arguments" {
+    const caps: zt.ToolCapabilities = .{
+        .risk = .read,
+        .workspace = .{ .path_field_default = .{ .field = "path", .default_path = "." } },
+        .cancellation = .none,
+        .shell = .none,
+    };
+
+    try expectExtractedPath(caps, "{}", ".");
+    try expectExtractedPath(caps, "{\"path\":\"\"}", ".");
+    try expectExtractedPath(caps, "{\"path\":\"src/a.zig\"}", "src/a.zig");
+
+    try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(std.testing.allocator, caps, "{\"path\":1}"));
+    try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(std.testing.allocator, caps, "not-json"));
+    try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(std.testing.allocator, caps, "[]"));
 }
 
 test "Root and Guard contain ordinary paths; escape symlink denied" {

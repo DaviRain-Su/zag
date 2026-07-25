@@ -361,8 +361,14 @@ pub const ToolRisk = enum {
 /// `none` means no path claim — not unrestricted filesystem access.
 pub const WorkspaceAccess = union(enum) {
     none,
-    /// JSON object field name holding a relative path (typically `"path"`).
+    /// JSON object field name holding a required relative path (typically `"path"`).
     path_field: []const u8,
+    /// JSON object field name holding an optional relative path. Missing or empty
+    /// string uses `default_path`; non-string / malformed arguments still fail.
+    path_field_default: struct {
+        field: []const u8,
+        default_path: []const u8,
+    },
 
     pub fn usesPath(self: WorkspaceAccess) bool {
         return self != .none;
@@ -372,6 +378,14 @@ pub const WorkspaceAccess = union(enum) {
         return switch (self) {
             .none => null,
             .path_field => |f| f,
+            .path_field_default => |d| d.field,
+        };
+    }
+
+    pub fn defaultPath(self: WorkspaceAccess) ?[]const u8 {
+        return switch (self) {
+            .none, .path_field => null,
+            .path_field_default => |d| d.default_path,
         };
     }
 };
@@ -578,4 +592,23 @@ test "monoNowNs is nondecreasing" {
     const a = monoNowNs();
     const b = monoNowNs();
     try std.testing.expect(b >= a);
+}
+
+test "WorkspaceAccess accessors preserve required and defaulted path metadata" {
+    const none: WorkspaceAccess = .none;
+    try std.testing.expect(!none.usesPath());
+    try std.testing.expect(none.pathField() == null);
+    try std.testing.expect(none.defaultPath() == null);
+
+    const required: WorkspaceAccess = .{ .path_field = "path" };
+    try std.testing.expect(required.usesPath());
+    try std.testing.expectEqualStrings("path", required.pathField().?);
+    try std.testing.expect(required.defaultPath() == null);
+
+    const defaulted: WorkspaceAccess = .{
+        .path_field_default = .{ .field = "path", .default_path = "." },
+    };
+    try std.testing.expect(defaulted.usesPath());
+    try std.testing.expectEqualStrings("path", defaulted.pathField().?);
+    try std.testing.expectEqualStrings(".", defaulted.defaultPath().?);
 }

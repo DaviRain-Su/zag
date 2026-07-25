@@ -13,7 +13,7 @@ date: 2026-07-24
 2. A separate public runtime `ToolDescriptor` combines `ToolDefinition` with mandatory `ToolCapabilities`.
 3. H requires at least these capabilities:
    - `risk`: `read | write | execute` — required, with no implicit read default;
-   - workspace/path access metadata used by containment enforcement;
+   - workspace/path access metadata used by containment enforcement, including required path fields and explicit descriptor defaults when a tool's public schema makes the field optional;
    - whether an in-flight invocation supports cancellation.
 4. `Tool` registration carries the descriptor, an opaque instance pointer, and a handler callback. Custom tools can therefore own state without globals.
 5. Permission, workspace enforcement, scheduling, and tracing consume the same descriptor. They must not infer security behavior from tool names.

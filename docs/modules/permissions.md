@@ -38,7 +38,7 @@ The examples do not define classification. `ToolDescriptor.capabilities.risk` do
 
 ## Gate API
 
-A caller may inject a `permission_gate`. The Gate receives the complete `ToolDescriptor` plus arguments and any validated path context; it must not call a name-based risk fallback.
+A caller may inject a `permission_gate`. The Gate receives the complete `ToolDescriptor` plus arguments and the single extracted path context when the descriptor declares one. Required paths stay required; explicit defaulted paths (for example grep/glob missing `path` → `.`) are passed to the Gate and then jail-checked. The Gate must not call a name-based risk fallback.
 
 ```text
 Gate.check(descriptor, arguments_json, path?) → Outcome
