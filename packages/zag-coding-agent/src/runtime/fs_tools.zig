@@ -115,6 +115,7 @@ const walk_nodes_max: u32 = 4096;
 const max_walk_depth: u32 = 32;
 const max_dir_entries: u32 = 4096;
 const glob_frame_stack_max: u32 = 128;
+const binary_probe_bytes: usize = 4096;
 
 const FsLimitReason = enum {
     body_limit,
@@ -164,6 +165,7 @@ const TestFaultPoint = enum {
     list_iter_next,
     grep_stat,
     grep_read,
+    read_after_open_grow,
     walk_check_existing,
     walk_realpath,
 };
@@ -337,24 +339,7 @@ pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []cons
     };
 
     const limits = activeLimits();
-    const stat = ctx.cwd.statFile(ctx.io, path, .{ .follow_symlinks = true }) catch return error.ToolFailed;
-    if (stat.size <= limits.file_bytes and stat.size <= limits.body_bytes) {
-        const read_limit = std.math.add(usize, limits.body_bytes, 1) catch return error.OutOfMemory;
-        return ctx.cwd.readFileAlloc(ctx.io, path, ctx.allocator, .limited(read_limit)) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => return error.ToolFailed,
-        };
-    }
-
-    const prefix_len = limits.body_bytes - max_incomplete_marker_len;
-    const partial = try readFilePrefixAlloc(ctx, path, prefix_len);
-    defer ctx.allocator.free(partial);
-
-    var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
-    errdefer body.deinit();
-    if (!try body.appendRaw(partial, .body_limit)) return body.finish();
-    body.setIncomplete(.body_limit);
-    return body.finish();
+    return readFileBounded(ctx, path, limits);
 }
 
 pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
@@ -382,6 +367,7 @@ pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     try walkTree(ctx, &guard, root, .{
         .kind = .grep,
         .pattern = pattern,
+        .scope_root = root,
         .body = &body,
         .hits = &hits,
         .hits_max = limits.grep_hits,
@@ -416,6 +402,7 @@ pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     try walkTree(ctx, &guard, root, .{
         .kind = .glob,
         .pattern = pattern,
+        .scope_root = root,
         .body = &body,
         .hits = &hits,
         .hits_max = limits.glob_hits,
@@ -442,12 +429,40 @@ fn nextListEntry(ctx: tool.Context, it: *Io.Dir.Iterator) !?Io.Dir.Entry {
     return it.next(ctx.io);
 }
 
+fn readFileBounded(ctx: tool.Context, path: []const u8, limits: FsLimits) tool.HandlerError![]u8 {
+    const complete_limit = @min(limits.body_bytes, limits.file_bytes);
+    const sentinel_len = std.math.add(usize, complete_limit, 1) catch return error.OutOfMemory;
+    const bytes = try readFilePrefixAlloc(ctx, path, sentinel_len);
+    defer ctx.allocator.free(bytes);
+
+    if (bytes.len <= complete_limit) {
+        const owned = ctx.allocator.alloc(u8, bytes.len) catch return error.OutOfMemory;
+        @memcpy(owned, bytes);
+        return owned;
+    }
+
+    const prefix_len = limits.body_bytes - max_incomplete_marker_len;
+    const prefix = bytes[0..@min(prefix_len, bytes.len)];
+    var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
+    errdefer body.deinit();
+    if (!try body.appendRaw(prefix, .body_limit)) return body.finish();
+    body.setIncomplete(.body_limit);
+    return body.finish();
+}
+
 fn readFilePrefixAlloc(ctx: tool.Context, path: []const u8, prefix_len: usize) tool.HandlerError![]u8 {
     const buf = ctx.allocator.alloc(u8, prefix_len) catch return error.OutOfMemory;
     errdefer ctx.allocator.free(buf);
 
     var file = ctx.cwd.openFile(ctx.io, path, .{}) catch return error.ToolFailed;
     defer file.close(ctx.io);
+
+    if (takeTestFault(.read_after_open_grow)) {
+        const grown = ctx.allocator.alloc(u8, prefix_len) catch return error.OutOfMemory;
+        defer ctx.allocator.free(grown);
+        @memset(grown, 'r');
+        ctx.cwd.writeFile(ctx.io, .{ .sub_path = path, .data = grown }) catch return error.ToolFailed;
+    }
 
     var filled: usize = 0;
     while (filled < prefix_len) {
@@ -488,6 +503,7 @@ fn finishSearchOutput(
 const WalkOpts = struct {
     kind: WalkMode,
     pattern: []const u8,
+    scope_root: []const u8,
     body: *LimitedBody,
     hits: *u32,
     hits_max: u32,
@@ -655,14 +671,17 @@ fn enqueueDirChildren(
     }
 }
 
+fn isHostPathSep(c: u8) bool {
+    if (@import("builtin").os.tag == .windows) return c == '/' or c == '\\';
+    return c == '/';
+}
+
 fn pathDepth(rel: []const u8) u32 {
     if (std.mem.eql(u8, rel, ".")) return 0;
     var depth: u32 = 0;
     for (rel) |c| {
         // Host separators only: on POSIX `\` is a filename byte, not a depth edge.
-        if (@import("builtin").os.tag == .windows) {
-            if (c == '/' or c == '\\') depth += 1;
-        } else if (c == '/') depth += 1;
+        if (isHostPathSep(c)) depth += 1;
     }
     return depth + 1;
 }
@@ -677,6 +696,16 @@ fn readFileAllocForGrep(ctx: tool.Context, rel: []const u8, read_limit: usize) !
     return ctx.cwd.readFileAlloc(ctx.io, rel, ctx.allocator, .limited(read_limit));
 }
 
+fn probeLikelyBinary(ctx: tool.Context, rel: []const u8) error{ OutOfMemory, IoSkip }!bool {
+    const probe = ctx.allocator.alloc(u8, binary_probe_bytes) catch return error.OutOfMemory;
+    defer ctx.allocator.free(probe);
+
+    var file = ctx.cwd.openFile(ctx.io, rel, .{}) catch return error.IoSkip;
+    defer file.close(ctx.io);
+    const n = file.readPositional(ctx.io, &.{probe}, 0) catch return error.IoSkip;
+    return std.mem.indexOfScalar(u8, probe[0..n], 0) != null;
+}
+
 fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
     if (opts.body.reason != null) return;
 
@@ -684,6 +713,15 @@ fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErro
         opts.body.setIncomplete(.io_skip);
         return;
     };
+    const binary = probeLikelyBinary(ctx, rel) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.IoSkip => {
+            opts.body.setIncomplete(.io_skip);
+            return;
+        },
+    };
+    if (binary) return;
+
     if (st.size > opts.limits.grep_file_bytes) {
         opts.body.setIncomplete(.source_limit);
         return;
@@ -725,7 +763,8 @@ fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErro
 }
 
 fn globFile(rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
-    const matched = matchGlobDetailed(opts.pattern, rel, opts.limits.glob_frames) catch |err| switch (err) {
+    const candidate = scopedGlobCandidate(opts.scope_root, rel);
+    const matched = matchGlobDetailed(opts.pattern, candidate, opts.limits.glob_frames) catch |err| switch (err) {
         error.PatternLimit => {
             opts.body.setIncomplete(.pattern_limit);
             return;
@@ -738,6 +777,15 @@ fn globFile(rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
     }
     if (!try opts.body.appendOwnedLine(rel, .hit_limit)) return;
     opts.hits.* = std.math.add(u32, opts.hits.*, 1) catch return error.OutOfMemory;
+}
+
+fn scopedGlobCandidate(scope_root: []const u8, rel: []const u8) []const u8 {
+    if (std.mem.eql(u8, scope_root, ".")) return rel;
+    if (std.mem.eql(u8, scope_root, rel)) return std.fs.path.basename(rel);
+    if (std.mem.startsWith(u8, rel, scope_root) and rel.len > scope_root.len and isHostPathSep(rel[scope_root.len])) {
+        return rel[scope_root.len + 1 ..];
+    }
+    return rel;
 }
 
 fn shouldSkipDir(name: []const u8) bool {
@@ -905,6 +953,15 @@ test "grep and glob in tmp dir" {
     defer gpa.free(paths);
     try std.testing.expect(std.mem.indexOf(u8, paths, "src/a.zig") != null);
     try std.testing.expect(std.mem.indexOf(u8, paths, "b.md") == null);
+
+    const scoped = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src\"}");
+    defer gpa.free(scoped);
+    try std.testing.expect(std.mem.indexOf(u8, scoped, "src/a.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, scoped, "readme.txt") == null);
+
+    const scoped_file = try glob(ctx, null, "{\"pattern\":\"*.zig\",\"path\":\"src/a.zig\"}");
+    defer gpa.free(scoped_file);
+    try std.testing.expect(std.mem.indexOf(u8, scoped_file, "src/a.zig") != null);
 }
 
 /// Sibling outside + workspace fixture for symlink containment (not nested outside).
@@ -1128,7 +1185,7 @@ test "fs-v1 marker reservation and helper N/N+1 body budget" {
     try expectFsMarker(out, "body_limit");
 }
 
-test "read_file exact boundary and N+1 bounded prefix" {
+test "read_file exact boundary N+1 far oversized and growth race stay bounded" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
@@ -1156,6 +1213,25 @@ test "read_file exact boundary and N+1 bounded prefix" {
     defer gpa.free(over_body);
     try std.testing.expect(over_body.len <= limit);
     try expectFsMarker(over_body, "body_limit");
+
+    const far = try gpa.alloc(u8, limit * 3);
+    defer gpa.free(far);
+    @memset(far, 'z');
+    try tmp.dir.writeFile(io, .{ .sub_path = "far.txt", .data = far });
+    const far_body = try readFile(ctx, null, "{\"path\":\"far.txt\"}");
+    defer gpa.free(far_body);
+    try std.testing.expect(far_body.len <= limit);
+    try expectFsMarker(far_body, "body_limit");
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "race.txt", .data = exact });
+    var faults: TestFaults = .{ .point = .read_after_open_grow };
+    setFsTestFaults(&faults);
+    defer clearFsTestFaults();
+    const race_body = try readFile(ctx, null, "{\"path\":\"race.txt\"}");
+    defer gpa.free(race_body);
+    try std.testing.expect(faults.observed);
+    try std.testing.expect(race_body.len <= limit);
+    try expectFsMarker(race_body, "body_limit");
 }
 
 test "list_dir entry and body cutoffs emit bounded markers" {
@@ -1212,6 +1288,35 @@ test "grep hit body and source cutoffs emit bounded markers" {
     defer gpa.free(source_body);
     try std.testing.expect(source_body.len <= limit);
     try expectFsMarker(source_body, "source_limit");
+}
+
+test "grep oversized binary remains intentional exclusion before source limit" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const big_binary = "\x00BINARY_SECRET padding padding\n";
+    const big_text = "plain text padding padding\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "big.bin", .data = big_binary });
+    try tmp.dir.writeFile(io, .{ .sub_path = "big.txt", .data = big_text });
+
+    const limit = max_incomplete_marker_len + 32;
+    setFsTestLimits(.{ .body_bytes = limit, .grep_file_bytes = 4 });
+    defer clearFsTestLimits();
+
+    const binary_body = try grep(ctx, null, "{\"pattern\":\"absent\",\"path\":\"big.bin\"}");
+    defer gpa.free(binary_body);
+    try std.testing.expect(binary_body.len <= limit);
+    try std.testing.expect(std.mem.indexOf(u8, binary_body, incomplete_prefix) == null);
+    try std.testing.expect(std.mem.indexOf(u8, binary_body, "BINARY_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, binary_body, "no matches") != null);
+
+    const text_body = try grep(ctx, null, "{\"pattern\":\"absent\",\"path\":\"big.txt\"}");
+    defer gpa.free(text_body);
+    try std.testing.expect(text_body.len <= limit);
+    try expectFsMarker(text_body, "source_limit");
 }
 
 test "glob hit body and pattern-frame cutoffs emit bounded markers" {
