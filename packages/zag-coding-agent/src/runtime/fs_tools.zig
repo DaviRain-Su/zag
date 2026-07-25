@@ -160,6 +160,33 @@ const FsLimits = struct {
 
 var test_limits: ?FsLimits = null;
 
+const TestFaultPoint = enum {
+    list_iter_next,
+    grep_stat,
+    grep_read,
+    walk_check_existing,
+    walk_realpath,
+};
+
+const TestFaults = struct {
+    point: TestFaultPoint,
+    observed: bool = false,
+};
+
+var test_faults: ?*TestFaults = null;
+
+fn takeTestFault(point: TestFaultPoint) bool {
+    if (builtin.is_test) {
+        if (test_faults) |faults| {
+            if (!faults.observed and faults.point == point) {
+                faults.observed = true;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 fn activeLimits() FsLimits {
     if (builtin.is_test) {
         if (test_limits) |limits| return limits;
@@ -268,7 +295,7 @@ pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const
     var it = dir.iterate();
     var count: u32 = 0;
     while (true) {
-        const maybe_entry = it.next(ctx.io) catch {
+        const maybe_entry = nextListEntry(ctx, &it) catch {
             body.setIncomplete(.io_skip);
             break;
         };
@@ -410,6 +437,11 @@ fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) 
     };
 }
 
+fn nextListEntry(ctx: tool.Context, it: *Io.Dir.Iterator) !?Io.Dir.Entry {
+    if (takeTestFault(.list_iter_next)) return error.SystemResources;
+    return it.next(ctx.io);
+}
+
 fn readFilePrefixAlloc(ctx: tool.Context, path: []const u8, prefix_len: usize) tool.HandlerError![]u8 {
     const buf = ctx.allocator.alloc(u8, prefix_len) catch return error.OutOfMemory;
     errdefer ctx.allocator.free(buf);
@@ -508,9 +540,13 @@ fn walkTree(
         // Root was already verified by the caller; re-check for children.
         // OutOfMemory must propagate (never swallow as skip).
         if (index != 0) {
-            guard.checkExisting(ctx.io, ctx.cwd, rel) catch |err| switch (err) {
+            checkNestedExisting(ctx, guard, rel) catch |err| switch (err) {
                 error.OutOfMemory => return error.OutOfMemory,
-                else => continue,
+                error.OutsideWorkspace, error.InvalidPath, error.NotFound => continue,
+                error.ResolveFailed => {
+                    opts.body.setIncomplete(.io_skip);
+                    return;
+                },
             };
         }
 
@@ -526,7 +562,13 @@ fn walkTree(
                 try visitFile(ctx, rel, opts);
             },
             .directory => {
-                const real_owned = (try resolveRealOwned(ctx, rel)) orelse continue;
+                const real_owned = resolveRealOwned(ctx, rel) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    error.IoSkip => {
+                        opts.body.setIncomplete(.io_skip);
+                        return;
+                    },
+                };
                 if (visited_dirs.contains(real_owned)) {
                     ctx.allocator.free(real_owned);
                     continue;
@@ -542,9 +584,15 @@ fn walkTree(
     }
 }
 
-fn resolveRealOwned(ctx: tool.Context, rel: []const u8) error{OutOfMemory}!?[]u8 {
+fn checkNestedExisting(ctx: tool.Context, guard: *const workspace.Guard, rel: []const u8) workspace.ContainError!void {
+    if (takeTestFault(.walk_check_existing)) return error.ResolveFailed;
+    return guard.checkExisting(ctx.io, ctx.cwd, rel);
+}
+
+fn resolveRealOwned(ctx: tool.Context, rel: []const u8) error{ OutOfMemory, IoSkip }![]u8 {
+    if (takeTestFault(.walk_realpath)) return error.IoSkip;
     var buf: [Io.Dir.max_path_bytes]u8 = undefined;
-    const n = ctx.cwd.realPathFile(ctx.io, rel, &buf) catch return null;
+    const n = ctx.cwd.realPathFile(ctx.io, rel, &buf) catch return error.IoSkip;
     return ctx.allocator.dupe(u8, buf[0..n]) catch return error.OutOfMemory;
 }
 
@@ -619,10 +667,20 @@ fn pathDepth(rel: []const u8) u32 {
     return depth + 1;
 }
 
+fn statFileForGrep(ctx: tool.Context, rel: []const u8) !Io.File.Stat {
+    if (takeTestFault(.grep_stat)) return error.InputOutput;
+    return ctx.cwd.statFile(ctx.io, rel, .{ .follow_symlinks = true });
+}
+
+fn readFileAllocForGrep(ctx: tool.Context, rel: []const u8, read_limit: usize) ![]u8 {
+    if (takeTestFault(.grep_read)) return error.InputOutput;
+    return ctx.cwd.readFileAlloc(ctx.io, rel, ctx.allocator, .limited(read_limit));
+}
+
 fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
     if (opts.body.reason != null) return;
 
-    const st = ctx.cwd.statFile(ctx.io, rel, .{ .follow_symlinks = true }) catch {
+    const st = statFileForGrep(ctx, rel) catch {
         opts.body.setIncomplete(.io_skip);
         return;
     };
@@ -631,12 +689,7 @@ fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErro
         return;
     }
     const read_limit = std.math.add(usize, opts.limits.grep_file_bytes, 1) catch return error.OutOfMemory;
-    const contents = ctx.cwd.readFileAlloc(
-        ctx.io,
-        rel,
-        ctx.allocator,
-        .limited(read_limit),
-    ) catch |err| switch (err) {
+    const contents = readFileAllocForGrep(ctx, rel, read_limit) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.StreamTooLong => {
             opts.body.setIncomplete(.source_limit);
@@ -1046,6 +1099,15 @@ fn clearFsTestLimits() void {
     if (builtin.is_test) test_limits = null;
 }
 
+fn setFsTestFaults(faults: *TestFaults) void {
+    std.debug.assert(builtin.is_test);
+    test_faults = faults;
+}
+
+fn clearFsTestFaults() void {
+    if (builtin.is_test) test_faults = null;
+}
+
 fn expectFsMarker(body: []const u8, reason: []const u8) !void {
     const expected = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}{s}", .{ incomplete_prefix, reason, incomplete_suffix });
     defer std.testing.allocator.free(expected);
@@ -1225,14 +1287,95 @@ test "fs tool OOM remains hard error not fake complete result" {
     try std.testing.expect(failing.has_induced_failure);
 }
 
-test "io_skip marker is bounded and complete" {
+test "list_dir iterator I/O failure emits bounded io_skip through handler branch" {
     const gpa = std.testing.allocator;
-    const limit = max_incomplete_marker_len;
-    var body = LimitedBody.init(gpa, limit);
-    errdefer body.deinit();
-    body.setIncomplete(.io_skip);
-    const out = try body.finish();
-    defer gpa.free(out);
-    try std.testing.expect(out.len <= limit);
-    try expectFsMarker(out, "io_skip");
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "a" });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const limit = max_incomplete_marker_len + 8;
+    setFsTestLimits(.{ .body_bytes = limit });
+    defer clearFsTestLimits();
+    var faults: TestFaults = .{ .point = .list_iter_next };
+    setFsTestFaults(&faults);
+    defer clearFsTestFaults();
+
+    const body = try listDir(ctx, null, "{\"path\":\".\"}");
+    defer gpa.free(body);
+    try std.testing.expect(faults.observed);
+    try std.testing.expect(body.len <= limit);
+    try expectFsMarker(body, "io_skip");
+}
+
+test "grep stat and read I/O failures emit bounded io_skip through handler branches" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "needle\n" });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const limit = max_incomplete_marker_len + 16;
+    setFsTestLimits(.{ .body_bytes = limit });
+    defer clearFsTestLimits();
+
+    {
+        var faults: TestFaults = .{ .point = .grep_stat };
+        setFsTestFaults(&faults);
+        defer clearFsTestFaults();
+        const body = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"a.txt\"}");
+        defer gpa.free(body);
+        try std.testing.expect(faults.observed);
+        try std.testing.expect(body.len <= limit);
+        try expectFsMarker(body, "io_skip");
+    }
+
+    {
+        var faults: TestFaults = .{ .point = .grep_read };
+        setFsTestFaults(&faults);
+        defer clearFsTestFaults();
+        const body = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"a.txt\"}");
+        defer gpa.free(body);
+        try std.testing.expect(faults.observed);
+        try std.testing.expect(body.len <= limit);
+        try expectFsMarker(body, "io_skip");
+    }
+}
+
+test "walker nested resolve failures emit bounded io_skip while exclusions remain silent" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.createDirPath(io, "dir");
+    try tmp.dir.writeFile(io, .{ .sub_path = "dir/a.txt", .data = "needle\n" });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const limit = max_incomplete_marker_len + 16;
+    setFsTestLimits(.{ .body_bytes = limit });
+    defer clearFsTestLimits();
+
+    {
+        var faults: TestFaults = .{ .point = .walk_check_existing };
+        setFsTestFaults(&faults);
+        defer clearFsTestFaults();
+        const body = try grep(ctx, null, "{\"pattern\":\"absent\"}");
+        defer gpa.free(body);
+        try std.testing.expect(faults.observed);
+        try std.testing.expect(body.len <= limit);
+        try expectFsMarker(body, "io_skip");
+    }
+
+    {
+        var faults: TestFaults = .{ .point = .walk_realpath };
+        setFsTestFaults(&faults);
+        defer clearFsTestFaults();
+        const body = try glob(ctx, null, "{\"pattern\":\"nomatch\"}");
+        defer gpa.free(body);
+        try std.testing.expect(faults.observed);
+        try std.testing.expect(body.len <= limit);
+        try expectFsMarker(body, "io_skip");
+    }
 }

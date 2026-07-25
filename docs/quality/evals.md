@@ -106,7 +106,7 @@ The reviews 01–04 review/fix cycle plus final Oracle closed endpoint/outside-s
 - list entry/body/iteration cutoffs, grep hit/body/source/I/O cutoffs, glob hit/body/pattern cutoffs, and walker node/depth/per-directory cutoffs cannot look complete;
 - fixtures use small private limits/pure helpers rather than giant physical trees and retain symlink-loop/contained/escape evidence.
 
-Current branch evidence adds focused `fs_tools.zig` tests for exact/N+1 read prefixes, list entry/body cutoffs, grep hit/body/source-size cutoffs, glob hit/body/pattern-frame cutoffs, walker node/depth/per-directory cutoffs, marker reservation (including the longest reason), `io_skip` marker formatting, existing containment/symlink fixtures, and OOM propagation. These remain develop-stage until independent review and the required root default/curl Gates complete.
+Current branch evidence adds focused `fs_tools.zig` tests for exact/N+1 read prefixes, list entry/body cutoffs, grep hit/body/source-size cutoffs, glob hit/body/pattern-frame cutoffs, walker node/depth/per-directory cutoffs, marker reservation (including the longest reason), handler-level `io_skip` for list iterator and grep stat/read I/O faults, nested walker resolve I/O classification, existing containment/symlink fixtures, and OOM propagation. These remain develop-stage until independent review and the required root default/curl Gates complete.
 
 ### Existing closed P1 evidence
 

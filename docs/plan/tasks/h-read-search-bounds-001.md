@@ -84,7 +84,7 @@ Fixtures must cover:
 
 # develop-stage evidence
 
-This branch adds a private bounded-body helper with complete `fs-v1` marker reservation, rewires `list_dir`, `read_file`, `grep`, and `glob` to the shared body budget, and adds deterministic private-limit fixtures for exact/N+1 read, list/grep/glob count and byte limits, walker node/depth/per-directory limits, source/pattern/io markers, symlink containment retention, and OOM propagation. This is **not** task closeout; independent verification, root default/curl Gates, and final integration audit remain pending.
+This branch adds a private bounded-body helper with complete `fs-v1` marker reservation, rewires `list_dir`, `read_file`, `grep`, and `glob` to the shared body budget, and adds deterministic private-limit fixtures for exact/N+1 read, list/grep/glob count and byte limits, walker node/depth/per-directory limits, source/pattern/io markers, symlink containment retention, and OOM propagation. Review 01 follow-up distinguishes nested containment exclusions from runtime resolve/I/O skips and drives handler-level list iterator plus grep stat/read I/O failures through private production-path seams. This is **not** task closeout; independent verification, root default/curl Gates, and final integration audit remain pending.
 
 # verification
 
