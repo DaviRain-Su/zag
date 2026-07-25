@@ -52,10 +52,14 @@ Satisfied as of `ebdd7ab` (`sdk-contract-001`):
 
 ### Process SDK/headless
 
-- structured JSON and streaming JSON;
-- stable auth/session/save/cancel/sandbox errors and exit codes;
+Satisfied as of `a1a1e0f` (`headless-001`):
+
+- structured JSON (`--json`) and streaming JSON (`--json-stream`);
+- stable auth/session/save/cancel/timeout/sandbox-unavailable errors and exit codes (headless-only matrix);
 - no log contamination on stdout;
-- protocol/version negotiation before ACP or editor integration.
+- versioned `headless-v1` public protocol documented in `docs/modules/headless-contract.md`.
+
+ACP/editor integration remains a follow-on consumer of this process contract.
 
 ## Related
 

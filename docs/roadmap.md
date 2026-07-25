@@ -9,7 +9,7 @@
 | Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
 | Production Floor Phase H | ✅ **L2 closeout** | single-user trusted-host；11/11 exit PASS；panel SHIP；gate 数字见 [h-integration-001](./plan/tasks/h-integration-001.md) |
 | Zig SDK-ready gate | ✅ **done/L2** | public injection + external consumer fixture 7/7 + `docs/modules/sdk-contract.md`; merged-main Gate passed at `ebdd7ab` |
-| Headless/process gate | ⏳ **in-progress** | `headless-v1` protocol/exit matrix/fixture landed; pending independent verification before `done` |
+| Headless/process gate | ✅ **done/L2** | `headless-v1` + exit matrix + process fixture 4/4; panel SHIP; merged-main Gate at `a1a1e0f` |
 | Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
 
 禁止在 Phase H exit 前声称 production-ready、SDK-ready 或 OS sandbox 已具备。
@@ -95,18 +95,17 @@ A second consumer and release channel are still required before repo mirror/semv
 
 ### Headless/process interface
 
-Task: [headless-001](./plan/tasks/headless-001.md) · contract: [modules/headless-contract.md](./modules/headless-contract.md).
+Task: [headless-001](./plan/tasks/headless-001.md) — **done/L2** at `a1a1e0f`. Contract: [modules/headless-contract.md](./modules/headless-contract.md).
 
-Headless is split from late TUI work:
+Required conditions are now satisfied:
 
-- machine-clean JSON/streaming JSON (`headless-v1`);
-- stable structured errors and exit codes;
-- auth/session/save/cancel/timeout/sandbox-unavailable matrix;
-- CI end-to-end fixture under both HTTP backends.
+- machine-clean JSON/streaming JSON (`headless-v1`) ✅
+- stable structured errors and headless-only exit codes ✅
+- auth/session/save/cancel/timeout/sandbox-unavailable matrix ✅
+- CI end-to-end process fixture under both HTTP backends ✅
+- default one-shot mode behavior unchanged ✅
 
-Status: implementation landed; `done` requires independent worktree/main Gate pass and closeout review.
-
-ACP/editor integration follows a versioned process contract; it does not require a stable Zig dynamic ABI.
+ACP/editor integration follows this versioned process contract; it does not require a stable Zig dynamic ABI.
 
 ## Capability track — dependency rules
 

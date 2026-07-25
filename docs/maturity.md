@@ -11,7 +11,7 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**总状态（2026-07-25 integration closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **L2（单用户、受控本机）**；Capability = 未开始。Final audit 的两个 file-surface 反例均已关闭：write/edit 由 `h-edit-integrity-001` 关闭，read/search 由 `h-read-search-bounds-001` 关闭。`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence integration audit：11/11 exit sentences **PASS**，final adversarial panel（3 + 1 ship oracle）**SHIP**；merged-main Gate 通过 zag-types **12/12**、zag-agent-core **157/157**、zag-coding-agent **138/138**、root default **432/432**、curl **431/431**、docs lint、readability **91/100**、security **65/100**、OpenAPI **287/287**、catalog **40**，required summaries 无显式 skips。Phase H L2 仅限 single-user trusted-host scope；SDK-ready、headless-ready、OS sandbox、process-tree ownership、mid-flight Tool/shell preemption、power-loss/fsync durability、exhaustive concurrent traversal、DLP/zeroization、第三方 Tool 通用 body 保证仍不宣称。`sdk-contract-001` 在 `ebdd7ab` 关闭 Zig SDK-ready Gate：external consumer fixture 7/7，`zag-coding-agent` 139/139，root std 440/440，curl 439/439，docs lint，readability 91/100，security 66/100（43 files），OpenAPI 287/287，catalog 40；per-run cancel 语义已钉死，未宣称 semver/C ABI/dynamic plugin ABI/headless-ready。
+**总状态（2026-07-26 headless closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **L2（单用户、受控本机）**；Zig SDK-ready = **L2**；Headless/Process SDK = **L2**；Capability = 未开始。Phase H L2 仅限 single-user trusted-host scope；OS sandbox、process-tree ownership、mid-flight Tool/shell preemption、power-loss/fsync durability、exhaustive concurrent traversal、DLP/zeroization、第三方 Tool 通用 body 保证、ACP/editor、semver/C ABI 仍不宣称。`sdk-contract-001` 在 `ebdd7ab` 关闭 Zig SDK-ready Gate。`headless-001` 在 `a1a1e0f` 关闭 Headless/Process Gate：`headless-v1` + `--json`/`--json-stream` + exit matrix + process fixture 4/4；independent review APPROVE_WITH_NITS → F-1 fix；ship panel SHIP；merged-main Gate root std **452/452**、curl **451/451**、coding **139/139**、docs lint、readability **91/100**、security **66/100**（44 files）、OpenAPI **287/287**、catalog **40**。
 
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
@@ -33,7 +33,7 @@
 | Provider / zag-ai | **L2** | final audit confirmed two wire styles、canonical retry/error/usage/cost、strict terminal/tool atomicity、curl active deadline/cancel、std ordinary success + controlled lifecycle fail-closed `unsupported_control`、redacted diagnostics；backend capability truth is explicit | backend-capability deadline/cancel ✅；strict completion/tool bundle ✅；redacted diagnostics + deterministic contract matrix ✅ | fallback/multi-key/third protocol on demand |
 | Trace / Observability | **L2** | h-trace-001 lifecycle + h-redact-001 redaction before serialize；schema；facade 单 terminal；Guard symlink jail；atomic；fail-closed；h-shell-001 证明 fixed policy/runtime first line 经 transcript/session/parsed exact-one trace 后 recovered completed | versioned schema ✅；truthful terminal ✅；symlink/atomic persistence ✅；redact ✅；shell projection ✅ | dashboard/correlation |
 | Zig source composition | **L2** | SDK-ready Gate closed at `ebdd7ab`：stateful Tool、high-level `Toolset`/`Observer` injection、ownership/lifetime/error/event/per-run cancel/session contracts、external consumer CI | supported import surface + contract docs + `tests/sdk-consumer-fixture/` pass merged-main Gate | published packages after second consumer |
-| Headless / Process SDK | **L1** | `headless-v1` protocol / `--json` / `--json-stream` / exit matrix / process fixture landed in `headless-001`; pending independent verification before L2 closeout | clean JSON/streaming output + stable errors/exit codes | ACP/editor integration |
+| Headless / Process SDK | **L2** | `headless-001` done at `a1a1e0f`：`headless-v1` + `--json`/`--json-stream` + headless-only exit matrix；process fixture 4/4（real binary + mock provider, both backends）；stdout purity；stream terminal uniqueness incl. halt-then-success；default mode 0/1/2 unchanged；`-Dtui` optional + Kernel no-TUI scan | clean JSON/streaming output + stable errors/exit codes ✅ | ACP/editor integration |
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
@@ -57,7 +57,7 @@
 
 L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。
 
-Phase H 已 closeout 为 **L2（单用户、受控本机）**。Edit integrity 与 read/search 已独立合并并 L2；`h-integration-001` fresh audit PASS。SDK-ready、headless-ready 与上述排除项仍不自动获得。
+Phase H 已 closeout 为 **L2（单用户、受控本机）**。Edit integrity 与 read/search 已独立合并并 L2；`h-integration-001` fresh audit PASS。Zig SDK-ready 与 Headless/Process 已各自独立闭合；上述排除项（OS sandbox、mid-flight preemption、semver/C ABI、ACP 等）仍不自动获得。
 
 ## SDK-ready gate
 
@@ -71,6 +71,19 @@ Phase H correctness 是前置，但不自动等于 SDK-ready。SDK-ready 已在 
 
 Semver publication and repo mirror wait for a second real consumer and release channel. See [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md).
 
+## Headless / Process SDK gate
+
+Independent of Zig source composition. Closed at `a1a1e0f` (`headless-001`):
+
+- versioned `headless-v1` public protocol (not a dump of Observer/Trace) ✅
+- `--json` single envelope and `--json-stream` NDJSON with exactly one terminal ✅
+- headless-only structured errors and exit-code matrix; default mode 0/1/2 unchanged ✅
+- stdout purity (logs/help/REPL do not pollute protocol stdout) ✅
+- process-level CI fixture (real `zag` binary, empty env, mock provider) on both HTTP backends ✅
+- TUI optional (`-Dtui` default false); Kernel packages do not import TUI ✅
+
+Does not claim ACP/editor integration, OS sandbox, or default-mode exit redesign. Contract: [modules/headless-contract.md](./modules/headless-contract.md).
+
 ## Teaching mapping
 
 | Teaching | Demonstrates | Production gap |
@@ -79,7 +92,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Phase 1 | write/shell/ask | descriptor risk、file containment、synchronous shell-v1 与 scoped atomic single-file edit integrity 均已过独立/main Gate |
 | Phase 2 | session/context | durability/open L2；compaction accounting L2 |
 | Phase 3 | lexical jail/policy/trace | real file containment、truthful/versioned trace、redaction closed；no OS sandbox |
-| **Phase H** | raises existing surfaces | L2 closeout：original DAG done；final audit file blockers closed；integration audit PASS；SDK Gate closed at `ebdd7ab`；headless remains separate Gate |
+| **Phase H** | raises existing surfaces | L2 closeout：original DAG done；final audit file blockers closed；integration audit PASS；SDK Gate closed at `ebdd7ab`；Headless Gate closed at `a1a1e0f` |
 
 ## Maintenance
 

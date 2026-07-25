@@ -13,7 +13,7 @@
 | Edit eval | Anchor/patch correctness and recovery | H2/C4 |
 | Shell runtime | Stable policy/runtime outcomes, capture budget, direct-child cleanup, and Agent trace composition | H2/P1 |
 | External consumer | Public source SDK composition compiles and runs outside product defaults | SDK gate |
-| Headless E2E | Stable process output/errors/exit status | **landed** — fixture `headless-001` runs real `zag` binary + mock provider under both backends; pending independent verification |
+| Headless E2E | Stable process output/errors/exit status | **done/L2** at `a1a1e0f` — process fixture 4/4 (real `zag` + mock provider, both backends); panel SHIP; dual-backend Gate passed |
 
 ## Existing baseline
 

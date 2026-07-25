@@ -22,7 +22,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 | P1 | Context/provider/redaction/doctor/shell/read-search/integration are done; Phase H is closed at L2 for single-user trusted-host scope. |
 | Integration | `h-integration-001` is **done**: fresh 11-sentence audit PASS, panel SHIP, merged-main Gate passed; Phase H closeout synchronized. |
 | Product CLI | `cli-repl-001` is done; multi-turn delimiter consumption passed independent and merged-main default/curl Gates. |
-| Post-H | Zig SDK gate is **done/L2** at `ebdd7ab`; headless gate remains **ready**; P2 sandbox/process-supervisor work stays separate. |
+| Post-H | Zig SDK gate is **done/L2** at `ebdd7ab`; headless gate is **done/L2** at `a1a1e0f`; P2 sandbox/process-supervisor work stays separate. |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
 
@@ -69,7 +69,7 @@ Doctor, shell, and edit integrity keep their completed contracts. Integration is
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | done | Fresh Phase H sentence audit after read/search bounds |
 | [cli-repl-001](./tasks/cli-repl-001.md) | P1 | done | Multi-turn interactive input delimiter consumption |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | done | Zig SDK-ready gate closed at `ebdd7ab` |
-| [headless-001](./tasks/headless-001.md) | P1 | ready | Structured process interface |
+| [headless-001](./tasks/headless-001.md) | P1 | done | Headless/Process SDK L2 closed at `a1a1e0f` |
 
 ## Task file skeleton
 

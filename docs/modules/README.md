@@ -62,7 +62,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 + WireAdapter | OpenAI-compatible + Anthropic；deadline/cancel contract |
 | [trace-observability.md](./trace-observability.md) | H7 | 审计 trace |
 | [sdk-contract.md](./sdk-contract.md) | SDK-ready | Public Zig source-composition contract（status: closed at `ebdd7ab`） |
-| [headless-contract.md](./headless-contract.md) | Headless Gate | Public JSON/NDJSON process contract + exit matrix |
+| [headless-contract.md](./headless-contract.md) | Headless Gate **L2** | Public JSON/NDJSON process contract + exit matrix; closed at `a1a1e0f` |
 | [memory.md](./memory.md) | C5 stub | Memory Repo（跨 session；默认可关） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 stub | Skills / Hooks / MCP |

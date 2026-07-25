@@ -135,7 +135,7 @@ Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 
 |-------|----------|---------|
 | Low-level Zig composition | direct Provider/Toolset/Observer/Transcript/loop assembly | ✅ validated |
 | Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ✅ closed — public injection + external consumer fixture 7/7 + [`sdk-contract.md`](./modules/sdk-contract.md); merged-main Gate passed at `ebdd7ab` |
-| Process SDK/headless | versioned JSON/events + stable errors/exit codes | ❌ Gate open |
+| Process SDK/headless | versioned JSON/events + stable errors/exit codes | ✅ closed — `headless-v1` + exit matrix + process fixture; merged-main Gate passed at `a1a1e0f` |
 
 ### SDK-ready Gate
 
@@ -173,7 +173,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 
 - **Phase H**：保持当前 package layout；既有 Gates、`h-edit-integrity-001`、`h-read-search-bounds-001`、`h-integration-001` 均已通过；Phase H 在 `d22ce6e` closeout 为 **L2（单用户、受控本机）**。
 - **SDK-ready Gate**：已闭合；public injection、external consumer、contract docs 均已落地并通过 merged-main Gate；不由 Phase H 或 package count 自动获得。
-- **Headless Gate**：process contract (`--json` / `--json-stream`, `headless-v1`, exit matrix, process fixture) 已在本 task 落地，状态为**收口中 pending independent verification**；不早于独立 worktree/main Gate 通过前标为 closed。
+- **Headless Gate**：已闭合于 `a1a1e0f`；`--json` / `--json-stream`、`headless-v1`、exit matrix、process fixture 与 dual-backend Gate 均已通过；不宣称 ACP/editor、OS sandbox 或 default-mode exit 重设计。
 - **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。
 - Split decisions use dependency/consumer pressure, not phase completion as an automatic trigger.
 

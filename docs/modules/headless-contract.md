@@ -11,8 +11,9 @@ This document defines the public machine interface for the `zag` CLI when invoke
 ## Status
 
 - Protocol version: `headless-v1`
+- Gate: **L2 closed** at `a1a1e0f` (`headless-001`); process fixture + dual-backend Gate passed.
 - Default CLI behavior is unchanged: without `--json` / `--json-stream`, `zag` prints final text to stdout and keeps verbose/cost/errors on stderr.
-- This contract is a post-H **Headless/Process SDK Gate**. It does not imply TUI, ACP, editor protocol, OS sandbox, or C ABI stability.
+- This contract is the post-H **Headless/Process SDK** surface. It does not imply TUI, ACP, editor protocol, OS sandbox, or C ABI stability.
 
 ## Modes
 
