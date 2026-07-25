@@ -134,7 +134,7 @@ Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 
 | Level | Contract | Current |
 |-------|----------|---------|
 | Low-level Zig composition | direct Provider/Toolset/Observer/Transcript/loop assembly | ✅ validated |
-| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ❌ Gate open |
+| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | 🔄 closing — public injection + external consumer fixture + [`sdk-contract.md`](./modules/sdk-contract.md) landed; independent verification + main Gate pending |
 | Process SDK/headless | versioned JSON/events + stable errors/exit codes | ❌ Gate open |
 
 ### SDK-ready Gate
@@ -143,12 +143,14 @@ All conditions are required:
 
 1. Phase H correctness passes; no fail-open custom Tool or unsafe session semantics.
 2. `Tool` supports instance state and mandatory runtime capabilities.
-3. Supported high-level composition accepts caller Toolset, Observer, and policy without product-private fields.
-4. Ownership/lifetime, typed errors, cancellation/deadline, events, and session semantics are documented and tested.
+3. Supported high-level composition accepts caller `Toolset`, `Observer`, and policy without product-private fields.
+4. Ownership/lifetime, typed errors, cancellation/deadline, events, and session semantics are documented and tested in [`docs/modules/sdk-contract.md`](./modules/sdk-contract.md).
 5. A repository-owned external consumer builds/runs in CI without private monorepo imports.
 6. Package tests are self-contained.
 
 Only after the Gate may a stability table assign semver promises. Repo mirror additionally needs a second real consumer and release channel.
+
+Supported consumer import modules: `zag-types`, `zag-agent-core`, `zag-coding-agent`. Consumer code must import by module name only; sibling source paths such as `@import("../packages/...")` are not supported.
 
 Target usage is intentionally illustrative until the Gate lands:
 

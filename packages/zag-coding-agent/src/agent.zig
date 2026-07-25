@@ -60,6 +60,14 @@ pub const Options = struct {
     secrets: []const []const u8 = &.{},
     /// Apply documented common API-key/token patterns (default true).
     pattern_redaction: bool = true,
+    /// Optional custom toolset. When null the default `Phase1Storage` built-ins are used.
+    /// The slice and the `Tool` descriptors/instance pointers it references are
+    /// **borrowed from the caller** and must outlive every `Agent.reply` call.
+    toolset: ?[]const tool.Tool = null,
+    /// Optional observer invoked before the Agent's internal usage/verbose handler.
+    /// The observer value is copied into options; the pointer/data it references
+    /// must remain valid for the lifetime of every `Agent.reply` call.
+    observer: ?observer_mod.Observer = null,
     /// Optional source redactor to **clone** into Agent-owned policy.
     /// When set, `secrets` / `pattern_redaction` are ignored for construction.
     redactor: ?*const redact_mod.Redactor = null,
@@ -462,6 +470,9 @@ pub const Agent = struct {
     }
 
     fn effectiveToolset(self: *Agent) tool.Toolset {
+        // Caller-provided custom toolset takes precedence; lifetime is borrowed
+        // from the caller and must outlive all `Agent.reply` calls.
+        if (self.options.toolset) |tools| return .{ .tools = tools };
         if (builtin.is_test) {
             if (self.test_tools) |override| return .{ .tools = override };
         }
@@ -513,6 +524,11 @@ pub const Agent = struct {
 
     fn onAgentEvent(ptr: ?*anyopaque, event: observer_mod.Event) void {
         const self: *Agent = @ptrCast(@alignCast(ptr.?));
+        // User observer receives the event first; internal usage/verbose ledger follows.
+        // A null `on_event` is silently ignored so `.observer = .none()` is harmless.
+        if (self.options.observer) |user| {
+            user.emit(event);
+        }
         switch (event) {
             .usage => |u| {
                 self.ledger.recordModel(u, self.options.model_info);
@@ -530,6 +546,12 @@ pub const Agent = struct {
                 }
             },
         }
+    }
+
+    /// Cooperative cancel request; safe to call from another thread/signal handler.
+    /// The flag is checked between turns and between tools, not mid-handler.
+    pub fn requestCancel(self: *Agent) void {
+        self.cancel.request();
     }
 
     /// Ensure session owns a redactor (clone from Agent if missing); bind trace for this reply only.

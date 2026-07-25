@@ -57,6 +57,13 @@ pub fn build(b: *std.Build) void {
     });
     const cli_mod = cli_dep.module("zag-cli");
 
+    const fixture_dep = b.dependency("sdk_consumer_fixture", .{
+        .target = target,
+        .optimize = optimize,
+        .http_backend = http_backend,
+    });
+    const fixture_mod = fixture_dep.module("sdk-consumer-fixture");
+
     const http_opts = b.addOptions();
     http_opts.addOption(HttpBackend, "http_backend", http_backend);
     http_opts.addOption([]const u8, "package", "zag_root");
@@ -221,6 +228,11 @@ pub fn build(b: *std.Build) void {
     });
     const run_coding_tests = b.addRunArtifact(coding_tests);
 
+    const fixture_tests = b.addTest(.{
+        .root_module = fixture_mod,
+    });
+    const run_fixture_tests = b.addRunArtifact(fixture_tests);
+
     const cli_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("packages/zag-cli/src/root.zig"),
@@ -332,6 +344,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_ai_tests.step);
     test_step.dependOn(&run_core_tests.step);
     test_step.dependOn(&run_coding_tests.step);
+    test_step.dependOn(&run_fixture_tests.step);
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_doctor_process_tests.step);

@@ -50,6 +50,9 @@
         .zag_cli = .{
             .path = "packages/zag-cli",
         },
+        .sdk_consumer_fixture = .{
+            .path = "tests/sdk-consumer-fixture",
+        },
         .curl = .{
             .path = "packages/third_party/zig-curl",
             .lazy = true,

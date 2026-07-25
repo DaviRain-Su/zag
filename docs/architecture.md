@@ -42,7 +42,7 @@
 | Level | Meaning | Current |
 |-------|---------|---------|
 | Low-level Zig composition | caller directly assembles Provider/Toolset/Observer/Transcript/loop | 已验证可行 |
-| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **未达** |
+| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **收口中** — public injection landed, external consumer fixture running, contract documented in [`modules/sdk-contract.md`](./modules/sdk-contract.md); pending independent verification and main Gate |
 | Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **未达** |
 
 Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag does not currently promise a stable C ABI or Zig dynamic plugin ABI.

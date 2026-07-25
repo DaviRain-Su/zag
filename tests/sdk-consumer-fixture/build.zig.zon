@@ -1,0 +1,22 @@
+.{
+    .name = .sdk_consumer_fixture,
+    .version = "0.5.0",
+    .fingerprint = 0xe7296c6db5e26584,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .zag_types = .{
+            .path = "../../packages/zag-types",
+        },
+        .zag_agent_core = .{
+            .path = "../../packages/zag-agent-core",
+        },
+        .zag_coding_agent = .{
+            .path = "../../packages/zag-coding-agent",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

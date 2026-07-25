@@ -1,7 +1,8 @@
 ---
 id: sdk-contract-001
 scope: sdk/source-contract
-status: ready
+status: in-progress
+evidence: public injection landed, external consumer fixture passes locally, docs updated; pending independent verification and main Gate
 priority: P1
 depends-on: [h-integration-001]
 ---

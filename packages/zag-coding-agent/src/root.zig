@@ -37,6 +37,11 @@ pub const golden_tests = @import("golden_tests.zig");
 pub const WireProvider = wire_provider.WireProvider;
 pub const Adapter = wire_provider.Adapter;
 
+pub const Toolset = tool.Toolset;
+pub const Observer = observer.Observer;
+pub const ToolRegistry = tool.Registry;
+pub const Tool = tool.Tool;
+
 pub const Agent = agent.Agent;
 pub const Session = agent.Session;
 pub const Options = agent.Options;
