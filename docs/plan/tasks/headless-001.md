@@ -1,7 +1,7 @@
 ---
 id: headless-001
 scope: product/headless-process-contract
-status: pending
+status: ready
 priority: P1
 depends-on: [h-integration-001]
 ---

@@ -143,7 +143,7 @@ Production 合同（h-trace-001）：每 reply 一 run；显式 path 原子写 *
 
 ## 8. 生产缺口
 
-File **symlink-aware containment**（h-workspace-001）、**truthful/versioned trace**（h-trace-001）、known-key/shape **redaction**（h-redact-001）、provider-independent doctor（[h-doctor-001](../../docs/plan/tasks/h-doctor-001.md)）与 h-integration retained default Agent policy/containment evidence 均已在 Phase H 落地；fresh integration audit 仍 pending。见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**；OS sandbox 属 C7。不要把 file jail 称为 OS sandbox。
+File **symlink-aware containment**（h-workspace-001）、**truthful/versioned trace**（h-trace-001）、known-key/shape **redaction**（h-redact-001）、provider-independent doctor（[h-doctor-001](../../docs/plan/tasks/h-doctor-001.md)）与 h-integration default Agent policy/containment evidence 均已在 Phase H 落地；`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence audit，Phase H closeout 为 L2（单用户、受控本机）。见 **[docs/gaps/03-safety.md](../../docs/gaps/03-safety.md)**；OS sandbox 属 C7。不要把 file jail 称为 OS sandbox。
 
 ---
 

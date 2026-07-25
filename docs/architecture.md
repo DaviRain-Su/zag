@@ -1,7 +1,7 @@
 # Zag 架构
 
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
-> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 历史上找到两个 file-surface blocker；single-file edit integrity 与 read/search bounds 均已关闭，h-integration-001 现在 ready 但 fresh audit 尚未执行。
+> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 历史上找到两个 file-surface blocker；single-file edit integrity 与 read/search bounds 均已关闭，`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence audit（11/11 PASS，panel SHIP），Phase H 达到 **L2（单用户、受控本机）**。
 > Grok Build / Pi / Oh My Pi 只作机制参照：借依赖纪律、生命周期与能力合同，不复制 crate 数或完整产品复杂度。
 
 ---

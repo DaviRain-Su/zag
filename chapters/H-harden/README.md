@@ -1,7 +1,7 @@
 # Chapter H — Production Floor（硬化）
 
 > 对应 [Phase H](../../docs/phases/H-harden.md)。  
-> **状态：in progress，未达 L2。** Teaching 0–3 tutorial-complete；当前 P0/P1 基线见 [assessment](../../docs/plan/analysis/2026-07-24-production-floor-assessment.md)。
+> **状态：L2 closeout（single-user trusted-host）。** Teaching 0–3 tutorial-complete；Phase H 在 `d22ce6e` 通过 fresh 11-sentence audit 并 closeout。当前基线见 [maturity](../../docs/maturity.md)。
 
 **一句话：** 不堆新功能表面；先让已有 loop、Tool、edit、session、workspace、provider、trace 在失败路径上不丢数据、不 fail-open、不说假成功。
 
@@ -41,7 +41,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | Slice | Spec | Current truth |
 |-------|------|---------------|
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | L2：soft errors/serial/goldens + facade terminal；provider active control；accepted multi-Tool between-call Agent composition 已通过独立/main Gate；mid-flight Tool preemption post-H |
-| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 + single-file write/edit L2 + read/search L2 已独立/main 验收；overall H waits on fresh integration audit |
+| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 + single-file write/edit L2 + read/search L2 已独立/main 验收；Phase H closed at `d22ce6e` via fresh integration audit PASS/panel SHIP |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
@@ -69,7 +69,7 @@ final audit FAIL（existing suites green）
   ├─ h-edit-integrity-001 ✅ reviews/Oracle/main Gate
   └─ h-read-search-bounds-001 ✅ reviews 01–10 cycle + PASS/SHIP + main Gate
   ↓
-h-integration-001 ready → fresh 11-sentence audit
+h-integration-001 done → fresh 11-sentence audit PASS; panel SHIP
   ↓
 SDK-ready gate · headless gate · C4/C5.1/C7 by dependency
 ```
@@ -96,4 +96,4 @@ Each task adds its named failure fixture before claiming closeout. Live provider
 
 ## 5. Exit
 
-All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. The first final audit failed exits 8/10/11 on two file-surface contracts; edit integrity and read/search bounds are now closed, so h-integration-001 is ready and must repeat the fresh 11-sentence audit. Exit 11 remains pending until that audit agrees. H completion would not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, power-loss edit durability, or OS sandbox, and would not automatically imply SDK-ready or headless-ready.
+All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. The first final audit failed exits 8/10/11 on two file-surface contracts; edit integrity and read/search bounds are now closed, and `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope. H completion does not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, power-loss edit durability, or OS sandbox, and does not automatically imply SDK-ready or headless-ready.

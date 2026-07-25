@@ -9,7 +9,7 @@
 | 轨道 | 状态 |
 |------|------|
 | Teaching Phase 0–3 | ✅ **tutorial-complete** |
-| Production Floor（Phase H） | ❌ **未完成** — 当前主线 |
+| Production Floor（Phase H） | ✅ **L2（单用户、受控本机）** |
 | Capability C4–C9 | 未开始 |
 
 > Phase 3 教程演示了 jail / policy / trace，**不等于**生产就绪。权威矩阵：[docs/maturity.md](./docs/maturity.md)。
@@ -23,13 +23,13 @@
 | [docs/maturity.md](./docs/maturity.md) | L0–L3 成熟度真理源 |
 | [docs/roadmap.md](./docs/roadmap.md) | Phase H P0/P1、SDK/headless Gate、Capability DAG |
 | [production-floor assessment](./docs/plan/analysis/2026-07-24-production-floor-assessment.md) | 2026-07-24 评估、P0/P1/P2 与实施任务 |
-| [latest Phase H audit](./docs/plan/analysis/2026-07-25-phase-h-final-audit.md) | 2026-07-25 FAIL verdict、两个 file-surface blockers 与 exit disposition |
+| [latest Phase H audit](./docs/plan/analysis/2026-07-25-phase-h-final-audit.md) | 2026-07-25 FAIL verdict → 后续在 `d22ce6e` closeout；11/11 exit PASS、panel SHIP、gate 数字见 [h-integration-001](./docs/plan/tasks/h-integration-001.md) |
 | [docs/architecture.md](./docs/architecture.md) | 分层：Loop⊂Graph · Tool runtime · WireAdapter · 产品壳 |
 | [chapters/00-loop](./chapters/00-loop/README.md) | Teaching 0：loop |
 | [chapters/01-edit-permissions](./chapters/01-edit-permissions/README.md) | Teaching 1：编辑 + 权限 |
 | [chapters/02-session-context](./chapters/02-session-context/README.md) | Teaching 2：会话 + context |
 | [chapters/03-production](./chapters/03-production/README.md) | Teaching 3：jail / policy / trace（**目录名历史遗留**；≠ 生产完成） |
-| [chapters/H-harden](./chapters/H-harden/README.md) | Phase H P0/P1 硬化（in progress） |
+| [chapters/H-harden](./chapters/H-harden/README.md) | Phase H P0/P1 硬化（L2 closeout） |
 | [docs/modules/memory.md](./docs/modules/memory.md) | Memory Repo 规格（C5；H 不做） |
 | [SECURITY.md](./SECURITY.md) | 安全默认与「尚未」 |
 
@@ -40,7 +40,7 @@ Teaching 0  loop + 只读                 ✅ tutorial
 Teaching 1  write/shell + ask|yolo      ✅ tutorial
 Teaching 2  会话 / AGENTS.md / context  ✅ tutorial
 Teaching 3  jail / shell policy / trace ✅ tutorial（≠ 生产完成）
-Phase H     硬化到 maturity L2          ❌ file blockers ✅；integration fresh audit pending
+Phase H     硬化到 maturity L2          ✅ L2 closeout（single-user trusted-host）
 C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
 ```
 

@@ -2,12 +2,12 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — edit integrity and read/search bounds are closed; fresh integration audit pending** |
+| Status | **L2 closeout — single-user, trusted-host scope; integration audit PASS** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
 | Assessment | [2026-07-24 production-floor assessment](../plan/analysis/2026-07-24-production-floor-assessment.md) |
-| Latest audit | [2026-07-25 Phase H final audit](../plan/analysis/2026-07-25-phase-h-final-audit.md) — FAIL |
+| Latest audit | [2026-07-25 Phase H final audit](../plan/analysis/2026-07-25-phase-h-final-audit.md) — historical FAIL → subsequent `h-integration-001` closeout at `d22ce6e` (11/11 PASS, panel SHIP) |
 
 ## Reset after assessment
 
@@ -229,8 +229,8 @@ h-edit-integrity-001   h-read-search-bounds-001
       done                 done
        └─────────┬─────────┘
                  ▼
-        h-integration-001 ready
-        retained evidence + fresh 11-sentence audit
+        h-integration-001 done
+        fresh 11-sentence audit PASS; panel SHIP
                  │
                  ▼
   ├─► Zig SDK-ready gate
@@ -240,8 +240,8 @@ h-edit-integrity-001   h-read-search-bounds-001
   └─► C7 sandbox/process supervisor
 ```
 
-This is a DAG. Original module evidence remains valid. Edit integrity and read/search bounds now pass independently, so integration is ready to resume the fresh audit. Green existing suites cannot waive that remaining counterexample.
+This is a DAG. Original module evidence remains valid. Edit integrity and read/search bounds closed their blockers, and `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e`, closing Phase H at L2 for single-user trusted-host scope. Green existing suites plus the integration audit together satisfy the exit; they do not automatically promote SDK-ready or headless-ready.
 
 ## Exit
 
-Phase H exits only after the newly ready h-integration-001 independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.
+Phase H exits only after `h-integration-001` independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. That closeout has now happened at `d22ce6e`: 11/11 exit sentences PASS, adversarial panel SHIP, merged-main Gate numbers verified. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.

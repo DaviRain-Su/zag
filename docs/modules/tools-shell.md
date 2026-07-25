@@ -113,7 +113,7 @@ Independent review 01 blocked the first package evidence on command leakage in t
 
 Independent re-review 02 and Oracle passed the fixed range. After ff-only merge, main passed `384/384` default and `383/383` curl tests; focused coding-agent passed `104/104`, with every supported macOS shell/signal/PID/N/N+1/invalid-UTF8 fixture executed and zero skips.
 
-Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**done**). The later final audit failed only on file-tool contracts; `h-integration-001` is now ready after `h-read-search-bounds-001` closeout and shell remains closed. Shell L2 does not imply process-tree ownership, OS sandbox, mid-flight cancellation, SDK-ready, or overall Phase H completion.
+Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**done**). The later final audit failed only on file-tool contracts; `h-read-search-bounds-001` closed those blockers and `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), so Phase H is L2 for single-user trusted-host scope. Shell remains closed. Shell L2 does not imply process-tree ownership, OS sandbox, mid-flight cancellation, SDK-ready, or headless-ready.
 
 ## L2 acceptance
 
@@ -127,7 +127,7 @@ Task: [h-shell-001](../plan/tasks/h-shell-001.md) (**done**). The later final au
 - [x] docs and behavior agree that mid-flight Tool cancellation, PTY, background jobs, process-tree ownership, and OS sandbox are absent.
 - [x] independent re-review, Oracle, and main std/curl Gate pass.
 
-The final integration/Phase H audit is a separate product-level Gate and does not reopen this module's synchronous L2 contract.
+The final integration/Phase H audit is a separate product-level Gate; it has since passed at `d22ce6e` and does not reopen this module's synchronous L2 contract.
 
 ## L3
 

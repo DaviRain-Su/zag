@@ -66,7 +66,7 @@ The tasks are independent in code but overlap global truth/teaching documents, s
 
 ## Subsequent delivery status
 
-`h-edit-integrity-001` is done after the reviews 01–04 review/fix cycle, final Oracle, ff-only merge, and main default/curl Gate. `h-read-search-bounds-001` is also done after the reviews 01–10 review/fix cycle, final independent review 10 PASS, final adversarial ship panel SHIP, ff-only merge, and merged-main Gate. `h-integration-001` is now ready for the fresh 11-sentence audit. The original FAIL verdict remains until that audit passes.
+`h-edit-integrity-001` closed after the reviews 01–04 review/fix cycle, final Oracle, ff-only merge, and main default/curl Gate. `h-read-search-bounds-001` closed after the reviews 01–10 review/fix cycle, final independent review 10 PASS, final adversarial ship panel SHIP, ff-only merge, and merged-main Gate. `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e`: all 11 exit sentences PASS, final adversarial panel (3 + 1 ship oracle) SHIP, and the merged-main Gate passed zag-types 12/12, zag-agent-core 157/157, zag-coding-agent 138/138, root default 432/432, curl 431/431, docs lint, readability 91/100, security 65/100, OpenAPI 287/287, catalog 40, with no explicit skips. Phase H therefore closed at L2 for single-user trusted-host scope. The historical FAIL verdict in this document documents the 2026-07-25 audit state only; it is superseded by the subsequent closeout.
 
 ## Explicit exclusions
 

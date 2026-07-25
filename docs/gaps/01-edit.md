@@ -34,4 +34,4 @@
 
 ## 下一步
 
-既有 Tool/workspace/doctor/shell/edit 与原 Agent evidence 保持通过。`h-read-search-bounds-001` 已关闭当前 file blocker；`h-integration-001` 现在 ready 并需 fresh 11-sentence audit。Mid-flight shell cancellation、process tree、power-loss durability 与更强 edit UX 仍未宣称。
+既有 Tool/workspace/doctor/shell/edit 与原 Agent evidence 保持通过。`h-read-search-bounds-001` 已关闭当前 file blocker；`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence audit（11/11 PASS，panel SHIP），Phase H 达到 L2（单用户、受控本机）。Mid-flight shell cancellation、process tree、power-loss durability 与更强 edit UX 仍未宣称。

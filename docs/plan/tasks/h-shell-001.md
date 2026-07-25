@@ -12,7 +12,7 @@ Close the missed Phase H shell blocker without introducing a process supervisor:
 
 This task does **not** implement or claim mid-flight user cancellation of an already running Tool, process-group/tree ownership, background jobs, PTY, network/OS sandboxing, or detached-command supervision. Those remain post-H process-supervisor work.
 
-`h-integration-001` retains its independently verified and main-merged composition evidence. This task landed and returned integration to `ready`; the later final audit failed on two unrelated file-tool contracts; those file blockers are now closed and integration is ready again without reopening shell.
+`h-integration-001` retains its independently verified and main-merged composition evidence. This task landed and returned integration to `ready`; the later final audit failed on two unrelated file-tool contracts; those blockers are now closed, and `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope without reopening shell.
 
 # closeout
 
@@ -20,7 +20,7 @@ Independent review 01 **blocked** the first package commit on three scoped gaps:
 
 Independent re-review 02 and Oracle both passed the fixed range. The ff-only merged main Gate then passed default `30/30` steps and `384/384` tests plus curl `32/32` steps and `383/383` tests. Focused coding-agent verification passed `104/104`; on the supported macOS host every real shell, signal, PID, N/N+1, and invalid-UTF-8 Agent fixture ran with **zero skips**. Docs lint/score remain `91/100` readability and `64/100` security.
 
-The task is **done**. It returned `h-integration-001` to **ready** at shell closeout; the subsequent final audit blocked integration on `h-edit-integrity-001` and `h-read-search-bounds-001`, not on shell; those blockers are now closed and integration is ready again. The non-blocking shell-specific NUL/control durable-roundtrip suggestion is recorded in `docs/plan/backlog.md`.
+The task is **done**. It returned `h-integration-001` to **ready** at shell closeout; the subsequent final audit blocked integration on `h-edit-integrity-001` and `h-read-search-bounds-001`, not on shell; those blockers are now closed; `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope. The non-blocking shell-specific NUL/control durable-roundtrip suggestion is recorded in `docs/plan/backlog.md`.
 
 # contract source
 

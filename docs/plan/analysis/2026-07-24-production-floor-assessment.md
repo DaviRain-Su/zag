@@ -78,7 +78,9 @@ Post-module composition and exit audits found three planning omissions without c
 1. H5 already required a doctor/readiness report, but the task DAG had no owner. [h-doctor-001](../tasks/h-doctor-001.md) now owns a provider/API-key-independent, fixed/path-free control report and is complete.
 2. h-provider-001 delivered provider deadline/active cancellation and partial-stream Tool safety. It does **not** implement preemption of an already running Tool/shell handler. H integration verifies cancellation **between** accepted Tools; mid-flight handler/process ownership and process-tree cleanup remain explicit post-H process-supervisor work.
 3. After the original h-integration composition evidence passed independent review and both main backend suites, the sentence-by-sentence H exit audit found that synchronous shell timeout/output-limit/process outcomes, total result budget, direct-child cleanup evidence, and shell trace reconstruction still had no task owner. [h-shell-001](../tasks/h-shell-001.md) was added to own that P1 gate and is done.
-4. The 2026-07-25 final executable audit passed the existing default/curl suites but found two further default file-surface counterexamples. [h-edit-integrity-001](../tasks/h-edit-integrity-001.md) reopens data preservation narrowly: direct truncate/write can destroy prior bytes. [h-read-search-bounds-001](../tasks/h-read-search-bounds-001.md) owns the missing shared byte ceiling and explicit walker/source-cutoff semantics. Integration keeps its prior evidence. `h-edit-integrity-001` and `h-read-search-bounds-001` are now done after their review/fix cycles and merged-main Gates; the fresh integration audit remains the only blocker before Phase H can close.
+4. The 2026-07-25 final executable audit passed the existing default/curl suites but found two further default file-surface counterexamples. [h-edit-integrity-001](../tasks/h-edit-integrity-001.md) reopens data preservation narrowly: direct truncate/write can destroy prior bytes. [h-read-search-bounds-001](../tasks/h-read-search-bounds-001.md) owns the missing shared byte ceiling and explicit walker/source-cutoff semantics. Integration keeps its prior evidence. `h-edit-integrity-001` and `h-read-search-bounds-001` are now done after their review/fix cycles and merged-main Gates; the fresh integration audit remained the only blocker before Phase H could close.
+
+**Subsequent closeout:** `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope. The assessment's task DAG and exclusions remain otherwise unchanged.
 
 P1 does not authorize semver publication. SDK publication requires the independent gate in [packaging.md](../../packaging.md).
 
@@ -149,7 +151,7 @@ This is a dependency graph, not a mandatory single-thread sequence. C4, C5.1, an
 | P1 | [h-shell-001](../tasks/h-shell-001.md) | Stable synchronous shell outcomes, body budget, direct-child cleanup, and trace evidence |
 | P0 | [h-edit-integrity-001](../tasks/h-edit-integrity-001.md) | Preserve existing/absent targets across single-file write/edit faults |
 | P1 | [h-read-search-bounds-001](../tasks/h-read-search-bounds-001.md) | Enforce shared body budget and explicit incomplete search/list outcomes |
-| P1 | [h-integration-001](../tasks/h-integration-001.md) | Retain verified Agent chains and repeat fresh Phase H audit after file blockers closed |
+| P1 | [h-integration-001](../tasks/h-integration-001.md) | Retain verified Agent chains and close Phase H via fresh 11-sentence audit (done at `d22ce6e`: 11/11 PASS, panel SHIP) |
 | P1 | [sdk-contract-001](../tasks/sdk-contract-001.md) | External stateful consumer and public ownership/event contract |
 | P1 | [headless-001](../tasks/headless-001.md) | Stable structured process interface |
 

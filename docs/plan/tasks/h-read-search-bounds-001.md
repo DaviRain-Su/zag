@@ -102,7 +102,7 @@ Merged-main evidence:
 
 The closed scoped contract covers four handler bodies `<= 64 KiB`, complete first `fs-v1` incomplete markers, `read_file` N/N+1/growth evidence, walker node/depth/per-directory/I/O cutoffs, source/binary/pattern evidence, fixed search-scope exclusions, generic bounded path/name-free jail and unknown-tool bodies, required/defaulted descriptor behavior, and real Agent evidence. Fixed `.git` and build-directory exclusions are intentional search-scope exclusions, and likely-binary detection remains a probe heuristic. Generic bounded jail/unknown bodies are Tool body contracts only; trace/audit fields keep their separate redacted/capped path contract. Provider-visible schemas still contain only `ToolDefinition`; the public union surface is not SDK-ready.
 
-This closes the read/search L2 blocker only. Phase H overall remains **in progress** until `h-integration-001` performs a fresh 11-sentence audit. This task does not claim OS sandboxing, process-tree ownership, mid-flight Tool preemption, exhaustive concurrent traversal, or generic third-party handler-body enforcement.
+This closes the read/search L2 blocker only. `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope. This task does not claim OS sandboxing, process-tree ownership, mid-flight Tool preemption, exhaustive concurrent traversal, or generic third-party handler-body enforcement.
 
 # verification
 
@@ -115,4 +115,4 @@ This closes the read/search L2 blocker only. Phase H overall remains **in progre
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
 - independent worktree review and merged-main std/curl Gate pass;
-- `h-edit-integrity-001` is done; this task has passed, so `h-integration-001` is `ready` for the fresh audit.
+- `h-edit-integrity-001` is done; this task has passed, and `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope.

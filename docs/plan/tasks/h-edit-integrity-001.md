@@ -142,7 +142,7 @@ The task passed its full develop→review/fix loop and merged-main Gate:
 - review 04 passed, and final Oracle re-review returned SHIP for the allocation-free cleanup/result boundary;
 - ff-only merged `main` passed default **402/402** and curl **401/401** tests, docs lint/score (**91/100 readability**, **65/100 security**), OpenAPI **287/287**, and catalog **40 models current**, with supported macOS endpoint/symlink/fault/signaled-child fixtures reporting no skips.
 
-Task status is **done**. This closes the scoped single-file write/edit L2 boundary only. `h-read-search-bounds-001` is now also done; a fresh `h-integration-001` audit remains required before Phase H can close.
+Task status is **done**. This closes the scoped single-file write/edit L2 boundary only. `h-read-search-bounds-001` is also done, and `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP), closing Phase H at L2 for single-user trusted-host scope.
 
 # verification
 

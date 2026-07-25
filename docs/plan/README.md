@@ -17,10 +17,10 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 
 | Area | Status |
 |------|--------|
-| Phase H | **In progress; not L2.** Both file-surface blockers are closed; fresh integration audit is still pending. |
+| Phase H | **L2 closeout — single-user, trusted-host scope.** Both file-surface blockers are closed; `h-integration-001` passed the fresh 11-sentence audit at `d22ce6e` (11/11 PASS, panel SHIP). |
 | P0 | **Complete:** `h-edit-integrity-001` completed the reviews 01–04 review/fix cycle, then passed final Oracle, ff-only merge, and main default/curl Gate; write/edit is L2 for its scoped single-file contract. |
-| P1 | Context/provider/redaction/doctor/shell/read-search are done; retained integration evidence remains valid. |
-| Integration | `h-integration-001` is ready and must repeat the fresh 11-sentence audit before Phase H can close. |
+| P1 | Context/provider/redaction/doctor/shell/read-search/integration are done; Phase H is closed at L2 for single-user trusted-host scope. |
+| Integration | `h-integration-001` is **done**: fresh 11-sentence audit PASS, panel SHIP, merged-main Gate passed; Phase H closeout synchronized. |
 | Product CLI | `cli-repl-001` is done; multi-turn delimiter consumption passed independent and merged-main default/curl Gates. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
 
@@ -39,15 +39,15 @@ done: h-edit-integrity-001          done: h-read-search-bounds-001
 single-file write/edit L2           bounded + explicit incomplete results L2
          └──────────┬──────────┘
                     ▼
-           ready: h-integration-001
-           retained evidence + fresh 11-sentence audit
+           done: h-integration-001
+           fresh 11-sentence audit PASS; panel SHIP
                     ├───────────────────► sdk-contract-001
                     └───────────────────► headless-001
 ```
 
-The two file tasks have independent code contracts but overlap global truth/teaching docs, so docs-sprint serializes their develop→verify→merge cycles. Edit integrity and read/search bounds are done; the remaining Phase H dependency is the fresh integration audit.
+The two file tasks have independent code contracts but overlap global truth/teaching docs, so docs-sprint serialized their develop→verify→merge cycles. Edit integrity and read/search bounds are done; integration has completed the final audit and closed Phase H at L2 for single-user trusted-host scope.
 
-Doctor, shell, and edit integrity keep their completed contracts. Integration remains the convergence point: its original Agent chains are already verified and it can now resume the final audit.
+Doctor, shell, and edit integrity keep their completed contracts. Integration is the convergence point: its original Agent chains were already verified and the fresh final audit has now passed.
 
 `ready` means dependencies are satisfied, not that tasks may safely edit one shared checkout in parallel. Use task `path` overlap rules.
 
@@ -66,10 +66,10 @@ Doctor, shell, and edit integrity keep their completed contracts. Integration re
 | [h-shell-001](./tasks/h-shell-001.md) | P1 | done | Synchronous shell-v1/budget/direct-child/Agent evidence |
 | [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | done | Target-preserving single-file write/edit commit |
 | [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | done | Bounded read/search bodies and explicit incomplete results |
-| [h-integration-001](./tasks/h-integration-001.md) | P1 | ready | Fresh Phase H sentence audit after read/search bounds |
+| [h-integration-001](./tasks/h-integration-001.md) | P1 | done | Fresh Phase H sentence audit after read/search bounds |
 | [cli-repl-001](./tasks/cli-repl-001.md) | P1 | done | Multi-turn interactive input delimiter consumption |
-| [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
-| [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
+| [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | ready | Zig SDK-ready gate |
+| [headless-001](./tasks/headless-001.md) | P1 | ready | Structured process interface |
 
 ## Task file skeleton
 

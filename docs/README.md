@@ -1,7 +1,7 @@
 # Zag 文档地图
 
 > **权威入口**：[INDEX.md](./INDEX.md)（XPlan buckets：Product Spec · Active · Complete · Reference · Quality）。  
-> Zig 是载体；**harness** 是主角。Teaching 0–3 已验收；**Phase H 未完成前不要写「已生产就绪」**。
+> Zig 是载体；**harness** 是主角。Teaching 0–3 已验收；**Phase H = L2（单用户、受控本机）**。
 
 本页保留历史读者路径；新文档与决策请按 INDEX 落桶。
 
@@ -60,7 +60,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [chapters/01-edit-permissions](../chapters/01-edit-permissions/README.md) | tutorial-complete | write + ask/yolo |
 | [chapters/02-session-context](../chapters/02-session-context/README.md) | tutorial-complete | session + context view |
 | [chapters/03-production](../chapters/03-production/README.md) | tutorial-complete | jail + policy + trace（**非**生产完成） |
-| [chapters/H-harden](../chapters/H-harden/README.md) | in progress | P0/P1 Production Floor hardening |
+| [chapters/H-harden](../chapters/H-harden/README.md) | L2 closeout | P0/P1 Production Floor hardening |
 
 ## 相关根文档
 

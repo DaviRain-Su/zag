@@ -11,7 +11,7 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**总状态（2026-07-25 read/search closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **未达 L2 / in progress**；Capability = 未开始。Final audit 的两个 file-surface 反例均已关闭：write/edit 由 `h-edit-integrity-001` 关闭，read/search 由 `h-read-search-bounds-001` 关闭。`h-read-search-bounds-001` task commits 已 ff-only 进入 `main`，完成 reviews 01–10 review/fix cycle + final independent review 10 **PASS** + final adversarial ship panel **SHIP**；merged-main 通过 zag-types **12/12**、zag-agent-core **157/157**、zag-coding-agent **138/138**、root default **432/432**、curl **431/431**、docs lint、readability **91/100**、security **65/100**、OpenAPI **287/287**、catalog **40**，required summaries 无显式 skips。`h-integration-001` 现在 **ready**，但 fresh 11-sentence audit 尚未执行，所以 Phase H overall、SDK-ready、headless-ready 仍不得宣称。
+**总状态（2026-07-25 integration closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **L2（单用户、受控本机）**；Capability = 未开始。Final audit 的两个 file-surface 反例均已关闭：write/edit 由 `h-edit-integrity-001` 关闭，read/search 由 `h-read-search-bounds-001` 关闭。`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence integration audit：11/11 exit sentences **PASS**，final adversarial panel（3 + 1 ship oracle）**SHIP**；merged-main Gate 通过 zag-types **12/12**、zag-agent-core **157/157**、zag-coding-agent **138/138**、root default **432/432**、curl **431/431**、docs lint、readability **91/100**、security **65/100**、OpenAPI **287/287**、catalog **40**，required summaries 无显式 skips。Phase H L2 仅限 single-user trusted-host scope；SDK-ready、headless-ready、OS sandbox、process-tree ownership、mid-flight Tool/shell preemption、power-loss/fsync durability、exhaustive concurrent traversal、DLP/zeroization、第三方 Tool 通用 body 保证仍不宣称。
 
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
@@ -37,7 +37,7 @@
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
 | Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
-| Quality / Evals | **L1+** | 既有 module/doctor/Agent/shell/edit/read-search matrices 均通过；read/search budget/walker fixtures 已独立/main 验收；仍因 fresh integration audit 未执行而保持 L1+ | existing composition ✅；shell/edit/read-search matrices ✅；fresh integration audit pending | edit/cost/perf baselines |
+| Quality / Evals | **L2** | 既有 module/doctor/Agent/shell/edit/read-search matrices 均通过；fresh integration audit 在 `d22ce6e` PASS；gate 数字见总状态 | existing composition ✅；shell/edit/read-search matrices ✅；fresh integration audit PASS | edit/cost/perf baselines |
 
 ## Phase H production-floor exit
 
@@ -53,11 +53,11 @@
 8. **Editing/runtime ✅**：shell、single-file write/edit、read/search bounded-output 子合同均已独立/main 验收；read/search closeout covers four handler bodies `<=64KiB`, complete `fs-v1` markers, read N/N+1/growth, walker/source/binary/pattern/defaulted-descriptor/Agent evidence.
 9. **Observability ✅**：real invalid UTF-8 shell fixture 经 transcript/session/resume/parsed single-call trace 后以 recovered `completed` 收口；trace 用 exact-one counts，不假设 result call ID；shell policy/runtime replay Gate 已通过。
 10. **Regression evidence ✅**：mutator endpoint/preservation/cleanup、post-staging allocation boundary、post-commit signaled diff ownership、yolo Agent composition、core remember fixtures、read/search budget/walker/source/binary/pattern/defaulted-descriptor/Agent fixtures 均已通过 merged-main evidence.
-11. **Documentation truth ❌（fresh integration pending）**：read/search task closeout 与 integration-ready 状态已同步；但 fresh 11-sentence integration audit 尚未执行。只有该 audit 通过后才能重新勾选本句。
+11. **Documentation truth ✅**：read/search task closeout 与 integration-ready 状态已同步；fresh 11-sentence integration audit 在 `d22ce6e` PASS，panel SHIP，gate 数字已验证。
 
 L2 **不要求 OS sandbox**，前提是声明严格限定在单用户 trusted-host，并保持默认 ask。更高自治、background job、untrusted executable extension 的发布 Gate 需要 C7 sandbox/process supervisor。
 
-Final audit verdict remains **FAIL** because the fresh integration audit has not yet been executed. Edit integrity and read/search are independently merged and L2 for their scoped contracts; `h-integration-001` is now ready for a fresh 11-sentence audit. Green shell/provider/edit/read-search/REPL suites do not promote Phase H, SDK, or headless indirectly.
+Phase H 已 closeout 为 **L2（单用户、受控本机）**。Edit integrity 与 read/search 已独立合并并 L2；`h-integration-001` fresh audit PASS。SDK-ready、headless-ready 与上述排除项仍不自动获得。
 
 ## SDK-ready gate
 
@@ -79,7 +79,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Phase 1 | write/shell/ask | descriptor risk、file containment、synchronous shell-v1 与 scoped atomic single-file edit integrity 均已过独立/main Gate |
 | Phase 2 | session/context | durability/open L2；compaction accounting L2 |
 | Phase 3 | lexical jail/policy/trace | real file containment、truthful/versioned trace、redaction closed；no OS sandbox |
-| **Phase H** | raises existing surfaces | original DAG done；final audit file blockers closed → integration ready, fresh audit pending |
+| **Phase H** | raises existing surfaces | L2 closeout：original DAG done；final audit file blockers closed；integration audit PASS；SDK/headless remain separate gates |
 
 ## Maintenance
 

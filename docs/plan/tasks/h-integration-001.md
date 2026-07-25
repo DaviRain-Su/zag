@@ -1,7 +1,7 @@
 ---
 id: h-integration-001
 scope: phase-h/integration-e2e
-status: ready
+status: done
 priority: P1
 depends-on: [h-session-001, h-tool-runtime-001, h-workspace-001, h-trace-001, h-context-001, h-provider-001, h-redact-001, h-doctor-001, h-shell-001, h-edit-integrity-001, h-read-search-bounds-001]
 ---
@@ -28,14 +28,20 @@ The prior Phase H audit found a missing shell module gate, and independent shell
 
 Shell is **done** and remains L2 for its scoped synchronous contract.
 
-# final-audit blockers closed; fresh audit pending
+# Phase H closeout
 
-The 2026-07-25 executable final audit passed both full backend suites but returned **FAIL** on two default file-surface counterexamples:
+The 2026-07-25 executable final audit returned **FAIL** on two default file-surface counterexamples (historical). Both blockers are now closed:
 
-1. `write_file` / `search_replace` published through in-place truncate/write and lacked target-preserving write/flush/replace fault evidence;
-2. `list_dir` / `read_file` / `grep` / `glob` did not yet prove the shared byte ceiling and could hide walker/source cutoffs as complete output.
+1. `write_file` / `search_replace` published through in-place truncate/write and lacked target-preserving write/flush/replace fault evidence — closed by [h-edit-integrity-001](./h-edit-integrity-001.md).
+2. `list_dir` / `read_file` / `grep` / `glob` did not yet prove the shared byte ceiling and could hide walker/source cutoffs as complete output — closed by [h-read-search-bounds-001](./h-read-search-bounds-001.md).
 
-Both historical file blockers are now closed. [h-edit-integrity-001](./h-edit-integrity-001.md) closed the mutator contract after the reviews 01–04 review/fix cycle plus final Oracle/main Gate. [h-read-search-bounds-001](./h-read-search-bounds-001.md) closed the read/search contract after ff-only merge to `main`, the reviews 01–10 review/fix cycle, final independent review 10 **PASS**, final adversarial ship panel **SHIP**, and merged-main Gates. This task is now **ready** for a fresh 11-sentence audit. Its retained Agent policy/containment/cancellation, shell, edit, and read/search evidence remains valid. No Phase H, SDK-ready, or headless-ready claim is made before that audit.
+A fresh 11-sentence integration audit was then executed against `d22ce6e`:
+
+- all 11 Phase H exit sentences **PASS**;
+- final adversarial panel (3 core reviewers + 1 independent ship oracle) returned **SHIP**;
+- merged-main Gate passed: zag-types **12/12**, zag-agent-core **157/157**, zag-coding-agent **138/138**, root default **432/432**, curl **431/431**, docs lint, readability **91/100**, security **65/100**, OpenAPI **287/287**, catalog **40**, with no explicit skips.
+
+This closes Phase H at **L2 for single-user, trusted-host scope only**. It does not claim SDK-ready, headless-ready, OS sandbox, process-tree ownership, mid-flight Tool/shell preemption, power-loss/fsync durability, exhaustive concurrent traversal, DLP/zeroization, or generic third-party Tool body guarantees.
 
 # context
 
@@ -88,3 +94,5 @@ This task verifies only between-Tool cancellation. It must not claim that an alr
 - `zig build test -Dhttp_backend=curl --summary all` passes on main;
 - docs lint/score pass;
 - only after every Phase H exit sentence passes may this task become `done` and maturity/README claim Phase H L2.
+
+This task is now **done**: the 11-sentence integration audit **PASS**, the adversarial panel returned **SHIP**, the merged-main Gate numbers above are verified, and the closeout state has been synchronized to `docs/maturity.md`, README, SECURITY, roadmap, architecture, packaging, phases, plan, chapters, gaps, quality/evals, and module docs.

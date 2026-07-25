@@ -1,7 +1,7 @@
 ---
 id: sdk-contract-001
 scope: sdk/source-contract
-status: pending
+status: ready
 priority: P1
 depends-on: [h-integration-001]
 ---

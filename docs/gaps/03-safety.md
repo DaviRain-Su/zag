@@ -30,4 +30,4 @@ OS sandbox/network/process-tree enforcement is C7, not Phase H. Trusted-host L2 
 
 ## Next
 
-Trusted-host file containment, redaction, doctor, default Agent policy/containment composition, and synchronous shell-v1 delivery are closed. The final audit retained this evidence; edit integrity and read/search bounds are now done; h-integration-001 is ready for the fresh audit. OS sandbox/process-tree ownership remains [C7](../phases/C7-sandbox.md).
+Trusted-host file containment, redaction, doctor, default Agent policy/containment composition, and synchronous shell-v1 delivery are closed. The final audit retained this evidence; edit integrity and read/search bounds are now done; `h-integration-001` subsequently passed the fresh 11-sentence audit at `d22ce6e`, closing Phase H at L2 for single-user trusted-host scope. OS sandbox/process-tree ownership remains [C7](../phases/C7-sandbox.md).
