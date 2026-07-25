@@ -348,7 +348,7 @@ fn executeOneTool(
     const caps = desc.capabilities;
 
     // Single path extraction for permission + jail (no re-parse drift).
-    // path_field tools: missing/non-string/malformed → soft invalid_arguments (handler never runs).
+    // path_field tools: missing/empty/non-string/malformed → soft invalid_arguments (handler never runs).
     const path_owned = workspace.pathFromDescriptor(
         deps.tool_ctx.allocator,
         caps,
@@ -442,7 +442,7 @@ fn softInvalidArguments(
 ) RunError!void {
     const detail = std.fmt.allocPrint(
         deps.tool_ctx.allocator,
-        "invalid arguments for '{s}': missing or non-string required field '{s}'",
+        "invalid arguments for '{s}': missing, empty, or non-string required field '{s}'",
         .{ call.name, field },
     ) catch return error.OutOfMemory;
     defer deps.tool_ctx.allocator.free(detail);
@@ -1767,6 +1767,88 @@ test "unknown model tool soft-fails without permission inference" {
     try std.testing.expect(found);
 }
 
+test "unknown model tool with oversized name returns bounded generic body" {
+    const gpa = std.testing.allocator;
+    const sentinel = "UNKNOWN_TOOL_SENTINEL_loop_81bf";
+    const long_name = try gpa.alloc(u8, tool.max_result_bytes + sentinel.len + 1);
+    defer gpa.free(long_name);
+    var i: usize = 0;
+    while (i < long_name.len) : (i += 1) {
+        long_name[i] = sentinel[i % sentinel.len];
+    }
+
+    const Handler = struct {
+        ran: bool = false,
+        fn handle(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.ran = true;
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var state: Handler = .{};
+    const tools = [_]tool.Tool{try tool.buildTool(gpa, .{
+        .definition = .{ .name = "registered_write", .description = "registered", .parameters_json = "{\"type\":\"object\"}" },
+        .capabilities = .{ .risk = .write, .workspace = .none, .cancellation = .none, .shell = .none },
+        .instance = &state,
+        .handler = Handler.handle,
+    })};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        name: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, self.name),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{ .content = try arena.dupe(u8, "soft"), .tool_calls = &.{}, .finish_reason = "stop" };
+        }
+    };
+
+    var mock: Mock = .{ .name = long_name };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("call unknown long");
+
+    const result = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{ .allocator = gpa, .io = std.testing.io, .cwd = std.Io.Dir.cwd() },
+        .options = .{ .permission_gate = .denyAllDangerous() },
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("soft", result.final_text);
+    try std.testing.expect(!state.ran);
+    var found = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool) {
+            found = true;
+            try std.testing.expect(tool_error.hasCode(m.content, .unknown_tool));
+            try std.testing.expect(!tool_error.hasCode(m.content, .permission_denied));
+            try std.testing.expect(m.content.len <= tool.max_result_bytes);
+            try std.testing.expect(std.mem.indexOf(u8, m.content, sentinel) == null);
+            try std.testing.expect(std.mem.indexOf(u8, m.content, "registered_write") == null);
+        }
+    }
+    try std.testing.expect(found);
+}
+
 test "forged invalid capabilities skip provider" {
     const gpa = std.testing.allocator;
     const noop = struct {
@@ -1884,6 +1966,7 @@ test "custom path tool missing path soft invalid_arguments without handler" {
 
     const cases = [_][]const u8{
         "{}",
+        "{\"path\":\"\"}",
         "{\"path\":1}",
         "not-json",
         "[]",

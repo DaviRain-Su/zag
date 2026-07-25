@@ -37,8 +37,8 @@ The file-tool jail and shell policy are different controls. `run_shell` is not m
 
 ## File containment contract (L2 sub-capability)
 
-- Reject empty/NUL/absolute/drive/UNC and lexical escape paths. Descriptor defaults are validated with the same lexical jail (`.` allowed) before a toolset can run.
-- Resolve the workspace root once per `loop.run` (threaded as borrowed `tool.Context.workspace_root_real`); handlers lazy-resolve when the field is null. For `path_field_default`, omitted path and present empty string become the descriptor default (grep/glob use `.`) and then follow the same permission and jail path as explicit arguments.
+- Reject empty required paths and NUL/absolute/drive/UNC/lexical escape paths. Descriptor defaults are validated with the same lexical jail (`.` allowed) before a toolset can run.
+- Resolve the workspace root once per `loop.run` (threaded as borrowed `tool.Context.workspace_root_real`); handlers lazy-resolve when the field is null. Required `path_field` values treat present empty strings as `invalid_arguments`; for `path_field_default`, omitted path and present empty string become the descriptor default (grep/glob use `.`) and then follow the same permission and jail path as explicit arguments.
 - Existing read/list/search targets must resolve beneath that root (component-boundary compare: `/ws` does not contain `/ws2`).
 - Write/create walks every existing ancestor; non-existent suffix under a verified ancestor is allowed **without** `..` after the first missing component (`new/../escape/...` → deny). Escaping or dangling intermediate/final symlinks deny. Checks complete **before** any parent create.
 - File mutators additionally require a lexical file endpoint (no trailing host separator or final `.`/`..`). Existing endpoints must resolve to regular files strictly below root; directory/root aliases are invalid arguments. After canonical selection, the target is re-proven strictly below root and its staging parent root-or-descendant before any atomic temporary is opened.

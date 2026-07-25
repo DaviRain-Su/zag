@@ -274,19 +274,18 @@ pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const
     _ = instance;
     const path = try tool.requireStringField(ctx.allocator, arguments_json, "path");
     defer ctx.allocator.free(path);
+    if (path.len == 0) return error.InvalidArguments;
 
-    const sub = if (path.len == 0) "." else path;
-
-    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, sub, err);
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
     defer guard.deinit(ctx.allocator);
 
-    guard.checkExisting(ctx.io, ctx.cwd, sub) catch |err| {
-        return jailOrFail(ctx, sub, err);
+    guard.checkExisting(ctx.io, ctx.cwd, path) catch |err| {
+        return jailOrFail(ctx, path, err);
     };
 
     // Open without following a directory symlink that somehow changed post-check
     // when possible; verified path is contained so follow is OK for real dirs.
-    var dir = ctx.cwd.openDir(ctx.io, sub, .{ .iterate = true }) catch {
+    var dir = ctx.cwd.openDir(ctx.io, path, .{ .iterate = true }) catch {
         return error.ToolFailed;
     };
     defer dir.close(ctx.io);
@@ -1076,6 +1075,12 @@ test "list_dir and read_file on project files" {
     const listing = try registry.execute(ctx, "list_dir", "{\"path\":\".\"}");
     defer gpa.free(listing);
     try std.testing.expect(std.mem.indexOf(u8, listing, "build.zig") != null);
+
+    try std.testing.expectError(error.InvalidArguments, listDir(ctx, null, "{\"path\":\"\"}"));
+    const empty_list = try registry.execute(ctx, "list_dir", "{\"path\":\"\"}");
+    defer gpa.free(empty_list);
+    try std.testing.expect(core.tool_error.hasCode(empty_list, .invalid_arguments));
+    try std.testing.expect(std.mem.indexOf(u8, empty_list, "build.zig") == null);
 
     const build_txt = try registry.execute(ctx, "read_file", "{\"path\":\"build.zig\"}");
     defer gpa.free(build_txt);

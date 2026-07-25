@@ -1007,7 +1007,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
     try std.testing.expect(loaded.items().len >= 1);
 }
 
-test "Agent Phase1Storage grep and glob default missing path in tmp cwd" {
+test "Agent Phase1Storage grep and glob default missing and empty path in tmp cwd" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -1051,7 +1051,7 @@ test "Agent Phase1Storage grep and glob default missing path in tmp cwd" {
                 if (!saw_grep or !saw_glob) return error.InvalidResponse;
                 const tc = try arena.alloc(message.ToolCall, 2);
                 tc[0] = .{ .id = try arena.dupe(u8, "grep-1"), .name = try arena.dupe(u8, "grep"), .arguments = try arena.dupe(u8, "{\"pattern\":\"needle\"}") };
-                tc[1] = .{ .id = try arena.dupe(u8, "glob-1"), .name = try arena.dupe(u8, "glob"), .arguments = try arena.dupe(u8, "{\"pattern\":\"**/*.zig\"}") };
+                tc[1] = .{ .id = try arena.dupe(u8, "glob-1"), .name = try arena.dupe(u8, "glob"), .arguments = try arena.dupe(u8, "{\"pattern\":\"**/*.zig\",\"path\":\"\"}") };
                 return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
             }
 

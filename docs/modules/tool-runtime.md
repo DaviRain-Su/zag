@@ -68,10 +68,10 @@ Zig cannot prevent a host from forging a `Tool` literal. Normal product path can
 4. Validated runtime path never carries optional capability fields.
 5. Send only `ToolDefinition[]` to the Provider (built per turn from the registry).
 6. `Registry.find` returns `?*const Tool`. Loop uses the **same** extracted path for permission + jail (single parse).
-7. When `workspace=path_field`, missing/non-string/malformed path args → soft `invalid_arguments` **before** permission/handler.
+7. When `workspace=path_field`, missing/empty/non-string/malformed path args → soft `invalid_arguments` **before** permission/handler.
 8. When `workspace=path_field_default`, missing field yields an owned `default_path`; present empty string also yields the default to match raw handler behavior; present non-empty string is used as-is; non-string/malformed args → soft `invalid_arguments`. The extracted value still goes through permission and jail before the handler.
 9. When `shell=command_argument`, missing/non-string command → soft `invalid_arguments`; denylist deny → soft `shell_deny`; handler runs only after allow.
-10. Unknown model-requested tools soft-fail as `unknown_tool` **without** name-based risk inference.
+10. Unknown model-requested tools soft-fail as a generic bounded `unknown_tool` body **without** echoing the requested name and without name-based risk inference.
 11. Expected handler failures map to stable machine-readable tool-result shapes.
 
 ## Cancellation metadata
@@ -86,8 +86,8 @@ Zig cannot prevent a host from forging a `Tool` literal. Normal product path can
 | Invalid capabilities (empty path_field/default field, invalid default_path, shell≠execute, …) | `InvalidCapabilities` at `buildTool` / `validateTools` |
 | Invalid name / non-object schema | `InvalidName` / `InvalidSchema` |
 | Duplicate / invalid toolset | `error.InvalidToolset` before provider (call count 0) |
-| Unknown requested tool | Soft tool result `unknown_tool` |
-| Invalid path/command args (descriptor-required fields, or non-string/malformed defaulted field) | Soft `invalid_arguments` before handler |
+| Unknown requested tool | Soft generic bounded tool result `unknown_tool` (requested name omitted) |
+| Invalid path/command args (missing/empty/non-string/malformed descriptor-required path fields, or non-string/malformed defaulted field) | Soft `invalid_arguments` before handler |
 | Other invalid arguments | Soft tool result `invalid_arguments` |
 | Handler failure | Soft tool result `tool_failed` |
 | Host allocation failure | Typed run error |
@@ -100,7 +100,7 @@ Zig cannot prevent a host from forging a `Tool` literal. Normal product path can
 - [x] missing capability registration fails closed;
 - [x] invalid capabilities (forged Tool / empty path_field / invalid defaulted path / shell≠execute) fail `validateTools` + `loop.run` before provider;
 - [x] invalid name/schema/duplicate fail closed;
-- [x] custom required path: missing/non-string/malformed/escape → soft error, handler count 0;
+- [x] custom required path: missing/empty/non-string/malformed/escape → soft error, handler count 0;
 - [x] custom defaulted path: missing/empty → `.` through permission+jail+handler; escape/non-string fail before handler;
 - [x] custom shell (non-`run_shell` name): missing/non-string/denied/allowed descriptor-driven;
 - [x] built-ins all declare descriptors (risk/workspace/cancellation/shell);

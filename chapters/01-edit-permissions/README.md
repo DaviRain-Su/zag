@@ -123,7 +123,7 @@ role=tool  content="error: code=permission_denied message=…"
 
 ## 4. 新工具契约（模型看见什么）
 
-模型只看见 `ToolDefinition`（name / description / parameters）。**不会**看见 risk、workspace、cancellation、instance。
+模型只看见 `ToolDefinition`（name / description / parameters）。**不会**看见 risk、workspace、cancellation、instance。Required `path_field` 的空字符串是 `invalid_arguments`，只有 grep/glob 的 defaulted `path` 允许 missing/empty → `.`；未知工具返回固定 generic `unknown_tool` body，不回显模型给的工具名。
 
 ### `write_file`
 

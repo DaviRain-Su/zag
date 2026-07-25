@@ -40,9 +40,9 @@ These remain useful but do not cover the assessment blockers.
 3. invalid capabilities on forged Tool / shell≠execute / empty path_field / invalid defaulted path fail before Provider. ✅
 4. provider-visible schema: `loop → WireProvider → WireAdapter` sees only `ToolDefinition`. ✅
 5. every built-in declares risk/workspace/cancellation/shell, with grep/glob using explicit defaulted path metadata rather than name-based special cases. ✅
-6. custom required path Tool: jail + missing/non-string/malformed → soft error, handler=0; custom defaulted path Tool: missing/empty → `.` through permission+jail+handler, escape/non-string fail before handler. ✅
+6. custom required path Tool: jail + missing/empty/non-string/malformed → soft error, handler=0; custom defaulted path Tool: missing/empty → `.` through permission+jail+handler, escape/non-string fail before handler. ✅
 7. custom shell Tool (non-`run_shell` name): missing/non-string/deny/allow. ✅
-8. unknown model tool remains soft `unknown_tool`. ✅
+8. unknown model tool remains soft `unknown_tool` with a generic bounded name-free body. ✅
 
 ### Workspace
 

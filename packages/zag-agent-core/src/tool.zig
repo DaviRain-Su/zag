@@ -278,9 +278,7 @@ pub const Registry = struct {
     ) std.mem.Allocator.Error![]u8 {
         const tool_error = @import("tool_error.zig");
         const found = self.find(name) orelse {
-            const msg = try std.fmt.allocPrint(ctx.allocator, "unknown tool '{s}'", .{name});
-            defer ctx.allocator.free(msg);
-            return tool_error.format(ctx.allocator, .unknown_tool, msg);
+            return tool_error.format(ctx.allocator, .unknown_tool, "unknown tool requested");
         };
         return self.executeTool(ctx, found, arguments_json);
     }
@@ -431,6 +429,13 @@ test "buildTool rejects empty name and non-object schema" {
     }));
     try std.testing.expectError(error.InvalidName, buildTool(gpa, .{
         .definition = .{ .name = "bad name", .description = "", .parameters_json = "{}" },
+        .capabilities = caps,
+        .handler = noop,
+    }));
+    const too_long_name = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abc";
+    try std.testing.expect(too_long_name.len == max_tool_name_len + 1);
+    try std.testing.expectError(error.InvalidName, buildTool(gpa, .{
+        .definition = .{ .name = too_long_name, .description = "", .parameters_json = "{}" },
         .capabilities = caps,
         .handler = noop,
     }));
@@ -630,7 +635,7 @@ test "registry definitions exclude runtime fields" {
     try std.testing.expectEqual(@as(u32, 2), counter.n);
 }
 
-test "unknown tool soft-fails" {
+test "unknown tool soft-fails with generic bounded name-free body" {
     const gpa = std.testing.allocator;
     const reg: Registry = .{ .tools = &.{} };
     const ctx: Context = .{
@@ -640,5 +645,18 @@ test "unknown tool soft-fails" {
     };
     const body = try reg.execute(ctx, "nope", "{}");
     defer gpa.free(body);
-    try std.testing.expect(std.mem.indexOf(u8, body, "code=unknown_tool") != null);
+    try std.testing.expectEqualStrings("error: code=unknown_tool message=unknown tool requested", body);
+
+    const sentinel = "UNKNOWN_TOOL_SENTINEL_5f62";
+    const long_name = try gpa.alloc(u8, max_result_bytes + sentinel.len + 1);
+    defer gpa.free(long_name);
+    var i: usize = 0;
+    while (i < long_name.len) : (i += 1) {
+        long_name[i] = sentinel[i % sentinel.len];
+    }
+    const long_body = try reg.execute(ctx, long_name, "{}");
+    defer gpa.free(long_body);
+    try std.testing.expectEqualStrings("error: code=unknown_tool message=unknown tool requested", long_body);
+    try std.testing.expect(long_body.len <= max_result_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, long_body, sentinel) == null);
 }

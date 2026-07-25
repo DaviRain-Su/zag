@@ -13,7 +13,7 @@
 //! not a built-in name list (D-007).
 //!
 //! When `workspace = path_field`, the named JSON field is **required** and must
-//! be a string — missing/non-string/malformed JSON → `error.InvalidArguments`.
+//! be a non-empty string — missing/empty/non-string/malformed JSON → `error.InvalidArguments`.
 //! When `workspace = path_field_default`, missing field uses the descriptor
 //! default; a present empty string also uses the default so loop preflight and raw
 //! handlers do not drift. Present non-string or malformed JSON remains invalid.
@@ -365,6 +365,7 @@ pub fn requireStringArgument(
     if (parsed.value != .object) return error.InvalidArguments;
     const val = parsed.value.object.get(field) orelse return error.InvalidArguments;
     if (val != .string) return error.InvalidArguments;
+    if (val.string.len == 0) return error.InvalidArguments;
     return try allocator.dupe(u8, val.string);
 }
 
@@ -387,7 +388,7 @@ fn optionalStringArgumentOrDefault(
 /// Extract path using descriptor workspace metadata.
 ///
 /// - `workspace.none` → `null` (no path claim).
-/// - `workspace.path_field` → required string field; missing/non-string/bad JSON → `InvalidArguments`.
+/// - `workspace.path_field` → required non-empty string field; missing/empty/non-string/bad JSON → `InvalidArguments`.
 /// - `workspace.path_field_default` → missing field or present empty string returns an owned default;
 ///   present non-empty string returns an owned value; non-string/bad JSON → `InvalidArguments`.
 pub fn pathFromDescriptor(
@@ -486,6 +487,11 @@ test "pathFromDescriptor respects workspace access" {
     const p = try pathFromDescriptor(gpa, path_caps, "{\"path\":\"src/a.zig\"}");
     defer if (p) |s| gpa.free(s);
     try std.testing.expectEqualStrings("src/a.zig", p.?);
+
+    const direct = try requireStringArgument(gpa, "{\"path\":\".\"}", "path");
+    defer gpa.free(direct);
+    try std.testing.expectEqualStrings(".", direct);
+    try std.testing.expectError(error.InvalidArguments, requireStringArgument(gpa, "{\"path\":\"\"}", "path"));
 }
 
 test "pathFromDescriptor requires string field when path claimed" {
@@ -497,6 +503,7 @@ test "pathFromDescriptor requires string field when path claimed" {
         .shell = .none,
     };
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "{}"));
+    try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "{\"path\":\"\"}"));
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "{\"path\":1}"));
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "not-json"));
     try std.testing.expectError(error.InvalidArguments, pathFromDescriptor(gpa, path_caps, "[]"));
