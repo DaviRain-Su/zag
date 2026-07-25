@@ -306,9 +306,14 @@ pub const HeadlessWriter = struct {
     }
 
     /// `--json-stream`: terminal run_end event derived from a completed reply.
+    /// If the stream was already halted mid-run, emits the halt error terminal
+    /// instead so callers still satisfy "exactly one terminal".
     pub fn writeRunEnd(self: *Self, result: anytype) !void {
         if (self.terminal_written) return;
-        if (self.halted) return;
+        if (self.halted) {
+            try self.writeError(self.halt_error);
+            return;
+        }
         const final = try redact_mod.redactOptional(self.redactor, self.gpa, result.final_text);
         defer self.gpa.free(final);
         try self.writeEvent(.{
@@ -479,6 +484,46 @@ test "HeadlessWriter NDJSON stream emits terminal run_end exactly once" {
         if (std.mem.indexOf(u8, line, "\"type\":\"run_end\"") != null) terminal_count += 1;
     }
     try std.testing.expectEqual(@as(u32, 1), terminal_count);
+}
+
+test "HeadlessWriter halted stream then success still emits one error terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    var hw = HeadlessWriter.init(gpa, io, &out.writer, .json_stream, null);
+    defer hw.deinit();
+
+    try hw.emitRunStart("0.5.0", "ask", "protect");
+    hw.setHalted(.{
+        .code = .out_of_memory,
+        .message = "JSON serialization failed.",
+    });
+
+    const result = .{
+        .final_text = "should not appear as run_end",
+        .turns = @as(u32, 1),
+        .usage = message.Usage{ .prompt_tokens = 1, .completion_tokens = 1, .total_tokens = 2 },
+        .stop_reason = loop.StopReason.completed,
+    };
+    try hw.writeRunEnd(result);
+
+    try std.testing.expect(hw.hasTerminal());
+    try std.testing.expect(hw.isHalted());
+    const text = std.mem.trim(u8, out.written(), " \n");
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var run_end_count: u32 = 0;
+    var error_count: u32 = 0;
+    while (lines.next()) |line| {
+        if (line.len == 0) continue;
+        if (std.mem.indexOf(u8, line, "\"type\":\"run_end\"") != null) run_end_count += 1;
+        if (std.mem.indexOf(u8, line, "\"type\":\"error\"") != null) error_count += 1;
+    }
+    try std.testing.expectEqual(@as(u32, 0), run_end_count);
+    try std.testing.expectEqual(@as(u32, 1), error_count);
+    try std.testing.expect(std.mem.indexOf(u8, text, "\"code\":\"out_of_memory\"") != null);
 }
 
 test "HeadlessWriter error envelope redacts configured secrets" {

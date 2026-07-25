@@ -665,6 +665,16 @@ fn runOneShotHeadless(
             writer.flush() catch {};
             std.process.exit(if (err == error.OutOfMemory) 40 else 60);
         };
+    } else if (writer.isHalted()) {
+        // Stream observer halted mid-run (JSON/write OOM). Agent may still
+        // succeed; contract requires exactly one terminal — emit the halt error.
+        const he = writer.haltError() orelse hw.HeadlessError{
+            .code = .trace_error,
+            .message = "Headless stream halted.",
+        };
+        writer.writeError(he) catch {};
+        writer.flush() catch {};
+        std.process.exit(he.code.exitCode());
     } else {
         writer.writeRunEnd(result) catch |err| {
             writer.flush() catch {};
