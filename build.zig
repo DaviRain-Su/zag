@@ -11,6 +11,13 @@ pub fn build(b: *std.Build) void {
         "Outbound HTTP backend (std.http or zig-curl) for zag-ai + openai-zig",
     ) orelse .std;
 
+    const tui = b.option(
+        bool,
+        "tui",
+        "Enable TUI product shell (default false; currently no TUI package)",
+    ) orelse false;
+    _ = tui;
+
     const openai_dep = b.dependency("openai_zig", .{
         .target = target,
         .optimize = optimize,
@@ -338,6 +345,37 @@ pub fn build(b: *std.Build) void {
     );
     doctor_fixture_step.dependOn(&run_doctor_process_tests.step);
 
+    // headless-001: process-level `--json` / `--json-stream` fixture (real zag
+    // binary, empty env, isolated cwd, built-in mock provider). Runs under
+    // both std and curl backends.
+    const headless_mock_server_exe = b.addExecutable(.{
+        .name = "headless-mock-server",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/headless_mock_server.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const headless_fixture_opts = b.addOptions();
+    headless_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
+    headless_fixture_opts.addOptionPath("mock_server_bin", headless_mock_server_exe.getEmittedBin());
+    const headless_process_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/headless_process_fixture.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "headless_fixture_options", .module = headless_fixture_opts.createModule() },
+            },
+        }),
+    });
+    const run_headless_process_tests = b.addRunArtifact(headless_process_tests);
+    const headless_fixture_step = b.step(
+        "headless-process-fixture",
+        "Process-level headless JSON/stream end-to-end fixture",
+    );
+    headless_fixture_step.dependOn(&run_headless_process_tests.step);
+
     const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
@@ -348,6 +386,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_doctor_process_tests.step);
+    test_step.dependOn(&run_headless_process_tests.step);
     test_step.dependOn(openai_coverage_step);
     test_step.dependOn(catalog_check_step);
     test_step.dependOn(docs_lint_step);

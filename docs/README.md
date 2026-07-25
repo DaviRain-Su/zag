@@ -39,6 +39,7 @@ vision → maturity（看清自己在哪）
 | [modules/](./modules/) | 模块规格（不变式、API、验收、[代码映射](./modules/README.md#代码映射表)） |
 | [modules/memory.md](./modules/memory.md) | **Memory Repo**（C5；H 不做；默认可关） |
 | [modules/sdk-contract.md](./modules/sdk-contract.md) | **SDK Public Contract**（SDK-ready Gate closed at `ebdd7ab`） |
+| [modules/headless-contract.md](./modules/headless-contract.md) | **Headless/Process SDK Contract**（`headless-v1` JSON/NDJSON + exit matrix） |
 | [phases/](./phases/) | Phase H 与 Capability C4–C9 |
 | [quality/](./quality/) | golden / security eval / provider 合同 / 生成评分报告 |
 

@@ -13,7 +13,7 @@
 | Edit eval | Anchor/patch correctness and recovery | H2/C4 |
 | Shell runtime | Stable policy/runtime outcomes, capture budget, direct-child cleanup, and Agent trace composition | H2/P1 |
 | External consumer | Public source SDK composition compiles and runs outside product defaults | SDK gate |
-| Headless E2E | Stable process output/errors/exit status | Headless gate |
+| Headless E2E | Stable process output/errors/exit status | **landed** — fixture `headless-001` runs real `zag` binary + mock provider under both backends; pending independent verification |
 
 ## Existing baseline
 
@@ -132,6 +132,9 @@ Closeout evidence includes focused `fs_tools.zig` tests for exact/N+1 read prefi
 
 1. SDK-ready: an external stateful Tool/Provider/Observer/policy/session consumer passes (`sdk-contract-001`).
 2. Headless: JSON stdout is clean and the failure exit/error matrix is stable (`headless-001`).
+   - Process fixture: real `zag` binary, empty env, isolated cwd, built-in OpenAI-compatible mock provider, both HTTP backends.
+   - Covered: `--json` result envelope, `--json-stream` terminal uniqueness, missing API key → `provider_configuration` exit 30, invalid session path → exit 2 without path leak.
+   - Not claimed: deterministic `cancelled`/`timeout` process fixtures (covered by CLI unit tests).
 
 ### SDK-ready external consumer (`sdk-contract-001`, done)
 

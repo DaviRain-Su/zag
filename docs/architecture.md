@@ -43,7 +43,7 @@
 |-------|---------|---------|
 | Low-level Zig composition | caller directly assembles Provider/Toolset/Observer/Transcript/loop | 已验证可行 |
 | Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — public injection + external consumer fixture 7/7 + contract documented in [`modules/sdk-contract.md`](./modules/sdk-contract.md); merged-main Gate passed at `ebdd7ab` |
-| Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **未达** |
+| Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **收口中 pending verification** — `headless-v1` protocol + exit matrix + process fixture landed in `headless-001`; independent/main Gate pass required to mark closed |
 
 Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag does not currently promise a stable C ABI or Zig dynamic plugin ABI.
 
@@ -67,7 +67,7 @@ Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag d
 4. Model-visible `ToolDefinition` 与 local `ToolCapabilities` 分离；permission/workspace/runner 消费同一 runtime descriptor，缺失 metadata fail-closed。
 5. **Memory / Graph / 产品面** 不得依赖 `openai-zig` 类型，也不得成为 H/SDK 最低合同的占位 hook。
 6. **依赖只准朝下**；Kernel 不 import 产品面；产品是 Kernel 的第一个严格消费者。
-7. Phase H 保证 single-Loop correctness；SDK-ready/headless 是独立 Gate；Graph、Memory、TUI 后置。
+7. Phase H 保证 single-Loop correctness；SDK-ready/headless 是独立 Gate；headless contract 见 [`modules/headless-contract.md`](./modules/headless-contract.md)；Graph、Memory、TUI 后置。
 8. OS sandbox 是 runner/process-supervisor enforcement，不污染 Provider/message Kernel ABI。
 9. **All-in-one 是产品目标，不是架构豁免**：每个新能力先声明落点与 failure contract。
 
@@ -158,8 +158,8 @@ Agent Core
 
 | 模式 | 阶段 | 说明 |
 |------|------|------|
-| CLI / one-shot | 现状 L1 | `zag-cli` 组装 resolve → WireAdapter → Agent；尚无稳定 machine contract |
-| Headless JSON/process SDK | post-H Gate | versioned JSON/events、stable errors/exit codes；早于 TUI |
+| CLI / one-shot | 现状 L1 | `zag-cli` 组装 resolve → WireAdapter → Agent；headless 模式见 [`modules/headless-contract.md`](./modules/headless-contract.md) |
+| Headless JSON/process SDK | post-H Gate | versioned JSON/events、stable errors/exit codes；`headless-v1` contract + exit matrix + process fixture；早于 TUI |
 | TUI · dashboard · polished ACP | **C9** | 只组装，不把 loop 逻辑写进 UI |
 
 Agent Core 可被多种 shell 嵌入；shell 只处理 I/O、protocol 与 lifecycle。See [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md).
@@ -236,7 +236,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | Tool runtime descriptor | zag-types + Agent Core | **Phase H P0** |
 | WireAdapter（OpenAI-compatible + Anthropic） | zag-ai | wire 基础 + h-provider-001 deadline/cancel capability truth 已落地 |
 | Zig SDK-ready | supported Kernel/product facade | ✅ closed at `ebdd7ab` |
-| Headless/process contract | zag-cli/product shell | post-H independent Gate，早于 TUI |
+| Headless/process contract | zag-cli/product shell | post-H independent Gate，headless-v1 contract + fixture landed；独立 worktree/main Gate pass后 closed |
 | 可靠编辑 | runtime + toolset | H2 correctness → C4 sharpness |
 | Repo map/fork；Memory Repo | context/session backend | C5；Memory later/default-off |
 | Graph / Subagent / Oracle | optional orchestration | C6；依赖 lifecycle/process safety |

@@ -8,7 +8,7 @@
 
 ## Scope split
 
-Headless automation is **not deferred to late C9**. It is an earlier post-H Gate defined by [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md) and [headless-001](../plan/tasks/headless-001.md):
+Headless automation is **not deferred to late C9**. It is an earlier post-H Gate defined by [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md), [headless-001](../plan/tasks/headless-001.md), and the [`headless-v1` process contract](../modules/headless-contract.md):
 
 - clean JSON/streaming JSON;
 - versioned events;
@@ -34,7 +34,7 @@ C9 starts only after that machine contract exists and focuses on optional produc
 
 ## Acceptance
 
-- [ ] headless Gate remains green while C9 is enabled/disabled;
+- [x] headless Gate remains green while C9 is enabled/disabled;
 - [ ] TUI (if shipped) can complete core tasks without losing permission/error/session behavior;
 - [ ] ACP/editor path negotiates protocol version and uses stable process errors;
 - [ ] dashboard reads versioned trace rather than private Agent memory;

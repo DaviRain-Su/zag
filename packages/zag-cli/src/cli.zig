@@ -7,6 +7,7 @@ const Io = std.Io;
 const ai = @import("zag-ai");
 const core = @import("zag-agent-core");
 const coding = @import("zag-coding-agent");
+const hw = @import("headless_writer.zig");
 
 const default_system =
     \\You are Zag, a coding agent that can read and modify the working directory.
@@ -25,6 +26,28 @@ const default_system =
     \\- Be concise. When finished, answer without further tool calls.
     \\
 ;
+
+/// Observer adapter that forwards harness events to the headless NDJSON writer.
+const HeadlessObserver = struct {
+    writer: *hw.HeadlessWriter,
+
+    fn asObserver(self: *HeadlessObserver) core.observer.Observer {
+        return .{
+            .ptr = self,
+            .on_event = onEvent,
+        };
+    }
+
+    fn onEvent(ptr: ?*anyopaque, event: core.observer.Event) void {
+        const self: *HeadlessObserver = @ptrCast(@alignCast(ptr.?));
+        self.writer.dispatchEvent(event) catch |err| {
+            self.writer.setHalted(if (err == error.OutOfMemory)
+                hw.HeadlessError{ .code = .out_of_memory, .message = "headless stream out of memory" }
+            else
+                hw.HeadlessError{ .code = .trace_error, .message = "headless stream write failed" });
+        };
+    }
+};
 
 /// Entry used by the executable's `main`.
 pub fn run(init: std.process.Init) !void {
@@ -48,6 +71,7 @@ pub fn run(init: std.process.Init) !void {
     var want_stream = false;
     var config_path: ?[]const u8 = null;
     var want_doctor = false;
+    var headless_mode: ?hw.HeadlessMode = null;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -115,6 +139,18 @@ pub fn run(init: std.process.Init) !void {
             }
         } else if (std.mem.eql(u8, a, "--stream")) {
             want_stream = true;
+        } else if (std.mem.eql(u8, a, "--json")) {
+            if (headless_mode) |_| {
+                std.log.err("--json and --json-stream are mutually exclusive", .{});
+                std.process.exit(2);
+            }
+            headless_mode = .json;
+        } else if (std.mem.eql(u8, a, "--json-stream")) {
+            if (headless_mode) |_| {
+                std.log.err("--json and --json-stream are mutually exclusive", .{});
+                std.process.exit(2);
+            }
+            headless_mode = .json_stream;
         } else if (std.mem.eql(u8, a, "--config")) {
             i += 1;
             if (i >= args.len) {
@@ -130,7 +166,7 @@ pub fn run(init: std.process.Init) !void {
             break;
         } else if (std.mem.startsWith(u8, a, "-")) {
             std.log.err("unknown flag", .{});
-            try printUsage();
+            try printUsage(io);
             std.process.exit(2);
         } else {
             try prompt_parts.append(arena, a);
@@ -138,7 +174,11 @@ pub fn run(init: std.process.Init) !void {
     }
 
     if (show_help) {
-        try printUsage();
+        if (headless_mode) |_| {
+            try printUsageToStderr(io);
+        } else {
+            try printUsage(io);
+        }
         return;
     }
 
@@ -156,7 +196,11 @@ pub fn run(init: std.process.Init) !void {
     // Agent / session / trace / network. No API key required. Does not mutate policy.
     // Other legal flags/prompt with --doctor are accepted then ignored (P2 UX debt).
     if (want_doctor) {
-        try runDoctor(gpa, io, doctorOptionsFromFlags(permission_mode, shell_policy, no_project));
+        if (headless_mode) |_| {
+            try runDoctorHeadless(gpa, io, doctorOptionsFromFlags(permission_mode, shell_policy, no_project));
+        } else {
+            try runDoctor(gpa, io, doctorOptionsFromFlags(permission_mode, shell_policy, no_project));
+        }
         return;
     }
 
@@ -168,6 +212,9 @@ pub fn run(init: std.process.Init) !void {
     }
 
     var resolve_result = ai.resolve(gpa, io, init.environ_map, config_path) catch |err| {
+        if (headless_mode) |mode| {
+            headlessErrorExit(gpa, io, mode, null, resolveErrorToHeadless(err));
+        }
         switch (err) {
             error.MissingApiKey => {
                 std.log.err(
@@ -230,6 +277,9 @@ pub fn run(init: std.process.Init) !void {
     }
 
     const wire = resolved.createWire(gpa, io) catch |err| {
+        if (headless_mode) |mode| {
+            headlessErrorExit(gpa, io, mode, null, wireErrorToHeadless(err));
+        }
         std.log.err("wire adapter init failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
@@ -246,6 +296,18 @@ pub fn run(init: std.process.Init) !void {
     // Wire resolved API key into redaction policy without logging the value.
     // Stack-owned slice list lives for Agent.init, which copies secret bytes.
     const secret_slots = [_][]const u8{resolved.config.api_key};
+
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buf);
+    var headless_writer: hw.HeadlessWriter = undefined;
+    var headless_observer: HeadlessObserver = undefined;
+    if (headless_mode) |mode| {
+        headless_writer = hw.HeadlessWriter.init(gpa, io, &stdout_writer.interface, mode, null);
+        if (mode == .json_stream) {
+            headless_observer = .{ .writer = &headless_writer };
+        }
+    }
+
     var agent_opts: coding.agent.Options = .{
         .verbose = verbose,
         .permission_mode = permission_mode,
@@ -262,12 +324,16 @@ pub fn run(init: std.process.Init) !void {
         .model_info = resolve_result.model_info,
         .secrets = &secret_slots,
         .pattern_redaction = true,
+        .observer = if (headless_mode == .json_stream) headless_observer.asObserver() else .none(),
     };
     if (resolve_result.max_turns) |mt| {
         agent_opts.max_turns = mt;
     }
 
     var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
+        if (headless_mode) |mode| {
+            headlessErrorExit(gpa, io, mode, null, .{ .code = .out_of_memory, .message = "agent init failed" });
+        }
         std.log.err("agent init failed (out of memory)", .{});
         std.process.exit(1);
     };
@@ -276,6 +342,16 @@ pub fn run(init: std.process.Init) !void {
 
     // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
     const open_mode = selectOpenMode(continue_session);
+
+    if (headless_mode) |mode| {
+        if (prompt_parts.items.len == 0) {
+            std.log.err("headless mode requires a prompt", .{});
+            std.process.exit(2);
+        }
+        const prompt = try std.mem.join(arena, " ", prompt_parts.items);
+        try runOneShotHeadless(gpa, io, &agent, prompt, session_path, open_mode, !no_project, mode, &headless_writer);
+        return;
+    }
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
@@ -521,6 +597,143 @@ fn writeStdout(io: Io, bytes: []const u8) !void {
     try Io.File.stdout().writeStreamingAll(io, bytes);
 }
 
+fn runDoctorHeadless(gpa: std.mem.Allocator, io: Io, opts: coding.doctor.Options) !void {
+    const report = coding.doctor.collect(gpa, io, Io.Dir.cwd(), opts);
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buf);
+    var writer = hw.HeadlessWriter.init(gpa, io, &stdout_writer.interface, .json, null);
+    defer writer.deinit();
+    try writer.writeDoctorReport(report);
+    try stdout_writer.flush();
+}
+
+fn headlessErrorExit(
+    gpa: std.mem.Allocator,
+    io: Io,
+    mode: hw.HeadlessMode,
+    redactor: ?*const core.redact.Redactor,
+    err: hw.HeadlessError,
+) noreturn {
+    var stdout_buf: [4096]u8 = undefined;
+    var stdout_writer = Io.File.stdout().writer(io, &stdout_buf);
+    var writer = hw.HeadlessWriter.init(gpa, io, &stdout_writer.interface, mode, redactor);
+    defer writer.deinit();
+    writer.writeError(err) catch {};
+    stdout_writer.flush() catch {};
+    std.process.exit(err.code.exitCode());
+}
+
+fn runOneShotHeadless(
+    gpa: std.mem.Allocator,
+    io: Io,
+    agent: *coding.Agent,
+    prompt: []const u8,
+    session_path: ?[]const u8,
+    open_mode: coding.OpenMode,
+    load_project: bool,
+    mode: hw.HeadlessMode,
+    writer: *hw.HeadlessWriter,
+) noreturn {
+    _ = gpa;
+    _ = io;
+    writer.setRedactor(agent.activeRedactor());
+
+    if (mode == .json_stream) {
+        writer.emitRunStart(coding.version, agent.options.permission_mode.name(), agent.options.shell_policy.name()) catch |err| {
+            writer.flush() catch {};
+            std.process.exit(if (err == error.OutOfMemory) 40 else 60);
+        };
+    }
+
+    const result = agent.completeWithSession(default_system, prompt, .{
+        .path = session_path,
+        .open_mode = open_mode,
+        .load_project_instructions = load_project,
+    }) catch |err| {
+        const he = replyErrorToHeadless(err);
+        const code = replyErrorExitCode(err);
+        if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
+            writer.writeError(he) catch {};
+        }
+        writer.flush() catch {};
+        std.process.exit(code);
+    };
+    defer result.deinit(agent.gpa);
+
+    if (mode == .json) {
+        writer.writeResult(result) catch |err| {
+            writer.flush() catch {};
+            std.process.exit(if (err == error.OutOfMemory) 40 else 60);
+        };
+    } else {
+        writer.writeRunEnd(result) catch |err| {
+            writer.flush() catch {};
+            std.process.exit(if (err == error.OutOfMemory) 40 else 60);
+        };
+    }
+    writer.flush() catch {};
+    std.process.exit(hw.exitCodeForStopReason(result.stop_reason));
+}
+
+fn resolveErrorToHeadless(err: anyerror) hw.HeadlessError {
+    return switch (err) {
+        error.MissingApiKey => .{ .code = .provider_configuration, .message = "Missing API key." },
+        error.UnknownProvider => .{ .code = .provider_configuration, .message = "Unknown provider." },
+        error.MissingBaseUrl => .{ .code = .provider_configuration, .message = "Missing base URL for custom endpoint." },
+        error.UnsupportedApiStyle => .{ .code = .provider_configuration, .message = "Unsupported API style." },
+        error.OutOfMemory => .{ .code = .out_of_memory, .message = "Out of memory." },
+        else => .{ .code = .provider_configuration, .message = "Provider configuration failed." },
+    };
+}
+
+fn wireErrorToHeadless(err: ai.WireError) hw.HeadlessError {
+    return switch (err) {
+        error.OutOfMemory => .{ .code = .out_of_memory, .message = "Out of memory." },
+        error.AuthenticationFailed => .{ .code = .provider_configuration, .message = "Provider authentication configuration failed." },
+        else => .{ .code = .provider_error, .message = "Provider wire initialization failed." },
+    };
+}
+
+fn replyErrorToHeadless(err: coding.agent.ReplyError) hw.HeadlessError {
+    return switch (err) {
+        error.ProviderFailed => .{ .code = .provider_error, .message = "Provider request failed." },
+        error.TraceFailed => .{ .code = .trace_error, .message = "Trace persistence failed." },
+        error.OutOfMemory => .{ .code = .out_of_memory, .message = "Out of memory." },
+        error.InvalidToolset => .{ .code = .invalid_toolset, .message = "Toolset validation failed." },
+        error.InvalidContext => .{ .code = .invalid_context, .message = "Context validation failed." },
+        error.MaxTurnsExceeded => .{ .code = .provider_error, .message = "Max turns exceeded." },
+        error.SessionNotFound => .{ .code = .session_not_found, .message = "Session not found." },
+        error.SessionAlreadyExists => .{ .code = .session_already_exists, .message = "Session already exists." },
+        error.InvalidSession => .{ .code = .session_invalid, .message = "Session invalid." },
+        error.UnsupportedSchema => .{ .code = .session_unsupported_schema, .message = "Session schema unsupported." },
+        error.SessionBusy => .{ .code = .session_busy, .message = "Session busy." },
+        error.IoFailed => .{ .code = .session_io_failed, .message = "Session I/O failed." },
+        error.InvalidPath => .{ .code = .session_invalid, .message = "Session path invalid." },
+        error.TraceIoFailed => .{ .code = .trace_error, .message = "Trace I/O failed." },
+        error.TraceSerializationFailed => .{ .code = .trace_error, .message = "Trace serialization failed." },
+    };
+}
+
+fn replyErrorExitCode(err: coding.agent.ReplyError) u8 {
+    return switch (err) {
+        error.ProviderFailed => 31,
+        error.TraceFailed => 60,
+        error.OutOfMemory => 40,
+        error.InvalidToolset => 32,
+        error.InvalidContext => 33,
+        error.MaxTurnsExceeded => 10,
+        error.SessionNotFound => 50,
+        error.SessionAlreadyExists => 51,
+        error.InvalidSession => 52,
+        error.UnsupportedSchema => 53,
+        error.SessionBusy => 54,
+        error.IoFailed => 55,
+        error.InvalidPath => 52,
+        error.TraceIoFailed => 60,
+        error.TraceSerializationFailed => 60,
+    };
+}
+
 /// Generic CLI validation messages (never echo the invalid argv token).
 pub fn invalidPermissionModeMessage() []const u8 {
     return "unknown permission mode";
@@ -586,7 +799,7 @@ fn streamLogHandler(_: ?*anyopaque, event: ai.StreamEvent) anyerror!void {
     }
 }
 
-fn printUsage() !void {
+fn printUsage(io: Io) !void {
     const usage =
         \\zag — Zig coding agent
         \\
@@ -603,6 +816,8 @@ fn printUsage() !void {
         \\  --no-remember              re-prompt every write path in ask mode
         \\  --shell-policy MODE        protect (default) | off
         \\  --doctor                   readiness report (no API key / provider / network)
+        \\  --json                     headless one-shot: single JSON result envelope
+        \\  --json-stream              headless one-shot: NDJSON event stream
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
@@ -628,8 +843,54 @@ fn printUsage() !void {
         \\                       ↘ zag-ai → openai-zig
         \\
     ;
-    const io = std.Io.Threaded.global_single_threaded.io();
-    try writeStdout(io, usage);
+    try Io.File.stdout().writeStreamingAll(io, usage);
+}
+
+fn printUsageToStderr(io: Io) !void {
+    const usage =
+        \\zag — Zig coding agent
+        \\
+        \\Usage:
+        \\  zag [flags] <prompt...>     one-shot
+        \\  zag [flags]                 interactive REPL
+        \\
+        \\Flags:
+        \\  -h, --help                 show help
+        \\  -v, --verbose              stderr tool / permission log
+        \\  --ask / --yolo             human permission mode (default ask)
+        \\  -p, --permission MODE      ask | yolo
+        \\  --plan                     plan session: read + plan.md only (H3 stub)
+        \\  --no-remember              re-prompt every write path in ask mode
+        \\  --shell-policy MODE        protect (default) | off
+        \\  --doctor                   readiness report (no API key / provider / network)
+        \\  --json                     headless one-shot: single JSON result envelope
+        \\  --json-stream              headless one-shot: NDJSON event stream
+        \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
+        \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
+        \\  --no-project               skip AGENTS.md injection
+        \\  --trace                    write run trace (.zag/traces/latest.jsonl)
+        \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)
+        \\                             (bare words after --trace are treated as prompt)
+        \\  --stream                   SSE streaming completions
+        \\  --config PATH              JSON config (.zag/config.json also auto-loaded)
+        \\
+        \\Tools: list_dir, read_file, grep, glob, search_replace, write_file, run_shell
+        \\Security: relative paths only; shell denylist even under --yolo
+        \\
+        \\Model (packages/zag-ai):
+        \\  Env: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, …
+        \\  ZAG_PROVIDER  ZAG_MODEL  ZAG_BASE_URL
+        \\  ZAG_API_STYLE=openai_compat|anthropic_messages
+        \\  ZAG_TEMPERATURE  ZAG_MAX_TOKENS  ZAG_MAX_RETRIES  ZAG_TIMEOUT_MS  ZAG_CHAT_RETRIES
+        \\
+        \\  Anthropic example:
+        \\    ANTHROPIC_API_KEY=…  ZAG_PROVIDER=anthropic
+        \\
+        \\Packages: zag-cli → coding-agent → agent-core → zag-types
+        \\                       ↘ zag-ai → openai-zig
+        \\
+    ;
+    try Io.File.stderr().writeStreamingAll(io, usage);
 }
 
 /// True when `s` is safe to treat as an optional `--trace` path argument

@@ -46,6 +46,8 @@ pub const Agent = agent.Agent;
 pub const Session = agent.Session;
 pub const Options = agent.Options;
 pub const OpenMode = agent.OpenMode;
+pub const ReplyError = agent.ReplyError;
+pub const OwnedResult = agent.OwnedResult;
 
 pub const version = "0.5.0";
 

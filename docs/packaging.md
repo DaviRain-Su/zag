@@ -173,7 +173,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 
 - **Phase H**：保持当前 package layout；既有 Gates、`h-edit-integrity-001`、`h-read-search-bounds-001`、`h-integration-001` 均已通过；Phase H 在 `d22ce6e` closeout 为 **L2（单用户、受控本机）**。
 - **SDK-ready Gate**：已闭合；public injection、external consumer、contract docs 均已落地并通过 merged-main Gate；不由 Phase H 或 package count 自动获得。
-- **Headless Gate**：提供 process contract，早于 TUI/ACP polish。
+- **Headless Gate**：process contract (`--json` / `--json-stream`, `headless-v1`, exit matrix, process fixture) 已在本 task 落地，状态为**收口中 pending independent verification**；不早于独立 worktree/main Gate 通过前标为 closed。
 - **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。
 - Split decisions use dependency/consumer pressure, not phase completion as an automatic trigger.
 

@@ -1,7 +1,7 @@
 ---
 id: headless-001
 scope: product/headless-process-contract
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-integration-001]
 ---
@@ -35,7 +35,17 @@ The binding implementation plan is [2026-07-25-headless-plan](../analysis/2026-0
 - `docs/roadmap.md`
 - `docs/plan/tasks/headless-001.md`
 
-# verification
+## closeout evidence
+
+Implementation landed in `task/headless-001` (baseline `9fd5648`):
+
+- `packages/zag-cli/src/headless_writer.zig` — protocol writer, event schema, redaction, exit-code mapping.
+- `packages/zag-cli/src/cli.zig` — `--json` / `--json-stream` parsing, headless dispatch, error mapping.
+- `packages/zag-cli/src/headless_process_fixture.zig` + `headless_mock_server.zig` — process E2E fixture.
+- `build.zig` — fixture step + `-Dtui` option (default false).
+- `docs/modules/headless-contract.md` + registry updates + packaging/architecture/roadmap/C9/evals sync.
+
+Status remains `in-progress` until independent worktree review and merged-main dual-backend Gate pass; `docs/maturity.md` Headless row stays L1.
 
 1. **stdout purity:** in `--json` / `--json-stream` modes stdout contains only protocol output (single result/error envelope, or NDJSON events ending in exactly one terminal); logs/diagnostics stay on stderr; `--help`/`--doctor`/REPL do not pollute protocol stdout (REPL + headless flag → exit 2).
 2. **Versioned protocol:** every envelope/event carries `protocol_version: "headless-v1"`, an independent public schema that maps to — but does not serialize — internal Observer/Trace types.
