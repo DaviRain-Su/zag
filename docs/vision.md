@@ -65,7 +65,7 @@
 | 跨会话偏好 / 重复交代 | Memory Repo（默认可关） | **C5 only**（[memory.md](./modules/memory.md)） |
 | 扩展要改核心 | skills / hooks / MCP | C8 · zag-hooks/zag-mcp |
 | 改 harness 变笨 | golden + contracts | Quality（H 起） |
-| SDK 用户无法安全嵌入 | stateful Tool + runtime descriptor + injection + ownership/event/session contract | Phase H P0/P1 → SDK Gate |
+| SDK 用户无法安全嵌入 | stateful Tool + runtime descriptor + injection + ownership/event/session contract | Phase H P0/P1 → SDK Gate closed at `ebdd7ab` |
 
 ## 目标分层（摘要）
 
@@ -89,7 +89,7 @@
 - Phase H 内做 Memory 平台 / 云知识库（属 C5，默认关）
 - 一开始就 multi-repo development（monorepo 唯一开发源）
 - 未测量就宣传 Zig binary size/startup/cross-build advantage
-- 在 SDK Gate 前承诺 semver、C ABI 或 Zig dynamic plugin ABI
+- 在第二真实 consumer 与发布通道落地前承诺 semver、C ABI 或 Zig dynamic plugin ABI
 - ~~把默认工具面压到最小~~（已废弃的 Pi 叙事）
 
 ## 文档轨

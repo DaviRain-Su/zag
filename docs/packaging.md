@@ -2,7 +2,7 @@
 
 | 项 | 内容 |
 |----|------|
-| 状态 | **Active design**；包边界已落地，SDK-ready/发布 Gate 未达 |
+| 状态 | **Active design**；包边界已落地，SDK-ready Gate 已闭合；发布 Gate 仍开放 |
 | 对标 | Grok Build 单向 workspace discipline；不复制 crate 粒度 |
 | 决策 | **单 monorepo 多包**；拆 repo 是发布动作，不是架构动作；见 [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) |
 
@@ -14,13 +14,13 @@
 
 1. **产品目标 = all-in-one**：工具、子代理、沙箱、扩展、TUI 都是一等目标，不做「刻意极简」。
 2. **实现纪律 = 严格分层**：功能多不等于泥球；每个能力落进一个小包，依赖只准朝下。
-3. **SDK 目标 = 内核可嵌入**：`zag-agent-core` 的 low-level composition 已可行；只有通过 SDK-ready Gate 的 public surface 才获得兼容承诺，不能把所有下层包自动视为已发布 SDK。
+3. **SDK 目标 = 内核可嵌入**：`zag-agent-core` 的 low-level composition 已可行；SDK-ready Gate 已闭合，其 public surface 获得兼容承诺（不含 semver/C ABI/dynamic plugin ABI），不能把所有下层包自动视为已发布 SDK。
 4. Pi 保留的只有一条：**扩展验证纪律**（新工作流先 skill/plugin 验证再内置）——不再作为「默认面要小」的依据。
 
 ```text
       All-in-One 产品（zag bin / TUI / headless）
               ▲  组装
-      Kernel composition → SDK-ready Gate（zag-agent-core + selected domain APIs）
+      Kernel composition → SDK-ready ✅（zag-agent-core + selected domain APIs）
               ▲  依赖
       契约层（types / tool-protocol）
 ```
@@ -72,7 +72,7 @@ L2 领域服务      openai-zig          HTTP SDK ✅
 L3 产品 harness  zag-coding-agent ✅  Agent/Session 外观 · 默认 toolset · WireProvider 桥 · runtime tools
 L4 内核 ★low-level composition
                  zag-agent-core ✅    loop · 纯 Provider 端口 · session · policy · trace（**仅依赖 zag-types**）
-                 SDK-ready ❌         stateful Tool/capabilities/session/event contract 待 Gate
+                 SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel contract 已闭合；external consumer fixture 7/7
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
                  zag-tui / zag-acp   （C9）
 L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run` ✅
@@ -93,11 +93,11 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 | 概念层（architecture） | 实际包 | 状态 |
 |------------------------|--------|------|
 | Product shell | zag-cli（+ C9 zag-tui / zag-acp）+ zag (bin) | ✅ |
-| Kernel low-level composition | **zag-agent-core** | ✅；SDK-ready ❌ |
-| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅；caller injection 待 SDK Gate |
+| Kernel low-level composition | **zag-agent-core** | ✅；SDK-ready ✅ |
+| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅；caller injection 已闭合 |
 | Model plane（canonical + WireAdapter） | zag-ai + openai-zig | L2 H contract；dual-wire strict completion + curl active controls + std unsupported-control truth |
-| Runtime / 领域包 | coding-agent runtime / core workspace；未来 sandbox | Tool descriptor/file containment/synchronous shell-v1 Gates 已通过；OS sandbox 与 SDK compatibility 仍后置；非为拆而拆 |
-| 契约 | **zag-types** | canonical + runtime ToolCapabilities/Descriptor 已落地；SDK compatibility Gate 仍未达 |
+| Runtime / 领域包 | coding-agent runtime / core workspace；未来 sandbox | Tool descriptor/file containment/synchronous shell-v1 Gates 已通过；OS sandbox 仍后置；SDK compatibility 已闭合 |
+| 契约 | **zag-types** | canonical + runtime ToolCapabilities/Descriptor 已落地；SDK-ready Gate 已闭合；semver publication 仍待第二真实 consumer + 发布通道 |
 
 ### 后续拆分排期
 
@@ -134,19 +134,21 @@ Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 
 | Level | Contract | Current |
 |-------|----------|---------|
 | Low-level Zig composition | direct Provider/Toolset/Observer/Transcript/loop assembly | ✅ validated |
-| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | 🔄 closing — public injection + external consumer fixture + [`sdk-contract.md`](./modules/sdk-contract.md) landed; independent verification + main Gate pending |
+| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ✅ closed — public injection + external consumer fixture 7/7 + [`sdk-contract.md`](./modules/sdk-contract.md); merged-main Gate passed at `ebdd7ab` |
 | Process SDK/headless | versioned JSON/events + stable errors/exit codes | ❌ Gate open |
 
 ### SDK-ready Gate
 
-All conditions are required:
+The Gate is **closed** as of `ebdd7ab`. All conditions are satisfied:
 
 1. Phase H correctness passes; no fail-open custom Tool or unsafe session semantics.
 2. `Tool` supports instance state and mandatory runtime capabilities.
 3. Supported high-level composition accepts caller `Toolset`, `Observer`, and policy without product-private fields.
 4. Ownership/lifetime, typed errors, cancellation/deadline, events, and session semantics are documented and tested in [`docs/modules/sdk-contract.md`](./modules/sdk-contract.md).
-5. A repository-owned external consumer builds/runs in CI without private monorepo imports.
+5. A repository-owned external consumer (`tests/sdk-consumer-fixture/`) builds/runs in CI without private monorepo imports — **7/7** tests pass.
 6. Package tests are self-contained.
+
+Merged-main evidence: fixture **7/7**, `zag-coding-agent` **139/139**, root std **440/440**, curl **439/439**, docs lint, readability **91/100**, security **66/100** (43 files), OpenAPI **287/287**, catalog **40**. No explicit skips; the single curl differential is the existing `zag-ai` backend-specific fixture.
 
 Only after the Gate may a stability table assign semver promises. Repo mirror additionally needs a second real consumer and release channel.
 
@@ -170,7 +172,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 ## 5. 与路线图的关系
 
 - **Phase H**：保持当前 package layout；既有 Gates、`h-edit-integrity-001`、`h-read-search-bounds-001`、`h-integration-001` 均已通过；Phase H 在 `d22ce6e` closeout 为 **L2（单用户、受控本机）**。
-- **SDK-ready Gate**：完成 public composition 和 external consumer；不由 Phase H 或 package count 自动获得。
+- **SDK-ready Gate**：已闭合；public injection、external consumer、contract docs 均已落地并通过 merged-main Gate；不由 Phase H 或 package count 自动获得。
 - **Headless Gate**：提供 process contract，早于 TUI/ACP polish。
 - **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。
 - Split decisions use dependency/consumer pressure, not phase completion as an automatic trigger.
@@ -178,7 +180,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 ## 6. 刻意不做
 
 - 在 H/P0-P1 correctness 未闭合时继续碎拆；
-- 在 SDK Gate 前承诺 semver public API、C ABI 或 dynamic plugin ABI；
+- 在第二真实 consumer 与发布通道落地前承诺 semver public API、C ABI 或 dynamic plugin ABI；
 - 双向同步的 multi-repo development flow；
 - 为对齐 Grok Build 而复刻其 crate 粒度；只有真实 ownership/dependency pressure 才拆包。
 

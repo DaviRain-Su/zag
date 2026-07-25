@@ -20,7 +20,7 @@
 │ L4 Kernel ★低层 Zig composition（今 zag-agent-core）           │
 │  Loop · Session · Context view · Permissions · Trace           │
 │  ToolDescriptor / Runtime 挂载                                 │
-│  SDK-ready = 独立 Gate；不由“包已拆出”自动获得                  │
+│  SDK-ready Gate 已闭合；不由“包已拆出”自动获得                  │
 │  Memory / Graph 均为后续可选能力，不是 Kernel 最低合同          │
 │  L3 产品 agent 定义（今 zag-coding-agent）                      │
 ├────────────────────┬─────────────────────────────────────────┤
@@ -42,7 +42,7 @@
 | Level | Meaning | Current |
 |-------|---------|---------|
 | Low-level Zig composition | caller directly assembles Provider/Toolset/Observer/Transcript/loop | 已验证可行 |
-| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **收口中** — public injection landed, external consumer fixture running, contract documented in [`modules/sdk-contract.md`](./modules/sdk-contract.md); pending independent verification and main Gate |
+| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — public injection + external consumer fixture 7/7 + contract documented in [`modules/sdk-contract.md`](./modules/sdk-contract.md); merged-main Gate passed at `ebdd7ab` |
 | Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **未达** |
 
 Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag does not currently promise a stable C ABI or Zig dynamic plugin ABI.
@@ -57,7 +57,7 @@ Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag d
 | **Memory Core（future port）** | grok-memory 抽象 | 跨 session 记忆；default-off | **C5** 按真实 use case 设计，不在 H/SDK minimum 预留 |
 | **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、WireAdapter、stream、errors | L2；final audit confirmed dual-wire contract、strict completion、curl active controls + std fail-closed capability truth |
 | **L2 Runtime / 领域包** | tools / workspace / sandbox | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
-| **L0 契约** | tool-types / tool-protocol | provider-facing canonical types + separate runtime ToolCapabilities；无厂商/产品 IO | H/P0 完成 descriptor；SDK Gate 后才承诺稳定发布 |
+| **L0 契约** | tool-types / tool-protocol | provider-facing canonical types + separate runtime ToolCapabilities；无厂商/产品 IO | H/P0 完成 descriptor；SDK-ready Gate 已闭合；semver 仍待第二真实 consumer + 发布通道 |
 
 ### 架构不变式
 
@@ -235,7 +235,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | 单 Loop production correctness | Agent Core | **Phase H P0/P1** |
 | Tool runtime descriptor | zag-types + Agent Core | **Phase H P0** |
 | WireAdapter（OpenAI-compatible + Anthropic） | zag-ai | wire 基础 + h-provider-001 deadline/cancel capability truth 已落地 |
-| Zig SDK-ready | supported Kernel/product facade | post-H independent Gate |
+| Zig SDK-ready | supported Kernel/product facade | ✅ closed at `ebdd7ab` |
 | Headless/process contract | zag-cli/product shell | post-H independent Gate，早于 TUI |
 | 可靠编辑 | runtime + toolset | H2 correctness → C4 sharpness |
 | Repo map/fork；Memory Repo | context/session backend | C5；Memory later/default-off |
@@ -296,7 +296,7 @@ Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 ## 版本叙事
 
 - 包版本见 `src/root.zig` / `build.zig.zon`。
-- **版本号 ≠ production-ready 或 SDK-ready。** Product L2 以 [maturity Phase H exit](./maturity.md#phase-h-production-floor-exit) 为准；SDK 另过 [SDK-ready gate](./maturity.md#sdk-ready-gate)。
+- **版本号 ≠ production-ready 或已发布 SDK。** Product L2 以 [maturity Phase H exit](./maturity.md#phase-h-production-floor-exit) 为准；SDK-ready Gate 已闭合，但 semver publication 仍待第二真实 consumer 与发布通道。
 
 ## 安全
 

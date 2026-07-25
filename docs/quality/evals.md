@@ -133,6 +133,23 @@ Closeout evidence includes focused `fs_tools.zig` tests for exact/N+1 read prefi
 1. SDK-ready: an external stateful Tool/Provider/Observer/policy/session consumer passes (`sdk-contract-001`).
 2. Headless: JSON stdout is clean and the failure exit/error matrix is stable (`headless-001`).
 
+### SDK-ready external consumer (`sdk-contract-001`, done)
+
+Merged-main evidence at `ebdd7ab`:
+
+- `tests/sdk-consumer-fixture/` passes **7/7** tests covering:
+  - low-level composition importing `zag-types`, `zag-agent-core`, and `zag-coding-agent` by module name only;
+  - stateful custom `Tool` and custom `Provider`;
+  - caller `Toolset` and `Observer` injection through `Agent.Options`;
+  - ask/yolo allow-deny policy behavior;
+  - between-Tool cancel with cancelled result backfill;
+  - session create and resume;
+  - session save-error path.
+- `zag-coding-agent` package tests **139/139**.
+- Root default backend **440/440**, curl backend **439/439**; the single curl differential is the existing `zag-ai` backend-specific fixture.
+- Docs lint, readability **91/100**, security **66/100** (43 files), OpenAPI **287/287**, catalog **40**.
+- Per-run cancel semantics are documented: `Agent.requestCancel()` affects only the current run because stale flags are cleared at `beginRun`; the run-in-progress bit still applies.
+
 ## Edit eval (H2/C4)
 
 1. unique anchor replacement succeeds;

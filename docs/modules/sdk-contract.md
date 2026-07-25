@@ -1,6 +1,6 @@
 # Zag SDK Public Contract
 
-> Status: **SDK-ready Gate in progress**. This document records the supported
+> Status: **SDK-ready Gate closed** as of `ebdd7ab`. This document records the supported
 > in-process Zig source-composition contract for `zag-types`, `zag-agent-core`,
 > and `zag-coding-agent`. It does **not** promise C ABI, dynamic plugin ABI,
 > semver publication, headless protocol, OS sandbox, or mid-flight Tool/shell
@@ -67,7 +67,7 @@ All rules below are caller-borrowed unless explicitly stated otherwise.
 | Session save failure | — | `session_store.Error` | `session_error` | false |
 | Trace persist failure | — | `trace.Error` | `trace_error` | false |
 
-Sources: [`packages/zag-agent-core/src/loop.zig:70-120`](../../packages/zag-agent-core/src/loop.zig), [`packages/zag-coding-agent/src/agent.zig:630-640`](../../packages/zag-coding-agent/src/agent.zig).
+Sources: [`packages/zag-agent-core/src/loop.zig:70-120`](../../packages/zag-agent-core/src/loop.zig), [`packages/zag-coding-agent/src/agent.zig:654-670`](../../packages/zag-coding-agent/src/agent.zig).
 
 ### 3.2 Retry policy
 
@@ -172,8 +172,8 @@ Source: [`packages/zag-agent-core/src/session_store.zig:37-46`](../../packages/z
   readers fail on unknown versions.
 - Destructive renames require a new schema version plus migration or explicit
   rejection.
-- **No semver promise** until the SDK-ready Gate closes and a second real consumer
-  plus release channel exist (see [packaging.md](../packaging.md)).
+- **No semver promise** until a second real consumer plus release channel exist
+  (see [packaging.md](../packaging.md)).
 
 ## 8. Non-goals
 

@@ -43,6 +43,8 @@ A process boundary also isolates non-Zig consumers and ecosystem-heavy component
 
 ### Zig SDK-ready
 
+Satisfied as of `ebdd7ab` (`sdk-contract-001`):
+
 - stateful custom Tool, custom Provider, Observer, policy, cancellation, and session integration;
 - public ownership/lifetime/error documentation;
 - versioned event compatibility policy;

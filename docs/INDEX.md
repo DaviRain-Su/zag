@@ -7,7 +7,7 @@
 
 | Bucket | Meaning | Paths |
 |--------|---------|-------|
-| **Product Spec** | What Zag is / package law / L0–L3 bar | [vision](./vision.md) · [maturity](./maturity.md) · [architecture](./architecture.md) · [packaging](./packaging.md) · [modules/](./modules/) |
+| **Product Spec** | What Zag is / package law / L0–L3 bar | [vision](./vision.md) · [maturity](./maturity.md) · [architecture](./architecture.md) · [packaging](./packaging.md) · [modules/](./modules/) · [modules/sdk-contract.md](./modules/sdk-contract.md) |
 | **Active** | In-flight design & delivery | [Phase H](./phases/H-harden.md) · [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md) · [latest H audit](./plan/analysis/2026-07-25-phase-h-final-audit.md) · [plan/](./plan/) · [decisions/active/](./decisions/active/) |
 | **Complete** | Finished tutorial / archived decisions | [chapters/](../chapters/) · [decisions/complete/](./decisions/complete/) · [gaps/](./gaps/) (Teaching→L2 debt) |
 | **Reference** | External / web / industry notes | [references](./references.md) · [research/](./research/) |

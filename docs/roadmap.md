@@ -8,7 +8,7 @@
 |-------|--------|---------|
 | Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
 | Production Floor Phase H | ✅ **L2 closeout** | single-user trusted-host；11/11 exit PASS；panel SHIP；gate 数字见 [h-integration-001](./plan/tasks/h-integration-001.md) |
-| Zig SDK-ready gate | ⏳ **ready** | integration done；low-level composition 已证明；支持契约未闭合 |
+| Zig SDK-ready gate | ✅ **done/L2** | public injection + external consumer fixture 7/7 + `docs/modules/sdk-contract.md`; merged-main Gate passed at `ebdd7ab` |
 | Headless/process gate | ⏳ **ready** | integration closeout；one-shot 存在；结构化协议/exit matrix 未闭合 |
 | Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
 
@@ -81,15 +81,15 @@ Phase H exits only after integration independently repeats the fresh 11-sentence
 
 ### Zig SDK-ready
 
-Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Task: [sdk-contract-001](./plan/tasks/sdk-contract-001.md).
+Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Task: [sdk-contract-001](./plan/tasks/sdk-contract-001.md) — **done/L2** at `ebdd7ab`.
 
-Required before a public compatibility claim:
+Required conditions are now satisfied:
 
-- high-level custom Toolset/Observer/policy injection;
-- stateful Tool and documented lifetimes;
-- stable errors/events/cancel/session contract;
-- repository-owned external consumer CI;
-- package self-contained tests.
+- high-level custom Toolset/Observer/policy injection ✅
+- stateful Tool and documented lifetimes ✅
+- stable errors/events/per-run cancel/session contract ✅
+- repository-owned external consumer CI ✅ (`tests/sdk-consumer-fixture/` 7/7)
+- package self-contained tests ✅
 
 A second consumer and release channel are still required before repo mirror/semver publication.
 
@@ -176,9 +176,9 @@ Headless moved to an earlier gate. C9 retains optional TUI, diff UX, dashboard, 
 |--------|--------|
 | Keep current monorepo package boundaries | now |
 | Add Tool runtime descriptor contract | Phase H P0 |
-| External consumer fixture | SDK gate |
+| External consumer fixture | ✅ SDK gate closed |
 | Split `zag-tools`/`zag-workspace` | only after the relevant APIs stabilize and a real dependency reason exists |
-| Repo mirror / semver publication | SDK gate + second consumer + release channel |
+| Repo mirror / semver publication | SDK gate closed + second consumer + release channel |
 | C ABI / dynamic plugin ABI | no current commitment; prefer process protocol |
 
 ## Stop-doing until P0/P1 close

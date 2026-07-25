@@ -11,7 +11,7 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**总状态（2026-07-25 integration closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **L2（单用户、受控本机）**；Capability = 未开始。Final audit 的两个 file-surface 反例均已关闭：write/edit 由 `h-edit-integrity-001` 关闭，read/search 由 `h-read-search-bounds-001` 关闭。`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence integration audit：11/11 exit sentences **PASS**，final adversarial panel（3 + 1 ship oracle）**SHIP**；merged-main Gate 通过 zag-types **12/12**、zag-agent-core **157/157**、zag-coding-agent **138/138**、root default **432/432**、curl **431/431**、docs lint、readability **91/100**、security **65/100**、OpenAPI **287/287**、catalog **40**，required summaries 无显式 skips。Phase H L2 仅限 single-user trusted-host scope；SDK-ready、headless-ready、OS sandbox、process-tree ownership、mid-flight Tool/shell preemption、power-loss/fsync durability、exhaustive concurrent traversal、DLP/zeroization、第三方 Tool 通用 body 保证仍不宣称。
+**总状态（2026-07-25 integration closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **L2（单用户、受控本机）**；Capability = 未开始。Final audit 的两个 file-surface 反例均已关闭：write/edit 由 `h-edit-integrity-001` 关闭，read/search 由 `h-read-search-bounds-001` 关闭。`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence integration audit：11/11 exit sentences **PASS**，final adversarial panel（3 + 1 ship oracle）**SHIP**；merged-main Gate 通过 zag-types **12/12**、zag-agent-core **157/157**、zag-coding-agent **138/138**、root default **432/432**、curl **431/431**、docs lint、readability **91/100**、security **65/100**、OpenAPI **287/287**、catalog **40**，required summaries 无显式 skips。Phase H L2 仅限 single-user trusted-host scope；SDK-ready、headless-ready、OS sandbox、process-tree ownership、mid-flight Tool/shell preemption、power-loss/fsync durability、exhaustive concurrent traversal、DLP/zeroization、第三方 Tool 通用 body 保证仍不宣称。`sdk-contract-001` 在 `ebdd7ab` 关闭 Zig SDK-ready Gate：external consumer fixture 7/7，`zag-coding-agent` 139/139，root std 440/440，curl 439/439，docs lint，readability 91/100，security 66/100（43 files），OpenAPI 287/287，catalog 40；per-run cancel 语义已钉死，未宣称 semver/C ABI/dynamic plugin ABI/headless-ready。
 
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
@@ -32,7 +32,7 @@
 | Session / Resume | **L2** | D-006: create/resume distinct; open_or_create SDK-only; atomic save + per-Writer test fault preserves prior bytes; `Agent.reply` save IoFailed fixture; one active writer via reusable `{path}.lock`; strict header; lexical session path. Not claimed: fsync/power-loss, symlink containment, hostile Writer-copy defense | explicit create/resume; atomic preservation; visible save errors; exclusive writer/conflict | fork/tree/journal as needed |
 | Provider / zag-ai | **L2** | final audit confirmed two wire styles、canonical retry/error/usage/cost、strict terminal/tool atomicity、curl active deadline/cancel、std ordinary success + controlled lifecycle fail-closed `unsupported_control`、redacted diagnostics；backend capability truth is explicit | backend-capability deadline/cancel ✅；strict completion/tool bundle ✅；redacted diagnostics + deterministic contract matrix ✅ | fallback/multi-key/third protocol on demand |
 | Trace / Observability | **L2** | h-trace-001 lifecycle + h-redact-001 redaction before serialize；schema；facade 单 terminal；Guard symlink jail；atomic；fail-closed；h-shell-001 证明 fixed policy/runtime first line 经 transcript/session/parsed exact-one trace 后 recovered completed | versioned schema ✅；truthful terminal ✅；symlink/atomic persistence ✅；redact ✅；shell projection ✅ | dashboard/correlation |
-| Zig source composition | **L1** | external low-level Kernel composition 可编译运行 | [SDK gate](./packaging.md#sdk-ready-gate)：stateful Tool、injection、ownership/error/event contracts、external consumer CI | published packages after second consumer |
+| Zig source composition | **L2** | SDK-ready Gate closed at `ebdd7ab`：stateful Tool、high-level `Toolset`/`Observer` injection、ownership/lifetime/error/event/per-run cancel/session contracts、external consumer CI | supported import surface + contract docs + `tests/sdk-consumer-fixture/` pass merged-main Gate | published packages after second consumer |
 | Headless / Process SDK | **L1** | one-shot CLI 存在；无 versioned JSON/events/exit matrix | clean JSON/streaming output + stable errors/exit codes | ACP/editor integration |
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
@@ -61,13 +61,13 @@ Phase H 已 closeout 为 **L2（单用户、受控本机）**。Edit integrity �
 
 ## SDK-ready gate
 
-Phase H correctness 是前置，但不自动等于 SDK-ready。SDK-ready 还要求：
+Phase H correctness 是前置，但不自动等于 SDK-ready。SDK-ready 已在 `ebdd7ab` 闭合：
 
-- supported high-level injection of Toolset/Observer/policy;
-- documented ownership/lifetime/error/cancel/event compatibility;
-- repository-owned external stateful consumer test;
-- package self-contained tests;
-- migration/release policy。
+- supported high-level injection of Toolset/Observer/policy ✅
+- documented ownership/lifetime/error/cancel/event/session compatibility ✅
+- repository-owned external stateful consumer test ✅ (`tests/sdk-consumer-fixture/` 7/7)
+- package self-contained tests ✅
+- migration/release policy ✅（semver publication still waits for a second real consumer and release channel）
 
 Semver publication and repo mirror wait for a second real consumer and release channel. See [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md).
 
@@ -79,7 +79,7 @@ Semver publication and repo mirror wait for a second real consumer and release c
 | Phase 1 | write/shell/ask | descriptor risk、file containment、synchronous shell-v1 与 scoped atomic single-file edit integrity 均已过独立/main Gate |
 | Phase 2 | session/context | durability/open L2；compaction accounting L2 |
 | Phase 3 | lexical jail/policy/trace | real file containment、truthful/versioned trace、redaction closed；no OS sandbox |
-| **Phase H** | raises existing surfaces | L2 closeout：original DAG done；final audit file blockers closed；integration audit PASS；SDK/headless remain separate gates |
+| **Phase H** | raises existing surfaces | L2 closeout：original DAG done；final audit file blockers closed；integration audit PASS；SDK Gate closed at `ebdd7ab`；headless remains separate Gate |
 
 ## Maintenance
 
