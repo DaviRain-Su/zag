@@ -372,6 +372,84 @@ fn runOneShot(
     }
 }
 
+const ReplInput = union(enum) {
+    text: []const u8,
+    explicit_empty,
+    eof,
+};
+
+/// Reads and classifies one submitted REPL line. `takeDelimiter` consumes the
+/// newline so a persistent reader advances to the next user turn.
+fn readReplInput(reader: *Io.Reader) !ReplInput {
+    const line = (try reader.takeDelimiter('\n')) orelse return .eof;
+    const trimmed = std.mem.trim(u8, line, " \t\r");
+    return if (trimmed.len == 0) .explicit_empty else .{ .text = trimmed };
+}
+
+test "REPL input consumes delimiters across two turns before explicit empty" {
+    var reader: Io.Reader = .fixed("first\nsecond\n\n");
+
+    switch (try readReplInput(&reader)) {
+        .text => |text| try std.testing.expectEqualStrings("first", text),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (try readReplInput(&reader)) {
+        .text => |text| try std.testing.expectEqualStrings("second", text),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (try readReplInput(&reader)) {
+        .explicit_empty => {},
+        else => return error.TestUnexpectedResult,
+    }
+    switch (try readReplInput(&reader)) {
+        .eof => {},
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "REPL input trims spaces tabs and CRLF" {
+    var reader: Io.Reader = .fixed(" \t first turn \t\r\n\t \r\n");
+
+    switch (try readReplInput(&reader)) {
+        .text => |text| try std.testing.expectEqualStrings("first turn", text),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (try readReplInput(&reader)) {
+        .explicit_empty => {},
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "REPL input classifies immediate EOF" {
+    var reader: Io.Reader = .fixed("");
+    switch (try readReplInput(&reader)) {
+        .eof => {},
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "REPL input submits final unterminated nonempty bytes then EOF" {
+    var reader: Io.Reader = .fixed(" \t final turn \r");
+
+    switch (try readReplInput(&reader)) {
+        .text => |text| try std.testing.expectEqualStrings("final turn", text),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (try readReplInput(&reader)) {
+        .eof => {},
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "REPL input exposes StreamTooLong beyond the 4096-byte reader capacity" {
+    var overlong: [4097]u8 = @splat('x');
+    var source: Io.Reader = .fixed(&overlong);
+    var repl_buf: [4096]u8 = undefined;
+    var bounded = source.limited(.unlimited, &repl_buf);
+
+    try std.testing.expectError(error.StreamTooLong, readReplInput(&bounded.interface));
+}
+
 fn runRepl(
     agent: *coding.Agent,
     io: Io,
@@ -410,18 +488,16 @@ fn runRepl(
 
     while (true) {
         try writeStdout(io, "you> ");
-        const line = reader.takeDelimiterExclusive('\n') catch |err| switch (err) {
-            error.EndOfStream => {
+        const user_text = switch (try readReplInput(reader)) {
+            .eof => {
                 try writeStdout(io, "\n");
                 break;
             },
-            else => return err,
+            .explicit_empty => break,
+            .text => |text| text,
         };
 
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len == 0) break;
-
-        const result = agent.reply(&session, trimmed) catch |err| {
+        const result = agent.reply(&session, user_text) catch |err| {
             std.log.err("agent failed: {s}", .{@errorName(err)});
             continue;
         };

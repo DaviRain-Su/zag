@@ -1,7 +1,7 @@
 ---
 id: cli-repl-001
 scope: product-cli/repl-input
-status: ready
+status: in-progress
 priority: P1
 depends-on: []
 ---

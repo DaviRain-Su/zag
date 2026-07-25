@@ -19,6 +19,14 @@ zig build run -- -v "这个项目有几个源文件？读一下 build.zig 摘要
 
 验收：stderr 出现 `tool_call list_dir` / `read_file`，答案来自 tool 而非臆测。
 
+产品 CLI 也可进入交互模式：
+
+```bash
+zig build run
+```
+
+REPL 在同一个 `Session` 中接受多轮非空输入，直到空白行或 stdin EOF；这是交互产品壳，不是稳定的 headless/process protocol。
+
 ---
 
 ## 1. 业务心智模型

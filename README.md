@@ -60,6 +60,9 @@ zig build test
 zig build run -- --yolo -v --trace "list_dir ."
 # or: zig build run -- --yolo -v --trace -- "list_dir ."
 
+# 交互 REPL（默认 ask）：同一 Session 多轮，空白行或 Ctrl-D/EOF 退出
+zig build run
+
 # 应被 jail 拒绝：
 zig build run -- --yolo -v "read_file /etc/passwd"
 ```
@@ -73,6 +76,8 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 | `-c` / `--continue` | 续聊（默认 `.zag/sessions/default.jsonl`） |
 | `--trace` / `--trace=PATH` | 审计 JSONL（默认 `.zag/traces/latest.jsonl`；裸词不当路径） |
 | `--no-project` | 不注入 AGENTS.md |
+
+交互模式在同一个 `Session` 中接受多轮非空输入，直到空白行或 stdin EOF；它是产品 REPL，不是稳定的 headless/process protocol。
 
 ```text
 src/main.zig                    可执行入口（几行 → zag-cli.run）
