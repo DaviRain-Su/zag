@@ -165,6 +165,7 @@ const TestFaultPoint = enum {
     list_iter_next,
     grep_stat,
     grep_read,
+    binary_probe_short_once,
     read_after_open_grow,
     walk_check_existing,
     walk_realpath,
@@ -699,14 +700,27 @@ fn readFileAllocForGrep(ctx: tool.Context, rel: []const u8, read_limit: usize) !
     return ctx.cwd.readFileAlloc(ctx.io, rel, ctx.allocator, .limited(read_limit));
 }
 
+fn readBinaryProbeChunk(ctx: tool.Context, file: *Io.File, dest: []u8, offset: usize) error{IoSkip}!usize {
+    const window = if (offset == 0 and takeTestFault(.binary_probe_short_once)) dest[0..1] else dest;
+    return file.readPositional(ctx.io, &.{window}, offset) catch return error.IoSkip;
+}
+
 fn probeLikelyBinary(ctx: tool.Context, rel: []const u8) error{ OutOfMemory, IoSkip }!bool {
     const probe = ctx.allocator.alloc(u8, binary_probe_bytes) catch return error.OutOfMemory;
     defer ctx.allocator.free(probe);
 
     var file = ctx.cwd.openFile(ctx.io, rel, .{}) catch return error.IoSkip;
     defer file.close(ctx.io);
-    const n = file.readPositional(ctx.io, &.{probe}, 0) catch return error.IoSkip;
-    return std.mem.indexOfScalar(u8, probe[0..n], 0) != null;
+
+    var filled: usize = 0;
+    while (filled < probe.len) {
+        const n = try readBinaryProbeChunk(ctx, &file, probe[filled..], filled);
+        if (n == 0) return false;
+        const end = std.math.add(usize, filled, n) catch return error.IoSkip;
+        if (std.mem.indexOfScalar(u8, probe[filled..end], 0) != null) return true;
+        filled = end;
+    }
+    return false;
 }
 
 fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
@@ -1391,6 +1405,32 @@ test "grep oversized binary remains intentional exclusion before source limit" {
     defer gpa.free(text_body);
     try std.testing.expect(text_body.len <= limit);
     try expectFsMarker(text_body, "source_limit");
+}
+
+test "grep binary probe continues after short nonzero read" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "short.bin", .data = "A\x00BINARY_SECRET padding padding\n" });
+
+    const limit = max_incomplete_marker_len + 32;
+    setFsTestLimits(.{ .body_bytes = limit, .grep_file_bytes = 4 });
+    defer clearFsTestLimits();
+    var faults: TestFaults = .{ .point = .binary_probe_short_once };
+    setFsTestFaults(&faults);
+    defer clearFsTestFaults();
+
+    const body = try grep(ctx, null, "{\"pattern\":\"absent\",\"path\":\"short.bin\"}");
+    defer gpa.free(body);
+    try std.testing.expect(faults.observed);
+    try std.testing.expect(body.len <= limit);
+    try std.testing.expect(std.mem.indexOf(u8, body, incomplete_prefix) == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "source_limit") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "BINARY_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "no matches") != null);
 }
 
 test "glob hit body and pattern-frame cutoffs emit bounded markers" {
