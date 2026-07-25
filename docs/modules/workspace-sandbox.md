@@ -46,7 +46,7 @@ The file-tool jail and shell policy are different controls. `run_shell` is not m
 - Containment path compare uses **host** separators only (POSIX: `/` only — root `/tmp/ws` does not contain sibling `/tmp/ws\outside`).
 - `list_dir` on an escaping directory symlink → `jail_deny`; listing a parent may show symlink **names** without reading targets.
 - grep/glob walkers do not follow escaping/dangling symlinks; nested escapes skip without leaking outside bytes; directory real-path identity bounds symlink loops.
-- Enforcement failure or unresolvable security-critical cases deny with machine-readable `code=jail_deny`. Ordinary missing files stay `ToolFailed` / not “safe to escape”.
+- Enforcement failure or unresolvable security-critical cases deny with machine-readable `code=jail_deny` using a stable generic, path-free Tool body. Raw path details belong only to the separate trace/audit fields under their redacted/capped contract. Ordinary missing files stay `ToolFailed` / not “safe to escape”.
 - Document residual TOCTOU limits; tests cover the supported threat model.
 
 ## Shell policy minimum matrix

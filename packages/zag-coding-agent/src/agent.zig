@@ -870,6 +870,74 @@ test "Session.save is no-op for ephemeral session without writer" {
     try s.save();
 }
 
+test "Agent pre-handler jail deny for long path is bounded and handler not executed" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const sentinel = "AGENT_LONG_ABS_SENTINEL_2741";
+
+    const State = struct { executed: bool = false };
+    const Stub = struct {
+        fn handle(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const state: *State = @ptrCast(@alignCast(instance.?));
+            state.executed = true;
+            return error.ToolFailed;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{ .name = "read_file", .description = "", .parameters_json = "{\"type\":\"object\"}" },
+            .capabilities = .{ .risk = .read, .workspace = .{ .path_field = "path" }, .cancellation = .none, .shell = .none },
+        },
+        .instance = &state,
+        .handler = Stub.handle,
+    }};
+
+    const Mock = struct {
+        sentinel: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            const filler = try arena.alloc(u8, 70 * 1024);
+            @memset(filler, 'z');
+            const args = try std.fmt.allocPrint(arena, "{{\"path\":\"/{s}{s}\"}}", .{ self.sentinel, filler });
+            const tc = try arena.alloc(message.ToolCall, 1);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "c1"),
+                .name = try arena.dupe(u8, "read_file"),
+                .arguments = args,
+            };
+            return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+        }
+    };
+
+    var mock: Mock = .{ .sentinel = sentinel };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var agent = try Agent.init(gpa, io, provider, .{ .max_turns = 1, .permission_mode = .yolo });
+    defer agent.deinit();
+    agent.test_tools = &tools;
+    var session = try Session.start(gpa, io, .{ .base_system = "sys", .load_project_instructions = false });
+    defer session.deinit();
+
+    _ = try agent.reply(&session, "read long path");
+    try std.testing.expect(!state.executed);
+    var found = false;
+    for (session.transcript.items()) |m| {
+        if (m.role == .tool) {
+            found = true;
+            try std.testing.expect(m.content.len <= tool.max_result_bytes);
+            try std.testing.expect(core.tool_error.hasCode(m.content, .jail_deny));
+            try std.testing.expect(std.mem.indexOf(u8, m.content, sentinel) == null);
+        }
+    }
+    try std.testing.expect(found);
+}
+
 test "Agent.reply save failure returns IoFailed and preserves session bytes" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;

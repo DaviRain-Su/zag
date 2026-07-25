@@ -627,7 +627,7 @@ fn emitJailDeny(deps: Deps, tool_name: []const u8, path: []const u8) RunError![]
         // Generic only — never log raw path (may contain secrets).
         std.log.warn("jail deny", .{});
     }
-    return workspace.deniedMessage(deps.tool_ctx.allocator, path) catch return error.OutOfMemory;
+    return workspace.deniedMessage(deps.tool_ctx.allocator) catch return error.OutOfMemory;
 }
 
 fn readOnlyDesc(name: []const u8) zt.ToolDescriptor {
@@ -843,6 +843,86 @@ test "jail deny absolute path without writing" {
     for (transcript.items()) |m| {
         if (m.role == .tool and tool_error.hasCode(m.content, .jail_deny)) {
             found = true;
+        }
+    }
+    try std.testing.expect(found);
+}
+
+test "loop pre-handler jail deny for long absolute path is bounded and does not execute handler" {
+    const gpa = std.testing.allocator;
+    const sentinel = "LOOP_LONG_ABS_SENTINEL_839f";
+
+    const State = struct { executed: bool = false };
+    const ReadStub = struct {
+        fn handle(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const state: *State = @ptrCast(@alignCast(instance.?));
+            state.executed = true;
+            return error.ToolFailed;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = readOnlyDesc("read_file"),
+        .instance = &state,
+        .handler = ReadStub.handle,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        sentinel: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const filler = try arena.alloc(u8, 70 * 1024);
+                @memset(filler, 'a');
+                const args = try std.fmt.allocPrint(arena, "{{\"path\":\"/{s}{s}\"}}", .{ self.sentinel, filler });
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = args,
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "blocked"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{ .sentinel = sentinel };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("read long absolute path");
+
+    _ = try run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &tools },
+        .tool_ctx = .{ .allocator = gpa, .io = std.testing.io, .cwd = std.Io.Dir.cwd() },
+        .options = .{ .permission_gate = .yolo() },
+    }, &transcript);
+
+    try std.testing.expect(!state.executed);
+    var found = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool) {
+            found = true;
+            try std.testing.expect(m.content.len <= tool.max_result_bytes);
+            try std.testing.expect(tool_error.hasCode(m.content, .jail_deny));
+            try std.testing.expect(std.mem.indexOf(u8, m.content, sentinel) == null);
         }
     }
     try std.testing.expect(found);

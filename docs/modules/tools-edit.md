@@ -52,8 +52,8 @@ A runtime cutoff that omits otherwise eligible output ends with exactly one comp
 - `read_file` keeps bounded-prefix behavior: an exact-boundary file has no marker; a larger file returns a prefix plus `reason=body_limit`, still within 64 KiB.
 - list/search count and byte cutoffs are independent and explicit.
 - walker node, depth, per-directory, source-size/I/O skip, and glob-complexity exhaustion cannot masquerade as complete.
-- `.git`, fixed common build directories, and likely-binary files are documented search-scope exclusions rather than runtime truncation.
-- containment skips never leak outside bytes. Search remains bounded and may be incomplete; it is not advertised as exhaustive under concurrent filesystem changes.
+- `.git`, fixed common build directories, and likely-binary files are documented search-scope exclusions rather than runtime truncation; direct scopes and walk-discovered directories use the same fixed-directory exclusion boundary, while ordinary files with the same basename remain eligible.
+- containment skips never leak outside bytes. Jail-deny Tool bodies use the stable generic `error: code=jail_deny ...` message and never interpolate raw paths; trace keeps its separate redacted/capped path contract. Search remains bounded and may be incomplete; it is not advertised as exhaustive under concurrent filesystem changes.
 
 Private test-only limits or pure helpers may shrink boundaries for deterministic fixtures. They do not enter Tool JSON, Agent/Tool options, CLI, provider ABI, or production descriptors.
 

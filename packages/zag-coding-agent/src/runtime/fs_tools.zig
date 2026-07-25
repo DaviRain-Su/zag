@@ -363,6 +363,11 @@ pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     const limits = activeLimits();
     var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
     errdefer body.deinit();
+    if (try isDirectScopeFixedExcluded(ctx, &guard, root)) {
+        const hits: u32 = 0;
+        try finishSearchOutput(&body, .grep, hits, pattern);
+        return body.finish();
+    }
 
     var hits: u32 = 0;
     try walkTree(ctx, &guard, root, .{
@@ -398,6 +403,11 @@ pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
     const limits = activeLimits();
     var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
     errdefer body.deinit();
+    if (try isDirectScopeFixedExcluded(ctx, &guard, root)) {
+        const hits: u32 = 0;
+        try finishSearchOutput(&body, .glob, hits, pattern);
+        return body.finish();
+    }
 
     const scope_root = try normalizeRelativeForGlob(ctx.allocator, root);
     defer ctx.allocator.free(scope_root);
@@ -597,7 +607,7 @@ fn walkTree(
                     ctx.allocator.free(real_owned);
                     return error.OutOfMemory;
                 };
-                try enqueueDirChildren(ctx, rel, &paths, opts);
+                try enqueueDirChildren(ctx, guard, rel, &paths, opts);
             },
             else => {},
         }
@@ -625,6 +635,7 @@ fn visitFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErr
 
 fn enqueueDirChildren(
     ctx: tool.Context,
+    guard: *const workspace.Guard,
     rel: []const u8,
     paths: *std.ArrayList([]u8),
     opts: WalkOpts,
@@ -656,12 +667,16 @@ fn enqueueDirChildren(
             opts.body.setIncomplete(.node_limit);
             return;
         }
-        if (shouldSkipDir(entry.name)) continue;
-
         const child = if (std.mem.eql(u8, rel, "."))
             ctx.allocator.dupe(u8, entry.name) catch return error.OutOfMemory
         else
             std.fs.path.join(ctx.allocator, &.{ rel, entry.name }) catch return error.OutOfMemory;
+
+        if (try shouldExcludeWalkChild(ctx, guard, opts, child)) {
+            ctx.allocator.free(child);
+            if (opts.body.reason != null) return;
+            continue;
+        }
 
         if (paths.items.len >= opts.limits.walk_nodes) {
             ctx.allocator.free(child);
@@ -673,6 +688,87 @@ fn enqueueDirChildren(
             return error.OutOfMemory;
         };
     }
+}
+
+fn shouldExcludeWalkChild(
+    ctx: tool.Context,
+    guard: *const workspace.Guard,
+    opts: WalkOpts,
+    rel: []const u8,
+) tool.HandlerError!bool {
+    checkNestedExisting(ctx, guard, rel) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.OutsideWorkspace, error.InvalidPath, error.NotFound => return true,
+        error.ResolveFailed => {
+            opts.body.setIncomplete(.io_skip);
+            return true;
+        },
+    };
+
+    const st = ctx.cwd.statFile(ctx.io, rel, .{ .follow_symlinks = true }) catch {
+        opts.body.setIncomplete(.io_skip);
+        return true;
+    };
+    return fixedExclusionForExisting(ctx, guard, rel, st.kind) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.IoSkip => {
+            opts.body.setIncomplete(.io_skip);
+            return true;
+        },
+    };
+}
+
+fn isDirectScopeFixedExcluded(ctx: tool.Context, guard: *const workspace.Guard, rel: []const u8) tool.HandlerError!bool {
+    const st = ctx.cwd.statFile(ctx.io, rel, .{ .follow_symlinks = true }) catch return error.ToolFailed;
+    return fixedExclusionForExisting(ctx, guard, rel, st.kind) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.IoSkip => return error.ToolFailed,
+    };
+}
+
+fn fixedExclusionForExisting(
+    ctx: tool.Context,
+    guard: *const workspace.Guard,
+    rel: []const u8,
+    kind: Io.File.Kind,
+) error{ OutOfMemory, IoSkip }!bool {
+    const rel_norm = normalizeRelativeForGlob(ctx.allocator, rel) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidArguments => return error.IoSkip,
+    };
+    defer ctx.allocator.free(rel_norm);
+    if (std.mem.eql(u8, rel_norm, ".")) return false;
+    if (kind == .directory and shouldSkipDir(lastNormalizedComponent(rel_norm))) return true;
+
+    const real_owned = try resolveRealOwned(ctx, rel);
+    defer ctx.allocator.free(real_owned);
+    return fixedExclusionForReal(guard, real_owned, kind);
+}
+
+fn lastNormalizedComponent(rel_norm: []const u8) []const u8 {
+    const index = std.mem.lastIndexOfScalar(u8, rel_norm, '/') orelse return rel_norm;
+    return rel_norm[index + 1 ..];
+}
+
+fn fixedExclusionForReal(guard: *const workspace.Guard, real_abs: []const u8, kind: Io.File.Kind) bool {
+    if (!guard.root.contains(real_abs)) return false;
+    if (std.mem.eql(u8, guard.root.path, real_abs)) return false;
+    if (real_abs.len <= guard.root.path.len) return false;
+    const rel_real = real_abs[guard.root.path.len + 1 ..];
+
+    var count: usize = 0;
+    var it_count = std.mem.tokenizeScalar(u8, rel_real, std.fs.path.sep);
+    while (it_count.next()) |_| count += 1;
+
+    var index: usize = 0;
+    var it = std.mem.tokenizeScalar(u8, rel_real, std.fs.path.sep);
+    while (it.next()) |part| : (index += 1) {
+        if (!shouldSkipDir(part)) continue;
+        const is_final = index + 1 == count;
+        if (!is_final) return true;
+        return kind == .directory;
+    }
+    return false;
 }
 
 fn isHostPathSep(c: u8) bool {
@@ -1172,6 +1268,108 @@ test "symlink containment: read/list/grep/glob deny escape, allow contained" {
     const loop_grep = try grep(ctx, null, "{\"pattern\":\"loop-note\",\"path\":\".\"}");
     defer gpa.free(loop_grep);
     try std.testing.expect(std.mem.indexOf(u8, loop_grep, "loop-note") != null or std.mem.indexOf(u8, loop_grep, "note.txt") != null);
+}
+
+test "jail deny bodies for long absolute raw handler paths are bounded and path-free" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const sentinel = "FS_LONG_ABS_SENTINEL_4b76";
+    const filler = try gpa.alloc(u8, 70 * 1024);
+    defer gpa.free(filler);
+    @memset(filler, 'q');
+    const path_json = try std.fmt.allocPrint(gpa, "\"/{s}{s}\"", .{ sentinel, filler });
+    defer gpa.free(path_json);
+
+    const list_args = try std.fmt.allocPrint(gpa, "{{\"path\":{s}}}", .{path_json});
+    defer gpa.free(list_args);
+    const read_args = list_args;
+    const grep_args = try std.fmt.allocPrint(gpa, "{{\"pattern\":\"needle\",\"path\":{s}}}", .{path_json});
+    defer gpa.free(grep_args);
+    const glob_args = try std.fmt.allocPrint(gpa, "{{\"pattern\":\"**/*\",\"path\":{s}}}", .{path_json});
+    defer gpa.free(glob_args);
+
+    const cases = .{
+        try listDir(ctx, null, list_args),
+        try readFile(ctx, null, read_args),
+        try grep(ctx, null, grep_args),
+        try glob(ctx, null, glob_args),
+    };
+    inline for (cases) |body| {
+        defer gpa.free(body);
+        try std.testing.expect(body.len <= tool.max_result_bytes);
+        try std.testing.expect(std.mem.indexOf(u8, body, "code=jail_deny") != null);
+        try std.testing.expect(std.mem.indexOf(u8, body, sentinel) == null);
+    }
+}
+
+test "fixed search exclusions apply to directories only and direct scopes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "target", .data = "needle target-file\n" });
+    try tmp.dir.createDirPath(io, ".git");
+    try tmp.dir.writeFile(io, .{ .sub_path = ".git/config", .data = "needle GIT_SECRET\n" });
+    try tmp.dir.createDirPath(io, "zig-out");
+    try tmp.dir.writeFile(io, .{ .sub_path = "zig-out/artifact.txt", .data = "needle BUILD_SECRET\n" });
+    try tmp.dir.createDirPath(io, "cache");
+    try tmp.dir.writeFile(io, .{ .sub_path = "cache/dep.txt", .data = "not-a-search-hit\n" });
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/ok.txt", .data = "needle src-ok\n" });
+    if (builtin.os.tag != .windows) {
+        try tmp.dir.symLink(io, "cache", "node_modules", .{ .is_directory = true });
+    }
+
+    const grep_target = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"target\"}");
+    defer gpa.free(grep_target);
+    try std.testing.expect(std.mem.indexOf(u8, grep_target, "target-file") != null);
+    const glob_target = try glob(ctx, null, "{\"pattern\":\"target\"}");
+    defer gpa.free(glob_target);
+    try std.testing.expect(std.mem.indexOf(u8, glob_target, "target") != null);
+
+    const direct_git_file = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\".git/config\"}");
+    defer gpa.free(direct_git_file);
+    try std.testing.expect(std.mem.indexOf(u8, direct_git_file, "GIT_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, direct_git_file, incomplete_prefix) == null);
+    try std.testing.expect(std.mem.indexOf(u8, direct_git_file, "no matches") != null);
+
+    const direct_git_dir = try glob(ctx, null, "{\"pattern\":\"**/*\",\"path\":\".git\"}");
+    defer gpa.free(direct_git_dir);
+    try std.testing.expect(std.mem.indexOf(u8, direct_git_dir, "config") == null);
+    try std.testing.expect(std.mem.indexOf(u8, direct_git_dir, incomplete_prefix) == null);
+    try std.testing.expect(std.mem.indexOf(u8, direct_git_dir, "no paths") != null);
+
+    const direct_build_file = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"zig-out/artifact.txt\"}");
+    defer gpa.free(direct_build_file);
+    try std.testing.expect(std.mem.indexOf(u8, direct_build_file, "BUILD_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, direct_build_file, incomplete_prefix) == null);
+    try std.testing.expect(std.mem.indexOf(u8, direct_build_file, "no matches") != null);
+
+    if (builtin.os.tag != .windows) {
+        const symlink_fixed = try glob(ctx, null, "{\"pattern\":\"**/*\",\"path\":\"node_modules\"}");
+        defer gpa.free(symlink_fixed);
+        try std.testing.expect(std.mem.indexOf(u8, symlink_fixed, "dep.txt") == null);
+        try std.testing.expect(std.mem.indexOf(u8, symlink_fixed, incomplete_prefix) == null);
+    }
+
+    const root_grep = try grep(ctx, null, "{\"pattern\":\"needle\"}");
+    defer gpa.free(root_grep);
+    try std.testing.expect(std.mem.indexOf(u8, root_grep, "target-file") != null);
+    try std.testing.expect(std.mem.indexOf(u8, root_grep, "src-ok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, root_grep, "GIT_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, root_grep, "BUILD_SECRET") == null);
+    try std.testing.expect(std.mem.indexOf(u8, root_grep, incomplete_prefix) == null);
+
+    const interior = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"zig-out/../src\"}");
+    defer gpa.free(interior);
+    try std.testing.expect(std.mem.indexOf(u8, interior, "src-ok") != null);
+    try std.testing.expect(std.mem.indexOf(u8, interior, "no matches") == null);
 }
 
 test "POSIX backslash sibling: all file tools deny without leak" {

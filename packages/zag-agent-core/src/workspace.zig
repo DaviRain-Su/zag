@@ -239,6 +239,8 @@ fn isDotSlashOnly(sub: []const u8) bool {
     return false;
 }
 
+pub const jail_deny_message = "path outside workspace jail. Use relative paths under the working directory; absolute paths, '..' escapes, and symlink/alias escapes are denied.";
+
 /// Map containment failure to a soft tool body (`code=jail_deny`) or typed OOM.
 /// `NotFound` is not converted — callers handle ordinary missing paths.
 pub fn denyBody(
@@ -246,23 +248,18 @@ pub fn denyBody(
     path: []const u8,
     err: ContainError,
 ) error{ OutOfMemory, NotFound }![]u8 {
+    _ = path;
     return switch (err) {
         error.NotFound => error.NotFound,
         error.OutOfMemory => error.OutOfMemory,
-        error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => deniedMessage(allocator, path),
+        error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => deniedMessage(allocator),
     };
 }
 
-/// Soft error string for the model (caller owns with allocator).
-pub fn deniedMessage(allocator: std.mem.Allocator, path: []const u8) std.mem.Allocator.Error![]u8 {
+/// Stable path-free soft error string for the model (caller owns with allocator).
+pub fn deniedMessage(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
     const tool_error = @import("tool_error.zig");
-    const msg = try std.fmt.allocPrint(
-        allocator,
-        "path outside workspace jail: '{s}'. Use relative paths under the working directory; absolute paths, '..' escapes, and symlink/alias escapes are denied.",
-        .{path},
-    );
-    defer allocator.free(msg);
-    return tool_error.format(allocator, .jail_deny, msg);
+    return tool_error.format(allocator, .jail_deny, jail_deny_message);
 }
 
 /// Validate a tool path against the workspace jail (string-level, no IO).
@@ -404,6 +401,19 @@ test "jail rejects absolute and escape" {
     try std.testing.expectError(error.OutsideWorkspace, checkToolPath("../secret"));
     try std.testing.expectError(error.OutsideWorkspace, checkToolPath("a/../../b"));
     try std.testing.expectError(error.InvalidPath, checkToolPath(""));
+}
+
+test "jail deny body is generic bounded and path-free" {
+    const gpa = std.testing.allocator;
+    const sentinel = "ULTRA_LONG_PATH_SENTINEL_6fe0";
+    const path = try std.fmt.allocPrint(gpa, "/tmp/{s}{s}{s}", .{ sentinel, sentinel, sentinel });
+    defer gpa.free(path);
+
+    const body = try denyBody(gpa, path, error.OutsideWorkspace);
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings("error: code=jail_deny message=" ++ jail_deny_message, body);
+    try std.testing.expect(body.len < 512);
+    try std.testing.expect(std.mem.indexOf(u8, body, sentinel) == null);
 }
 
 test "pathIsWithinRoot component boundary" {

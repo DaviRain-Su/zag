@@ -19,7 +19,7 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 |------|--------|
 | Phase H | **Blocked.** Final audit found two file-surface counterexamples; edit integrity is closed and read/search bounds remains open. |
 | P0 | **Complete:** `h-edit-integrity-001` completed the reviews 01–04 review/fix cycle, then passed final Oracle, ff-only merge, and main default/curl Gate; write/edit is L2 for its scoped single-file contract. |
-| P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is ready; retained integration evidence remains valid. |
+| P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is in-progress; retained integration evidence remains valid. |
 | Integration | `h-integration-001` is blocked only on `h-read-search-bounds-001`, then must repeat the sentence-by-sentence audit. |
 | Product CLI | `cli-repl-001` is done; multi-turn delimiter consumption passed independent and merged-main default/curl Gates. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
@@ -35,7 +35,7 @@ original P0/P1 modules + doctor + shell ✅
                     │
          ┌──────────┴──────────┐
          ▼                     ▼
-done: h-edit-integrity-001          ready: h-read-search-bounds-001
+done: h-edit-integrity-001          in-progress: h-read-search-bounds-001
 single-file write/edit L2           bounded + explicit incomplete results
          └──────────┬──────────┘
                     ▼
@@ -65,7 +65,7 @@ Doctor, shell, and edit integrity keep their completed contracts. Integration re
 | [h-doctor-001](./tasks/h-doctor-001.md) | P1 | done | Provider-independent readiness/control report |
 | [h-shell-001](./tasks/h-shell-001.md) | P1 | done | Synchronous shell-v1/budget/direct-child/Agent evidence |
 | [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | done | Target-preserving single-file write/edit commit |
-| [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | ready | Bounded read/search bodies and explicit incomplete results |
+| [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | in-progress | Bounded read/search bodies and explicit incomplete results |
 | [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Fresh Phase H sentence audit after read/search bounds |
 | [cli-repl-001](./tasks/cli-repl-001.md) | P1 | done | Multi-turn interactive input delimiter consumption |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
