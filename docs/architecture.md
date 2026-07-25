@@ -1,7 +1,7 @@
 # Zag 架构
 
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
-> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 已返回 FAIL：单文件 commit integrity 与 read/search bounds 有两个明确 blocker，h-integration-001 暂时 blocked。
+> Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 历史上找到两个 file-surface blocker；单文件 commit integrity 已由 h-edit-integrity-001 关闭，现在只剩 read/search bounds，h-integration-001 仍 blocked。
 > Grok Build / Pi / Oh My Pi 只作机制参照：借依赖纪律、生命周期与能力合同，不复制 crate 数或完整产品复杂度。
 
 ---
@@ -225,7 +225,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | trace | `zag-agent-core/src/trace.zig` | L2；versioned、truthful unique terminal、atomic persistence、redaction；shell projection Gate passed |
 | context | `zag-agent-core/src/context.zig` | L2；fixed-point final-view accounting + strict Tool bundles |
 | read/search | `zag-coding-agent/src/runtime/fs_tools.zig` | L1+；containment landed；final audit found byte-budget and silent-cutoff counterexamples → h-read-search-bounds-001 |
-| write/edit | `zag-coding-agent/src/runtime/edit_tools.zig` | L1+；anchor/containment landed；direct truncate/write violates target preservation → h-edit-integrity-001 |
+| write/edit | `zag-coding-agent/src/runtime/edit_tools.zig` | L2；h-edit-integrity-001 target-preserving atomic commit + cleanup truth + final symlink/Agent evidence passed independent/main Gate |
 | provider | core Provider + zag-ai WireAdapter | L2；two wire styles + strict completion；curl active controls，std requested controls fail closed before network |
 
 ## 目标能力与阶段
@@ -270,8 +270,8 @@ Agent Core 只见 `Provider.chat`；不感知 openai-zig。
 |------|---------|--------------------|
 | list_dir / read_file | ✅ mandatory descriptor + lexical/real containment | h-read-search-bounds-001: checked 64 KiB body + exact `fs-v1` incomplete reason |
 | grep / glob | ✅ descriptor + symlink-aware walker containment | same task: hit/body/walker/source/pattern cutoffs cannot look complete |
-| search_replace | ✅ unique anchor + descriptor + containment | h-edit-integrity-001: target-preserving atomic commit + contained final symlink + `edit-v1` fault |
-| write_file | ✅ create/full write + descriptor + containment | same task; no direct truncate/write; narrow parent-dir residue declared |
+| search_replace | ✅ unique anchor + descriptor + containment + L2 atomic commit | contained final symlink + cleanup-truthful `edit-v1` fault + Agent evidence |
+| write_file | ✅ create/full write + descriptor + containment + L2 atomic commit | no direct truncate/write; endpoint/parent/temp residue contracts verified |
 | run_shell | ✅ permission + descriptor-selected policy + fixed deny + synchronous UTF-8/base64 shell-v1/scoped-budget/direct-PID/trace Gate passed | mid-flight cancel/process tree/background/PTY/OS sandbox remain post-H |
 
 ## 持久化

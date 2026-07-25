@@ -7,7 +7,7 @@
 | Track | Status | Meaning |
 |-------|--------|---------|
 | Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
-| Production Floor Phase H | ❌ **file blockers active** | final audit FAIL；edit integrity + read/search bounds ready；integration blocked |
+| Production Floor Phase H | ❌ **read/search blocker active** | edit integrity done；read/search bounds ready；integration blocked |
 | Zig SDK-ready gate | ❌ 未达 | low-level composition 已证明；支持契约未闭合 |
 | Headless/process gate | ❌ 未达 | one-shot 存在；结构化协议/exit matrix 未闭合 |
 | Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
@@ -61,7 +61,7 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-tool-runtime-001](./plan/tasks/h-tool-runtime-001.md) | stateful Tool, mandatory descriptor, fail-closed custom policy |
 | [h-workspace-001](./plan/tasks/h-workspace-001.md) | symlink-aware containment for all file Tools |
 | [h-trace-001](./plan/tasks/h-trace-001.md) | one truthful terminal state and visible trace I/O failure |
-| [h-edit-integrity-001](./plan/tasks/h-edit-integrity-001.md) | **in progress:** review-02 endpoint/cleanup PASS, Oracle preallocation fix landed, review-03 optional diff-ownership remediation awaits fresh verification/main Gate |
+| [h-edit-integrity-001](./plan/tasks/h-edit-integrity-001.md) | **done:** reviews 01–04 review/fix cycle + final Oracle + merged-main target-preservation Gate passed |
 
 ### P1
 
@@ -73,9 +73,9 @@ Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/READM
 | [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | **done:** no-key readiness/control truth; no policy mutation or OS-sandbox claim |
 | [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **done:** fixed-deny/encoding/scoped-limit/direct-PID/Agent matrix passed re-review, Oracle, and main std/curl |
 | [h-read-search-bounds-001](./plan/tasks/h-read-search-bounds-001.md) | Tool runtime + workspace | **ready:** shared 64 KiB body budget + explicit `fs-v1` incomplete outcomes |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all prior modules + both file tasks | **blocked:** retained Agent evidence; repeat final audit after both file tasks |
+| [h-integration-001](./plan/tasks/h-integration-001.md) | all prior modules + read/search bounds | **blocked:** retained Agent evidence; repeat final audit after read/search task |
 
-Phase H exits only after both file tasks pass and integration independently repeats the sentence-by-sentence closeout against [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit). Shell/provider completion alone is not the overall verdict.
+Phase H exits only after read/search bounds passes and integration independently repeats the sentence-by-sentence closeout against [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit). Shell/provider completion alone is not the overall verdict.
 
 ## Post-H gates
 

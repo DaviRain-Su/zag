@@ -1,7 +1,7 @@
 ---
 id: cli-repl-001
 scope: product-cli/repl-input
-status: in-progress
+status: done
 priority: P1
 depends-on: []
 ---
@@ -62,6 +62,12 @@ Prefer a small CLI-local line-classification helper so tests exercise the exact 
 - `chapters/00-loop/README.md`
 - `docs/plan/README.md`
 - `docs/plan/tasks/cli-repl-001.md`
+
+# closeout
+
+The docs-first contract landed at `be536b3`; implementation landed at `7fb105a`. The production REPL now classifies input through the same helper used by fixed-reader tests and consumes the newline with Zig 0.16 `takeDelimiter`. Independent review passed with no findings. After ff-only merge, main passed zag-cli **12/12**, root default **407/407**, and root curl **406/406**, with no skips; docs lint/score remained **91/100 readability** and **65/100 security**.
+
+Task status is **done**. Interactive mode now remains in one Session across non-empty turns until blank/whitespace input or EOF. This does not claim a stable headless/process protocol or redesign ask-mode stdin ownership.
 
 # verification
 

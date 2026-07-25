@@ -62,7 +62,11 @@ h-edit-integrity-001 ───────┐
 h-read-search-bounds-001 ───┘
 ```
 
-The tasks are independent in code but overlap global truth/teaching documents, so docs-sprint executes their develop→verify→merge cycles serially. `h-integration-001` remains blocked until both are independently verified and merged.
+The tasks are independent in code but overlap global truth/teaching documents, so docs-sprint executes their develop→verify→merge cycles serially.
+
+## Subsequent delivery status
+
+`h-edit-integrity-001` is now done after the reviews 01–04 review/fix cycle, final Oracle, ff-only merge, and main default/curl Gate. `h-read-search-bounds-001` remains ready and is the only remaining file dependency; `h-integration-001` stays blocked until it passes.
 
 ## Explicit exclusions
 

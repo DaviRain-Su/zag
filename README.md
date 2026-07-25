@@ -40,7 +40,7 @@ Teaching 0  loop + 只读                 ✅ tutorial
 Teaching 1  write/shell + ask|yolo      ✅ tutorial
 Teaching 2  会话 / AGENTS.md / context  ✅ tutorial
 Teaching 3  jail / shell policy / trace ✅ tutorial（≠ 生产完成）
-Phase H     硬化到 maturity L2          ❌ final audit FAIL → 两个 file-surface tasks ready；integration blocked
+Phase H     硬化到 maturity L2          ❌ edit integrity ✅；read/search bounds ready；integration blocked
 C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
 ```
 

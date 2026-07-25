@@ -67,7 +67,7 @@ Plan mode permits read and reserved plan-file writes (`plan.md`, `.zag/plan.md`,
 - [x] all Tool risk comes from a validated descriptor.
 - [x] custom write/execute Tools are confirmed/denied like built-ins.
 - [x] missing descriptor/risk fails registration rather than defaulting to read.
-- [x] exact lexical remember keys re-prompt for aliases and never bypass Guard/jail (focused develop fixture in `h-edit-integrity-001`; task Gate still pending).
+- [x] exact lexical remember keys re-prompt for aliases and never bypass Guard/jail (`h-edit-integrity-001` independent/main Gate passed).
 - [x] canonical filesystem-object/path-domain authorization is explicitly L3 rather than an H claim.
 - [x] trace records descriptor-derived risk and decision.
 

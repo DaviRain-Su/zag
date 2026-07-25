@@ -167,7 +167,7 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 
 ## 5. 与路线图的关系
 
-- **Phase H**：保持当前 package layout；既有 session/Tool/containment/trace/context/redact/provider/shell Gates 保持有效；final audit 新增 `h-edit-integrity-001` 与 `h-read-search-bounds-001`，integration blocked 到两者完成。
+- **Phase H**：保持当前 package layout；既有 Gates 与 `h-edit-integrity-001` 均已通过；`h-read-search-bounds-001` 是 integration fresh audit 前唯一 file blocker。
 - **SDK-ready Gate**：完成 public composition 和 external consumer；不由 Phase H 或 package count 自动获得。
 - **Headless Gate**：提供 process contract，早于 TUI/ACP polish。
 - **C track**：新能力先声明 package boundary 与 failure contract；不把 business logic 长进 cli/main。

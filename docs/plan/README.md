@@ -17,11 +17,11 @@ The accepted planning baseline is [the 2026-07-24 production-floor assessment](.
 
 | Area | Status |
 |------|--------|
-| Phase H | **Blocked.** The final audit passed existing suites but found two unowned default file-surface L2 counterexamples. |
-| P0 | Original queue is done; `h-edit-integrity-001` review 02 passed endpoint/cleanup, Oracle's preallocation correction landed, and review-03 optional diff-ownership remediation is on the task branch pending fresh verification/main Gate. |
+| Phase H | **Blocked.** Final audit found two file-surface counterexamples; edit integrity is closed and read/search bounds remains open. |
+| P0 | **Complete:** `h-edit-integrity-001` completed the reviews 01–04 review/fix cycle, then passed final Oracle, ff-only merge, and main default/curl Gate; write/edit is L2 for its scoped single-file contract. |
 | P1 | Context/provider/redaction/doctor/shell are done; `h-read-search-bounds-001` is ready; retained integration evidence remains valid. |
-| Integration | `h-integration-001` is blocked on both file-surface tasks, then must repeat the sentence-by-sentence audit. |
-| Product CLI | `cli-repl-001` is in progress: the persistent REPL reader now consumes submitted delimiters and deterministic input regressions cover multi-turn/exit boundaries; independent from the H file DAG. |
+| Integration | `h-integration-001` is blocked only on `h-read-search-bounds-001`, then must repeat the sentence-by-sentence audit. |
+| Product CLI | `cli-repl-001` is done; multi-turn delimiter consumption passed independent and merged-main default/curl Gates. |
 | Post-H | Zig SDK and headless gates remain pending; P2 sandbox/process-supervisor work stays separate. |
 
 Priority definitions live only in the assessment. Module contracts live under `docs/modules/`; implementation tasks link to them.
@@ -35,8 +35,8 @@ original P0/P1 modules + doctor + shell ✅
                     │
          ┌──────────┴──────────┐
          ▼                     ▼
-in-progress: h-edit-integrity-001   ready: h-read-search-bounds-001
-review-03 diff-ownership fix; fresh verification pending   bounded + explicit incomplete results
+done: h-edit-integrity-001          ready: h-read-search-bounds-001
+single-file write/edit L2           bounded + explicit incomplete results
          └──────────┬──────────┘
                     ▼
           blocked: h-integration-001
@@ -45,9 +45,9 @@ review-03 diff-ownership fix; fresh verification pending   bounded + explicit in
                     └───────────────────► headless-001
 ```
 
-The two file tasks have independent code contracts but overlap global truth/teaching docs, so docs-sprint delivery serializes their develop→verify→merge cycles. Integration becomes `ready` only after both are `done`.
+The two file tasks have independent code contracts but overlap global truth/teaching docs, so docs-sprint serializes their develop→verify→merge cycles. Edit integrity is done; read/search bounds is the only remaining file dependency.
 
-Doctor and shell keep their completed dependency contracts. Integration remains the convergence point: its original Agent chains are already verified, but it cannot resume the final audit until both newly owned file-surface contracts pass.
+Doctor, shell, and edit integrity keep their completed contracts. Integration remains the convergence point: its original Agent chains are already verified, but it cannot resume the final audit until read/search bounds passes.
 
 `ready` means dependencies are satisfied, not that tasks may safely edit one shared checkout in parallel. Use task `path` overlap rules.
 
@@ -64,10 +64,10 @@ Doctor and shell keep their completed dependency contracts. Integration remains 
 | [h-redact-001](./tasks/h-redact-001.md) | P1 | done | Secret redaction |
 | [h-doctor-001](./tasks/h-doctor-001.md) | P1 | done | Provider-independent readiness/control report |
 | [h-shell-001](./tasks/h-shell-001.md) | P1 | done | Synchronous shell-v1/budget/direct-child/Agent evidence |
-| [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | in-progress | Target-preserving single-file write/edit commit |
+| [h-edit-integrity-001](./tasks/h-edit-integrity-001.md) | P0 | done | Target-preserving single-file write/edit commit |
 | [h-read-search-bounds-001](./tasks/h-read-search-bounds-001.md) | P1 | ready | Bounded read/search bodies and explicit incomplete results |
-| [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Fresh Phase H sentence audit after both file tasks |
-| [cli-repl-001](./tasks/cli-repl-001.md) | P1 | in-progress | Multi-turn interactive input delimiter consumption |
+| [h-integration-001](./tasks/h-integration-001.md) | P1 | blocked | Fresh Phase H sentence audit after read/search bounds |
+| [cli-repl-001](./tasks/cli-repl-001.md) | P1 | done | Multi-turn interactive input delimiter consumption |
 | [sdk-contract-001](./tasks/sdk-contract-001.md) | P1 | pending | Zig SDK-ready gate |
 | [headless-001](./tasks/headless-001.md) | P1 | pending | Structured process interface |
 

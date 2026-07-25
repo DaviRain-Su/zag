@@ -93,4 +93,4 @@ Fixtures must cover:
 - `zig build test -Dhttp_backend=curl --summary all`;
 - docs lint/score pass;
 - independent worktree review and merged-main std/curl Gate pass;
-- only after this task and `h-edit-integrity-001` are done may `h-integration-001` return to `ready`.
+- `h-edit-integrity-001` is done; only after this task passes may `h-integration-001` return to `ready`.

@@ -22,7 +22,7 @@
 | ~~custom Tool risk 按名称且 unknown→read~~ | **closed** D-007 / h-tool-runtime-001：descriptor risk fail-closed | done |
 | ~~file Tool 仅 lexical jail~~ | **closed** h-workspace-001：symlink-aware Guard + handler recheck | done |
 | ~~shell-v1 outcome/body/cleanup/trace Gate~~ | **closed:** fixed deny、UTF-8/base64、scoped limits、N/N+1、direct-PID、Agent parsed-trace；independent/Oracle/main passed | done [h-shell-001](../plan/tasks/h-shell-001.md) |
-| single-file write/edit fault preservation | final audit confirmed direct truncate/write can destroy prior bytes；basic target preservation is H correctness, not C4 sharpness | open [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) |
+| ~~single-file write/edit fault preservation~~ | **closed:** atomic target preservation、cleanup truth、final symlink、Agent/remember 与 signaled-diff fixtures passed reviews/Oracle/main | done [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) |
 | read/search body + cutoff truth | count caps do not prove 64 KiB；walker/source/pattern limits may look complete | open [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) |
 
 ## 非本阶段
@@ -34,4 +34,4 @@
 
 ## 下一步
 
-既有 Tool/workspace/doctor/shell 与原 Agent evidence 保持通过。Final audit 已把 `h-edit-integrity-001` 与 `h-read-search-bounds-001` 提升为 blocking tasks；`h-integration-001` 等两者完成后再 fresh audit。Mid-flight shell cancellation、process tree、power-loss durability 与更强 edit UX 仍未宣称。
+既有 Tool/workspace/doctor/shell/edit 与原 Agent evidence 保持通过。`h-read-search-bounds-001` 是当前唯一 file blocker；完成后 `h-integration-001` 再 fresh audit。Mid-flight shell cancellation、process tree、power-loss durability 与更强 edit UX 仍未宣称。

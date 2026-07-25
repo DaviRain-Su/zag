@@ -41,7 +41,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | Slice | Spec | Current truth |
 |-------|------|---------------|
 | H1 Loop | [loop-turn](../../docs/modules/loop-turn.md) | L2：soft errors/serial/goldens + facade terminal；provider active control；accepted multi-Tool between-call Agent composition 已通过独立/main Gate；mid-flight Tool preemption post-H |
-| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 保持；edit review-02 已通过 endpoint/cleanup，Oracle preallocation 修复后 review-03 发现 optional diff stdout ownership blocker；修复与 real signaled-child fixture 在 branch，待 fresh verification/main Gate；read/search task 仍 ready |
+| H2 Edit/Shell | [tools-edit](../../docs/modules/tools-edit.md) · [tools-shell](../../docs/modules/tools-shell.md) | shell L2 + single-file write/edit L2 已独立/main 验收；read/search bounds 仍 ready/blocking |
 | H3 Tool/Permissions | [tool-runtime](../../docs/modules/tool-runtime.md) · [permissions](../../docs/modules/permissions.md) | D-007 L2 landed（descriptor fail-closed） |
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
@@ -66,10 +66,10 @@ Tool runtime + trace
 h-shell-001（re-review + Oracle + main std/curl）✅
   ↓
 final audit FAIL（existing suites green）
-  ├─ h-edit-integrity-001 in-progress（review-02 PASS → Oracle prealloc fix → review-03 diff-ownership BLOCKED；remediation 待 fresh verification/main）
+  ├─ h-edit-integrity-001 ✅ reviews/Oracle/main Gate
   └─ h-read-search-bounds-001 ready
   ↓
-h-integration-001 blocked → 两者 done 后 fresh sentence audit
+h-integration-001 blocked → read/search done 后 fresh sentence audit
   ↓
 SDK-ready gate · headless gate · C4/C5.1/C7 by dependency
 ```
@@ -96,4 +96,4 @@ Each task adds its named failure fixture before claiming closeout. Live provider
 
 ## 5. Exit
 
-All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. The first final audit failed exits 8/10/11 on two file-surface contracts, so h-integration-001 is blocked until both new tasks pass and then must repeat the independent sentence audit. H completion would not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, power-loss edit durability, or OS sandbox, and would not automatically imply SDK-ready or headless-ready.
+All [maturity Phase H conditions](../../docs/maturity.md#phase-h-production-floor-exit) must pass. The first final audit failed exits 8/10/11 on two file-surface contracts; edit integrity is now closed, while h-integration-001 remains blocked until read/search bounds passes and then must repeat the independent sentence audit. H completion would not claim mid-flight Tool/shell preemption, descendants/process-tree cleanup, detached jobs, PTY, power-loss edit durability, or OS sandbox, and would not automatically imply SDK-ready or headless-ready.

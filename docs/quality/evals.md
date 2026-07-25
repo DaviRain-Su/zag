@@ -53,7 +53,7 @@ These remain useful but do not cover the assessment blockers.
 5. prefix collision (`/ws` ⊄ `/ws2`) and symlink-loop walker bound. ✅
 6. macOS/Linux via `Io.Dir.symLink`; Windows skips symlink fixtures (no false pass). ✅
 
-### Edit integrity (`h-edit-integrity-001`, in progress)
+### Edit integrity (`h-edit-integrity-001`, done)
 
 1. existing ordinary target: injected write-prefix, flush, final containment-denial, and post-close rename-boundary replace faults preserve exact prior bytes;
 2. absent `write_file` target remains absent on every commit fault;
@@ -68,7 +68,7 @@ These remain useful but do not cover the assessment blockers.
 11. on macOS/Linux, a private absolute-executable seam runs a real fake `git` that writes nonempty stdout and dies by signal; the handler observes the non-exited term, frees stdout once, omits optional diff, returns exact mandatory success, and preserves committed bytes without leak/crash;
 12. separate core fixtures prove lexical remember aliases re-prompt and remembered approval never bypasses Guard/jail.
 
-Review 02 passed endpoint/cleanup and Oracle's preallocated-result correction landed. Fresh review 03 then found optional-diff stdout double-free after publication; the fourth develop-stage fix and signaled-child fixture remain pending fresh verification and merged-main std/curl Gate, so this section and the task stay in progress.
+The reviews 01–04 review/fix cycle plus final Oracle closed endpoint/outside-staging, cleanup truth, post-staging allocation, and optional-diff stdout ownership blockers. After ff-only merge, main passed default 402/402 and curl 401/401 with supported macOS edit fixtures zero skip; these remain permanent regressions.
 
 ### Run/trace lifecycle
 

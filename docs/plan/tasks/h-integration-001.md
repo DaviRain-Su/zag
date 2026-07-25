@@ -35,7 +35,7 @@ The 2026-07-25 executable final audit passed both full backend suites but return
 1. `write_file` / `search_replace` publish through in-place truncate/write and lack target-preserving write/flush/replace fault evidence;
 2. `list_dir` / `read_file` / `grep` / `glob` do not yet prove the shared byte ceiling and can hide walker/source cutoffs as complete output.
 
-[h-edit-integrity-001](./h-edit-integrity-001.md) and [h-read-search-bounds-001](./h-read-search-bounds-001.md) now own those contracts. This task is **blocked** until both are done. Its retained Agent policy/containment/cancellation and shell evidence remains valid; after both dependencies merge, integration returns to `ready` for a fresh sentence-by-sentence audit. No Phase H, SDK-ready, or headless-ready claim is made before that audit.
+[h-edit-integrity-001](./h-edit-integrity-001.md) now closes the mutator contract after the reviews 01–04 review/fix cycle plus final Oracle/main Gate. [h-read-search-bounds-001](./h-read-search-bounds-001.md) still owns the remaining read/search contract. This task is **blocked** only until that dependency is done. Its retained Agent policy/containment/cancellation, shell, and edit evidence remains valid; afterward integration returns to `ready` for a fresh sentence-by-sentence audit. No Phase H, SDK-ready, or headless-ready claim is made before that audit.
 
 # context
 

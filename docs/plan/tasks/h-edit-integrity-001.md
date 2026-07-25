@@ -1,7 +1,7 @@
 ---
 id: h-edit-integrity-001
 scope: phase-h/edit-integrity
-status: in-progress
+status: done
 priority: P0
 depends-on: [h-tool-runtime-001, h-workspace-001, h-session-001, h-trace-001, h-redact-001]
 ---
@@ -132,11 +132,17 @@ Add one real coding-product Agent fixture for a recoverable injected edit failur
 - `chapters/H-harden/README.md`
 - `SECURITY.md` if the trusted-host wording needs synchronization
 
-# develop evidence (pending independent verification)
+# closeout
 
-The task branch routes both handlers through one `Io.File.Atomic` commit helper: validated file endpoint, canonical target/parent containment proof, complete write, Zig writer flush, final Guard recheck, and atomic replace. Review-01 remediation added exact public-handler endpoint repro fixtures, explicit close/delete/absence verification, cleanup-failure precedence, and a replace seam after the temporary is closed at the rename boundary; independent review 02 passed those corrections. Oracle then required preallocated post-staging results, implemented with an allocator-boundary fixture over a real partial temporary. Fresh review 03 found a separate post-publication double-free when optional `git diff` had nonempty stdout and a non-exited term; the fourth remediation gives stdout one owner and adds a real signaled fake-git handler fixture without mutating `PATH`.
+The task passed its full develop→review/fix loop and merged-main Gate:
 
-This is develop-stage evidence only. The review-03 remediation requires fresh verification. Task status remains `in-progress`; merged-main std/curl Gate is still required, and `h-integration-001` remains blocked.
+- review 01 reproduced invalid final-dot/trailing/root-resolving endpoints, false `target=preserved`, and outside-root staging; remediation added lexical endpoint validation, canonical target/parent containment proofs, and public-handler regression fixtures;
+- review 02 passed those corrections; Oracle then found that swallowed temp deletion and post-cleanup result allocation could hide a residual artifact, so cleanup became explicit/observable and all staged-failure bodies became preallocated with allocation-free selection;
+- fresh review 03 found optional `git diff` non-exited stdout double-free after publication; remediation gave stdout one owner and added a real nonempty-stdout/SIGTERM fake-git fixture without mutating `PATH`;
+- review 04 passed, and final Oracle re-review returned SHIP for the allocation-free cleanup/result boundary;
+- ff-only merged `main` passed default **402/402** and curl **401/401** tests, docs lint/score (**91/100 readability**, **65/100 security**), OpenAPI **287/287**, and catalog **40 models current**, with supported macOS endpoint/symlink/fault/signaled-child fixtures reporting no skips.
+
+Task status is **done**. This closes the scoped single-file write/edit L2 boundary only. `h-read-search-bounds-001` and a fresh `h-integration-001` audit remain required before Phase H can close.
 
 # verification
 

@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **L1+** — atomic single-file edit implementation and fixtures are on the in-progress task branch; independent/main Gate and the separate read/search blocker remain open |
+| Current maturity | **Split:** write/edit **L2** after h-edit-integrity-001; read/search **L1+** pending h-read-search-bounds-001 |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -26,18 +26,18 @@
 
 `search_replace` requires exactly one `old_string`; zero → `anchor_not_found`, multiple → `ambiguous_anchor`, oversize → `too_large`.
 
-## Final-audit blockers
+## Final-audit disposition
 
 D-007 descriptors and h-workspace-001 symlink-aware containment are complete for every built-in file/search Tool. The final `h-integration-001` audit found two independent L2 counterexamples:
 
-1. `write_file` and `search_replace` still use in-place truncate/write, so a later write failure can destroy prior bytes or publish a partial file.
-2. count caps do not prove the shared result-byte ceiling: `list_dir`/`glob` can exceed it, `read_file` does not reliably produce its advertised oversized prefix on Zig 0.16, and walker/search cutoffs can silently present incomplete output as complete.
+1. direct truncate/write could destroy prior bytes or publish a partial file — **closed** by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md);
+2. count caps do not prove the shared result-byte ceiling, and walker/search cutoffs can look complete — still **open** in [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md).
 
-These are owned by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) and [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md). Shell remains independently L2 under [`shell-v1`](./tools-shell.md); its passing Gate does not waive file-tool contracts.
+### Edit-integrity delivery evidence
 
-### Edit-integrity delivery state
+Both production truncate writes are gone. One same-parent `Io.File.Atomic` helper validates endpoint shape, proves canonical target/parent containment, preallocates mandatory success and staged-failure bodies, writes complete bytes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies and chooses prepared result ownership allocation-free. Contained final file symlinks retain their entry/text while the resolved target changes. A real signaled optional-diff child proves post-commit enrichment cannot replace mandatory success.
 
-The in-progress edit task branch removes both production truncate writes and shares one same-parent `Io.File.Atomic` helper. Complete bytes, mandatory success text, and stable failure bodies are allocated before parent open/staging; endpoint checks and canonical target/parent proofs run before parent creation or temp open; the helper writes, flushes, rechecks Guard, and replaces the selected target. Failure cleanup explicitly closes/deletes/verifies instead of relying on `Atomic.deinit`'s swallowed deletion error, then selects prepared result ownership allocation-free. Contained final file symlinks keep their link entry/text while the resolved target changes. Review 02 passed endpoint/cleanup; Oracle's preallocated-result correction landed; fresh review 03 then found non-exited optional-diff stdout double-free after publication. The fourth develop fix gives stdout one owner and adds a real signaled-child fixture, pending fresh verification and merged-main std/curl Gate, so the module and Phase H do not advance yet.
+The independent reviews 01–04 review/fix cycle drove and verified endpoint/outside-staging, cleanup truth, post-staging OOM, and stdout-ownership fixes; final Oracle re-review shipped the cleanup boundary. After ff-only merge, main passed default **402/402** and curl **401/401**, with supported macOS fixtures reporting no skips. Write/edit is therefore L2 for the scoped contract below. Read/search and overall Phase H remain open; shell stays separately L2 under [`shell-v1`](./tools-shell.md).
 
 ## H read/search contract
 
@@ -101,11 +101,11 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] zero/multiple anchor failures do not mutate and are tested.
 - [x] all built-in file/search Tools declare descriptors and use symlink-aware containment.
 - [ ] every read/list/grep/glob body is bounded and every resource cutoff has a complete `fs-v1` marker (`h-read-search-bounds-001`).
-- [ ] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`; review 02 passed, merged-main Gate pending).
-- [ ] write/edit faults preserve exact prior target state and expose stable cleanup-truthful `edit-v1` results without post-staging result allocation (`h-edit-integrity-001`; Oracle correction landed).
-- [ ] non-exited optional diff capture with owned stdout cannot abort or replace mandatory post-commit success (`h-edit-integrity-001`; review-03 fix awaits fresh verification).
-- [ ] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`; review 02 passed, merged-main Gate pending).
-- [ ] lexical remember alias/jail fixtures prove the documented conservative H boundary (`h-edit-integrity-001`; develop fixtures pass, independent/main Gate pending).
+- [x] endpoint-shape/root/directory aliases reject before creation or staging, while valid interior normalization stays contained (`h-edit-integrity-001`).
+- [x] write/edit faults preserve exact prior target state and expose cleanup-truthful `edit-v1` results with allocation-free post-staging selection (`h-edit-integrity-001`).
+- [x] non-exited optional diff capture with owned stdout cannot abort or replace mandatory post-commit success (`h-edit-integrity-001`).
+- [x] contained final-symlink target replacement and one Agent/session/trace edit-fault chain pass (`h-edit-integrity-001`).
+- [x] lexical remember alias/jail fixtures prove the conservative H boundary (`h-edit-integrity-001`).
 - [x] shell/error integration passes its separate lifecycle contract and independent/main Gate (`h-shell-001`).
 
 ## L3 (C4)

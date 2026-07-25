@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — final audit failed on edit integrity and read/search bounds; integration blocked** |
+| Status | **In progress; not L2 — edit integrity closed; read/search bounds still blocks integration** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
@@ -50,7 +50,7 @@ Canonical table: [assessment § priorities](../plan/analysis/2026-07-24-producti
 | [h-trace-001](../plan/tasks/h-trace-001.md) | [trace-observability](../modules/trace-observability.md) | exactly one truthful terminal; visible trace failure |
 | [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) | [tools-edit](../modules/tools-edit.md) | final-audit correction: preserve existing/absent single-file targets across commit faults |
 
-The original P0 queue is complete, but final audit reopened data preservation narrowly through `h-edit-integrity-001`. Review 02 passed the review-01 endpoint/outside-staging and cleanup corrections; Oracle then required preallocated post-staging results, and fresh review 03 blocked on optional post-commit diff stdout ownership. The task branch now contains that narrow remediation and a real signaled-child fixture, pending fresh verification and merged-main Gate. No P2 capability implementation is promoted meanwhile.
+The original P0 queue is complete. Final audit briefly reopened data preservation through `h-edit-integrity-001`; the reviews 01–04 review/fix cycle plus final Oracle, ff-only merge, and main default **402/402** + curl **401/401** closed endpoint/outside-staging, cleanup truth, post-staging OOM, final-symlink, Agent/remember, and post-commit diff ownership. No P2 capability was used to waive the contract.
 
 ## H1 — Loop / lifecycle
 
@@ -92,8 +92,8 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 
 ### Reopened by final audit
 
-- [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) is in progress: direct truncate/write is gone; review 02 passed strict endpoints/selected-parent containment and observable cleanup, Oracle's preallocated-result fix landed, and review-03 optional diff stdout ownership is remediated with a real signaled-child fixture. Contained final symlink and yolo Agent/session/trace fixtures remain; separate core fixtures own ask/remember. Fresh verification/main Gate is not complete.
-- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) must keep every read/list/grep/glob body within 64 KiB and mark every runtime cutoff with complete `fs-v1` incomplete metadata.
+- [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) is **done**: direct truncate/write is gone; strict endpoints/selected-parent containment, observable cleanup, allocation-free staged results, contained final symlink, yolo Agent/session/trace, core ask/remember, and real signaled optional-diff fixtures completed the reviews 01–04 review/fix cycle and passed final Oracle/main Gate.
+- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) remains open and must keep every read/list/grep/glob body within 64 KiB and mark every runtime cutoff with complete `fs-v1` incomplete metadata.
 - Permission remember is exact lexical request-path scoped for H; aliases re-prompt and Guard remains mandatory. Canonical object/path-domain authorization is post-H.
 - h-shell-001 remains closed and does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline.
 
@@ -226,7 +226,7 @@ original P0/P1 + doctor + shell ✅
        ┌─────────┴─────────┐
        ▼                   ▼
 h-edit-integrity-001   h-read-search-bounds-001
-   in progress               ready
+      done                    ready
        └─────────┬─────────┘
                  ▼
        h-integration-001 blocked
@@ -240,8 +240,8 @@ h-edit-integrity-001   h-read-search-bounds-001
   └─► C7 sandbox/process supervisor
 ```
 
-This is a DAG. Original module evidence remains valid, but the final audit discovered two previously unowned file-surface contracts. Integration resumes only after both pass independently; green existing suites do not waive either counterexample.
+This is a DAG. Original module evidence remains valid. Edit integrity now passes independently; integration resumes only after read/search bounds also passes. Green existing suites cannot waive that remaining counterexample.
 
 ## Exit
 
-Phase H exits only after both file-surface tasks are done and a newly ready h-integration-001 independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.
+Phase H exits only after read/search bounds is done and a newly ready h-integration-001 independently re-audits every [maturity production-floor condition](../maturity.md#phase-h-production-floor-exit), confirms main std/curl evidence, and synchronizes production-floor truth. A green suite, package split, or partial checklist cannot waive an exit condition. The exit does not claim preemption of an already running Tool/shell handler, process-tree cleanup, OS sandbox, SDK-ready, or headless-ready.
