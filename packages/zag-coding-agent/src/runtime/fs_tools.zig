@@ -640,7 +640,11 @@ fn enqueueDirChildren(
     paths: *std.ArrayList([]u8),
     opts: WalkOpts,
 ) tool.HandlerError!void {
-    if (pathDepth(rel) >= opts.limits.walk_depth) {
+    const depth = pathDepth(rel) orelse {
+        opts.body.setIncomplete(.depth_limit);
+        return;
+    };
+    if (depth >= opts.limits.walk_depth) {
         opts.body.setIncomplete(.depth_limit);
         return;
     }
@@ -776,14 +780,25 @@ fn isHostPathSep(c: u8) bool {
     return c == '/';
 }
 
-fn pathDepth(rel: []const u8) u32 {
-    if (std.mem.eql(u8, rel, ".")) return 0;
+fn pathDepth(rel: []const u8) ?u32 {
     var depth: u32 = 0;
-    for (rel) |c| {
-        // Host separators only: on POSIX `\` is a filename byte, not a depth edge.
-        if (isHostPathSep(c)) depth += 1;
+    var start: usize = 0;
+    while (start <= rel.len) {
+        var end = start;
+        while (end < rel.len and !isHostPathSep(rel[end])) : (end += 1) {}
+        const part = rel[start..end];
+        if (part.len != 0 and !std.mem.eql(u8, part, ".")) {
+            if (std.mem.eql(u8, part, "..")) {
+                if (depth == 0) return null;
+                depth -= 1;
+            } else {
+                depth = std.math.add(u32, depth, 1) catch return null;
+            }
+        }
+        if (end == rel.len) break;
+        start = end + 1;
     }
-    return depth + 1;
+    return depth;
 }
 
 fn statFileForGrep(ctx: tool.Context, rel: []const u8) !Io.File.Stat {
@@ -1465,6 +1480,53 @@ fn expectFsMarker(body: []const u8, reason: []const u8) !void {
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, incomplete_prefix));
 }
 
+fn expectNoFsMarker(body: []const u8, reason: []const u8) !void {
+    try std.testing.expect(std.mem.indexOf(u8, body, incomplete_prefix) == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, reason) == null);
+}
+
+fn repeatedTrailingHostSeparators(gpa: std.mem.Allocator, base: []const u8, count: usize) ![]u8 {
+    const sep: u8 = if (builtin.os.tag == .windows) '\\' else '/';
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    try out.appendSlice(gpa, base);
+    try out.appendNTimes(gpa, sep, count);
+    return out.toOwnedSlice(gpa) catch return error.OutOfMemory;
+}
+
+fn searchArgsJson(gpa: std.mem.Allocator, pattern: []const u8, path: []const u8) ![]u8 {
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    errdefer out.deinit();
+    var s: std.json.Stringify = .{ .writer = &out.writer };
+    try s.beginObject();
+    try s.objectField("pattern");
+    try s.write(pattern);
+    try s.objectField("path");
+    try s.write(path);
+    try s.endObject();
+    return out.toOwnedSlice();
+}
+
+test "pathDepth uses normalized host components" {
+    try std.testing.expectEqual(@as(?u32, 0), pathDepth(""));
+    try std.testing.expectEqual(@as(?u32, 0), pathDepth("."));
+    try std.testing.expectEqual(@as(?u32, 0), pathDepth("./"));
+    try std.testing.expectEqual(@as(?u32, 1), pathDepth("src"));
+    try std.testing.expectEqual(@as(?u32, 1), pathDepth("src////////////////"));
+    try std.testing.expectEqual(@as(?u32, 2), pathDepth("src/./nested"));
+    try std.testing.expectEqual(@as(?u32, 2), pathDepth("src/a/../b"));
+    try std.testing.expectEqual(@as(?u32, 0), pathDepth("src/.."));
+    try std.testing.expectEqual(@as(?u32, null), pathDepth(".."));
+    try std.testing.expectEqual(@as(?u32, null), pathDepth("src/../.."));
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(?u32, 1), pathDepth("src\\\\\\\\"));
+        try std.testing.expectEqual(@as(?u32, 2), pathDepth("src\\.\\nested"));
+        try std.testing.expectEqual(@as(?u32, 2), pathDepth("src\\a\\..\\b"));
+    } else {
+        try std.testing.expectEqual(@as(?u32, 1), pathDepth("src\\\\literal"));
+    }
+}
+
 test "fs-v1 marker reservation and helper N/N+1 body budget" {
     const gpa = std.testing.allocator;
     const limit = max_incomplete_marker_len + 4;
@@ -1701,6 +1763,40 @@ test "walker node depth and per-directory cutoffs emit first stable marker" {
     defer gpa.free(per_dir_body);
     try std.testing.expect(per_dir_body.len <= limit);
     try expectFsMarker(per_dir_body, "node_limit");
+}
+
+test "grep and glob normalize trailing separators for walk depth only" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    try tmp.dir.createDirPath(io, "src");
+    try tmp.dir.writeFile(io, .{ .sub_path = "src/a.zig", .data = "needle\n" });
+
+    const noisy_src = try repeatedTrailingHostSeparators(gpa, "src", max_walk_depth + 5);
+    defer gpa.free(noisy_src);
+    const grep_args = try searchArgsJson(gpa, "needle", noisy_src);
+    defer gpa.free(grep_args);
+    const glob_args = try searchArgsJson(gpa, "*.zig", noisy_src);
+    defer gpa.free(glob_args);
+
+    const limit = max_incomplete_marker_len + 128;
+    setFsTestLimits(.{ .body_bytes = limit, .walk_depth = 2 });
+    defer clearFsTestLimits();
+
+    const grep_body = try grep(ctx, null, grep_args);
+    defer gpa.free(grep_body);
+    try std.testing.expect(grep_body.len <= limit);
+    try std.testing.expect(std.mem.indexOf(u8, grep_body, "a.zig") != null);
+    try std.testing.expect(std.mem.indexOf(u8, grep_body, "needle") != null);
+    try expectNoFsMarker(grep_body, "depth_limit");
+
+    const glob_body = try glob(ctx, null, glob_args);
+    defer gpa.free(glob_body);
+    try std.testing.expect(glob_body.len <= limit);
+    try std.testing.expect(std.mem.indexOf(u8, glob_body, "a.zig") != null);
+    try expectNoFsMarker(glob_body, "depth_limit");
 }
 
 test "fs tool OOM remains hard error not fake complete result" {
