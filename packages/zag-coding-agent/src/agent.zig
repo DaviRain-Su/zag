@@ -568,6 +568,10 @@ pub const Agent = struct {
     /// Per-reply prep: reset ledger + trace buffer, non-destructive preflight,
     /// then `run_start`. Lifecycle owner: facade (loop + session save + persist).
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
+        // Per-run cancel: stale flags from a prior reply (e.g. SIGINT) are cleared
+        // here so that one cancel only affects the current run. A flag set during
+        // this run (between Tools or inside a provider in-flight call) still wins.
+        self.cancel.clear();
         // Fresh run-local cost ledger each reply.
         self.ledger = .{};
         // Drop any stale borrowed redactor **before** fallible ensure/bind so a
@@ -1441,7 +1445,93 @@ test "h-provider: retryable error exact chat_retries+1 attempts" {
     try expectRunEnd(tr, false, "provider_error");
 }
 
-test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {
+test "h-trace: per-run cancel clears stale flag; second reply completes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Provider requests cancel in-flight and returns a multi-tool turn. The
+    // pending tools are never executed and the run ends cancelled.
+    const Mock = struct {
+        calls: *u32,
+        agent: *Agent,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
+            // In-flight cooperative cancel only on the first reply; all later replies complete.
+            if (self.calls.* == 1) {
+                self.agent.cancel.request();
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "cancel_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{
+                    .content = "batch",
+                    .tool_calls = tc,
+                    .finish_reason = "tool_calls",
+                };
+            }
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = undefined,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .toolset = &[_]tool.Tool{},
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var mock_state: Mock = .{ .calls = undefined, .agent = &agent };
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+    // Patch the provider pointer into the Agent after both are initialized.
+    agent.provider = provider;
+    var calls: u32 = 0;
+    mock_state.calls = &calls;
+
+    var session1 = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session1.deinit();
+    const result1 = try agent.reply(&session1, "first");
+    try std.testing.expectEqual(loop.StopReason.cancelled, result1.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), calls);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "cancelled");
+
+    // A second reply on the same Agent must start clean (stale flag cleared).
+    var session2 = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session2.deinit();
+    const result2 = try agent.reply(&session2, "second");
+    try std.testing.expectEqual(loop.StopReason.completed, result2.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), calls);
+}
+
+test "h-trace: explicit .observer = .none() runs without event chain error" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var calls: u32 = 0;
@@ -1449,11 +1539,9 @@ test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {
     var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .verbose = false,
-        .max_turns = 4,
+        .observer = .none(),
     });
     defer agent.deinit();
-    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
-    agent.cancel.request();
 
     var session = try Session.start(gpa, io, .{
         .base_system = "sys",
@@ -1462,12 +1550,7 @@ test "h-trace: cancelled terminal ok=true stop_reason=cancelled" {
     defer session.deinit();
 
     const result = try agent.reply(&session, "hi");
-    try std.testing.expectEqual(loop.StopReason.cancelled, result.stop_reason);
-    // Cancel checked before first provider call when flag already set.
-    try std.testing.expectEqual(@as(u32, 0), calls);
-
-    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
-    try expectRunEnd(tr, true, "cancelled");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
 }
 
 test "h-trace: session save failure ok=false session_error not completed" {

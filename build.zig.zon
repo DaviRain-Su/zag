@@ -66,6 +66,7 @@
         "build.zig.zon",
         "src",
         "packages",
+        "tests",
         "README.md",
         "SECURITY.md",
     },

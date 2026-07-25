@@ -599,7 +599,12 @@ test "session create → reply → save → resume preserves transcript" {
 }
 
 test "session save error returns session_error and preserves prior bytes" {
+    // chmod-based write-denial is only effective on Unix-like, non-root systems.
     if (@import("builtin").os.tag != .macos and @import("builtin").os.tag != .linux) {
+        return error.SkipZigTest;
+    }
+    // Root can still write to a 0o555 directory, so the failure path is not testable.
+    if (std.c.geteuid() == 0) {
         return error.SkipZigTest;
     }
 

@@ -125,6 +125,14 @@ Two supported cancellation mechanisms:
    `CancelFlag`). The flag is checked between turns and between tools, **not**
    inside a running Tool handler.
 
+`Agent.reply` defines **per-run cancel semantics**: at the start of each reply
+any stale flag from a previous run is cleared, so a single `requestCancel()`
+affects only the current run. A flag that is set during the current run — either
+between Tools or while the provider request is in flight — is still observed and
+produces `stop_reason=cancelled`. The CLI installs a single SIGINT handler
+against `agent.cancel`; per-run clearing prevents one Ctrl-C from permanently
+cancelling every future REPL turn.
+
 When both cancel and deadline fire, **cancel wins**. The curl backend performs
 active in-flight cancellation; the std backend returns `UnsupportedControl` for
 configured deadlines.
@@ -165,7 +173,7 @@ Source: [`packages/zag-agent-core/src/session_store.zig:37-46`](../../packages/z
 - Destructive renames require a new schema version plus migration or explicit
   rejection.
 - **No semver promise** until the SDK-ready Gate closes and a second real consumer
-  plus release channel exist (see [packaging.md](./packaging.md)).
+  plus release channel exist (see [packaging.md](../packaging.md)).
 
 ## 8. Non-goals
 
@@ -182,8 +190,8 @@ The following are explicitly **not** covered by this contract:
 
 ## 9. Related
 
-- [packaging.md](./packaging.md#sdk-ready-gate)
-- [architecture.md](./architecture.md)
+- [packaging.md](../packaging.md#sdk-ready-gate)
+- [architecture.md](../architecture.md)
 - [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md)
 - [D-007](../decisions/active/D-007-tool-runtime-descriptor.md)
 - Consumer fixture: [`tests/sdk-consumer-fixture/`](../../tests/sdk-consumer-fixture/)
