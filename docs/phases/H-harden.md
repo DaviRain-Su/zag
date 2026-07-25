@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Status | **In progress; not L2 — edit integrity closed; read/search bounds still blocks integration** |
+| Status | **In progress; not L2 — edit integrity closed; read/search bounds has develop-stage evidence but still blocks integration pending independent verification** |
 | Prerequisite | Teaching Phase 0–3 tutorial-complete |
 | Goal | All critical existing surfaces satisfy [maturity L2](../maturity.md) |
 | Non-goals | Graph, Memory Repo, full subagents, MCP, TUI, OS sandbox implementation |
@@ -93,7 +93,7 @@ Specs: [tools-edit](../modules/tools-edit.md), [tools-shell](../modules/tools-sh
 ### Reopened by final audit
 
 - [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md) is **done**: direct truncate/write is gone; strict endpoints/selected-parent containment, observable cleanup, allocation-free staged results, contained final symlink, yolo Agent/session/trace, core ask/remember, and real signaled optional-diff fixtures completed the reviews 01–04 review/fix cycle and passed final Oracle/main Gate.
-- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) remains open and must keep every read/list/grep/glob body within 64 KiB and mark every runtime cutoff with complete `fs-v1` incomplete metadata.
+- [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) is in progress: this branch adds checked 64 KiB body enforcement and complete `fs-v1` cutoff metadata for read/list/grep/glob, with small deterministic fixtures; it remains open until independent verification and root Gates pass.
 - Permission remember is exact lexical request-path scoped for H; aliases re-prompt and Guard remains mandatory. Canonical object/path-domain authorization is post-H.
 - h-shell-001 remains closed and does not claim mid-flight Tool cancel, process-tree cleanup, background/detached jobs, PTY, OS sandbox, or an end-to-end wall deadline.
 
@@ -226,7 +226,7 @@ original P0/P1 + doctor + shell ✅
        ┌─────────┴─────────┐
        ▼                   ▼
 h-edit-integrity-001   h-read-search-bounds-001
-      done                    ready
+      done                 in-progress
        └─────────┬─────────┘
                  ▼
        h-integration-001 blocked
@@ -240,7 +240,7 @@ h-edit-integrity-001   h-read-search-bounds-001
   └─► C7 sandbox/process supervisor
 ```
 
-This is a DAG. Original module evidence remains valid. Edit integrity now passes independently; integration resumes only after read/search bounds also passes. Green existing suites cannot waive that remaining counterexample.
+This is a DAG. Original module evidence remains valid. Edit integrity now passes independently; read/search bounds has only develop-stage evidence in this branch, so integration resumes only after independent verification also passes. Green existing suites cannot waive that remaining counterexample.
 
 ## Exit
 

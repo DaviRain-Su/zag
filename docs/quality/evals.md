@@ -98,13 +98,15 @@ The reviews 01–04 review/fix cycle plus final Oracle closed endpoint/outside-s
 
 ## P1 Phase H module and composition fixtures
 
-### Read/search bounds (`h-read-search-bounds-001`, open)
+### Read/search bounds (`h-read-search-bounds-001`, in progress — develop-stage evidence pending independent verification)
 
 - every `list_dir`, `read_file`, `grep`, and `glob` body is `<= 64 KiB` with checked arithmetic;
 - exact N/N+1 count and byte boundaries reserve one complete `fs-v1` incomplete marker;
 - oversized read returns a bounded prefix plus `reason=body_limit`; exact boundary has no marker;
 - list entry/body/iteration cutoffs, grep hit/body/source/I/O cutoffs, glob hit/body/pattern cutoffs, and walker node/depth/per-directory cutoffs cannot look complete;
 - fixtures use small private limits/pure helpers rather than giant physical trees and retain symlink-loop/contained/escape evidence.
+
+Current branch evidence adds focused `fs_tools.zig` tests for exact/N+1 read prefixes, list entry/body cutoffs, grep hit/body/source-size cutoffs, glob hit/body/pattern-frame cutoffs, walker node/depth/per-directory cutoffs, marker reservation (including the longest reason), `io_skip` marker formatting, existing containment/symlink fixtures, and OOM propagation. These remain develop-stage until independent review and the required root default/curl Gates complete.
 
 ### Existing closed P1 evidence
 

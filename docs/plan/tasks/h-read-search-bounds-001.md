@@ -1,7 +1,7 @@
 ---
 id: h-read-search-bounds-001
 scope: phase-h/read-search-bounds
-status: ready
+status: in-progress
 priority: P1
 depends-on: [h-tool-runtime-001, h-workspace-001]
 ---
@@ -81,6 +81,10 @@ Fixtures must cover:
 - `docs/plan/tasks/h-read-search-bounds-001.md`
 - `chapters/01-edit-permissions/README.md`
 - `chapters/H-harden/README.md`
+
+# develop-stage evidence
+
+This branch adds a private bounded-body helper with complete `fs-v1` marker reservation, rewires `list_dir`, `read_file`, `grep`, and `glob` to the shared body budget, and adds deterministic private-limit fixtures for exact/N+1 read, list/grep/glob count and byte limits, walker node/depth/per-directory limits, source/pattern/io markers, symlink containment retention, and OOM propagation. This is **not** task closeout; independent verification, root default/curl Gates, and final integration audit remain pending.
 
 # verification
 

@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
-| Current maturity | **Split:** write/edit **L2** after h-edit-integrity-001; read/search **L1+** pending h-read-search-bounds-001 |
+| Current maturity | **Split:** write/edit **L2** after h-edit-integrity-001; read/search **L1+** while h-read-search-bounds-001 develop-stage evidence awaits independent verification |
 | Target | L2 H correctness → L3 C4 sharpness |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -31,7 +31,7 @@
 D-007 descriptors and h-workspace-001 symlink-aware containment are complete for every built-in file/search Tool. The final `h-integration-001` audit found two independent L2 counterexamples:
 
 1. direct truncate/write could destroy prior bytes or publish a partial file — **closed** by [h-edit-integrity-001](../plan/tasks/h-edit-integrity-001.md);
-2. count caps do not prove the shared result-byte ceiling, and walker/search cutoffs can look complete — still **open** in [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md).
+2. count caps did not prove the shared result-byte ceiling, and walker/search cutoffs could look complete — [h-read-search-bounds-001](../plan/tasks/h-read-search-bounds-001.md) is **in progress** with develop-stage code/tests pending independent verification and main Gate evidence.
 
 ### Edit-integrity delivery evidence
 
@@ -56,6 +56,8 @@ A runtime cutoff that omits otherwise eligible output ends with exactly one comp
 - containment skips never leak outside bytes. Search remains bounded and may be incomplete; it is not advertised as exhaustive under concurrent filesystem changes.
 
 Private test-only limits or pure helpers may shrink boundaries for deterministic fixtures. They do not enter Tool JSON, Agent/Tool options, CLI, provider ABI, or production descriptors.
+
+Develop-stage evidence in `task/h-read-search-bounds-001` implements shared `fs-v1` marker reservation, bounded read prefixes, explicit walker/source/pattern reasons, and small private-limit fixtures. This is not yet a task closeout or read/search L2 promotion until independent verification and the required main Gates pass.
 
 ## H write/edit integrity contract
 

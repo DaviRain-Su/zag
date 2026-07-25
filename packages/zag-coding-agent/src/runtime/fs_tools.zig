@@ -5,6 +5,7 @@
 //! so raw `Registry.execute` cannot bypass the jail.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
 const core = @import("zag-agent-core");
 const tool = core.tool;
@@ -112,7 +113,132 @@ const max_glob_hits: u32 = 200;
 /// Hard cap on BFS nodes so walks cannot explode on huge trees.
 const walk_nodes_max: u32 = 4096;
 const max_walk_depth: u32 = 32;
+const max_dir_entries: u32 = 4096;
 const glob_frame_stack_max: u32 = 128;
+
+const FsLimitReason = enum {
+    body_limit,
+    entry_limit,
+    hit_limit,
+    node_limit,
+    depth_limit,
+    source_limit,
+    io_skip,
+    pattern_limit,
+
+    fn text(self: FsLimitReason) []const u8 {
+        return switch (self) {
+            .body_limit => "body_limit",
+            .entry_limit => "entry_limit",
+            .hit_limit => "hit_limit",
+            .node_limit => "node_limit",
+            .depth_limit => "depth_limit",
+            .source_limit => "source_limit",
+            .io_skip => "io_skip",
+            .pattern_limit => "pattern_limit",
+        };
+    }
+};
+
+const incomplete_prefix = "... incomplete: format=fs-v1 reason=";
+const incomplete_suffix = "\n";
+const max_reason_text_len = "pattern_limit".len;
+const max_incomplete_marker_len = incomplete_prefix.len + max_reason_text_len + incomplete_suffix.len;
+
+const FsLimits = struct {
+    body_bytes: usize = tool.max_result_bytes,
+    list_entries: u32 = max_list_entries,
+    file_bytes: usize = max_file_bytes,
+    grep_hits: u32 = max_grep_hits,
+    grep_file_bytes: usize = max_grep_file_bytes,
+    glob_hits: u32 = max_glob_hits,
+    walk_nodes: u32 = walk_nodes_max,
+    walk_depth: u32 = max_walk_depth,
+    dir_entries: u32 = max_dir_entries,
+    glob_frames: u32 = glob_frame_stack_max,
+};
+
+var test_limits: ?FsLimits = null;
+
+fn activeLimits() FsLimits {
+    if (builtin.is_test) {
+        if (test_limits) |limits| return limits;
+    }
+    return .{};
+}
+
+fn markerLen(reason: FsLimitReason) usize {
+    return incomplete_prefix.len + reason.text().len + incomplete_suffix.len;
+}
+
+const LimitedBody = struct {
+    out: Io.Writer.Allocating,
+    limit: usize,
+    reason: ?FsLimitReason = null,
+
+    fn init(gpa: std.mem.Allocator, limit: usize) LimitedBody {
+        return .{ .out = .init(gpa), .limit = limit };
+    }
+
+    fn deinit(self: *LimitedBody) void {
+        self.out.deinit();
+    }
+
+    fn writtenLen(self: *LimitedBody) usize {
+        return self.out.written().len;
+    }
+
+    fn setIncomplete(self: *LimitedBody, reason: FsLimitReason) void {
+        if (self.reason == null) self.reason = reason;
+    }
+
+    fn canAppend(self: *LimitedBody, bytes_len: usize, if_omitted: FsLimitReason) bool {
+        _ = if_omitted;
+        const with_item = std.math.add(usize, self.writtenLen(), bytes_len) catch return false;
+        const with_marker = std.math.add(usize, with_item, max_incomplete_marker_len) catch return false;
+        return with_marker <= self.limit;
+    }
+
+    fn appendRaw(self: *LimitedBody, bytes: []const u8, if_omitted: FsLimitReason) tool.HandlerError!bool {
+        if (!self.canAppend(bytes.len, if_omitted)) {
+            self.setIncomplete(.body_limit);
+            return false;
+        }
+        self.out.writer.writeAll(bytes) catch return error.OutOfMemory;
+        return true;
+    }
+
+    fn appendOwnedLine(self: *LimitedBody, line: []const u8, if_omitted: FsLimitReason) tool.HandlerError!bool {
+        const bytes_len = std.math.add(usize, line.len, 1) catch {
+            self.setIncomplete(.body_limit);
+            return false;
+        };
+        if (!self.canAppend(bytes_len, if_omitted)) {
+            self.setIncomplete(.body_limit);
+            return false;
+        }
+        self.out.writer.print("{s}\n", .{line}) catch return error.OutOfMemory;
+        return true;
+    }
+
+    fn appendFmtLine(self: *LimitedBody, comptime fmt: []const u8, args: anytype, if_omitted: FsLimitReason) tool.HandlerError!bool {
+        const gpa = self.out.allocator;
+        const line = std.fmt.allocPrint(gpa, fmt, args) catch return error.OutOfMemory;
+        defer gpa.free(line);
+        return self.appendOwnedLine(line, if_omitted);
+    }
+
+    fn finish(self: *LimitedBody) tool.HandlerError![]u8 {
+        if (self.reason) |reason| {
+            const len = markerLen(reason);
+            const final_len = std.math.add(usize, self.writtenLen(), len) catch return error.OutOfMemory;
+            if (final_len > self.limit) return error.OutOfMemory;
+            self.out.writer.print("{s}{s}{s}", .{ incomplete_prefix, reason.text(), incomplete_suffix }) catch return error.OutOfMemory;
+        }
+        std.debug.assert(self.out.written().len <= self.limit);
+        return self.out.toOwnedSlice() catch return error.OutOfMemory;
+    }
+};
 
 pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
     _ = instance;
@@ -135,15 +261,20 @@ pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const
     };
     defer dir.close(ctx.io);
 
-    var out: std.Io.Writer.Allocating = .init(ctx.allocator);
-    errdefer out.deinit();
+    const limits = activeLimits();
+    var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
+    errdefer body.deinit();
 
     var it = dir.iterate();
     var count: u32 = 0;
-    while (it.next(ctx.io) catch return error.ToolFailed) |entry| {
-        if (count >= max_list_entries) {
-            out.writer.print("... truncated after {d} entries\n", .{max_list_entries}) catch
-                return error.OutOfMemory;
+    while (true) {
+        const maybe_entry = it.next(ctx.io) catch {
+            body.setIncomplete(.io_skip);
+            break;
+        };
+        const entry = maybe_entry orelse break;
+        if (count >= limits.list_entries) {
+            body.setIncomplete(.entry_limit);
             break;
         }
         // Symlink names are listed by kind; targets are never opened/read here.
@@ -153,15 +284,15 @@ pub fn listDir(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const
             .sym_link => "symlink",
             else => "other",
         };
-        out.writer.print("{s}\t{s}\n", .{ entry.name, kind }) catch return error.OutOfMemory;
-        count += 1;
+        if (!try body.appendFmtLine("{s}\t{s}", .{ entry.name, kind }, .entry_limit)) break;
+        count = std.math.add(u32, count, 1) catch return error.OutOfMemory;
     }
 
-    if (count == 0) {
-        out.writer.writeAll("(empty directory)\n") catch return error.OutOfMemory;
+    if (count == 0 and body.reason == null) {
+        _ = try body.appendOwnedLine("(empty directory)", .body_limit);
     }
 
-    return out.toOwnedSlice() catch return error.OutOfMemory;
+    return body.finish();
 }
 
 pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
@@ -178,31 +309,25 @@ pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []cons
         return jailOrFail(ctx, path, err);
     };
 
-    const contents = ctx.cwd.readFileAlloc(
-        ctx.io,
-        path,
-        ctx.allocator,
-        .limited(max_file_bytes + 1),
-    ) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.StreamTooLong => {
-            const partial = ctx.cwd.readFileAlloc(
-                ctx.io,
-                path,
-                ctx.allocator,
-                .limited(max_file_bytes),
-            ) catch return error.ToolFailed;
-            defer ctx.allocator.free(partial);
-            return std.fmt.allocPrint(
-                ctx.allocator,
-                "{s}\n\n... truncated at {d} bytes\n",
-                .{ partial, max_file_bytes },
-            ) catch return error.OutOfMemory;
-        },
-        else => return error.ToolFailed,
-    };
+    const limits = activeLimits();
+    const stat = ctx.cwd.statFile(ctx.io, path, .{ .follow_symlinks = true }) catch return error.ToolFailed;
+    if (stat.size <= limits.file_bytes and stat.size <= limits.body_bytes) {
+        const read_limit = std.math.add(usize, limits.body_bytes, 1) catch return error.OutOfMemory;
+        return ctx.cwd.readFileAlloc(ctx.io, path, ctx.allocator, .limited(read_limit)) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.ToolFailed,
+        };
+    }
 
-    return contents;
+    const prefix_len = limits.body_bytes - max_incomplete_marker_len;
+    const partial = try readFilePrefixAlloc(ctx, path, prefix_len);
+    defer ctx.allocator.free(partial);
+
+    var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
+    errdefer body.deinit();
+    if (!try body.appendRaw(partial, .body_limit)) return body.finish();
+    body.setIncomplete(.body_limit);
+    return body.finish();
 }
 
 pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
@@ -222,22 +347,22 @@ pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
         return jailOrFail(ctx, root, err);
     };
 
-    var out: Io.Writer.Allocating = .init(ctx.allocator);
-    errdefer out.deinit();
+    const limits = activeLimits();
+    var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
+    errdefer body.deinit();
 
     var hits: u32 = 0;
-    var truncated = false;
     try walkTree(ctx, &guard, root, .{
         .kind = .grep,
         .pattern = pattern,
-        .out = &out,
+        .body = &body,
         .hits = &hits,
-        .truncated = &truncated,
-        .hits_max = max_grep_hits,
+        .hits_max = limits.grep_hits,
+        .limits = limits,
     });
 
-    try finishSearchOutput(&out, .grep, hits, truncated, pattern);
-    return out.toOwnedSlice() catch return error.OutOfMemory;
+    try finishSearchOutput(&body, .grep, hits, pattern);
+    return body.finish();
 }
 
 pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
@@ -256,22 +381,22 @@ pub fn glob(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8
         return jailOrFail(ctx, root, err);
     };
 
-    var out: Io.Writer.Allocating = .init(ctx.allocator);
-    errdefer out.deinit();
+    const limits = activeLimits();
+    var body = LimitedBody.init(ctx.allocator, limits.body_bytes);
+    errdefer body.deinit();
 
     var hits: u32 = 0;
-    var truncated = false;
     try walkTree(ctx, &guard, root, .{
         .kind = .glob,
         .pattern = pattern,
-        .out = &out,
+        .body = &body,
         .hits = &hits,
-        .truncated = &truncated,
-        .hits_max = max_glob_hits,
+        .hits_max = limits.glob_hits,
+        .limits = limits,
     });
 
-    try finishSearchOutput(&out, .glob, hits, truncated, pattern);
-    return out.toOwnedSlice() catch return error.OutOfMemory;
+    try finishSearchOutput(&body, .glob, hits, pattern);
+    return body.finish();
 }
 
 fn obtainGuard(ctx: tool.Context) workspace.ContainError!workspace.Guard {
@@ -285,6 +410,26 @@ fn jailOrFail(ctx: tool.Context, path: []const u8, err: workspace.ContainError) 
     };
 }
 
+fn readFilePrefixAlloc(ctx: tool.Context, path: []const u8, prefix_len: usize) tool.HandlerError![]u8 {
+    const buf = ctx.allocator.alloc(u8, prefix_len) catch return error.OutOfMemory;
+    errdefer ctx.allocator.free(buf);
+
+    var file = ctx.cwd.openFile(ctx.io, path, .{}) catch return error.ToolFailed;
+    defer file.close(ctx.io);
+
+    var filled: usize = 0;
+    while (filled < prefix_len) {
+        const n = file.readPositional(ctx.io, &.{buf[filled..prefix_len]}, filled) catch return error.ToolFailed;
+        if (n == 0) break;
+        filled = std.math.add(usize, filled, n) catch return error.OutOfMemory;
+    }
+    if (filled == prefix_len) return buf;
+    const exact = ctx.allocator.alloc(u8, filled) catch return error.OutOfMemory;
+    @memcpy(exact, buf[0..filled]);
+    ctx.allocator.free(buf);
+    return exact;
+}
+
 fn resolveRootPath(gpa: std.mem.Allocator, arguments_json: []const u8) tool.HandlerError![]u8 {
     const path_opt = try tool.optionalStringField(gpa, arguments_json, "path");
     defer if (path_opt) |p| gpa.free(p);
@@ -295,23 +440,15 @@ fn resolveRootPath(gpa: std.mem.Allocator, arguments_json: []const u8) tool.Hand
 const WalkMode = enum { grep, glob };
 
 fn finishSearchOutput(
-    out: *Io.Writer.Allocating,
+    body: *LimitedBody,
     kind: WalkMode,
     hits: u32,
-    truncated: bool,
     label: []const u8,
 ) tool.HandlerError!void {
-    if (hits == 0 and !truncated) {
+    if (hits == 0 and body.reason == null) {
         switch (kind) {
-            .grep => out.writer.print("(no matches for {s})\n", .{label}) catch return error.OutOfMemory,
-            .glob => out.writer.print("(no paths matched {s})\n", .{label}) catch return error.OutOfMemory,
-        }
-    } else if (truncated) {
-        switch (kind) {
-            .grep => out.writer.print("... truncated after {d} hits\n", .{max_grep_hits}) catch
-                return error.OutOfMemory,
-            .glob => out.writer.print("... truncated after {d} paths\n", .{max_glob_hits}) catch
-                return error.OutOfMemory,
+            .grep => _ = try body.appendFmtLine("(no matches for {s})", .{label}, .body_limit),
+            .glob => _ = try body.appendFmtLine("(no paths matched {s})", .{label}, .body_limit),
         }
     }
 }
@@ -319,10 +456,10 @@ fn finishSearchOutput(
 const WalkOpts = struct {
     kind: WalkMode,
     pattern: []const u8,
-    out: *Io.Writer.Allocating,
+    body: *LimitedBody,
     hits: *u32,
-    truncated: *bool,
     hits_max: u32,
+    limits: FsLimits,
 };
 
 /// Bounded BFS over relative paths (no recursion).
@@ -358,9 +495,9 @@ fn walkTree(
 
     var index: u32 = 0;
     while (index < paths.items.len) : (index += 1) {
-        if (opts.truncated.*) return;
-        if (index >= walk_nodes_max) {
-            opts.truncated.* = true;
+        if (opts.body.reason != null) return;
+        if (index >= opts.limits.walk_nodes) {
+            opts.body.setIncomplete(.node_limit);
             return;
         }
 
@@ -379,7 +516,10 @@ fn walkTree(
 
         const st = ctx.cwd.statFile(ctx.io, rel, .{
             .follow_symlinks = true,
-        }) catch continue;
+        }) catch {
+            opts.body.setIncomplete(.io_skip);
+            return;
+        };
 
         switch (st.kind) {
             .file => {
@@ -395,7 +535,7 @@ fn walkTree(
                     ctx.allocator.free(real_owned);
                     return error.OutOfMemory;
                 };
-                try enqueueDirChildren(ctx, rel, &paths);
+                try enqueueDirChildren(ctx, rel, &paths, opts);
             },
             else => {},
         }
@@ -419,19 +559,35 @@ fn enqueueDirChildren(
     ctx: tool.Context,
     rel: []const u8,
     paths: *std.ArrayList([]u8),
+    opts: WalkOpts,
 ) tool.HandlerError!void {
-    if (pathDepth(rel) >= max_walk_depth) return;
+    if (pathDepth(rel) >= opts.limits.walk_depth) {
+        opts.body.setIncomplete(.depth_limit);
+        return;
+    }
 
     // Directory was containment-checked; open it. Do not follow an unexpected
     // symlink-at-open by preferring iterate on the verified path.
-    var dir = ctx.cwd.openDir(ctx.io, rel, .{ .iterate = true, .follow_symlinks = true }) catch return;
+    var dir = ctx.cwd.openDir(ctx.io, rel, .{ .iterate = true, .follow_symlinks = true }) catch {
+        opts.body.setIncomplete(.io_skip);
+        return;
+    };
     defer dir.close(ctx.io);
 
     var it = dir.iterate();
     var entries_seen: u32 = 0;
-    while (it.next(ctx.io) catch return) |entry| {
-        entries_seen += 1;
-        if (entries_seen > walk_nodes_max) return;
+    while (it.next(ctx.io) catch {
+        opts.body.setIncomplete(.io_skip);
+        return;
+    }) |entry| {
+        entries_seen = std.math.add(u32, entries_seen, 1) catch {
+            opts.body.setIncomplete(.node_limit);
+            return;
+        };
+        if (entries_seen > opts.limits.dir_entries) {
+            opts.body.setIncomplete(.node_limit);
+            return;
+        }
         if (shouldSkipDir(entry.name)) continue;
 
         const child = if (std.mem.eql(u8, rel, "."))
@@ -439,8 +595,9 @@ fn enqueueDirChildren(
         else
             std.fs.path.join(ctx.allocator, &.{ rel, entry.name }) catch return error.OutOfMemory;
 
-        if (paths.items.len >= walk_nodes_max) {
+        if (paths.items.len >= opts.limits.walk_nodes) {
             ctx.allocator.free(child);
+            opts.body.setIncomplete(.node_limit);
             return;
         }
         paths.append(ctx.allocator, child) catch {
@@ -463,17 +620,36 @@ fn pathDepth(rel: []const u8) u32 {
 }
 
 fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
-    if (opts.truncated.*) return;
+    if (opts.body.reason != null) return;
 
+    const st = ctx.cwd.statFile(ctx.io, rel, .{ .follow_symlinks = true }) catch {
+        opts.body.setIncomplete(.io_skip);
+        return;
+    };
+    if (st.size > opts.limits.grep_file_bytes) {
+        opts.body.setIncomplete(.source_limit);
+        return;
+    }
+    const read_limit = std.math.add(usize, opts.limits.grep_file_bytes, 1) catch return error.OutOfMemory;
     const contents = ctx.cwd.readFileAlloc(
         ctx.io,
         rel,
         ctx.allocator,
-        .limited(max_grep_file_bytes),
-    ) catch return;
+        .limited(read_limit),
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.StreamTooLong => {
+            opts.body.setIncomplete(.source_limit);
+            return;
+        },
+        else => {
+            opts.body.setIncomplete(.io_skip);
+            return;
+        },
+    };
     defer ctx.allocator.free(contents);
 
-    // Skip likely-binary files (NUL in the first chunk).
+    // Skip likely-binary files (NUL in the first chunk): intentional search-scope exclusion.
     if (std.mem.indexOfScalar(u8, contents, 0) != null) return;
 
     var line_no: u32 = 1;
@@ -483,31 +659,32 @@ fn grepFile(ctx: tool.Context, rel: []const u8, opts: WalkOpts) tool.HandlerErro
         const line = contents[start..end];
         if (std.mem.indexOf(u8, line, opts.pattern) != null) {
             if (opts.hits.* >= opts.hits_max) {
-                opts.truncated.* = true;
+                opts.body.setIncomplete(.hit_limit);
                 return;
             }
-            if (opts.out.written().len + line.len + rel.len + 32 > tool.max_result_bytes) {
-                opts.truncated.* = true;
-                return;
-            }
-            opts.out.writer.print("{s}:{d}:{s}\n", .{ rel, line_no, line }) catch
-                return error.OutOfMemory;
-            opts.hits.* += 1;
+            if (!try opts.body.appendFmtLine("{s}:{d}:{s}", .{ rel, line_no, line }, .hit_limit)) return;
+            opts.hits.* = std.math.add(u32, opts.hits.*, 1) catch return error.OutOfMemory;
         }
         if (end == contents.len) break;
         start = end + 1;
-        line_no += 1;
+        line_no = std.math.add(u32, line_no, 1) catch return error.OutOfMemory;
     }
 }
 
 fn globFile(rel: []const u8, opts: WalkOpts) tool.HandlerError!void {
-    if (!matchGlob(opts.pattern, rel)) return;
+    const matched = matchGlobDetailed(opts.pattern, rel, opts.limits.glob_frames) catch |err| switch (err) {
+        error.PatternLimit => {
+            opts.body.setIncomplete(.pattern_limit);
+            return;
+        },
+    };
+    if (!matched) return;
     if (opts.hits.* >= opts.hits_max) {
-        opts.truncated.* = true;
+        opts.body.setIncomplete(.hit_limit);
         return;
     }
-    opts.out.writer.print("{s}\n", .{rel}) catch return error.OutOfMemory;
-    opts.hits.* += 1;
+    if (!try opts.body.appendOwnedLine(rel, .hit_limit)) return;
+    opts.hits.* = std.math.add(u32, opts.hits.*, 1) catch return error.OutOfMemory;
 }
 
 fn shouldSkipDir(name: []const u8) bool {
@@ -521,6 +698,10 @@ fn shouldSkipDir(name: []const u8) bool {
 /// Glob: `*` = within one path segment; `**` = any depth (including `/`).
 /// Iterative backtracking stack — no call recursion.
 pub fn matchGlob(pattern: []const u8, path: []const u8) bool {
+    return matchGlobDetailed(pattern, path, glob_frame_stack_max) catch false;
+}
+
+fn matchGlobDetailed(pattern: []const u8, path: []const u8, frame_limit: u32) error{PatternLimit}!bool {
     const Frame = struct { pat_index: u32, text_index: u32 };
 
     var stack: [glob_frame_stack_max]Frame = undefined;
@@ -550,7 +731,7 @@ pub fn matchGlob(pattern: []const u8, path: []const u8) bool {
                 // Try every split point; push frames (bounded).
                 var split: u32 = text_index;
                 while (split <= path.len) : (split += 1) {
-                    if (stack_len >= glob_frame_stack_max) break;
+                    if (stack_len >= frame_limit or stack_len >= glob_frame_stack_max) return error.PatternLimit;
                     stack[stack_len] = .{ .pat_index = rest, .text_index = split };
                     stack_len += 1;
                 }
@@ -561,7 +742,7 @@ pub fn matchGlob(pattern: []const u8, path: []const u8) bool {
                 // Match zero or more chars that are not '/'.
                 var split: u32 = text_index;
                 while (true) {
-                    if (stack_len >= glob_frame_stack_max) break;
+                    if (stack_len >= frame_limit or stack_len >= glob_frame_stack_max) return error.PatternLimit;
                     stack[stack_len] = .{
                         .pat_index = pat_index + 1,
                         .text_index = split,
@@ -853,4 +1034,205 @@ test "POSIX backslash sibling: all file tools deny without leak" {
     const outside2 = try parent.dir.readFileAlloc(io, sibling, gpa, .limited(64));
     defer gpa.free(outside2);
     try std.testing.expectEqualStrings("BACKSLASH_OUTSIDE_SECRET\n", outside2);
+}
+
+fn setFsTestLimits(limits: FsLimits) void {
+    std.debug.assert(builtin.is_test);
+    std.debug.assert(limits.body_bytes >= max_incomplete_marker_len);
+    test_limits = limits;
+}
+
+fn clearFsTestLimits() void {
+    if (builtin.is_test) test_limits = null;
+}
+
+fn expectFsMarker(body: []const u8, reason: []const u8) !void {
+    const expected = try std.fmt.allocPrint(std.testing.allocator, "{s}{s}{s}", .{ incomplete_prefix, reason, incomplete_suffix });
+    defer std.testing.allocator.free(expected);
+    try std.testing.expect(std.mem.endsWith(u8, body, expected));
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, incomplete_prefix));
+}
+
+test "fs-v1 marker reservation and helper N/N+1 body budget" {
+    const gpa = std.testing.allocator;
+    const limit = max_incomplete_marker_len + 4;
+    var body = LimitedBody.init(gpa, limit);
+    errdefer body.deinit();
+    try std.testing.expect(try body.appendOwnedLine("abc", .pattern_limit));
+    try std.testing.expect(!try body.appendOwnedLine("d", .pattern_limit));
+    const out = try body.finish();
+    defer gpa.free(out);
+    try std.testing.expect(out.len <= limit);
+    try expectFsMarker(out, "body_limit");
+}
+
+test "read_file exact boundary and N+1 bounded prefix" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const limit = max_incomplete_marker_len + 16;
+    setFsTestLimits(.{ .body_bytes = limit, .file_bytes = limit });
+    defer clearFsTestLimits();
+
+    const exact = try gpa.alloc(u8, limit);
+    defer gpa.free(exact);
+    @memset(exact, 'x');
+    try tmp.dir.writeFile(io, .{ .sub_path = "exact.txt", .data = exact });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const exact_body = try readFile(ctx, null, "{\"path\":\"exact.txt\"}");
+    defer gpa.free(exact_body);
+    try std.testing.expectEqual(limit, exact_body.len);
+    try std.testing.expect(std.mem.indexOf(u8, exact_body, incomplete_prefix) == null);
+
+    const over = try gpa.alloc(u8, limit + 1);
+    defer gpa.free(over);
+    @memset(over, 'y');
+    try tmp.dir.writeFile(io, .{ .sub_path = "over.txt", .data = over });
+    const over_body = try readFile(ctx, null, "{\"path\":\"over.txt\"}");
+    defer gpa.free(over_body);
+    try std.testing.expect(over_body.len <= limit);
+    try expectFsMarker(over_body, "body_limit");
+}
+
+test "list_dir entry and body cutoffs emit bounded markers" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const limit = max_incomplete_marker_len + 20;
+    setFsTestLimits(.{ .body_bytes = limit, .list_entries = 1 });
+    defer clearFsTestLimits();
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = "a" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = "b" });
+    const entry_body = try listDir(ctx, null, "{\"path\":\".\"}");
+    defer gpa.free(entry_body);
+    try std.testing.expect(entry_body.len <= limit);
+    try expectFsMarker(entry_body, "entry_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = max_incomplete_marker_len + 4, .list_entries = 10 });
+    const byte_body = try listDir(ctx, null, "{\"path\":\".\"}");
+    defer gpa.free(byte_body);
+    try std.testing.expect(byte_body.len <= max_incomplete_marker_len + 4);
+    try expectFsMarker(byte_body, "body_limit");
+}
+
+test "grep hit body and source cutoffs emit bounded markers" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    const limit = max_incomplete_marker_len + 48;
+    try tmp.dir.writeFile(io, .{ .sub_path = "hits.txt", .data = "needle one\nneedle two\n" });
+    setFsTestLimits(.{ .body_bytes = limit, .grep_hits = 1 });
+    defer clearFsTestLimits();
+    const hit_body = try grep(ctx, null, "{\"pattern\":\"needle\"}");
+    defer gpa.free(hit_body);
+    try std.testing.expect(hit_body.len <= limit);
+    try expectFsMarker(hit_body, "hit_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = max_incomplete_marker_len + 8, .grep_hits = 10 });
+    const byte_body = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"hits.txt\"}");
+    defer gpa.free(byte_body);
+    try std.testing.expect(byte_body.len <= max_incomplete_marker_len + 8);
+    try expectFsMarker(byte_body, "body_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = limit, .grep_file_bytes = 4 });
+    const source_body = try grep(ctx, null, "{\"pattern\":\"needle\",\"path\":\"hits.txt\"}");
+    defer gpa.free(source_body);
+    try std.testing.expect(source_body.len <= limit);
+    try expectFsMarker(source_body, "source_limit");
+}
+
+test "glob hit body and pattern-frame cutoffs emit bounded markers" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.zig", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.zig", .data = "" });
+    const limit = max_incomplete_marker_len + 24;
+    setFsTestLimits(.{ .body_bytes = limit, .glob_hits = 1 });
+    defer clearFsTestLimits();
+    const hit_body = try glob(ctx, null, "{\"pattern\":\"*.zig\"}");
+    defer gpa.free(hit_body);
+    try std.testing.expect(hit_body.len <= limit);
+    try expectFsMarker(hit_body, "hit_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = max_incomplete_marker_len + 2, .glob_hits = 10 });
+    const byte_body = try glob(ctx, null, "{\"pattern\":\"*.zig\"}");
+    defer gpa.free(byte_body);
+    try std.testing.expect(byte_body.len <= max_incomplete_marker_len + 2);
+    try expectFsMarker(byte_body, "body_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = limit, .glob_frames = 1 });
+    const pattern_body = try glob(ctx, null, "{\"pattern\":\"*z\"}");
+    defer gpa.free(pattern_body);
+    try std.testing.expect(pattern_body.len <= limit);
+    try expectFsMarker(pattern_body, "pattern_limit");
+}
+
+test "walker node depth and per-directory cutoffs emit first stable marker" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    try tmp.dir.createDirPath(io, "d/e");
+    try tmp.dir.writeFile(io, .{ .sub_path = "d/e/file.txt", .data = "nope" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "root.txt", .data = "nope" });
+
+    const limit = max_incomplete_marker_len + 32;
+    setFsTestLimits(.{ .body_bytes = limit, .walk_nodes = 1 });
+    defer clearFsTestLimits();
+    const node_body = try grep(ctx, null, "{\"pattern\":\"absent\"}");
+    defer gpa.free(node_body);
+    try std.testing.expect(node_body.len <= limit);
+    try expectFsMarker(node_body, "node_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = limit, .walk_depth = 1 });
+    const depth_body = try glob(ctx, null, "{\"pattern\":\"**/*.txt\"}");
+    defer gpa.free(depth_body);
+    try std.testing.expect(depth_body.len <= limit);
+    try expectFsMarker(depth_body, "depth_limit");
+
+    clearFsTestLimits();
+    setFsTestLimits(.{ .body_bytes = limit, .dir_entries = 1 });
+    const per_dir_body = try glob(ctx, null, "{\"pattern\":\"nomatch\"}");
+    defer gpa.free(per_dir_body);
+    try std.testing.expect(per_dir_body.len <= limit);
+    try expectFsMarker(per_dir_body, "node_limit");
+}
+
+test "fs tool OOM remains hard error not fake complete result" {
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    var body = LimitedBody.init(failing.allocator(), max_incomplete_marker_len + 16);
+    defer body.deinit();
+    try std.testing.expectError(error.OutOfMemory, body.appendFmtLine("{s}", .{"needle"}, .body_limit));
+    try std.testing.expect(failing.has_induced_failure);
+}
+
+test "io_skip marker is bounded and complete" {
+    const gpa = std.testing.allocator;
+    const limit = max_incomplete_marker_len;
+    var body = LimitedBody.init(gpa, limit);
+    errdefer body.deinit();
+    body.setIncomplete(.io_skip);
+    const out = try body.finish();
+    defer gpa.free(out);
+    try std.testing.expect(out.len <= limit);
+    try expectFsMarker(out, "io_skip");
 }
