@@ -2,17 +2,17 @@
 
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
 > Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 历史上找到两个 file-surface blocker；single-file edit integrity 与 read/search bounds 均已关闭，`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence audit（11/11 PASS，panel SHIP），Phase H 达到 **L2（单用户、受控本机）**。
-> Grok Build / Pi / Oh My Pi 只作机制参照：借依赖纪律、生命周期与能力合同，不复制 crate 数或完整产品复杂度。
+> [D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md)：Pi 是 Harness 行为参考，旧 `pi-mono-zig` 是冻结 Zig 档案，Grok Build 仅提供依赖/quarantine 纪律；Zag 不做 parity fork 或 batteries-included 产品。
 
 ---
 
 ## 目标分层总图（钉死）
 
-对齐 **Grok Build**（tool-types → tools → agent → shell → pager → bin）；名字用 Zag 自己的。双轨目标：**L4 以下 = Kernel SDK 面；L5–L6 = All-in-One 产品面**。
+分层借鉴 Grok Build 的单向依赖，Harness 行为参照 Pi；名字和合同用 Zag 自己的。双面目标：**L4 以下 = Kernel SDK 面；L5–L6 = 精简产品 Harness**。
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ L6 发行  zag (bin)             all-in-one 组装（对标 pager-bin）│
+│ L6 发行  zag (bin)             精简 Harness 组装                │
 ├──────────────────────────────────────────────────────────────┤
 │ L5 产品面（产品壳 · C9）        对标 pager / dashboard / acp    │
 │  zag-cli · zag-tui · zag-acp   只组装，不承载 loop / 协议细节   │
@@ -45,7 +45,17 @@
 | Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — public injection + external consumer fixture 7/7 + contract documented in [`modules/sdk-contract.md`](./modules/sdk-contract.md); merged-main Gate passed at `ebdd7ab` |
 | Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **已闭合** — `headless-v1` + exit matrix + process fixture; merged-main Gate passed at `a1a1e0f`; ACP/editor remains follow-on |
 
-Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag does not currently promise a stable C ABI or Zig dynamic plugin ABI.
+Decisions: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) and [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md). Zag does not promise a stable C ABI or Zig dynamic plugin ABI.
+
+### Extension boundary
+
+```text
+E0 static Zig source composition ──► existing SDK (same process, trusted)
+E1 passive package              ──► product discovery + bounded context
+E2 executable child             ◄─► zag-ext-v1 ◄─ product supervisor
+```
+
+E2 transports canonical data and constructs validated Tool shims; it never moves allocators, renderer pointers, or private Agent memory across the boundary. Product process ownership is separate from OS sandbox enforcement. WASM remains optional research, not a current layer or package.
 
 ### 分层职责
 
@@ -69,7 +79,7 @@ Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Zag d
 6. **依赖只准朝下**；Kernel 不 import 产品面；产品是 Kernel 的第一个严格消费者。
 7. Phase H 保证 single-Loop correctness；SDK-ready/headless 是独立 Gate；headless contract 见 [`modules/headless-contract.md`](./modules/headless-contract.md)；Graph、Memory、TUI 后置。
 8. OS sandbox 是 runner/process-supervisor enforcement，不污染 Provider/message Kernel ABI。
-9. **All-in-one 是产品目标，不是架构豁免**：每个新能力先声明落点与 failure contract。
+9. **小而完整不是架构豁免**：每个新能力仍先声明用户失败、owner 包与 failure contract；竞品功能本身不是加入理由。
 
 ---
 
@@ -241,7 +251,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | Repo map/fork；Memory Repo | context/session backend | C5；Memory later/default-off |
 | Graph / Subagent / Oracle | optional orchestration | C6；依赖 lifecycle/process safety |
 | OS sandbox/process supervisor | product runtime | C7；不进入 Provider/message ABI |
-| Skills / Hooks / MCP | extensions | C8，按 risk 分阶段 |
+| Extension tiers | E0 static SDK / E1 passive / E2 process | D-010；E2 needs C7.1, untrusted native also C7.2 |
 | TUI/dashboard/polished ACP | product shell | C9 |
 | Third native model protocol | zag-ai adapter | only on user demand；非 H gate |
 

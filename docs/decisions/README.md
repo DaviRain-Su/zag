@@ -28,3 +28,5 @@ Index (keep in sync when adding notes):
 | [D-006](./active/D-006-session-open-and-durability.md) | active | Session open modes and durability fail closed |
 | [D-007](./active/D-007-tool-runtime-descriptor.md) | active | Tool runtime capabilities are explicit and fail closed |
 | [D-008](./active/D-008-sdk-and-process-boundaries.md) | active | SDK readiness and process interfaces use separate gates |
+| [D-009](./active/D-009-pi-semantics-not-parity-fork.md) | active | Follow Pi harness semantics without becoming a parity fork |
+| [D-010](./active/D-010-extension-tiers-and-process-protocol.md) | active | Extensions use static Zig, passive packages, and a versioned process protocol |

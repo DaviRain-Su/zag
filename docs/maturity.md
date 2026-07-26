@@ -13,6 +13,8 @@
 
 **总状态（2026-07-26 headless closeout）：** Teaching Phase 0–3 = L1 完成；Production Floor Phase H = **L2（单用户、受控本机）**；Zig SDK-ready = **L2**；Headless/Process SDK = **L2**；Capability = 未开始。Phase H L2 仅限 single-user trusted-host scope；OS sandbox、process-tree ownership、mid-flight Tool/shell preemption、power-loss/fsync durability、exhaustive concurrent traversal、DLP/zeroization、第三方 Tool 通用 body 保证、ACP/editor、semver/C ABI 仍不宣称。`sdk-contract-001` 在 `ebdd7ab` 关闭 Zig SDK-ready Gate。`headless-001` 在 `a1a1e0f` 关闭 Headless/Process Gate：`headless-v1` + `--json`/`--json-stream` + exit matrix + process fixture 4/4；independent review APPROVE_WITH_NITS → F-1 fix；ship panel SHIP；merged-main Gate root std **452/452**、curl **451/451**、coding **139/139**、docs lint、readability **91/100**、security **66/100**（44 files）、OpenAPI **287/287**、catalog **40**。
 
+**产品范围（D-009）：** closed L2 rows remain unchanged；next delivery is interaction reliability → lifecycle events/control → session fork → selected Skills/edit/minimal TUI。Oracle/Graph/Memory/MCP/sandbox/provider breadth are not implied roadmap obligations。
+
 > 绿测、schema 字段或包拆分本身不能升格。任何可导致静默数据丢失、权限 fail-open、越界访问或虚假审计终态的反例都会阻止相关子系统升到 L2。
 
 评估与优先级：[production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)；最新 Gate：[2026-07-25 Phase H final audit](./plan/analysis/2026-07-25-phase-h-final-audit.md)。
@@ -36,7 +38,7 @@
 | Headless / Process SDK | **L2** | `headless-001` done at `a1a1e0f`：`headless-v1` + `--json`/`--json-stream` + headless-only exit matrix；process fixture 4/4（real binary + mock provider, both backends）；stdout purity；stream terminal uniqueness incl. halt-then-success；default mode 0/1/2 unchanged；`-Dtui` optional + Kernel no-TUI scan | clean JSON/streaming output + stable errors/exit codes ✅ | ACP/editor integration |
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
-| Extensions | L0 | 仅规格 | H 不做；依赖 Tool/process contracts | Skills/Hooks/MCP |
+| Runtime Extensions | L0 | D-010 spec only；trusted static Zig composition is already covered by SDK L2, but passive discovery / `zag-ext-v1` host do not exist | E1 Skills first；E2 requires C7.1 supervisor；untrusted native also C7.2 enforcement | declarative UI / optional WASM research |
 | Quality / Evals | **L2** | 既有 module/doctor/Agent/shell/edit/read-search matrices 均通过；fresh integration audit 在 `d22ce6e` PASS；gate 数字见总状态 | existing composition ✅；shell/edit/read-search matrices ✅；fresh integration audit PASS | edit/cost/perf baselines |
 
 ## Phase H production-floor exit

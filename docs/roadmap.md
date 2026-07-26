@@ -1,192 +1,157 @@
 # Zag 路线图
 
-> Zig 是载体；harness 是主角。成熟度真理源：[maturity](./maturity.md)。实施基线：[production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)；最新 Gate：[Phase H final audit](./plan/analysis/2026-07-25-phase-h-final-audit.md)。
+> Zag 是 **Pi-inspired Zig-native Agent Harness**。成熟度真理源：[maturity](./maturity.md)；范围决策：[D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md)；三方分析：[Pi alignment](./plan/analysis/2026-07-26-pi-zig-alignment.md)。
 
-## 诚实状态
+## 当前状态
 
 | Track | Status | Meaning |
 |-------|--------|---------|
-| Teaching Phase 0–3 | ✅ tutorial-complete | 可学习、可演示；不是 production-ready |
-| Production Floor Phase H | ✅ **L2 closeout** | single-user trusted-host；11/11 exit PASS；panel SHIP；gate 数字见 [h-integration-001](./plan/tasks/h-integration-001.md) |
-| Zig SDK-ready gate | ✅ **done/L2** | public injection + external consumer fixture 7/7 + `docs/modules/sdk-contract.md`; merged-main Gate passed at `ebdd7ab` |
-| Headless/process gate | ✅ **done/L2** | `headless-v1` + exit matrix + process fixture 4/4; panel SHIP; merged-main Gate at `a1a1e0f` |
-| Capability C4–C9 | 未开始 | 按依赖解锁，不再视为严格线性链 |
+| Teaching 0–3 | ✅ tutorial-complete | 教程可学习/演示；不等于 production claim |
+| Production Floor H | ✅ **L2** | single-user trusted-host；11/11 audit PASS；panel SHIP |
+| Zig SDK-ready | ✅ **L2** | public composition + external consumer fixture 7/7 |
+| Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
+| Pi-inspired daily Harness | **next** | interaction、events/control、fork、Skills、edit、minimal TUI |
 
-禁止在 Phase H exit 前声称 production-ready、SDK-ready 或 OS sandbox 已具备。
+OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
-## 总 DAG
+## 方向规则
+
+1. Zag mainline 保持独立；current Pi 是行为参考，旧 `pi-mono-zig` 是冻结设计/fixture 档案。
+2. 不追 Pi release/API/feature parity；只跟选定的 Harness 语义。
+3. C4–C9 是能力域，不是必须全部完成的线性产品清单。
+4. 每个新 task 从一个可复现失败出发，写 contract、fixture、独立 review 和 merged-main Gate。
+5. 默认不复制外部源码；任何 fixture/code import 都要 MIT provenance。
+
+## 已完成基础
 
 ```text
-Teaching 0 → 1 → 2 → 3  ✅
-                │
-                ▼
-Phase H correctness
-  P0: session · Tool policy · containment · truthful trace
-  P1: context · redact · provider control · doctor · shell · file-surface bounds/integrity · real composition
-                │
-                ├────► Zig SDK-ready gate ───► package publication decision
-                ├────► headless/process gate ─► ACP/editor integration later
-                ├────► C4 edit sharpness
-                ├────► C5.1 repo map/fork (after session/context)
-                └────► C7 sandbox + process supervisor
-                                      ├────► background jobs
-                                      ├────► executable hooks/MCP
-                                      └────► full executable subagents
-
-Later/default-off: Memory Repo · Graph · TUI/dashboard · full LSP/AST
+Teaching 0 → 1 → 2 → 3
+              │
+              ▼
+Phase H correctness ──► Zig SDK-ready ──► closed
+              └───────► Headless-v1 ────► closed
 ```
 
-The arrows are hard dependencies. Work without an arrow may overlap once its own module contracts are stable.
+历史 task 和 Gate 数字保留在 [plan](./plan/README.md)、[maturity](./maturity.md) 及相应 task closeout 中，不在新 Capability 路线重复展开。
 
-## Teaching track (retained)
+## 近期 DAG
 
-| Phase | Demonstration | Production debt |
-|-------|---------------|-----------------|
-| 0 — Loop | prompt → provider → Tool → result | lifecycle/error/cancel contract |
-| 1 — Edit/permission | write/shell + ask/yolo | extensible Tool descriptor and fail-closed policy |
-| 2 — Session/context | JSONL resume + project instructions + view | safe open/save/concurrency and exact compaction accounting |
-| 3 — Safety/trace | lexical jail + shell policy + JSONL trace | real containment, redaction, truthful/versioned trace |
+```text
+M0 — interaction reliability
+  cli-sigint-001
+        │
+        ▼
+M1 — core Harness controls
+  harness-events-001
+        │
+        ├────► harness-steering-001
+        └────► session-fork-001
+                       │
+                       ▼
+M2 — selected daily UX
+  skills-001       edit-sharpness-001
+        └──────────────┬──────────────┘
+                       ▼
+                 tui-minimal-001
+```
 
-Teaching chapters remain useful tutorials. Their completion does not imply the corresponding L2 row.
+### M0 — Interaction reliability
 
-## Phase H — current queue
+Task: [cli-sigint-001](./plan/tasks/cli-sigint-001.md) — **ready**.
 
-Detailed spec: [H-harden](./phases/H-harden.md). Task index: [plan](./plan/README.md).
+- idle direct REPL first Ctrl+C exits cleanly;
+- active first Ctrl+C requests cooperative cancel;
+- second interrupt provides bounded hard escape;
+- direct binary behavior is contractual; `zig build run` parent-process-group behavior is only documented;
+- no new std-HTTP or Tool/shell active-preemption claim。
 
-### P0
+Contract: [CLI interaction](./modules/cli-interaction.md).
 
-| Task | Exit |
-|------|------|
-| [h-session-001](./plan/tasks/h-session-001.md) | explicit create/resume, atomic preservation, visible save error, writer conflict |
-| [h-tool-runtime-001](./plan/tasks/h-tool-runtime-001.md) | stateful Tool, mandatory descriptor, fail-closed custom policy |
-| [h-workspace-001](./plan/tasks/h-workspace-001.md) | symlink-aware containment for all file Tools |
-| [h-trace-001](./plan/tasks/h-trace-001.md) | one truthful terminal state and visible trace I/O failure |
-| [h-edit-integrity-001](./plan/tasks/h-edit-integrity-001.md) | **done:** reviews 01–04 review/fix cycle + final Oracle + merged-main target-preservation Gate passed |
+### M1 — Core Harness controls
 
-### P1
+These tasks require their own analysis/task docs before implementation.
 
-| Task | Depends on | Exit |
-|------|------------|------|
-| [h-context-001](./plan/tasks/h-context-001.md) | session + trace | final-view compaction accounting |
-| [h-provider-001](./plan/tasks/h-provider-001.md) | trace | backend-capability deadline/cancel truth + partial Tool safety |
-| [h-redact-001](./plan/tasks/h-redact-001.md) | session + trace | shared pre-persistence redaction |
-| [h-doctor-001](./plan/tasks/h-doctor-001.md) | Tool/workspace/redaction | **done:** no-key readiness/control truth; no policy mutation or OS-sandbox claim |
-| [h-shell-001](./plan/tasks/h-shell-001.md) | Tool runtime + trace | **done:** fixed-deny/encoding/scoped-limit/direct-PID/Agent matrix passed re-review, Oracle, and main std/curl |
-| [h-read-search-bounds-001](./plan/tasks/h-read-search-bounds-001.md) | Tool runtime + workspace | **done:** shared 64 KiB body budget + explicit `fs-v1` incomplete outcomes passed reviews 01–10 cycle, final PASS/SHIP, merged-main Gate |
-| [h-integration-001](./plan/tasks/h-integration-001.md) | all prior modules + read/search bounds | **done:** retained Agent evidence; fresh 11-sentence final audit PASS; panel SHIP; merged-main Gate passed |
+| Task | Objective | Gate |
+|------|-----------|------|
+| `harness-events-001` | stable message/Tool/run lifecycle vocabulary | ordering + one terminal + mapping to Observer/headless; no internal-union serialization |
+| `harness-steering-001` | bounded steering/follow-up queues | deterministic insertion, ownership, cancel, transcript/session/trace evidence |
+| `session-fork-001` | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
 
-Phase H exits only after integration independently repeats the fresh 11-sentence closeout against [maturity § production-floor exit](./maturity.md#phase-h-production-floor-exit). Shell/provider/edit/read-search/REPL suites and the `h-integration-001` closeout promote Phase H to L2 for single-user trusted-host scope only; they do not automatically promote SDK-ready or headless-ready.
+This milestone aligns the smallest valuable Pi Harness semantics. It does **not** add subagents, Graph, provider hooks, or a new wire-compatible RPC protocol.
 
-## Post-H gates
+### M2 — Selected daily UX
 
-### Zig SDK-ready
+| Task | Objective | Deliberate limit |
+|------|-----------|------------------|
+| `skills-001` | passive `SKILL.md` discovery + bounded prompt injection | no executable privilege/package manager |
+| `edit-sharpness-001` | patch-grade edit + review/verification | no AST/LSP suite or multi-tool expansion |
+| `tui-minimal-001` | streaming text, multiline input, Tool/permission/error cards | no dashboard/theme/image/plugin platform |
 
-Decision: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md). Task: [sdk-contract-001](./plan/tasks/sdk-contract-001.md) — **done/L2** at `ebdd7ab`.
+Minimal TUI depends on the event/control contracts; it must only assemble Kernel APIs and keep plain/headless Gates green.
 
-Required conditions are now satisfied:
+## Extension release ladder (D-010)
 
-- high-level custom Toolset/Observer/policy injection ✅
-- stateful Tool and documented lifetimes ✅
-- stable errors/events/per-run cancel/session contract ✅
-- repository-owned external consumer CI ✅ (`tests/sdk-consumer-fixture/` 7/7)
-- package self-contained tests ✅
+| Rung | Surface | Gate |
+|------|---------|------|
+| E0 | trusted static Zig Toolset/Provider/Observer/policy | already covered by SDK-ready L2 |
+| E1 | passive Skills | M2 `skills-001`; jailed discovery + budget + no execute |
+| Events | optional trusted static deny-only hooks | lifecycle event contract first; no runtime loading claim |
+| Supervisor | bounded child ownership | C7.1, only after concrete runtime-extension consumer |
+| E2 | trusted local `zag-ext-v1` process extension | supervisor + versioned protocol + D-007 composition |
+| Untrusted native | downloaded/third-party process | additionally required OS enforcement; no downgrade |
+| WASM | optional portable/untrusted research | concrete use case + runtime/host capability Gate |
 
-A second consumer and release channel are still required before repo mirror/semver publication.
+No dynamic Zig library ABI, embedded Lua/QuickJS/Bun, Pi package-manager parity, or arbitrary extension-rendered TUI.
 
-### Headless/process interface
+## Capability domains after D-009
 
-Task: [headless-001](./plan/tasks/headless-001.md) — **done/L2** at `a1a1e0f`. Contract: [modules/headless-contract.md](./modules/headless-contract.md).
+| Domain | Near-term slice | Deferred |
+|--------|-----------------|----------|
+| C4 Edit | `edit-sharpness-001` in M2 | multi-file transactions, AST/LSP |
+| C5 Context | session fork in M1 | repo map until measured need; LLM summary optional; Memory default-off |
+| C6 Control/Orchestration | steering/follow-up in M1 | Oracle, executable subagents, Graph |
+| C7 Process/Sandbox | none | process supervisor only when executable/background use appears; OS enforcement after that |
+| C8 Extensions | E0 static SDK already; E1 passive Skills in M2 | runtime hooks/commands/MCP via E2 `zag-ext-v1` only after C7.1; WASM research only |
+| C9 Product shell | minimal TUI in M2 | ACP, dashboard, themes/images/full configuration UX |
 
-Required conditions are now satisfied:
+The detailed phase docs describe domain constraints. A deferred item is not an implied future commitment.
 
-- machine-clean JSON/streaming JSON (`headless-v1`) ✅
-- stable structured errors and headless-only exit codes ✅
-- auth/session/save/cancel/timeout/sandbox-unavailable matrix ✅
-- CI end-to-end process fixture under both HTTP backends ✅
-- default one-shot mode behavior unchanged ✅
+## Re-entry triggers for deferred work
 
-ACP/editor integration follows this versioned process contract; it does not require a stable Zig dynamic ABI.
+| Capability | Required trigger before planning |
+|------------|----------------------------------|
+| Repo map | measured medium-repo file-selection failure that current search/context cannot close |
+| Oracle | repeated real weak-model dead ends and a pinned stronger-model budget |
+| Process supervisor | background child, executable extension, or mid-flight process cancellation use case |
+| OS sandbox | required higher-autonomy/untrusted execution profile after supervisor exists |
+| E2 process extensions / MCP / runtime hooks | concrete local extension consumer + C7.1 supervisor; untrusted native additionally needs C7.2 OS enforcement |
+| ACP/editor | a real editor host willing to consume versioned process semantics |
+| Memory | repeated cross-session retrieval use case with delete/audit requirements |
+| Graph/subagents | repeated orchestration shape that cannot be expressed by one Loop + steering |
+| New provider/OAuth | named user/provider requirement and wire contract fixture |
 
-## Capability track — dependency rules
+## Quality rules
 
-### C4 — Edit sharpness
-
-Spec: [C4-edit-sharpness](./phases/C4-edit-sharpness.md).
-
-May start after H edit/containment correctness. It does not depend on Memory or Graph.
-
-- hashline/apply_patch-grade path;
-- hunk review;
-- post-edit verification;
-- multi-file partial-failure policy.
-
-### C5 — Context engineering
-
-Spec: [C5-context](./phases/C5-context.md).
-
-- **C5.1 repo map** and **C5.2 fork** follow safe session/context contracts and may overlap C4.
-- C5.3 LLM summary remains optional.
-- C5.4 Memory Repo remains default-off and later; it is not a Phase H or SDK prerequisite.
-
-### C6 — Oracle/subagents/Graph
-
-Spec: [C6-orchestration](./phases/C6-orchestration.md).
-
-- Read-only Oracle may follow stable event/cancel/session/headless contracts.
-- Full executable subagents require process ownership, budgets, cancellation, and an explicit safety policy.
-- Graph is optional orchestration around Loop; it never replaces the default coding Loop.
-
-### C7 — Sandbox/process supervisor
-
-Spec: [C7-sandbox](./phases/C7-sandbox.md).
-
-May develop in parallel after H safety semantics stabilize. It is not required for narrowly scoped trusted-host L2, but it blocks:
-
-- higher-autonomy/yolo production claims;
-- autonomous background processes;
-- untrusted executable hooks/MCP;
-- executable multi-agent fan-out.
-
-A mode that requires enforcement fails closed if the platform/profile cannot enforce it.
-
-### C8 — Extensions
-
-Spec: [C8-extensions](./phases/C8-extensions.md).
-
-Split by risk:
-
-- passive Skills/prompt packages can arrive after injection/budget contracts;
-- hooks and MCP Tool registration require D-007 descriptors;
-- executable servers require process-supervisor and permission/sandbox policy.
-
-### C9 — Product shell
-
-Spec: [C9-product-shell](./phases/C9-product-shell.md).
-
-Headless moved to an earlier gate. C9 retains optional TUI, diff UX, dashboard, and polished ACP/editor integration. Product UI only assembles Kernel APIs.
-
-## Quality (cross-cutting)
-
-- [evals](./quality/evals.md): goldens, P0 fault/security fixtures, SDK/headless E2E.
-- [provider contracts](./quality/contracts.md): wire/error/retry/deadline/cancel/partial Tool safety.
-- Every fixed P0/P1 failure remains a permanent CI regression.
+- Every fixed P0/P1 and public process/SDK behavior remains a permanent regression.
+- External Pi/legacy assets are untrusted reference data; no execution or dependency is introduced by research.
+- Imported code/data/goldens require exact commit/path, MIT notice, and a scoped relevance test.
+- std/curl capability differences remain explicit.
+- No performance/startup/size/cross-build claim before a reproducible benchmark Gate.
 
 ## Packaging
 
 | Action | Timing |
 |--------|--------|
-| Keep current monorepo package boundaries | now |
-| Add Tool runtime descriptor contract | Phase H P0 |
-| External consumer fixture | ✅ SDK gate closed |
-| Split `zag-tools`/`zag-workspace` | only after the relevant APIs stabilize and a real dependency reason exists |
-| Repo mirror / semver publication | SDK gate closed + second consumer + release channel |
-| C ABI / dynamic plugin ABI | no current commitment; prefer process protocol |
+| Keep current monorepo/package boundaries | now |
+| Add new package | only after real ownership/dependency pressure; no empty future packages |
+| Repo mirror / semver publication | second real consumer + release channel |
+| C/Zig dynamic plugin ABI | no current commitment; prefer versioned process contracts |
 
-## Stop-doing until P0/P1 close
+## Stop doing
 
-- provider/catalog breadth without a user requirement;
-- Graph, Memory Repo, TUI, full LSP/AST, background jobs;
-- mid-flight Tool/shell preemption disguised as provider work (it requires post-H process ownership/cleanup);
-- package/repo splitting for appearance;
-- unmeasured Zig performance/startup/cross-build claims;
-- production/L2/SDK-ready language based only on green happy-path tests.
+- chasing Pi’s provider count, OAuth surface, CLI flags, package manager, TS-RPC, or release cadence;
+- reviving/merging the historical parity port as Zag’s implementation base;
+- implementing Oracle/Graph/Memory/MCP/sandbox/dashboard because a competitor has them;
+- adding business logic to `main`/TUI/CLI instead of the owning package;
+- claiming graceful cancellation where only cooperative flags exist;
+- unmeasured Zig marketing claims.

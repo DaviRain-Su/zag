@@ -18,9 +18,10 @@
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | core `workspace` + `shell_policy` + `redact.zig` | C7 sandbox |
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
 | [trace-observability.md](./trace-observability.md) | H7 | core `trace.zig` + redaction | 保持 |
-| [memory.md](./memory.md) | **C5**（前置 H4） | —（未实现） | `.zag/memory/` + agent 挂载点 |
+| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | `packages/zag-cli/src/cli.zig` + core cancel flag | 保持 signal UX 在产品层 |
+| [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
-| [extensions.md](./extensions.md) | C8 | — | 独立 extensions 层 |
+| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1/E2 unimplemented | no package until a real implementation owner exists |
 
 ### 包边界速查
 
@@ -63,8 +64,9 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [trace-observability.md](./trace-observability.md) | H7 | 审计 trace |
 | [sdk-contract.md](./sdk-contract.md) | SDK-ready | Public Zig source-composition contract（status: closed at `ebdd7ab`） |
 | [headless-contract.md](./headless-contract.md) | Headless Gate **L2** | Public JSON/NDJSON process contract + exit matrix; closed at `a1a1e0f` |
-| [memory.md](./memory.md) | C5 stub | Memory Repo（跨 session；默认可关） |
+| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | REPL/one-shot input ownership and Ctrl+C lifecycle |
+| [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
-| [extensions.md](./extensions.md) | C8 stub | Skills / Hooks / MCP |
+| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK + E1 Skills + future E2 `zag-ext-v1` process extensions |
 
 总览：[../maturity.md](../maturity.md) · [../phases/H-harden.md](../phases/H-harden.md) · [../phases/C5-context.md](../phases/C5-context.md)  

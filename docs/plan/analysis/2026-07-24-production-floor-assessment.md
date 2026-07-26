@@ -7,7 +7,7 @@
 | Baseline | Local `main` on 2026-07-24 |
 | Delivery rule | Correctness before capability breadth |
 
-> **Historical snapshot:** findings below describe the accepted pre-task baseline. Current completion truth lives in [the task index](../README.md) and [maturity](../../maturity.md); completed items are not reopened by this preserved assessment record.
+> **Historical snapshot:** findings below describe the accepted pre-task baseline. Current completion truth lives in [the task index](../README.md) and [maturity](../../maturity.md); completed items are not reopened by this preserved assessment record. Its All-in-One direction is superseded by [D-009](../../decisions/active/D-009-pi-semantics-not-parity-fork.md) and the [2026-07-26 Pi alignment](./2026-07-26-pi-zig-alignment.md).
 
 ## Verdict
 

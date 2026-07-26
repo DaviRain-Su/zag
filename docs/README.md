@@ -20,8 +20,9 @@ vision → maturity（看清自己在哪）
 | 文档 | 作用 |
 |------|------|
 | [INDEX.md](./INDEX.md) | **桶地图** + lint / score 说明 |
-| [vision.md](./vision.md) | 双轨定位（Kernel SDK × All-in-One）、吸收原则 |
-| [packaging.md](./packaging.md) | 包分层与拆包设计（对齐 Grok Build workspace） |
+| [vision.md](./vision.md) | Pi-inspired Zig-native Harness 定位、吸收/删减原则 |
+| [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) | static Zig / passive packages / `zag-ext-v1` 扩展边界 |
+| [packaging.md](./packaging.md) | Harness × Kernel SDK 包分层与拆包纪律 |
 | [maturity.md](./maturity.md) | **真理源**：子系统 L0–L3 成熟度矩阵 |
 | [roadmap.md](./roadmap.md) | Teaching / Phase H / Capability / Quality |
 | [architecture.md](./architecture.md) | **钉死**：Loop⊂Graph、WireAdapter、Agent/Memory/产品壳分层 |
@@ -40,7 +41,8 @@ vision → maturity（看清自己在哪）
 | [modules/memory.md](./modules/memory.md) | **Memory Repo**（C5；H 不做；默认可关） |
 | [modules/sdk-contract.md](./modules/sdk-contract.md) | **SDK Public Contract**（SDK-ready Gate closed at `ebdd7ab`） |
 | [modules/headless-contract.md](./modules/headless-contract.md) | **Headless/Process SDK Contract**（`headless-v1` JSON/NDJSON + exit matrix） |
-| [phases/](./phases/) | Phase H 与 Capability C4–C9 |
+| [modules/cli-interaction.md](./modules/cli-interaction.md) | plain CLI/REPL 输入与 Ctrl+C 生命周期 |
+| [phases/](./phases/) | Phase H 与 capability domains C4–C9 |
 | [quality/](./quality/) | golden / security eval / provider 合同 / 生成评分报告 |
 
 ## 包边界（实现时）

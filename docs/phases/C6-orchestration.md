@@ -1,49 +1,51 @@
-# C6 — Orchestration / Oracle / Graph
+# C6 — Interactive Control / Optional Orchestration
 
 | 项 | 内容 |
 |----|------|
-| 前置 | Phase H lifecycle/session correctness + SDK/headless event contract；executable subagents 另依赖 process supervisor/safety policy |
-| 失败模式 | 弱模型硬撑；子代理散文不可用；大任务无计划 |
-| 模块 | [subagents-oracle](../modules/subagents-oracle.md) |
-| 架构 | [Loop ⊂ Graph](../architecture.md#loop--graph多角色编排) |
-| 对标设计 | Hyper `design-oracle.md`（对话点名；不做 `/oracle`） |
+| 前置 | Phase H lifecycle/session + SDK/headless event contracts ✅；executable agents 另依赖 process supervisor |
+| 近期路线位置 | M1 `harness-events-001` → `harness-steering-001` |
+| 失败模式 | 运行中的 Agent 无法接收纠偏；结束时无法排入 follow-up；复杂编排反客为主 |
+| 模块 | [loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
 
 ## 目标
 
-主会话可用便宜/日常模型干活；卡住时请到**更强只读 Oracle**；计划与子代理有界。  
-可选 **Graph/DAG 编排** 表达多角色拓扑；**每个 agentic 节点内部仍是 Agent Core Loop**。
+先实现 Pi Harness 的最小 interactive-control 语义：有界 steering 与 follow-up。Oracle、subagents、Graph 不是当前产品承诺。
 
-Delivery order inside C6:
+## 近期范围
 
-1. read-only Oracle over stable lifecycle/headless contract;
-2. bounded typed subagents with explicit process ownership/cancel;
-3. optional Graph only after repeated real orchestration shapes justify it.
+1. 先定义 message/Tool/run 生命周期事件与 ordering；
+2. bounded steering queue：在明确的 turn/Tool boundary 注入纠偏；
+3. bounded follow-up queue：Agent 将结束时追加工作；
+4. queue ownership、cancel、session/trace projection 和 overflow behavior 显式；
+5. 单 Agent Loop 仍是默认和完整路径。
 
-## 范围
+## Deferred
 
-1. Subagent runtime：explore / plan / general；独立 transcript；预算  
-2. Typed / `output_schema` 回传  
-3. **Oracle：** 只读；`[subagents.models] oracle = …` pin；未 pin 或同模型 → warn  
-4. 触发：连续失败 / 架构抉择 / **用户对话点名 oracle**（强制服从 spawn）  
-5. Plan mode 产品化（接 H3 语义）：里程碑 + 验收清单字段  
-6. Turn：cancel 已有则补 steer（中途纠偏）  
-7. Graph（可分期）：handoff / join / 失败回边；确定性 gate 与 LLM 节点混排  
+- read-only Oracle；
+- executable explore/plan/general subagents；
+- typed schema handoff；
+- plan-mode product UX；
+- Graph/DAG/handoff/join；
+- mid-flight Tool/shell preemption。
 
-## 非目标
+任何 deferred 项重启前都需要 [roadmap re-entry trigger](../roadmap.md#re-entry-triggers-for-deferred-work) 和独立 task。
 
-- Amp 四档 Modes  
-- 默认每步 Advisor（可后置，默认关）  
-- `/oracle` slash  
-- 用 Graph **替换** 单 agent coding Loop（Loop 仍是默认路径与节点引擎）  
-- 在未完成 H 时实现 Graph 运行时  
+## Invariants
+
+- steering/follow-up 不绕过 permission、workspace、context validation；
+- queue 有明确容量和 deterministic overflow result；
+- message ownership 跨 run/arena 边界安全；
+- cancel 后不执行未接受的 queued work；
+- transcript/session/trace 对实际注入内容一致；
+- UI/headless 只消费事件，不实现 queue business logic。
 
 ## 验收
 
-- [ ] fixture：两轮红测 → 应 spawn oracle（评测可 mock）  
-- [ ] 用户说「用 oracle …」→ 必须 spawn，不得硬撑  
-- [ ] Oracle 与父模型相同时非致命 warn  
-- [ ] plan 文件含可勾选验收项  
+- [ ] deterministic fixture pin 住每个 insertion point；
+- [ ] full/all 与 one-at-a-time（若都提供）顺序明确；
+- [ ] queue overflow/cancel/OOM 不丢失终态；
+- [ ] plain/headless/SDK 观察到一致语义。
 
 ## 对标
 
-Amp Oracle；Hyper design-oracle；omp typed subagents  
+Current Pi + historical `pi-mono-zig` 的 steering/follow-up 行为。重新实现到 Zag Loop/ownership model，不搬 god-object Agent。

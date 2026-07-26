@@ -32,8 +32,9 @@
 
 | 项目 | 学什么 | 优先 |
 |------|--------|------|
-| **[Pi](https://github.com/earendil-works/pi)**（**主对照**） | 包分层、agent loop、session 树、compaction、extensions/skills；**不 fork 扩核** | **H4 · H1 心智 · C5 · C8** |
-| **Hyper / Grok Build**（本机如 `~/orca/hyper-grok-build`） | 工业 harness 上限；权限/沙箱/hashline | 全程；H/C 深读 |
+| **[Pi](https://github.com/earendil-works/pi)**（**主行为对照**） | agent lifecycle/events、steering/follow-up、session tree、Skills、terminal Harness；固定快照见 D-009 | M1/M2；不追 API/版本/功能表 |
+| **[DaviRain-Su/pi-mono-zig](https://github.com/DaviRain-Su/pi-mono-zig)**（历史 Zig 档案） | Zig 0.16 events/session/TUI/SignalGuard/golden 设计与 failure vectors | read-only at `9d1f78c`; 不恢复 parity fork |
+| **Hyper / Grok Build**（本机如 `~/orca/hyper-grok-build`） | 单向依赖、quarantine、安全/进程边界 | 按需；不采用 batteries-included 范围 |
 | [omp / Oh My Pi](https://github.com/can1357/oh-my-pi) | 在 Pi 上的 meta-harness；hashline、LSP、typed subagent | C4、C6 |
 | [Nanocodex](https://github.com/gakonst/nanocodex) | Turn/steer/fork、行为合同、Code Mode（研究） | Quality、C6 |
 | [Aider](https://github.com/Aider-AI/aider) | repo map、git 边界 | C4、C5 |
@@ -54,7 +55,7 @@
 | docs: [compaction](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md)、[sessions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sessions.md)、[extensions](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md) | 深度规格 | H4 / C5 / C8 |
 
 Pi **故意不做**（用扩展/容器代替）：核内 MCP、sub-agent、permission popup、plan mode。  
-Zag **保留** teaching 级 permission + jail + shell_policy，并在 Phase H 硬化——不是纯 Pi 极简安全模型。
+Zag 保留并已硬化 permission/jail/shell/redaction/trace；这些 Zig-native contracts 不为 Pi parity 弱化。当前关系以 [D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md) 为准。外部仓库按非可信只读资料处理，不执行、不作构建依赖。
 
 ### Hyper 本机入口
 

@@ -1,48 +1,59 @@
-# C9 — Product Shell
+# C9 — Minimal Product Shell
 
 | Item | Content |
 |------|---------|
-| Prerequisite | Phase H + independent headless/process Gate; C4–C6 only as needed by a specific UI |
-| Failure mode | Kernel works but daily/editor UX is weak or duplicates business logic |
-| Reference | Hyper pager/dashboard/ACP |
+| Prerequisite | Headless/Process L2 ✅；minimal TUI additionally needs stable lifecycle events/control |
+| Near-term slice | M2 `tui-minimal-001` |
+| Failure mode | plain CLI is too weak for daily use, or UI duplicates Kernel business logic |
+| Reference | Current Pi + historical `pi-mono-zig` terminal behavior (design only) |
 
-## Scope split
+## Existing machine shell
 
-Headless automation is **not deferred to late C9**. It is an earlier post-H Gate defined by [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md), [headless-001](../plan/tasks/headless-001.md), and the [`headless-v1` process contract](../modules/headless-contract.md):
+Headless is already an independent closed Gate:
 
-- clean JSON/streaming JSON;
-- versioned events;
-- stable errors/exit codes;
-- process E2E fixtures.
+- `--json` single terminal envelope;
+- `--json-stream` NDJSON with one terminal;
+- `headless-v1` versioned errors/exit codes;
+- real-process fixtures under both HTTP backends。
 
-C9 starts only after that machine contract exists and focuses on optional product UX.
+Contract: [headless](../modules/headless-contract.md).
 
-## C9 goals
+## Scheduled minimal TUI
 
-1. Optional TUI: streaming text, Tool cards, permission prompts, diff/review pane.
-2. Polished ACP/editor integration over the existing process contract.
-3. Lightweight local dashboard for session cost/Tool timing/trace inspection.
-4. Config UX/migration on top of versioned config contracts.
+Only after `harness-events-001` and `harness-steering-001`:
+
+1. streaming assistant text;
+2. multiline input/history;
+3. Tool call/result cards;
+4. permission/cancel/error state;
+5. basic session identity/resume indication。
 
 ## Invariants
 
-- Product shells assemble Kernel APIs; they do not implement loop, permission, session, or provider business logic.
-- TUI and plain/headless modes expose the same correctness and errors.
-- stdout protocol remains uncontaminated by logs.
-- UI closure/drop cannot invent a successful run terminal state.
-- No cloud collaboration requirement.
+- product shell only assembles public Kernel/coding-agent APIs;
+- plain/headless/TUI expose the same permission/error/session truth;
+- UI close/drop cannot invent completed success;
+- headless stdout remains uncontaminated;
+- TUI can be disabled without changing Kernel builds/tests。
 
-## Acceptance
+## Deferred
 
-- [x] headless Gate remains green while C9 is enabled/disabled;
-- [ ] TUI (if shipped) can complete core tasks without losing permission/error/session behavior;
-- [ ] ACP/editor path negotiates protocol version and uses stable process errors;
-- [ ] dashboard reads versioned trace rather than private Agent memory;
-- [ ] CLI/help/config docs match behavior.
+- ACP/editor host;
+- dashboard/cost explorer;
+- themes, images, custom widgets, full overlay framework;
+- package manager/extension UI;
+- cloud collaboration/i18n breadth。
+
+## Acceptance for `tui-minimal-001`
+
+- [ ] core prompt→Tool→result flow works without losing permission/error/session semantics;
+- [ ] Ctrl+C behavior follows [CLI interaction](../modules/cli-interaction.md);
+- [ ] lifecycle rendering comes from events, not private Agent memory;
+- [ ] plain/headless dual-backend Gates remain green;
+- [ ] Kernel packages do not import TUI。
 
 ## Non-goals
 
-- Loop implementation in UI
-- First-release 10-language i18n
-- Cloud thread/collaboration platform
-- Dynamic Zig plugin ABI
+- copying the old vaxis product wholesale;
+- Loop/session/permission implementation in UI;
+- dynamic Zig plugin ABI。

@@ -1,9 +1,6 @@
 # 2026 Harness Landscape → Zag gap map
 
-> **决策修订（2026-07-24 晚）：** 本文写作时以 Pi 为 primary reference。定位已修订为
-> **双轨：Kernel SDK × All-in-One（主蓝本 = Grok Build 包分层）**，Pi 降级为
-> loop/session/compaction 的叙述参考；其「最小默认工具面」哲学**不采纳**。
-> 见 [vision.md](../vision.md) 与 [packaging.md](../packaging.md)。本文其余内容作研究存档保留。
+> **Superseded positioning (2026-07-26):** this frozen 2026-07-24 scan predates [D-009](../decisions/active/D-009-pi-semantics-not-parity-fork.md). Zag is now a **Pi-inspired Zig-native Agent Harness**, not an All-in-One target or parity fork. The landscape observations remain archival evidence; current scope lives in [vision](../vision.md) and [roadmap](../roadmap.md).
 
 > **Research freeze:** 2026-07-24.  
 > Sources: [earendil-works/pi](https://github.com/earendil-works/pi), X/Twitter, GitHub awesome lists, 2026 harness engineering posts.  

@@ -1,35 +1,35 @@
-# Zag 包分层与拆包设计（Kernel SDK × All-in-One）
+# Zag 包分层与拆包设计（Pi-inspired Harness × Kernel SDK）
 
 | 项 | 内容 |
 |----|------|
 | 状态 | **Active design**；包边界已落地，SDK-ready Gate 已闭合；发布 Gate 仍开放 |
-| 对标 | Grok Build 单向 workspace discipline；不复制 crate 粒度 |
+| 对标 | Pi Harness 语义 + Grok Build 单向 workspace discipline；不复制源码/API/包粒度 |
 | 决策 | **单 monorepo 多包**；拆 repo 是发布动作，不是架构动作；见 [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) |
 
 ---
 
-## 0. 定位修正
+## 0. 产品与包边界
 
-此前文档偏向 Pi 的「最小内核」叙事。**修正为 Grok Build 路线：**
+[D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md) 将 Zag 定位为 **Pi-inspired Zig-native Agent Harness**，而不是 all-in-one 或 parity fork：
 
-1. **产品目标 = all-in-one**：工具、子代理、沙箱、扩展、TUI 都是一等目标，不做「刻意极简」。
-2. **实现纪律 = 严格分层**：功能多不等于泥球；每个能力落进一个小包，依赖只准朝下。
-3. **SDK 目标 = 内核可嵌入**：`zag-agent-core` 的 low-level composition 已可行；SDK-ready Gate 已闭合，其 public surface 获得兼容承诺（不含 semver/C ABI/dynamic plugin ABI），不能把所有下层包自动视为已发布 SDK。
-4. Pi 保留的只有一条：**扩展验证纪律**（新工作流先 skill/plugin 验证再内置）——不再作为「默认面要小」的依据。
+1. **产品目标 = 小而完整的 Harness**：只把已复现失败所需的能力放进近期产品面。
+2. **实现纪律 = 严格分层**：每个能力有 owner 包、failure contract 和独立 Gate；依赖只准朝下。
+3. **SDK 目标 = 内核可嵌入**：`zag-agent-core` low-level composition 与 high-level injection 已闭合 SDK-ready Gate；不等于所有未来包都自动成为发布 API。
+4. **参考纪律 = 行为对齐，不追源码/API/功能表**：current Pi 与旧 `pi-mono-zig` 是固定快照参考，不是依赖或同步上游。
 
 ```text
-      All-in-One 产品（zag bin / TUI / headless）
+      Zag 产品 Harness（plain/headless/later minimal TUI）
               ▲  组装
-      Kernel composition → SDK-ready ✅（zag-agent-core + selected domain APIs）
+      Kernel composition → SDK-ready ✅（zag-agent-core + selected APIs）
               ▲  依赖
-      契约层（types / tool-protocol）
+      契约层（zag-types / Tool runtime metadata）
 ```
 
-两个客户，一套代码：自己的产品是 SDK 的第一个、也是要求最苛刻的用户。
+两个客户，一套代码：本地 Zag 产品与 Zig SDK consumer。产品是 Kernel 的第一个、也是最严格的消费者。
 
 ---
 
-## 1. Grok Build 分层（依赖证据）
+## 1. 外部分层纪律参考（Grok Build）
 
 从 workspace Cargo.toml 实测的依赖方向：
 
@@ -68,7 +68,7 @@ L2 领域服务      openai-zig          HTTP SDK ✅
                  zag-tools           fs/edit/grep/shell 实现（今在 coding-agent/runtime；H2 稳定后拆出）
                  zag-workspace       jail · git · worktree（今在 agent-core；H5 稳定后拆出）
                  zag-sandbox         OS 沙箱（C7 新包）
-                 zag-hooks / zag-mcp / zag-memory / zag-compaction（C 轨按需新包）
+                 future extension/memory/compaction packages（仅真实 ownership pressure 时创建）
 L3 产品 harness  zag-coding-agent ✅  Agent/Session 外观 · 默认 toolset · WireProvider 桥 · runtime tools
 L4 内核 ★low-level composition
                  zag-agent-core ✅    loop · 纯 Provider 端口 · session · policy · trace（**仅依赖 zag-types**）
@@ -165,7 +165,7 @@ var agent = zag.Agent.init(gpa, io, provider, .{
 });
 ```
 
-Cross-language hosts use the later process/headless contract. No stable C ABI, Zig dynamic ABI, or in-process dynamic plugin ABI is promised.
+Cross-language hosts use versioned process contracts. [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) distinguishes outward `headless-v1` from future inward `zag-ext-v1`; neither promises a stable C ABI, Zig dynamic ABI, or in-process dynamic plugin ABI.
 
 ---
 
@@ -187,5 +187,5 @@ Cross-language hosts use the later process/headless contract. No stable C ABI, Z
 ## 相关
 
 - [architecture.md](./architecture.md) — 分层图（与本文件一致）
-- [vision.md](./vision.md) — 双轨定位
+- [vision.md](./vision.md) — Pi-inspired Harness × Kernel SDK 定位
 - [roadmap.md](./roadmap.md) — 阶段推进
