@@ -695,6 +695,106 @@ test "coding.session_store canonical symbol resolves from external consumer" {
     _ = E; // ownership/compile assertion only; no behavior exercised.
 }
 
+// ── session-fork-001: mandatory public fork API + durable smoke ───────────────
+//
+// External consumer imports coding-agent by module name only; exercises
+// `Session.fork` and durable create + resume. No Core fork imports.
+
+test "session-fork: public Session.fork + durable create/resume smoke" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-sdk-session-fork";
+    const parent_path = ".zag-test-sdk-session-fork/parent.jsonl";
+    const child_path = ".zag-test-sdk-session-fork/child.jsonl";
+    std.Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    std.Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer std.Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    // Compile assertion: ForkError is public on coding-agent.
+    const FE = coding.ForkError;
+    _ = FE;
+
+    const MockProvider = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const coding.message.Message,
+            _: []const coding.tool.Definition,
+            _: coding.provider.RequestControl,
+        ) coding.provider.ChatError!coding.message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "fork-smoke"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: MockProvider = .{};
+    const provider = coding.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = MockProvider.chat },
+    };
+
+    var agent = try coding.Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+    });
+    defer agent.deinit();
+
+    var parent = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .path = parent_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    defer parent.deinit();
+
+    try parent.transcript.appendUser("before-fork");
+    try parent.save();
+    const parent_bytes = try std.Io.Dir.cwd().readFileAlloc(io, parent_path, gpa, .limited(64 * 1024));
+    defer gpa.free(parent_bytes);
+
+    {
+        var child = try parent.fork(child_path);
+        defer child.deinit();
+
+        // Parent durable bytes unchanged after fork
+        const parent_after = try std.Io.Dir.cwd().readFileAlloc(io, parent_path, gpa, .limited(64 * 1024));
+        defer gpa.free(parent_after);
+        try std.testing.expectEqualStrings(parent_bytes, parent_after);
+
+        try std.testing.expect(child.path != null);
+        try std.testing.expectEqualStrings(child_path, child.path.?);
+
+        // Durable smoke: child reply + save path (auto on reply) then resume
+        const result = try agent.reply(&child, "from-child");
+        try std.testing.expectEqualStrings("fork-smoke", result.final_text);
+        try std.testing.expectEqual(coding.loop.StopReason.completed, result.stop_reason);
+    }
+
+    // Resume child durable state after child writer released
+    var resumed = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .path = child_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+
+    var saw_before = false;
+    var saw_from_child = false;
+    for (resumed.transcript.items()) |m| {
+        if (m.role == .user and std.mem.eql(u8, m.content, "before-fork")) saw_before = true;
+        if (m.role == .user and std.mem.eql(u8, m.content, "from-child")) saw_from_child = true;
+    }
+    try std.testing.expect(saw_before);
+    try std.testing.expect(saw_from_child);
+
+    // Parent still valid after child deinit
+    try std.testing.expectEqualStrings(parent_path, parent.path.?);
+}
+
 // ── D-011 seam composition fixtures ──────────────────────────────────────────
 
 test "low-level core: explicit five-seam permissive composition" {

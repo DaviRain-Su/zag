@@ -411,6 +411,12 @@ pub const Session = struct {
         return null;
     }
 
+    /// Const-safe borrow of the owned redactor (session-fork-001). No mutation.
+    pub fn activeRedactorConst(self: *const Session) ?*const redact_mod.Redactor {
+        if (self.owned_redactor != null) return &self.owned_redactor.?;
+        return null;
+    }
+
     /// Clone `src` into this session (replaces any prior owned policy).
     pub fn adoptRedactorClone(self: *Session, src: *const redact_mod.Redactor) error{OutOfMemory}!void {
         const cloned = try src.clone(self.gpa);
@@ -432,7 +438,172 @@ pub const Session = struct {
             }, r);
         }
     }
+
+    /// Idle-only durable fork (session-fork-001). Parent is unchanged on every
+    /// success and every failure. `child_path` is a distinct lexical relative path.
+    /// Receiver is `*const Session`: no parent mutation and no const-cast to
+    /// call mutable `activeRedactor`. Exclusive `createNewWithRedactor` only.
+    pub fn fork(self: *const Session, child_path: []const u8) ForkError!Session {
+        const gpa = self.gpa;
+        const io = self.io;
+
+        // 1. validate child_path (lexical relative)
+        try session_store.validateSessionPath(child_path);
+
+        // 2. same-as-parent durable path → typed AlreadyExists; never replace parent.
+        // Honest mapping: same path is AlreadyExists (not Busy), even when parent
+        // holds the writer lease on that path.
+        if (self.path) |pp| {
+            if (std.mem.eql(u8, pp, child_path)) return error.SessionAlreadyExists;
+        }
+
+        // Null product redactor: fail-closed **before** any durable create
+        // (typed path; no panic dependency, no createNewUnredacted).
+        const parent_redactor = self.activeRedactorConst() orelse return error.OutOfMemory;
+
+        // 3. heap-stable arena (gpa.create), same as Session.start
+        const arena_impl = gpa.create(std.heap.ArenaAllocator) catch return error.OutOfMemory;
+        arena_impl.* = .init(gpa);
+        errdefer {
+            arena_impl.deinit();
+            gpa.destroy(arena_impl);
+        }
+        const arena = arena_impl.allocator();
+
+        // 4. empty DualQueues (do not copy parent pending); preallocate before create I/O
+        var control_queues = try control_queue_mod.DualQueues.init(gpa);
+        errdefer control_queues.deinit(gpa);
+
+        // 5. const-safe Redactor.clone (field path / *const accessor; no const-cast)
+        var owned_redactor = try parent_redactor.clone(gpa);
+        errdefer owned_redactor.deinit();
+
+        // 6. deep-copy transcript + live layers (not JSONL roundtrip)
+        var transcript = transcript_mod.Transcript.init(arena);
+        try deepCopyTranscriptInto(arena, self.transcript.items(), &transcript);
+
+        const base_system = arena.dupe(u8, self.base_system) catch return error.OutOfMemory;
+        const project_body = arena.dupe(u8, self.project_body) catch return error.OutOfMemory;
+        // project_source points at static candidates; rebind, do not free/dupe required
+        const project_source = self.project_source;
+        const compaction_gen = self.compaction_gen;
+        const compaction_summary: ?[]const u8 = if (self.compaction_summary) |s|
+            arena.dupe(u8, s) catch return error.OutOfMemory
+        else
+            null;
+        // zag_version is borrowed/static; rebind same pointer bytes
+        const zag_version = self.zag_version;
+
+        // 7. Session.path independent of Writer.path
+        const path_owned = gpa.dupe(u8, child_path) catch return error.OutOfMemory;
+        errdefer gpa.free(path_owned);
+
+        // 8. SessionMeta (schema v1)
+        const meta: session_store.SessionMeta = .{
+            .schema_version = session_store.current_schema_version,
+            .zag_version = zag_version,
+            .compaction_gen = compaction_gen,
+            .compaction_summary = compaction_summary,
+        };
+
+        // 9. sole durable fallible step (create_new + redaction only)
+        const redactor_ref: *const redact_mod.Redactor = &owned_redactor;
+        const writer = try session_store.createNewWithRedactor(
+            gpa,
+            io,
+            Io.Dir.cwd(),
+            child_path,
+            transcript.items(),
+            meta,
+            redactor_ref,
+        );
+        // 10. infallible assembly only after successful create
+        return .{
+            .gpa = gpa,
+            .io = io,
+            .arena_impl = arena_impl,
+            .transcript = transcript,
+            .path = path_owned,
+            .writer = writer,
+            .base_system = base_system,
+            .project_body = project_body,
+            .project_source = project_source,
+            .compaction_gen = compaction_gen,
+            .compaction_summary = compaction_summary,
+            .zag_version = zag_version,
+            .owned_redactor = owned_redactor,
+            .control_queues = control_queues,
+            .fail_next_note_compaction = if (builtin.is_test) false else {},
+        };
+    }
 };
+
+/// Typed errors for `Session.fork` (session_store vocabulary).
+pub const ForkError = session_store.Error;
+
+/// Deep-copy one live Message into `arena` (nested content / tool_calls /
+/// tool_call_id / content_parts). Always copies `tool_call_id` even when the
+/// parent live path aliases an assistant call id in the same arena.
+fn deepCopyMessage(arena: std.mem.Allocator, src: message.Message) error{OutOfMemory}!message.Message {
+    const content = arena.dupe(u8, src.content) catch return error.OutOfMemory;
+
+    var tool_calls: ?[]const message.ToolCall = null;
+    if (src.tool_calls) |calls| {
+        const out = arena.alloc(message.ToolCall, calls.len) catch return error.OutOfMemory;
+        for (calls, 0..) |c, i| {
+            out[i] = .{
+                .id = arena.dupe(u8, c.id) catch return error.OutOfMemory,
+                .name = arena.dupe(u8, c.name) catch return error.OutOfMemory,
+                .arguments = arena.dupe(u8, c.arguments) catch return error.OutOfMemory,
+            };
+        }
+        tool_calls = out;
+    }
+
+    var tool_call_id: ?[]const u8 = null;
+    if (src.tool_call_id) |id| {
+        tool_call_id = arena.dupe(u8, id) catch return error.OutOfMemory;
+    }
+
+    var content_parts: ?[]const message.ContentPart = null;
+    if (src.content_parts) |parts| {
+        const out = arena.alloc(message.ContentPart, parts.len) catch return error.OutOfMemory;
+        for (parts, 0..) |p, i| {
+            out[i] = switch (p) {
+                .text => |t| .{ .text = arena.dupe(u8, t) catch return error.OutOfMemory },
+                .image_url => |img| blk: {
+                    const url = arena.dupe(u8, img.url) catch return error.OutOfMemory;
+                    const detail: ?[]const u8 = if (img.detail) |d|
+                        arena.dupe(u8, d) catch return error.OutOfMemory
+                    else
+                        null;
+                    break :blk .{ .image_url = .{ .url = url, .detail = detail } };
+                },
+            };
+        }
+        content_parts = out;
+    }
+
+    return .{
+        .role = src.role,
+        .content = content,
+        .content_parts = content_parts,
+        .tool_calls = tool_calls,
+        .tool_call_id = tool_call_id,
+    };
+}
+
+fn deepCopyTranscriptInto(
+    arena: std.mem.Allocator,
+    src_items: []const message.Message,
+    dest: *transcript_mod.Transcript,
+) error{OutOfMemory}!void {
+    dest.messages.ensureTotalCapacity(arena, src_items.len) catch return error.OutOfMemory;
+    for (src_items) |m| {
+        const copied = try deepCopyMessage(arena, m);
+        dest.messages.append(arena, copied) catch return error.OutOfMemory;
+    }
+}
 
 // ── D-011 RunBridge: local owner of the five seam pointers for one reply ─────
 //

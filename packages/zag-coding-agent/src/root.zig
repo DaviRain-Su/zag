@@ -72,6 +72,12 @@ pub const Options = agent.Options;
 pub const OpenMode = agent.OpenMode;
 pub const ReplyError = agent.ReplyError;
 pub const OwnedResult = agent.OwnedResult;
+pub const ForkError = agent.ForkError;
+
+// session-fork-001: Gate fixtures (module §8 items 1–29)
+test {
+    _ = @import("session_fork_tests.zig");
+}
 
 pub const version = "0.5.0";
 

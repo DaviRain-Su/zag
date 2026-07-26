@@ -15,11 +15,26 @@ distinct lexical path with independent arena, deep-copied transcript (including
 live `content_parts`), independent redactor, empty control queues, exclusive
 `create_new` + redaction, and no Core fork API/state.
 
-Status `in-progress` means the **binding contract is authored and sharpened**;
-code implementation is a subsequent step. **No maturity row may be raised** by
-docs or by implementation happy paths.
+Status `in-progress` means the **binding contract is authored** and a **local
+implementation** lands under review; Gate closeout (independent review of code,
+ff-only merge, dual-backend root) remains open. **No maturity row may be raised**
+by docs or by implementation happy paths.
 
 Binding specification: [Session fork](../../modules/session-fork.md).
+
+## Implementation evidence (local, not closed)
+
+| Item | Evidence |
+|------|----------|
+| API | `Session.fork(*const Session, child_path) ForkError!Session` in `packages/zag-coding-agent/src/agent.zig` |
+| Arena | `gpa.create(ArenaAllocator)` then `.init(gpa)` (heap-stable) |
+| Deep-copy | live nested message/`content_parts`/layers; **not** JSONL roundtrip |
+| Create | sole durable step `createNewWithRedactor`; §5.1 **strategy A** = `session_store.testing.setFailNextCreateBody` (`builtin.is_test` only) |
+| Null redactor | typed `error.OutOfMemory` fail-closed before create (test-constructed) |
+| Same-path | `SessionAlreadyExists` (honest; not Busy) |
+| Fixtures | `packages/zag-coding-agent/src/session_fork_tests.zig` §8.1–29 |
+| SDK | `tests/sdk-consumer-fixture` fork + durable create/resume smoke |
+| Maturity | **L2 unchanged** |
 
 # context
 
@@ -125,30 +140,33 @@ sharpening included):
 - [x] `git diff --check` (docs-only commits)
 - [x] Explicit `git add` of intended docs/quality files only
 
-## Implementation Gate (future — **not** complete)
+## Implementation Gate (**local green**, closeout **not** complete)
 
 Must pass every fixture in
 [session-fork.md §8](../../modules/session-fork.md#8-verification-exact-fixture-list)
 items **1–29**, aligned with failure matrix **F-a…F-f**:
 
-| Items | Focus |
-|------:|-------|
-| 1–4 | Parent file/field equality on success **and** all faults |
-| 5–9 | Arena heap stability; **positive content_parts** live copy; nested non-alias; path dual-own deinit orders; live layers |
-| 10–13 | Post-compaction child reply; **parent reply after fork**; **ephemeral→durable**; tool-bundle pairing |
-| 14–16 | Queue isolation; redaction; child resume rows+compaction only (no layers/parts claim) |
-| 17–23 | InvalidPath; AlreadyExists; Busy; same-path typed result; prep OOM; **§5.1 create-body**; null redactor |
-| 24–28 | Lifecycle/Trace configured truth; Core no export; **mandatory SDK fork+durable smoke**; dual backend; **no maturity change** |
-| 29 | JSONL roundtrip is not deep-copy evidence |
+| Items | Focus | Local |
+|------:|-------|:-----:|
+| 1–4 | Parent file/field equality on success **and** all faults | yes |
+| 5–9 | Arena heap stability; **positive content_parts** live copy; nested non-alias; path dual-own deinit orders; live layers | yes |
+| 10–13 | Post-compaction child reply; **parent reply after fork**; **ephemeral→durable**; tool-bundle pairing | yes |
+| 14–16 | Queue isolation; redaction; child resume rows+compaction only (no layers/parts claim) | yes |
+| 17–23 | InvalidPath; AlreadyExists; Busy; same-path typed result; prep OOM; **§5.1 create-body**; null redactor | yes |
+| 24–28 | Lifecycle/Trace configured truth; Core no export; **mandatory SDK fork+durable smoke**; dual backend; **no maturity change** | partial† |
+| 29 | JSONL roundtrip is not deep-copy evidence | yes |
 
-Additional implementation checklist (maps to module, still unchecked):
+† Dual-backend root Gate deferred to coordinator after review. Local: coding-agent
+package tests, Core package tests, SDK fixture, docs-lint, `git diff --check`.
 
-- [ ] §5.1 create-body strategy A or B landed and fixture-proven
-- [ ] const-safe redactor clone; no `*const` → `*Session` cast
-- [ ] intermediate dirs + stale lock honesty documented in test comments
-- [ ] SDK consumer fork + durable smoke green
-- [ ] root std + curl Gates green
-- [ ] maturity rows unchanged at closeout
+Additional implementation checklist:
+
+- [x] §5.1 create-body **strategy A** landed and fixture-proven (`setFailNextCreateBody`)
+- [x] const-safe redactor clone (`activeRedactorConst` / field path); no `*const` → `*Session` cast
+- [x] intermediate dirs + stale lock honesty documented in test comments
+- [x] SDK consumer fork + durable smoke green
+- [ ] root std + curl Gates green (coordinator after review)
+- [x] maturity rows unchanged at closeout (still L2; no claim raised)
 
 # non-goals
 

@@ -120,13 +120,26 @@ pub const Writer = struct {
     }
 };
 
-/// Test-only helpers. Production code has no entry that enables save faults.
+/// Test-only: force the **final** create body (`saveWithMetaAtomicCreate` after
+/// lease acquisition) to fail with `IoFailed` once. Production has no enablement
+/// path (`builtin.is_test` only; same honesty as Writer `fail_before_replace`).
+/// Used by session-fork-001 §5.1 strategy A — must only fire inside create, never prep.
+var test_fail_next_create_body: if (builtin.is_test) bool else void =
+    if (builtin.is_test) false else {};
+
+/// Test-only helpers. Production code has no entry that enables save/create faults.
 pub const testing = if (builtin.is_test) struct {
     pub fn setFailBeforeReplace(writer: *Writer, enabled: bool) void {
         writer.fail_before_replace = enabled;
     }
     pub fn setFailNextRedact(writer: *Writer, enabled: bool) void {
         writer.fail_next_redact = enabled;
+    }
+    /// Arm one-shot create-body fault for the next `createNewWithRedactor` /
+    /// `createNewUnredacted` call. Clears itself when consumed. Production-
+    /// impossible (this module is `builtin.is_test` only).
+    pub fn setFailNextCreateBody(enabled: bool) void {
+        test_fail_next_create_body = enabled;
     }
 } else struct {};
 
@@ -232,7 +245,17 @@ fn createNewImpl(
 
     if (try sessionFileExists(cwd, io, path)) return error.SessionAlreadyExists;
 
-    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta, false, redactor, false);
+    // §5.1 strategy A: consume test-only create-body failpoint **after** lease
+    // acquisition has begun, so the fault is inside final create (not prep).
+    // On failure: errdefer releases the lock FD (no held FD); target jsonl is
+    // not linked; intermediate dirs + stale `{path}.lock` sidecar may remain.
+    const fail_create_body = if (builtin.is_test) blk: {
+        const armed = test_fail_next_create_body;
+        if (armed) test_fail_next_create_body = false;
+        break :blk armed;
+    } else false;
+
+    try saveWithMetaAtomicCreate(gpa, io, cwd, path, messages, meta, fail_create_body, redactor, false);
 
     return .{
         .gpa = gpa,

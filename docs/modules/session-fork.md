@@ -8,8 +8,14 @@ task: session-fork-001
 
 This module is the **binding contract** for `session-fork-001`. It defines safe,
 idle-only durable fork of a coding-agent `Session` into a **new** child session
-file. Implementation must obey every section below; docs-first status does **not**
-claim code delivery or any maturity raise.
+file. Implementation must obey every section below. Local code may land under
+review while status remains **in-progress**; this does **not** claim Gate closeout
+or any maturity raise.
+
+**Create-body fault strategy (implementation):** **A** —
+`session_store.testing.setFailNextCreateBody` (test-only; production-impossible).
+Fires inside the final `createNewWithRedactor` / `createNewImpl` body after lease
+acquisition, before atomic link of the child `.jsonl`.
 
 Prerequisite contracts (unchanged):
 
