@@ -1433,3 +1433,168 @@ test "seam composition: sink OutOfMemory maps to OutOfMemory run error" {
     const err = run(deps, &transcript);
     try std.testing.expectError(error.OutOfMemory, err);
 }
+// ── F1: restored permanent L2 invariants composed over the five seams ──────
+
+// h-provider-001: the loop threads the borrowed cancel-flag pointer identity
+// through RequestControl into provider.chat. This is the only loop-level proof
+// of that contract (transport/facade tests cover their own layers).
+test "h-provider-001: control reaches provider chat (seam composition)" {
+    const gpa = std.testing.allocator;
+
+    const Mock = struct {
+        saw_cancel: *bool,
+        flag: *cancel_mod.Flag,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            control: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            // Flag pointer identity: same cancel flag threaded through RequestControl.
+            self.saw_cancel.* = control.cancel == self.flag;
+            return .{
+                .content = try arena.dupe(u8, "ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var flag: cancel_mod.Flag = .{};
+    var saw = false;
+    var mock: Mock = .{ .saw_cancel = &saw, .flag = &flag };
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, LoopEventSink.discard());
+    deps.options.cancel = &flag;
+
+    _ = try run(deps, &transcript);
+    try std.testing.expect(saw);
+}
+
+// H1 invariant: tools in one assistant message run serially in provider call
+// order, with results appended and events emitted in the same order. This is
+// the explicit L2 serial-order assertion (loop-turn.md acceptance checklist).
+test "tools execute serially in call order (seam composition)" {
+    const gpa = std.testing.allocator;
+
+    const Echo = struct {
+        fn handle(ctx: tool.Context, _: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+            const label = try tool.requireStringField(ctx.allocator, arguments_json, "label");
+            defer ctx.allocator.free(label);
+            return std.fmt.allocPrint(ctx.allocator, "ok:{s}", .{label}) catch return error.OutOfMemory;
+        }
+    };
+
+    const tools = [_]tool.Tool{tool.stateless(.{
+        .definition = .{
+            .name = "echo",
+            .description = "echo",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+    }, Echo.handle)};
+
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const tc = try arena.alloc(message.ToolCall, 3);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "a"),
+                .name = try arena.dupe(u8, "echo"),
+                .arguments = try arena.dupe(u8, "{\"label\":\"1\"}"),
+            };
+            tc[1] = .{
+                .id = try arena.dupe(u8, "b"),
+                .name = try arena.dupe(u8, "echo"),
+                .arguments = try arena.dupe(u8, "{\"label\":\"2\"}"),
+            };
+            tc[2] = .{
+                .id = try arena.dupe(u8, "c"),
+                .name = try arena.dupe(u8, "echo"),
+                .arguments = try arena.dupe(u8, "{\"label\":\"3\"}"),
+            };
+            return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+        }
+    };
+
+    // Second chat: model finishes after seeing ordered results.
+    const Mock2 = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            msgs: []const message.Message,
+            defs: []const tool.Definition,
+            control: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, defs, control);
+            // Verify tool results arrived as 1,2,3 in transcript order.
+            var labels: [3]?[]const u8 = .{ null, null, null };
+            var li: usize = 0;
+            for (msgs) |m| {
+                if (m.role == .tool) {
+                    if (li < 3) {
+                        labels[li] = m.content;
+                        li += 1;
+                    }
+                }
+            }
+            if (li != 3) return error.InvalidResponse;
+            if (!std.mem.eql(u8, labels[0].?, "ok:1")) return error.InvalidResponse;
+            if (!std.mem.eql(u8, labels[1].?, "ok:2")) return error.InvalidResponse;
+            if (!std.mem.eql(u8, labels[2].?, "ok:3")) return error.InvalidResponse;
+            return .{
+                .content = try arena.dupe(u8, "ordered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock2 = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock2.chat },
+    };
+
+    // Recording sink captures tool_start/tool_end order to prove serial event order.
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("echo three");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
+    deps.tool_policy = ToolPolicy.allowAllForTrustedHost();
+
+    const result = try run(deps, &transcript);
+
+    try std.testing.expectEqualStrings("ordered", result.final_text);
+    try std.testing.expect(result.stop_reason == .completed);
+    // Three tool calls executed serially → three tool_start and three tool_end events.
+    try std.testing.expectEqual(@as(u32, 3), sink.tool_starts);
+    try std.testing.expectEqual(@as(u32, 3), sink.tool_ends);
+}

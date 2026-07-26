@@ -529,11 +529,12 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             }
         },
         .jail_decision => |j| {
-            // Trace, then generic warning.
+            // Trace, then generic warning (only when a real Observer callback is registered —
+            // matching the baseline `observer.on_event != null` guard, not just a non-null object).
             if (bridge.trace) |tr| {
                 tr.emitJailDeny(j.tool_name, j.path) catch |err| return mapTraceToSink(err);
             }
-            if (a.options.observer != null) {
+            if (observerCallbackActive(a.options.observer)) {
                 std.log.warn("jail deny", .{});
             }
         },
@@ -542,7 +543,7 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             if (bridge.trace) |tr| {
                 tr.emitShellDeny(command) catch |err| return mapTraceToSink(err);
             }
-            if (a.options.observer != null) {
+            if (observerCallbackActive(a.options.observer)) {
                 // Generic only — never log raw command (may contain secrets).
                 std.log.warn("shell policy deny", .{});
             }
@@ -552,7 +553,7 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             if (bridge.trace) |tr| {
                 tr.emitProviderRetry(r.attempt, r.err_name) catch |err| return mapTraceToSink(err);
             }
-            if (a.options.observer != null) {
+            if (observerCallbackActive(a.options.observer)) {
                 std.log.warn(
                     "provider retry {d}/{d} after {s}",
                     .{ r.attempt, a.options.chat_retries, r.err_name },
@@ -594,6 +595,15 @@ fn emitObserver(a: *Agent, event: observer_mod.Event) void {
     }
 }
 
+/// True only when an actual Observer callback (`on_event`) is registered. This
+/// restores the baseline `deps.options.observer.on_event != null` guard for the
+/// inline generic warnings (jail/shell/retry): a non-null observer object with a
+/// null callback does not enter the warning path.
+fn observerCallbackActive(observer: ?observer_mod.Observer) bool {
+    if (observer) |o| return o.on_event != null;
+    return false;
+}
+
 /// Map `trace.Error` to the sink error set. `OutOfMemory` stays `OutOfMemory`;
 /// durable/serialization/path faults become `SinkFailed` (→ loop `TraceFailed`).
 fn mapTraceToSink(err: trace_mod.Error) loop_event_mod.SinkError {
@@ -602,6 +612,24 @@ fn mapTraceToSink(err: trace_mod.Error) loop_event_mod.SinkError {
         error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => error.SinkFailed,
     };
 }
+
+// F2: prove the generic-warning guard matches the baseline `on_event != null`
+// semantics, not just a non-null observer object.
+test "observerCallbackActive: null observer object → false" {
+    try std.testing.expect(!observerCallbackActive(null));
+}
+
+test "observerCallbackActive: observer object with null on_event (.none()) → false" {
+    const o: observer_mod.Observer = .none();
+    try std.testing.expect(!observerCallbackActive(o));
+}
+
+test "observerCallbackActive: observer object with real callback → true" {
+    const o: observer_mod.Observer = .{ .ptr = null, .on_event = f2_dummy_cb };
+    try std.testing.expect(observerCallbackActive(o));
+}
+
+fn f2_dummy_cb(_: ?*anyopaque, _: observer_mod.Event) void {}
 
 pub const Agent = struct {
     gpa: std.mem.Allocator,

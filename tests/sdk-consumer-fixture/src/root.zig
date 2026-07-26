@@ -755,7 +755,7 @@ test "low-level core: explicit five-seam permissive composition" {
         },
         .tool_policy = core.loop.ToolPolicy.allowAllForTrustedHost(),
         .jail = core.loop.Jail.allowAllForTrustedHost(),
-        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .shell_policy = core.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
     }, &transcript);

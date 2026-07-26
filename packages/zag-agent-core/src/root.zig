@@ -47,7 +47,10 @@ pub const RegistrationError = tool.RegistrationError;
 // D-011 seam ports (re-exported for module-name consumers).
 pub const ToolPolicy = tool_policy.ToolPolicy;
 pub const Jail = jail.Jail;
-pub const ShellPolicyPort = shell_policy_port.ShellPolicy;
+// Canonical seam port name is `ShellPolicy`; `ShellPolicyPort` is kept as an
+// alias for compatibility with already-submitted consumers.
+pub const ShellPolicy = shell_policy_port.ShellPolicy;
+pub const ShellPolicyPort = ShellPolicy;
 pub const ContextView = context_view.ContextView;
 pub const LoopEventSink = loop_event.LoopEventSink;
 pub const LoopEvent = loop_event.LoopEvent;
