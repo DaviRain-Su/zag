@@ -1,7 +1,7 @@
 let meta = #{
     name: "zag-task-delivery",
     description: "Produce an isolated Zag task candidate through docs-first contract, implementation, independent review, fixes, and candidate checks",
-    when_to_use: "Deliver one Zag task as an isolated candidate commit without touching the launching worktree, merging, or pushing",
+    when_to_use: "Disabled until workflow host isolation fails closed; use zag-task-plan-review for read-only orchestration",
     phases: [
         #{ title: "Contract", detail: "author and independently verify the docs-first contract" },
         #{ title: "Implement", detail: "implement only the accepted contract in a host-isolated worktree" },
@@ -10,6 +10,8 @@ let meta = #{
         #{ title: "Candidate check", detail: "run both root backends in another isolated worktree" },
     ],
 };
+
+pause("infra", "Disabled: a live isolation probe showed isolation_worktree silently falling back to the launching worktree. Do not resume this workflow. Use zag-task-plan-review for read-only orchestration and the explicit docs-sprint worktree flow for writes.");
 
 let candidate_schema = #{
     "type": "object",
