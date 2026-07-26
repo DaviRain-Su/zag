@@ -189,6 +189,17 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
             error.OutOfMemory => return error.OutOfMemory,
             error.InvalidContext => return error.InvalidContext,
         };
+        // Independent Core gate: validate the protocol-visible body of the
+        // projected view **before** any compaction fact is emitted or
+        // Provider.chat, regardless of how the product ContextView built it
+        // (D-011 core-context-ownership-001). The view may carry leading
+        // system layers; those are skipped. This catches a hostile/malformed
+        // ContextView that returns an invalid bundle even when the product
+        // algorithm would have validated internally. A malformed projection is
+        // not a "successfully accepted final view" — Session/Trace must not see
+        // a compaction fact or advance generation before this gate passes.
+        protocol_history.validateViewBody(v.messages) catch return error.InvalidContext;
+
         // Session sink first, then trace: OOM on session note aborts before any
         // compaction line is written so session metadata and trace cannot
         // silently diverge on the success path (h-context-001). The sink adapter
@@ -196,14 +207,6 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         if (v.compaction) |ev| {
             deps_run.event_sink.emit(.{ .context_compaction = ev }) catch |err| return mapSinkEmit(err);
         }
-
-        // Independent Core gate: validate the protocol-visible body of the
-        // projected view **before** any Provider.chat, regardless of how the
-        // product ContextView built it (D-011 core-context-ownership-001).
-        // The view may carry leading system layers; those are skipped. This
-        // catches a hostile/malformed ContextView that returns an invalid bundle
-        // even when the product algorithm would have validated internally.
-        protocol_history.validateViewBody(v.messages) catch return error.InvalidContext;
 
         const outcome = try chatWithRetry(deps_run, scratch, v.messages);
         const turn = switch (outcome) {
@@ -1991,4 +1994,84 @@ test "core-context-001: hostile ContextView with leading system layers then malf
     const err = run(deps, &transcript);
     try std.testing.expectError(error.InvalidContext, err);
     try std.testing.expectEqual(@as(u32, 0), mock.calls);
+}
+
+// P3-5 regression: a hostile ContextView that returns BOTH a compaction fact
+// AND a malformed body must be rejected with InvalidContext before the sink
+// sees any context_compaction event. The validation gate runs before the
+// compaction emit, so Session/Trace cannot advance generation on a malformed
+// projection. This test fails under the old ordering (compaction emit before
+// validateViewBody) because the sink would receive the context_compaction event.
+test "core-context-001: hostile ContextView compaction + malformed body → InvalidContext, no compaction emit, provider=0" {
+    const gpa = std.testing.allocator;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return .{
+                .content = try arena.dupe(u8, "should-not-reach"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    // Hostile ContextView: returns a compaction fact AND a malformed body
+    // (orphan tool result with no preceding assistant tool_calls). Under the
+    // old ordering the sink would receive context_compaction before the
+    // validation gate rejects the body. Under the new ordering validation
+    // runs first, so no compaction event is emitted.
+    const HostileView = struct {
+        fn view(
+            _: ?*anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+        ) context_view_mod.ContextViewError!context_view_mod.View {
+            const msgs = try arena.alloc(message.Message, 2);
+            msgs[0] = message.Message.user("ask");
+            msgs[1] = message.Message.toolResult("orphan-id", "no-carrier");
+            const summary = try arena.dupe(u8, "[compaction] 5 earlier messages omitted.");
+            return .{
+                .messages = msgs,
+                .compaction = .{ .dropped = 5, .summary = summary },
+            };
+        }
+    };
+    const hostile_vtable: context_view_mod.ContextViewVTable = .{
+        .view = HostileView.view,
+    };
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.context_view = .{ .ptr = null, .vtable = &hostile_vtable };
+
+    const err = run(deps, &transcript);
+    try std.testing.expectError(error.InvalidContext, err);
+    // Provider must never have been called.
+    try std.testing.expectEqual(@as(u32, 0), mock.calls);
+    // No context_compaction event reached the sink (validation ran first).
+    try std.testing.expectEqual(@as(u32, 0), sink.context_compactions);
+    // No assistant event (provider was not called).
+    try std.testing.expectEqual(@as(u32, 0), sink.assistant_messages);
+    // turn_start was emitted before the view/validation gate (expected).
+    try std.testing.expectEqual(@as(u32, 1), sink.turn_starts);
 }

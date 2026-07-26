@@ -18,13 +18,6 @@
 const std = @import("std");
 const message = @import("message.zig");
 
-/// Protocol-history legality error. The loop maps this to `RunError.InvalidContext`
-/// (terminal `invalid_context`), distinct from provider errors.
-pub const Error = error{
-    /// Malformed tool-call/result history or other fail-closed context policy.
-    InvalidContext,
-};
-
 /// Fail-closed body policy (non-system history):
 /// - every assistant `tool_calls` bundle has nonempty **unique** call IDs;
 /// - immediately followed by **exactly one** contiguous `tool` result per call

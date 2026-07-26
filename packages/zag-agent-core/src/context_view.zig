@@ -16,7 +16,6 @@
 
 const std = @import("std");
 const message = @import("message.zig");
-const transcript_mod = @import("transcript.zig");
 
 pub const ContextViewError = error{
     OutOfMemory,
