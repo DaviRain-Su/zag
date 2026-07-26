@@ -1045,16 +1045,22 @@ test "Agent Phase1Storage grep and glob default missing and empty path in tmp cw
 
     var old_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const old_n = try Io.Dir.cwd().realPathFile(io, ".", &old_buf);
-    const old_cwd = try gpa.dupeZ(u8, old_buf[0..old_n]);
+    const old_cwd = try gpa.dupe(u8, old_buf[0..old_n]);
     defer gpa.free(old_cwd);
 
     var ws_buf: [Io.Dir.max_path_bytes]u8 = undefined;
     const ws_n = try parent.dir.realPathFile(io, "ws", &ws_buf);
-    const ws_cwd = try gpa.dupeZ(u8, ws_buf[0..ws_n]);
+    const ws_cwd = try gpa.dupe(u8, ws_buf[0..ws_n]);
     defer gpa.free(ws_cwd);
 
-    if (std.c.chdir(ws_cwd.ptr) != 0) return error.SkipZigTest;
-    defer _ = std.c.chdir(old_cwd.ptr);
+    // chdir via the Zig-native Io.Threaded syscall wrapper, not std.c.chdir:
+    // on Linux that resolves to the raw `chdir(2)` syscall (std.os.linux.chdir)
+    // and avoids pulling a libc dependency into the package test target, which
+    // Zig 0.16 rejects with `dependency on libc must be explicitly specified`.
+    // Darwin/Windows still go through libc, where the test target already
+    // links libc. Restore on the exit path so a later test never inherits cwd.
+    Io.Threaded.chdir(ws_cwd) catch return error.SkipZigTest;
+    defer Io.Threaded.chdir(old_cwd) catch {};
 
     const Mock = struct {
         calls: u32 = 0,
