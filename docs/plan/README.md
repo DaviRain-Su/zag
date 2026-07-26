@@ -57,7 +57,9 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 ### Active / next
 
-No implementation task is ready. `harness-events-001` requires its own analysis and task contract before code work starts.
+| ID | Priority | Status | Scope |
+|----|----------|--------|-------|
+| [harness-events-001](./tasks/harness-events-001.md) | P1 | pending design review | Source-backed Zig SDK lifecycle vocabulary |
 
 ### Completed foundation
 

@@ -95,7 +95,7 @@ These tasks require their own analysis/task docs before implementation.
 
 | Task | Objective | Gate |
 |------|-----------|------|
-| `harness-events-001` | stable message/Tool/run lifecycle vocabulary | ordering + one terminal + mapping to Observer/headless; no internal-union serialization |
+| [harness-events-001](./plan/tasks/harness-events-001.md) | source-backed message/Tool/run lifecycle vocabulary | ordering + one terminal + separate SDK/Trace/headless types; no internal-union serialization |
 | `harness-steering-001` | bounded steering/follow-up queues | deterministic insertion, ownership, cancel, transcript/session/trace evidence |
 | `session-fork-001` | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
 

@@ -112,7 +112,7 @@ C4–C9 remain domain labels. They no longer imply that every listed feature (Or
 
 ### `harness-events-001`
 
-Define a stable public lifecycle vocabulary before adding UI: message start/delta/end, Tool start/update/end, run start/terminal. Preserve one truthful terminal and map — do not serialize — internal events into headless output.
+Define a stable source-backed lifecycle vocabulary before adding UI: complete assistant messages, correlated Tool start/end, and run start/terminal. Preserve one truthful terminal and map — do not serialize — internal events into headless output. Real message deltas and Tool updates wait for provider-stream and Tool-progress sources; M1 must not fabricate empty phases.
 
 ### `harness-steering-001`
 
