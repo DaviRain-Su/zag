@@ -1060,7 +1060,7 @@ test "Agent Phase1Storage grep and glob default missing and empty path in tmp cw
     // Darwin/Windows still go through libc, where the test target already
     // links libc. Restore on the exit path so a later test never inherits cwd.
     Io.Threaded.chdir(ws_cwd) catch return error.SkipZigTest;
-    defer Io.Threaded.chdir(old_cwd) catch {};
+    defer Io.Threaded.chdir(old_cwd) catch @panic("failed to restore test cwd");
 
     const Mock = struct {
         calls: u32 = 0,
