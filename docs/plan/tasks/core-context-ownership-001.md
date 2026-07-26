@@ -1,7 +1,7 @@
 ---
 id: core-context-ownership-001
 scope: coding-agent/context-ownership
-status: pending
+status: ready
 priority: P1
 depends-on:
   - core-policy-ownership-001
