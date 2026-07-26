@@ -69,9 +69,9 @@ execute → tool result → transcript + trace
 | 2 | core `shell_policy.zig` | 命令 denylist |
 | 3 | coding `trace.zig` | 结构化事件（core-observation-ownership-001 移到 coding-agent） |
 | 4 | core `loop.zig` | 三道门顺序 |
+| 5 | `SECURITY.md` | 产品安全说明 |
 
 （core = `packages/zag-agent-core/src`；coding = `packages/zag-coding-agent/src`）
-| 5 | `SECURITY.md` | 产品安全说明 |
 
 ---
 
