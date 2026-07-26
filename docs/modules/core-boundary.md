@@ -5,7 +5,7 @@
 | Decision | [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current code | `packages/zag-agent-core/src/` plus product facade in `packages/zag-coding-agent/src/agent.zig` |
 | Target | Thin loop kernel with explicit required ports; product policy/state in coding-agent |
-| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001). Concrete permission/HITL/remember, workspace containment, and shell protection moved to coding-agent (core-policy-ownership-001). Context-layer ownership moved to coding-agent: protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent` and `ContextView.View` are single authoritative definitions in Core `context_view.zig` (core-context-ownership-001, closed at `6667c03`; merged-main std **513/513**, curl **512/512**). |
+| Migration status | **Done through `harness-events-001` at `aecf402`.** Required seams and canonical `LoopEvent` remain in Core; durable session, Trace/redaction/Observer, concrete permission/workspace/shell policy, and product context/compaction ownership live in coding-agent. Protocol-history validation and the single authoritative `CompactionEvent`/`ContextView.View` definitions remain in Core. The product lifecycle adapter projects Core source facts plus facade facts without a Core lifecycle channel. Merged-main std **530/530** and curl **529/529** passed; no existing L2 row was raised or lowered. |
 | Reference | Pi low-level `agent-loop.ts` / `agent.ts` / `types.ts`, semantics only |
 
 ## Purpose
@@ -161,9 +161,10 @@ Trace commit failure takes precedence over an earlier successful loop result. `d
 | In-process SDK lifecycle | coding-agent | Borrowed synchronous callbacks; copy to retain. |
 | `headless-v1` | CLI | Independently versioned mapping; exactly one process terminal; never serialize a Zig union directly. |
 
-There is no separate core `LifecycleObserver`. The `harness-events-001` task is implemented as
-a product SDK event adapter (`packages/zag-coding-agent/src/lifecycle.zig`) over Core source facts
-and facade run facts; implementation is present, closeout pending merged-main Gate.
+There is no separate Core `LifecycleObserver`. `harness-events-001` closed at `aecf402` as a product SDK event
+adapter (`packages/zag-coding-agent/src/lifecycle.zig`) over Core source facts and facade run facts. The merged-main
+Gate passed std **530/530** and curl **529/529**; this adapter does not change Trace/session/headless schemas or any
+closed L2 row.
 
 ## Product-owned state
 
@@ -188,11 +189,12 @@ and facade run facts; implementation is present, closeout pending merged-main Ga
 | Port infrastructure failure | Return `OutOfMemory` or visible sink/policy failure. | Map without calling it provider success. |
 | Session save/Trace persist/redaction | Not owned by Core. | Preserve prior bytes and commit truthful terminal. |
 
-## Public surface during migration
+## Public surface and compatibility
 
-The migration occurs before a semver publication promise. Temporary re-exports may be used only when a task explicitly
-needs them to keep an accepted fixture compiling. Every task updates the external SDK consumer and documents any source
-migration. No task may keep duplicate authoritative implementations merely to preserve an old import path.
+The migration completed before any semver publication promise. Each ownership task updated the external SDK consumer
+and documented its source migration; no duplicate authoritative implementation was retained merely to preserve an old
+import path. Future source moves remain subject to the same fixture-and-doc migration rule until publication policy
+changes.
 
 ## Migration DAG
 
@@ -215,10 +217,10 @@ core-policy-ownership-001   ✓ done — concrete permissions/HITL/remember, wor
 core-context-ownership-001   ✓ done — protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent`/`View` single authoritative definitions in Core `context_view.zig`; loop independently validates projected view body before Provider.chat
         │
         ▼
-harness-events-001 (in-progress — product SDK lifecycle adapter; no core lifecycle.zig)
+harness-events-001   ✓ done @ aecf402 — product SDK lifecycle adapter; no Core lifecycle.zig
 ```
 
-Tasks are serialized because they overlap `loop.zig`, `agent.zig`, roots, SDK fixture, and Product Spec docs.
+These migration tasks were serialized because they overlapped `loop.zig`, `agent.zig`, roots, the SDK fixture, and Product Spec docs.
 
 ## Verification contract
 

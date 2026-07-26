@@ -1,15 +1,17 @@
 ---
-status: in-progress
+status: done
 scope: in-process Zig SDK lifecycle events
 prerequisite: core-context-ownership-001
+closed-at: aecf402
 ---
 
 # Harness lifecycle events
 
-This module records the post-D-011 target for trusted in-process Zig consumers. It supersedes the proposed core
-`lifecycle.zig`/separate `LifecycleObserver` design. Implementation is present (closeout pending merged-main Gate):
-`zag-coding-agent` owns the public `LifecycleObserver` + `LifecycleEvent` union over Core `LoopEvent` source facts
-and facade run facts. No Core `lifecycle.zig` is created.
+This module records the closed post-D-011 contract for trusted in-process Zig consumers. `harness-events-001` closed
+at `aecf402`: `zag-coding-agent` owns the public `LifecycleObserver` + `LifecycleEvent` union over Core `LoopEvent`
+source facts and facade run facts. The product adapter supersedes the proposed Core `lifecycle.zig`/separate
+`LifecycleObserver` design; no Core `lifecycle.zig` exists. The vocabulary is source-backed only, with no emitted
+`message_delta` or `tool_update`.
 
 ## Boundary
 
@@ -73,8 +75,11 @@ For every public `run_start`:
 
 ```text
 run_start
-  → zero or more assistant_message
-  → for each accepted Tool call: tool_start → tool_end
+  → zero or more complete assistant_message
+  → zero or more source-backed Tool facts:
+      entered call          tool_start → tool_end
+      pending cancellation              tool_end only
+      hard mid-call failure tool_start only
   → exactly one run_terminal
 ```
 
@@ -155,8 +160,9 @@ a deliberate projection, not an alias or serialized representation of that inter
 
 ## Delivery status
 
-`harness-events-001` is **in-progress** (implementation present, closeout pending merged-main Gate). The dependency
-chain is complete:
+`harness-events-001` is **done** at `aecf402`. Independent re-review passed after the no-Trace turn-truth fix, and the
+ff-only merged-main Gate passed root std **530/530**, root curl **529/529**, Core **70/70**, Coding **282/282**, and
+external SDK fixture **18/18**.
 
 ```text
 core-boundary-001
@@ -165,12 +171,13 @@ core-boundary-001
   → core-observation-ownership-001
   → core-policy-ownership-001
   → core-context-ownership-001
-  → harness-events-001 (in-progress)
+  → harness-events-001 ✓ done @ aecf402
 ```
 
-The existing `task/harness-events-001` implementation branch is not a merge candidate because it implements the
-superseded Core lifecycle boundary. The `task/harness-events-001-v2` branch implements the product adapter over Core
-source facts and facade run facts.
+The historical `task/harness-events-001` branch remains ineligible because it implements the superseded Core lifecycle
+boundary. Its replacement `task/harness-events-001-v2` was fast-forwarded and supplies the product adapter over Core
+source facts and facade run facts. `harness-steering-001` and `session-fork-001` remain planned follow-ups whose task
+files must be authored docs-first before implementation.
 
 ## Related
 

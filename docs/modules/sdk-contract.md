@@ -6,10 +6,10 @@
 > semver publication, headless protocol, OS sandbox, or mid-flight Tool/shell
 > preemption. See [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md).
 >
-> **D-011 migration:** the closed behavior Gate remains valid, but the unpublished source surface is being narrowed:
-> `zag-agent-core` becomes a thin loop kernel and product policy/session/Trace/redaction/context ownership moves to
-> `zag-coding-agent`. Each task updates this document and the external consumer fixture. No semver publication promise
-> freezes the current module ownership. See [core-boundary](./core-boundary.md).
+> **D-011 migration:** the closed behavior Gate remains valid. The responsibility migration completed through
+> `harness-events-001` at `aecf402`: `zag-agent-core` is the thin loop kernel, while product
+> policy/session/Trace/redaction/context/lifecycle-adapter ownership lives in `zag-coding-agent`. No semver publication
+> promise freezes the current source layout. See [core-boundary](./core-boundary.md).
 
 ## 1. What is covered
 
@@ -34,10 +34,11 @@ var agent = try coding.Agent.init(gpa, io, provider, .{
     .permission_mode = .ask,
     .toolset = &[_]coding.tool.Tool{ my_tool },
     .observer = my_observer,
+    .lifecycle = my_lifecycle_observer,
 });
 ```
 
-This is D-010 **E0 trusted static Zig composition** and is the functional equivalent of trusted in-process custom Tool/Provider/Observer composition. It is source/build-time extension, not a runtime plugin or installable extension bundle. Future E2/E3 Provider/Tool/UI registration uses separate runtime contracts and does not change this Gate.
+This is D-010 **E0 trusted static Zig composition** and is the functional equivalent of trusted in-process custom Tool/Provider/Observer/lifecycle-observer composition. It is source/build-time extension, not a runtime plugin or installable extension bundle. Future E2/E3 Provider/Tool/UI registration uses separate runtime contracts and does not change this Gate.
 
 ## 2. Ownership and lifetime
 
@@ -48,6 +49,7 @@ All rules below are caller-borrowed unless explicitly stated otherwise.
 | `Tool`, descriptor strings, `instance` pointer | caller | Must outlive every copy of the `Tool`/`Toolset` and every `handler` invocation. `Tool` is copyable and shares the same borrowed instance pointer. Source: [`packages/zag-agent-core/src/tool.zig:20-30`](../../packages/zag-agent-core/src/tool.zig). |
 | `Provider` (`ptr` + `vtable`) | caller | Must outlive the `Agent` and every `loop.run` call. Provider receives a scratch arena per `chat`; returned `AssistantTurn` contents belong to that arena. Source: [`packages/zag-agent-core/src/provider.zig:30-45`](../../packages/zag-agent-core/src/provider.zig). |
 | `Observer` event slices | callback | Slices inside `Observer.Event` are valid only for the duration of the callback. Copy if needed. |
+| `LifecycleObserver` event slices | callback | Slices inside `LifecycleEvent` are synchronous and valid only during `Agent.Options.lifecycle` callback execution. Copy before retaining them. |
 | `Session` | caller | Must outlive every `Agent.reply(&session, ...)` call. Holds transcript arena and writer lock. |
 | `Agent` | caller | `deinit` releases resources only; it never invents a successful `run_end`. |
 | `Trace.path` | caller | `Trace` stores the pointer/bytes; the path slice must outlive the `Trace`. |
@@ -74,7 +76,7 @@ All rules below are caller-borrowed unless explicitly stated otherwise.
 | Session save failure | — | `session_store.Error` | `session_error` | false |
 | Trace persist failure | — | `trace.Error` | `trace_error` | false |
 
-Sources: [`packages/zag-agent-core/src/loop.zig:70-120`](../../packages/zag-agent-core/src/loop.zig), [`packages/zag-coding-agent/src/agent.zig:654-670`](../../packages/zag-coding-agent/src/agent.zig).
+Sources: [`packages/zag-agent-core/src/loop.zig`](../../packages/zag-agent-core/src/loop.zig), [`packages/zag-coding-agent/src/agent.zig:1029-1198`](../../packages/zag-coding-agent/src/agent.zig).
 
 ### 3.2 Retry policy
 
@@ -115,18 +117,26 @@ provider_retry, compaction, run_end
 
 Source: [`packages/zag-coding-agent/src/trace.zig:67-75`](../../packages/zag-coding-agent/src/trace.zig).
 
-### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001, core-policy-ownership-001, core-context-ownership-001 done; harness-events-001 in-progress)
+### Public lifecycle (`harness-events-001`, closed at `aecf402`)
 
-Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace, redaction, and verbose logging are coding-agent
-adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The
-`harness-events-001` public callback is a coding-agent projection (`LifecycleObserver` + `LifecycleEvent` in
-`packages/zag-coding-agent/src/lifecycle.zig`) and does not add Core `lifecycle.zig`. Existing
-Observer behavior is preserved via the `RunBridge` event-sink adapter in `zag-coding-agent`.
+Optional `Agent.Options.lifecycle` accepts a coding-agent `LifecycleObserver`. It synchronously projects Core
+`LoopEvent` source facts plus facade run-start/terminal facts; it is not a Core port, Trace v1, or `headless-v1`.
+Payload slices are callback-borrowed and must be copied before retention.
 
-Public lifecycle `run_terminal` is the `Agent.reply` run terminal only. `Agent.completeWithSession` /
-`OwnedResult` may allocate an owned copy of the result text **after** that terminal; a subsequent
-presentation OOM does not rewrite or fabricate a second lifecycle terminal (see
-[harness-events](./harness-events.md#public-terminal-vs-ownedresult-presentation)).
+The source-backed emit set is `run_start`, complete `assistant_message`, correlated `tool_start`/`tool_end`, and exactly
+one `run_terminal` for every started run. A pending accepted call cancelled between Tools may be end-only; a hard
+failure after `tool_start` but before a result may omit `tool_end`. No `message_delta` or `tool_update` is fabricated.
+
+Public lifecycle `run_terminal` is the `Agent.reply` run terminal only. `Agent.completeWithSession` / `OwnedResult` may
+allocate an owned presentation copy after that terminal; a subsequent presentation OOM does not rewrite or fabricate a
+second terminal. See [harness-events](./harness-events.md#public-terminal-vs-ownedresult-presentation).
+
+### D-011 ownership status
+
+Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace, redaction, verbose logging, and public
+lifecycle projection are coding-agent adapters with distinct failure policies. Run preflight/start/terminal remain
+facade-owned. No Core `lifecycle.zig` was added, and existing `Observer` behavior remains preserved through `RunBridge`.
+The SDK-ready Gate remains closed at `ebdd7ab`; this optional lifecycle surface enriches rather than reclassifies it.
 
 `core-observation-ownership-001` moved `trace.zig`, `redact.zig`, and `observer.zig` from `zag-agent-core` to
 `zag-coding-agent` (whole-file `git mv`, no Core shim/duplicate). Core's only event port is `LoopEventSink`;
@@ -161,12 +171,15 @@ with `InvalidContext`; no compaction fact reaches the sink and the provider is n
 
 ### 4.1 Event invariants
 
-- One started run produces exactly one `run_end` event.
-- `run_end.ok` reflects the true outcome; `deinit` does not fabricate success.
-- Trace writes redaction **before** serialization. Redaction OOM returns
-  `OutOfMemory`, never raw output.
-- Session compaction is applied before trace compaction; if the session sink
-  OOMs, no trace compaction line is written, preventing silent metadata drift.
+- Lifecycle preflight failure emits no `run_start`; every started lifecycle emits exactly one final `run_terminal`, and
+  no lifecycle callback follows it.
+- Lifecycle Tool correlation uses turn + call index + call id; pending cancellation and hard mid-Tool failure preserve
+  the source-truth exceptions documented above rather than inventing events.
+- One started Trace run produces exactly one `run_end`; `run_end.ok` reflects the true outcome, and `deinit` does not
+  fabricate success.
+- Trace writes redaction **before** serialization. Redaction OOM returns `OutOfMemory`, never raw output.
+- Session compaction is applied before trace compaction; if the session sink OOMs, no trace compaction line is written,
+  preventing silent metadata drift.
 
 ## 5. Cancellation and deadline
 

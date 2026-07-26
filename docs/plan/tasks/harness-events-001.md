@@ -1,7 +1,7 @@
 ---
 id: harness-events-001
 scope: sdk/product-lifecycle-observation
-status: in-progress
+status: done
 priority: P1
 depends-on:
   - core-context-ownership-001
@@ -65,8 +65,10 @@ Historical superseded analysis: [2026-07-26 harness events contract](../analysis
 # verification
 
 1. Completed run: `run_start → assistant_message → run_terminal(completed)`.
-2. Tool run: every Tool start has one end by turn/call-index/id before the next provider turn.
-3. Unknown Tool, invalid arguments, permission/jail/shell deny, handler failure, and pending cancel remain correlated.
+2. Tool run: every Tool start has one end by turn/call-index/id before the next provider turn unless a hard failure stops
+   the run after start and before any result exists; that path must not fabricate an end.
+3. Unknown Tool, invalid arguments, permission/jail/shell deny, handler failure, and pending cancel remain correlated;
+   pending calls cancelled between Tools are end-only and must not receive fabricated starts.
 4. Provider/session/Trace/OOM/invalid-toolset/context/timeout/unsupported-control paths have one truthful post-start terminal.
 5. Preflight failure emits no lifecycle start/terminal.
 6. No callback follows terminal.
@@ -84,6 +86,21 @@ Historical superseded analysis: [2026-07-26 harness events contract](../analysis
 
 # superseded implementation
 
-The existing `task/harness-events-001` branch (`1ffdcb7` committed baseline plus any local follow-up edits) targets a
-Core `lifecycle.zig` and is not eligible for merge. Start implementation from updated main only after all dependencies
-above are done.
+The historical `task/harness-events-001` branch (`1ffdcb7` plus any local follow-up edits) targets a Core
+`lifecycle.zig` and remains ineligible for merge. The replacement `task/harness-events-001-v2` branch implemented the
+product-owned adapter from updated main and was fast-forwarded at `aecf402`.
+
+# closeout
+
+- Implementation landed at `759ee65`; the reviewed no-Trace turn-truth fix landed at `aecf402`, which is the ff-only
+  merged-main tip for this task.
+- `packages/zag-coding-agent/src/lifecycle.zig`, `Agent.Options.lifecycle`, public root exports, coding-agent fixtures,
+  and the external SDK copy-to-retain fixture provide the product surface. Core only gained the source facts needed for
+  truthful projection; no Core `lifecycle.zig` or third event channel was added.
+- The accepted vocabulary is `run_start`, complete `assistant_message`, correlated `tool_start`/`tool_end`, and exactly
+  one `run_terminal` per started run. Pending calls cancelled between Tools remain end-only; hard failure after a Tool
+  start and before a result does not fabricate a Tool end.
+- Merged-main Gate passed: root std **530/530**, root curl **529/529**, Core **70/70**, Coding **282/282**, external SDK
+  fixture **18/18**, OpenAPI **287/287**, catalog **40**, docs readability **91/100**, and security awareness **71/100**.
+- This closes the lifecycle contract without raising or lowering any maturity row. Provider deltas, Tool progress,
+  steering/follow-up, session fork, RPC, TUI, E2/E3 hooks, and Trace/session/headless schema changes remain excluded.

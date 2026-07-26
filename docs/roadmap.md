@@ -8,10 +8,10 @@
 |-------|--------|---------|
 | Teaching 0–3 | ✅ tutorial-complete | 教程可学习/演示；不等于 production claim |
 | Production Floor H | ✅ **L2** | single-user trusted-host；11/11 audit PASS；panel SHIP |
-| Zig SDK-ready | ✅ **L2** | public composition + external consumer fixture 7/7 |
+| Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **18/18** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
-| Thin Core responsibility migration | **next / in progress** | seam-first move of product policy/state/observation out of `zag-agent-core`; no L2 behavior change |
-| Pi-inspired daily Harness | queued | events/control、fork、Skills/Prompt Templates、edit、minimal TUI after D-011 migration |
+| Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
+| Pi-inspired daily Harness | **next** | lifecycle events ✅; steering/follow-up and session fork next, then Skills/Prompt Templates、edit、minimal TUI |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -34,7 +34,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
-| SDK | ✅ L2；后续通过 events/control/fork 丰富 |
+| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，后续 steering/control 与 fork 分别过 Gate |
 | JSON | ✅ `headless-v1` L2 |
 | RPC | 正式后置 `rpc-v1`，独立于 `headless-v1`，不追 Pi command/schema parity |
 | TUI/UI | minimal host TUI；E2/E3 host-rendered intents，stateful view/action 另过 Gate |
@@ -70,10 +70,10 @@ M0.5 — thin Core responsibility migration
         │
         ▼
 M1 — product Harness controls
-  harness-events-001
+  harness-events-001 ✅ aecf402
         │
-        ├────► harness-steering-001
-        └────► session-fork-001
+        ├────► harness-steering-001 (planned)
+        └────► session-fork-001 (planned)
                        │
                        ▼
 M2 — selected daily UX
@@ -101,19 +101,21 @@ Contract: [CLI interaction](./modules/cli-interaction.md).
 
 ### M0.5 — Thin Core responsibility migration
 
-[D-011](./decisions/active/D-011-thin-agent-core-boundary.md) corrects the package responsibility model before more
-Harness features land. The serialized tasks are listed in [the Core boundary module](./modules/core-boundary.md).
-They preserve all closed L2 contracts and create no new Zig package.
+[D-011](./decisions/active/D-011-thin-agent-core-boundary.md) corrected the package responsibility model before more
+Harness features landed. Its serialized ownership tasks and the product lifecycle adapter completed at `aecf402`; see
+[the Core boundary module](./modules/core-boundary.md). They preserved all closed L2 contracts and created no new Zig
+package.
 
 ### M1 — Product Harness controls
 
-These tasks start only after the D-011 migration.
+The lifecycle prerequisite is closed. Steering and session fork remain planned and require docs-first task files before
+implementation.
 
-| Task | Objective | Gate |
-|------|-----------|------|
-| [harness-events-001](./plan/tasks/harness-events-001.md) | coding-agent SDK lifecycle projection from Core source facts + facade run facts | ordering + one terminal + separate SDK/Trace/headless types; no Core lifecycle channel or internal-union serialization |
-| `harness-steering-001` | bounded steering/follow-up queues | deterministic insertion, ownership, cancel, transcript/session/trace evidence |
-| `session-fork-001` | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
+| Task | Status | Objective | Gate |
+|------|--------|-----------|------|
+| [harness-events-001](./plan/tasks/harness-events-001.md) | **done @ `aecf402`** | coding-agent SDK lifecycle projection from Core source facts + facade run facts | ordering + one terminal + separate SDK/Trace/headless types; no Core lifecycle channel or internal-union serialization |
+| `harness-steering-001` | planned | bounded steering/follow-up queues | deterministic insertion, ownership, cancel, transcript/session/trace evidence |
+| `session-fork-001` | planned | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
 
 This milestone aligns the smallest valuable Pi Harness semantics. It does **not** add subagents, Graph, provider hooks, or a new wire-compatible RPC protocol.
 
@@ -134,7 +136,7 @@ Minimal TUI depends on the event/control contracts; it must only assemble Kernel
 |------|---------|------|
 | E0 | trusted static Zig Toolset/Provider/Observer/policy | already covered by SDK-ready L2 |
 | E1 | passive Skills, then Prompt Templates; theme data later | jailed discovery + budget + no loader execution; downstream Tool gates remain mandatory |
-| Events | optional trusted static deny-only hooks | lifecycle event contract first; no runtime loading claim |
+| Events | optional trusted static deny-only hooks | lifecycle contract closed at `aecf402`; hook API and runtime loading remain unimplemented |
 | Supervisor | bounded child ownership | C7.1, only after concrete runtime-extension consumer |
 | E2 | trusted local `zag-ext-v1` process extension | supervisor + versioned protocol + D-007 composition |
 | Untrusted native | downloaded/third-party process | additionally required OS enforcement; no downgrade |

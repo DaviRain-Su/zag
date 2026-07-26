@@ -8,19 +8,19 @@
 
 | 规格 | 阶段 | 现状路径 | 目标拆分（可选） |
 |------|------|----------|------------------|
-| [core-boundary.md](./core-boundary.md) | D-011 migration | current Core + coding-agent facade | Core only Loop/contracts; product policy/state in coding-agent |
-| [loop-turn.md](./loop-turn.md) | H1 | `packages/zag-agent-core/src/loop.zig` | narrow imports to required kernel seams |
-| [tool-runtime.md](./tool-runtime.md) | H/P0 **L2** → SDK | `zag-types` ToolDefinition + ToolCapabilities；core `tool.zig` | keep generic registry/validation in Core |
+| [core-boundary.md](./core-boundary.md) | D-011 done | thin Core + coding-agent product facade | Core owns Loop/contracts; coding-agent owns product policy/state/lifecycle adapter |
+| [loop-turn.md](./loop-turn.md) | H1 | `packages/zag-agent-core/src/loop.zig` | required kernel seams complete; L3 steering remains separate |
+| [tool-runtime.md](./tool-runtime.md) | H/P0 **L2** → SDK | `zag-types` ToolDefinition + ToolCapabilities；Core `tool.zig` | keep generic registry/validation in Core |
 | [tools-edit.md](./tools-edit.md) | H2 → C4 | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent |
-| [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | runtime `run_shell` + current core `shell_policy` | policy/runtime target coding-agent; required Core seam |
-| [permissions.md](./permissions.md) | H3 **L2** | current core `permissions.zig` | concrete policy target coding-agent; required Core seam |
-| [context-compaction.md](./context-compaction.md) | H4 → C5 | current core `context`；coding `project` | protocol validation stays Core; projection moves coding-agent |
-| [session-store.md](./session-store.md) | H4 → C5 | `packages/zag-coding-agent/src/session_store.zig` | move durable store to coding-agent; Transcript stays Core |
-| [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | current core `workspace` + `shell_policy`；`redact.zig` 已移到 coding-agent | implementations move coding-agent; future C7 sandbox separate |
+| [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | coding-agent `runtime/edit_tools.zig` + `shell_policy.zig` | future process supervisor remains separate |
+| [permissions.md](./permissions.md) | H3 **L2** | `zag-coding-agent/src/permissions.zig` | concrete product policy stays in coding-agent; required Core seam |
+| [context-compaction.md](./context-compaction.md) | H4 → C5 | Core `protocol_history.zig`/`context_view.zig` + coding-agent `context.zig` | ownership split complete; future repo-map work separate |
+| [session-store.md](./session-store.md) | H4 → C5 | `packages/zag-coding-agent/src/session_store.zig` | durable store stays coding-agent; Transcript stays Core |
+| [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | coding-agent `workspace.zig`/`shell_policy.zig`/`redact.zig` | future C7 OS sandbox remains separate |
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
 | [trace-observability.md](./trace-observability.md) | H7 | `packages/zag-coding-agent/src/{trace,redact,observer}.zig`；Core emits source facts via `LoopEventSink` | implementation moved to coding-agent by core-observation-ownership-001 |
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | `packages/zag-cli/src/cli.zig` + core cancel flag | 保持 signal UX 在产品层 |
-| [harness-events.md](./harness-events.md) | M1 in-progress | coding-agent SDK adapter over Core Loop facts + facade run facts | after D-011 migration; no core `lifecycle.zig` |
+| [harness-events.md](./harness-events.md) | M1 events ✅ | coding-agent SDK adapter over Core Loop facts + facade run facts; closed at `aecf402` | no Core `lifecycle.zig`; steering/fork remain separate |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1/E2/E3 runtime hosts unimplemented | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
@@ -33,7 +33,7 @@
 | `zag-ai` | `resolve`、`WireAdapter`、`ChatOptions`、catalog | openai_compat |
 | `zag-types` | Message / ToolDefinition / ToolRisk / ToolCapabilities / ToolDescriptor / ChatError | — |
 | `zag-agent-core` | `loop`、Transcript、纯 Provider/Tool/Cancel ports、protocol history、required policy/context/event seams | 无 durable session/Trace/redaction/Observer、无 concrete product policy/Tools、无 zag-ai |
-| `zag-coding-agent` | Agent/Session、policy/context/persistence/observation、Trace/redaction/Observer、WireProvider、toolset/runtime tools、durable session store | 组装 core + wire |
+| `zag-coding-agent` | Agent/Session、policy/context/persistence/observation、Trace/redaction/Observer/LifecycleObserver、WireProvider、toolset/runtime tools、durable session store | 组装 core + wire |
 | `zag-cli` | flags / REPL / one-shot/headless / signal + terminal ownership | 产品壳 |
 | `src/main` | 进程入口 → `zag_cli.run` | 薄 |
 
@@ -68,7 +68,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [sdk-contract.md](./sdk-contract.md) | SDK-ready | Public Zig source-composition contract（status: closed at `ebdd7ab`） |
 | [headless-contract.md](./headless-contract.md) | Headless Gate **L2** | Public JSON/NDJSON process contract + exit matrix; closed at `a1a1e0f` |
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | REPL/one-shot input ownership and Ctrl+C lifecycle |
-| [harness-events.md](./harness-events.md) | M1 in-progress | product SDK lifecycle adapter after thin-Core migration |
+| [harness-events.md](./harness-events.md) | M1 events ✅ | product SDK lifecycle adapter closed at `aecf402`; no Core lifecycle channel |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |

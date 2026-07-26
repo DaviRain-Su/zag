@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 前置 | Phase H lifecycle/session + SDK/headless event contracts ✅；executable agents 另依赖 process supervisor |
-| 近期路线位置 | M1 `harness-events-001` → `harness-steering-001` |
+| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` planned |
 | 失败模式 | 运行中的 Agent 无法接收纠偏；结束时无法排入 follow-up；复杂编排反客为主 |
 | 模块 | [loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
 
@@ -13,7 +13,7 @@
 
 ## 近期范围
 
-1. 先定义 message/Tool/run 生命周期事件与 ordering；
+1. message/Tool/run 生命周期事件与 ordering 已由 `harness-events-001` 闭合；
 2. bounded steering queue：在明确的 turn/Tool boundary 注入纠偏；
 3. bounded follow-up queue：Agent 将结束时追加工作；
 4. queue ownership、cancel、session/trace projection 和 overflow behavior 显式；
