@@ -1,7 +1,7 @@
 ---
 id: core-seams-001
 scope: agent-core/kernel-seams
-status: in-progress
+status: done
 priority: P0
 depends-on:
   - core-boundary-001

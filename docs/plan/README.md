@@ -19,8 +19,8 @@ docs/plan/
 | Zig SDK | **done/L2** at `ebdd7ab` — external consumer 7/7 |
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
-| Core responsibility correction | **spec done** at `d89cdbc` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); implementation migration not started |
-| Next code task | `core-seams-001` **ready**; `harness-events-001` remains re-queued behind the migration |
+| Core responsibility correction | **seam step done** at `b6a33a6` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); concrete ownership moves remain serialized |
+| Next code task | `core-session-ownership-001` **ready**; `harness-events-001` remains re-queued behind the migration |
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -41,8 +41,10 @@ completed foundation
         core-boundary-001 (docs, done) ✅
                   │
                   ▼
-        core-seams-001 (ready)
-          → core-session-ownership-001
+        core-seams-001 (done) ✅
+                  │
+                  ▼
+   core-session-ownership-001 (ready)
           → core-observation-ownership-001
           → core-policy-ownership-001
           → core-context-ownership-001
@@ -60,7 +62,7 @@ completed foundation
                      tui-minimal-001
 ```
 
-`pi-alignment-001`, `cli-sigint-001`, and the D-011 docs node `core-boundary-001` are complete. Source review found that the earlier lifecycle design would add a third Core event channel while leaving product policy/state in the kernel. `core-seams-001` is now the only ready implementation node; all code nodes are serialized, and `harness-events-001` returns only after the thin-Core migration. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
+`pi-alignment-001`, `cli-sigint-001`, the D-011 docs node `core-boundary-001`, and seam step `core-seams-001` are complete. Source review found that the earlier lifecycle design would add a third Core event channel while leaving product policy/state in the kernel. `core-session-ownership-001` is now the only ready implementation node; all code nodes are serialized, and `harness-events-001` returns only after the thin-Core migration. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -70,8 +72,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
-| [core-seams-001](./tasks/core-seams-001.md) | P0 | ready | Required kernel seams + canonical LoopEvent |
-| [core-session-ownership-001](./tasks/core-session-ownership-001.md) | P1 | pending | Durable session ownership → coding-agent |
+| [core-session-ownership-001](./tasks/core-session-ownership-001.md) | P1 | ready | Durable session ownership → coding-agent |
 | [core-observation-ownership-001](./tasks/core-observation-ownership-001.md) | P0 | pending | Trace/redaction/logging ownership → coding-agent |
 | [core-policy-ownership-001](./tasks/core-policy-ownership-001.md) | P0 | pending | Permission/workspace/shell implementation ownership → coding-agent |
 | [core-context-ownership-001](./tasks/core-context-ownership-001.md) | P1 | pending | Protocol history/Core vs context projection/product split |
@@ -81,6 +82,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [core-seams-001](./tasks/core-seams-001.md) | P0 | done | Required kernel seams + canonical LoopEvent |
 | [core-boundary-001](./tasks/core-boundary-001.md) | P0 | done | Thin-Core Product Spec, D-011, and serialized migration DAG |
 | [pi-alignment-001](./tasks/pi-alignment-001.md) | P1 | done | Pi feature surface → Zig-native Harness/carrier roadmap |
 | [cli-sigint-001](./tasks/cli-sigint-001.md) | P1 | done | Direct CLI Ctrl+C lifecycle and bounded escape |
