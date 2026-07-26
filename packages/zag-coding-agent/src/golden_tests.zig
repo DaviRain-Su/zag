@@ -169,9 +169,11 @@ test "golden deny-write leaves no file" {
             .io = io,
             .cwd = tmp.dir,
         },
-        .options = .{
-            .permission_gate = .denyAllDangerous(),
-        },
+        .tool_policy = core.loop.ToolPolicy.denyAll(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
     }, &transcript);
 
     try std.testing.expectEqualStrings("understood, not writing", result.final_text);
@@ -240,8 +242,12 @@ test "cancel then session save/load resumes" {
             .io = io,
             .cwd = tmp.dir,
         },
+        .tool_policy = core.loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
         .options = .{
-            .permission_gate = .yolo(),
             .cancel = &cancel_flag,
         },
     }, &transcript);

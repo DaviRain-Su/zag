@@ -221,7 +221,11 @@ test "loop via WireProvider forwards only ToolDefinition to WireAdapter" {
             .io = std.testing.io,
             .cwd = std.Io.Dir.cwd(),
         },
-        .options = .{ .permission_gate = .yolo() },
+        .tool_policy = loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = loop.ContextView.identity(),
+        .event_sink = loop.LoopEventSink.discard(),
     }, &transcript);
 
     try std.testing.expect(fake.saw);

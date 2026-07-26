@@ -24,6 +24,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const zt = @import("zag-types");
+const tool_args = @import("tool_args.zig");
 
 /// Lexical / containment denial (maps to soft `code=jail_deny`).
 pub const Error = error{
@@ -353,39 +354,20 @@ fn isSymlinkNoFollow(cwd: Io.Dir, io: Io, sub_path: []const u8) bool {
     return st.kind == .sym_link;
 }
 
-/// Extract a required string field from JSON tool arguments.
+/// Extract a required string field from JSON tool arguments. Delegates to the
+/// neutral `tool_args` module (single source) to avoid parse-logic duplication.
 pub fn requireStringArgument(
     allocator: std.mem.Allocator,
     arguments_json: []const u8,
     field: []const u8,
 ) PathExtractError![]const u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch
-        return error.InvalidArguments;
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidArguments;
-    const val = parsed.value.object.get(field) orelse return error.InvalidArguments;
-    if (val != .string) return error.InvalidArguments;
-    if (val.string.len == 0) return error.InvalidArguments;
-    return try allocator.dupe(u8, val.string);
+    return tool_args.requireStringArgument(allocator, arguments_json, field);
 }
 
-fn optionalStringArgumentOrDefault(
-    allocator: std.mem.Allocator,
-    arguments_json: []const u8,
-    field: []const u8,
-    default_path: []const u8,
-) PathExtractError![]const u8 {
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch
-        return error.InvalidArguments;
-    defer parsed.deinit();
-    if (parsed.value != .object) return error.InvalidArguments;
-    const val = parsed.value.object.get(field) orelse return try allocator.dupe(u8, default_path);
-    if (val != .string) return error.InvalidArguments;
-    if (val.string.len == 0) return try allocator.dupe(u8, default_path);
-    return try allocator.dupe(u8, val.string);
-}
-
-/// Extract path using descriptor workspace metadata.
+/// Extract path using descriptor workspace metadata. Single source of truth
+/// lives in `tool_args.pathFromDescriptor` (neutral kernel module); this is a
+/// thin re-export so existing call sites keep working without duplicating the
+/// parse logic.
 ///
 /// - `workspace.none` → `null` (no path claim).
 /// - `workspace.path_field` → required non-empty string field; missing/empty/non-string/bad JSON → `InvalidArguments`.
@@ -396,16 +378,7 @@ pub fn pathFromDescriptor(
     capabilities: zt.ToolCapabilities,
     arguments_json: []const u8,
 ) PathExtractError!?[]const u8 {
-    return switch (capabilities.workspace) {
-        .none => null,
-        .path_field => |field| try requireStringArgument(allocator, arguments_json, field),
-        .path_field_default => |d| try optionalStringArgumentOrDefault(
-            allocator,
-            arguments_json,
-            d.field,
-            d.default_path,
-        ),
-    };
+    return tool_args.pathFromDescriptor(allocator, capabilities, arguments_json);
 }
 
 /// Build a Guard from Context-like inputs (cached root optional).

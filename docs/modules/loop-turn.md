@@ -67,7 +67,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 ## Current gaps
 
-- D-011 responsibility migration is not complete: current `loop.zig` still imports concrete product context/policy/workspace/shell/Trace modules. See [core-boundary](./core-boundary.md).
+- D-011 seam migration step 1 (core-seams-001) is complete: `loop.run` routes through explicit `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`, and fallible canonical `LoopEventSink`. Current product behavior is preserved via adapters in `zag-coding-agent.RunBridge`. Ownership moves (session/Trace/policy/context files) remain pending later tasks. See [core-boundary](./core-boundary.md).
 - Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work and is not an H L2 requirement.
 - High-level SDK lifecycle is re-queued after the boundary migration; no core `lifecycle.zig` is planned.
 

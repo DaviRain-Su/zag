@@ -7,6 +7,7 @@ const std = @import("std");
 
 pub const message = @import("message.zig");
 pub const tool = @import("tool.zig");
+pub const tool_args = @import("tool_args.zig");
 pub const transcript = @import("transcript.zig");
 pub const provider = @import("provider.zig");
 pub const observer = @import("observer.zig");
@@ -19,6 +20,14 @@ pub const tool_error = @import("tool_error.zig");
 pub const cancel = @import("cancel.zig");
 pub const redact = @import("redact.zig");
 pub const trace = @import("trace.zig");
+
+// D-011 thin kernel seams (required ports + canonical event sink).
+pub const tool_policy = @import("tool_policy.zig");
+pub const jail = @import("jail.zig");
+pub const shell_policy_port = @import("shell_policy_port.zig");
+pub const context_view = @import("context_view.zig");
+pub const loop_event = @import("loop_event.zig");
+
 pub const loop = @import("loop.zig");
 
 pub const Message = message.Message;
@@ -34,6 +43,14 @@ pub const ToolCapabilities = tool.ToolCapabilities;
 pub const ToolRisk = tool.ToolRisk;
 pub const Registration = tool.Registration;
 pub const RegistrationError = tool.RegistrationError;
+
+// D-011 seam ports (re-exported for module-name consumers).
+pub const ToolPolicy = tool_policy.ToolPolicy;
+pub const Jail = jail.Jail;
+pub const ShellPolicyPort = shell_policy_port.ShellPolicy;
+pub const ContextView = context_view.ContextView;
+pub const LoopEventSink = loop_event.LoopEventSink;
+pub const LoopEvent = loop_event.LoopEvent;
 
 pub const version = "0.5.0";
 

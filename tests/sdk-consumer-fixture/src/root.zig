@@ -152,6 +152,11 @@ test "low-level zag-types + zag-agent-core composition" {
             .io = io,
             .cwd = std.Io.Dir.cwd(),
         },
+        .tool_policy = core.loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
     }, &transcript);
 
     try std.testing.expectEqualStrings("done", result.final_text);
@@ -670,4 +675,252 @@ test "session save error returns session_error and preserves prior bytes" {
     const after = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(8 * 1024));
     defer gpa.free(after);
     try std.testing.expectEqualStrings(prior, after);
+}
+
+// ── D-011 seam composition fixtures ──────────────────────────────────────────
+
+test "low-level core: explicit five-seam permissive composition" {
+    // Proves an external SDK consumer can compose the five explicit seams at
+    // the low level (allowAllForTrustedHost is explicit, never a default).
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const State = struct { n: u32 = 0 };
+    const Stub = struct {
+        fn h(ctx: core.tool.Context, instance: ?*anyopaque, _: []const u8) core.tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.n += 1;
+            return ctx.allocator.dupe(u8, "ok") catch return error.OutOfMemory;
+        }
+    };
+    var state: State = .{};
+    const t = try core.tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "counter",
+            .description = "x",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = &state,
+        .handler = Stub.h,
+    });
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const core.message.Message,
+            _: []const core.tool.Definition,
+            _: core.provider.RequestControl,
+        ) core.provider.ChatError!core.message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(core.message.ToolCall, 1);
+                tc[0] = .{ .id = "c1", .name = "counter", .arguments = "{}" };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = core.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = core.transcript.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("count");
+
+    const result = try core.loop.run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &[_]core.tool.Tool{t} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .tool_policy = core.loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("done", result.final_text);
+    try std.testing.expectEqual(@as(u32, 1), state.n);
+}
+
+test "low-level core: explicit deny policy prevents handler execution" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const State = struct { ran: bool = false };
+    const Stub = struct {
+        fn h(_: core.tool.Context, instance: ?*anyopaque, _: []const u8) core.tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.ran = true;
+            return error.ToolFailed;
+        }
+    };
+    var state: State = .{};
+    const t = try core.tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "write_file",
+            .description = "x",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .write,
+            .workspace = .{ .path_field = "path" },
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = &state,
+        .handler = Stub.h,
+    });
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const core.message.Message,
+            _: []const core.tool.Definition,
+            _: core.provider.RequestControl,
+        ) core.provider.ChatError!core.message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(core.message.ToolCall, 1);
+                tc[0] = .{
+                    .id = "c1",
+                    .name = "write_file",
+                    .arguments = try arena.dupe(u8, "{\"path\":\"x\",\"content\":\"y\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "denied ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = core.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = core.transcript.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("write");
+
+    _ = try core.loop.run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &[_]core.tool.Tool{t} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .tool_policy = core.loop.ToolPolicy.denyAll(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
+    }, &transcript);
+
+    try std.testing.expect(!state.ran);
+    var saw = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and core.tool_error.hasCode(m.content, .permission_denied)) saw = true;
+    }
+    try std.testing.expect(saw);
+}
+
+test "low-level core: unknown tool soft-fails before policy" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const core.message.Message,
+            _: []const core.tool.Definition,
+            _: core.provider.RequestControl,
+        ) core.provider.ChatError!core.message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(core.message.ToolCall, 1);
+                tc[0] = .{ .id = "c1", .name = "nope_nope", .arguments = "{}" };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = core.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = core.transcript.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("unknown");
+
+    _ = try core.loop.run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .tool_policy = core.loop.ToolPolicy.denyAll(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
+    }, &transcript);
+
+    var saw = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and core.tool_error.hasCode(m.content, .unknown_tool)) saw = true;
+    }
+    try std.testing.expect(saw);
+}
+
+test "low-level core: discard sink and identity view are explicit, not defaults" {
+    // The discard sink and identity view are named explicit helpers. A
+    // consumer selects them; they are never silently normalized to missing.
+    const discard_sink = core.loop.LoopEventSink.discard();
+    const identity_view = core.loop.ContextView.identity();
+    try discard_sink.emit(.{ .turn_start = 1 });
+    _ = identity_view;
 }

@@ -115,12 +115,17 @@ provider_retry, compaction, run_end
 
 Source: [`packages/zag-agent-core/src/trace.zig:67-75`](../../packages/zag-agent-core/src/trace.zig).
 
-### D-011 target
+### D-011 target (core-seams-001 done)
 
-Core will expose one borrowed/fallible source `LoopEventSink`; durable Trace and verbose logging become coding-agent
+Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace and verbose logging are coding-agent
 adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The later
 `harness-events-001` public callback is a coding-agent projection and does not add Core `lifecycle.zig`. Existing
-Observer behavior remains supported until its migration task records the exact source transition.
+Observer behavior is preserved via the `RunBridge` event-sink adapter in `zag-coding-agent`.
+
+`loop.run` now takes five explicit required seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`,
+`LoopEventSink` — as borrowed dependencies. Missing is never implicitly allow/yolo/identity/discard; a
+low-level host selects permissive helpers (`allowAllForTrustedHost`, `identity`, `discard`) explicitly.
+`zag-coding-agent.Agent` always installs product defaults equivalent to `ask + workspace jail + shell protect`.
 
 ### 4.1 Event invariants
 

@@ -18,6 +18,7 @@ const edit_tools = @import("runtime/edit_tools.zig");
 
 const message = core.message;
 const tool = core.tool;
+const tool_args = core.tool_args;
 const transcript_mod = core.transcript;
 const provider_mod = core.provider;
 const observer_mod = core.observer;
@@ -29,6 +30,13 @@ const trace_mod = core.trace;
 const redact_mod = core.redact;
 const loop = core.loop;
 const cancel_mod = core.cancel;
+
+// D-011 seam ports (adapted over current product behavior).
+const tool_policy_mod = core.tool_policy;
+const jail_mod = core.jail;
+const shell_policy_port = core.shell_policy_port;
+const context_view_mod = core.context_view;
+const loop_event_mod = core.loop_event;
 
 pub const Options = struct {
     max_turns: u32 = loop.default_max_turns,
@@ -366,6 +374,235 @@ pub const Session = struct {
     }
 };
 
+// ── D-011 RunBridge: local owner of the five seam pointers for one reply ─────
+//
+// A `RunBridge` is constructed as a local in `Agent.reply` BEFORE any seam
+// pointer is formed, lives on the stack for the entire synchronous `loop.run`,
+// and is never copied/moved/returned. The five seam values borrow its fields,
+// so their `ptr` arguments remain stable for the whole run. The current
+// product behavior (Observer fan-out, durable Trace, session compaction note,
+// generic warnings) is preserved byte-for-byte by the adapter vtables below.
+
+const RunBridge = struct {
+    agent: *Agent,
+    session: *Session,
+    /// Resolved permission gate (borrowed by the tool_policy seam).
+    gate: permissions.Gate,
+    /// Borrowed trace pointer for this reply (null when tracing is off).
+    trace: ?*trace_mod.Trace,
+
+    /// Build the `loop.Deps` borrowing this bridge's fields. The caller must
+    /// keep this `RunBridge` alive and unmoved for the duration of `loop.run`.
+    fn deps(self: *RunBridge) loop.Deps {
+        const a = self.agent;
+        return .{
+            .gpa = a.gpa,
+            .provider = a.provider,
+            .toolset = a.effectiveToolset(),
+            .tool_ctx = .{
+                .allocator = a.gpa,
+                .io = a.io,
+                .cwd = Io.Dir.cwd(),
+            },
+            .tool_policy = .{ .ptr = self, .vtable = &bridge_policy_vtable },
+            .jail = .{ .ptr = null, .vtable = jail_mod.WorkspaceGuardAdapter.vtable() },
+            .shell_policy = shell_policy_port.ShellPolicy.fromMode(a.options.shell_policy),
+            .context_view = .{ .ptr = self, .vtable = &bridge_context_vtable },
+            .event_sink = .{ .ptr = self, .vtable = &bridge_sink_vtable },
+            .options = .{
+                .max_turns = a.options.max_turns,
+                .chat_retries = a.options.chat_retries,
+                .retry_base_delay_ms = a.options.retry_base_delay_ms,
+                .cancel = &a.cancel,
+                .provider_timeout_ms = a.options.provider_timeout_ms,
+            },
+        };
+    }
+};
+
+// ── ToolPolicy adapter over `permissions.Gate` ────────────────────────────────
+
+const bridge_policy_vtable: tool_policy_mod.ToolPolicyVTable = .{
+    .check = bridgePolicyCheck,
+};
+
+fn bridgePolicyCheck(
+    ptr: ?*anyopaque,
+    descriptor: tool.ToolDescriptor,
+    arguments_json: []const u8,
+    path: ?[]const u8,
+) tool_policy_mod.Outcome {
+    const bridge: *RunBridge = @ptrCast(@alignCast(ptr.?));
+    const o = bridge.gate.check(descriptor, arguments_json, path);
+    return .{
+        .decision = switch (o.decision) {
+            .allow => .allow,
+            .deny => .deny,
+        },
+        .remembered = o.remembered,
+        .plan_blocked = o.plan_blocked,
+    };
+}
+
+// ── ContextView adapter over `context.viewForModel` + session layers ──────────
+
+const bridge_context_vtable: context_view_mod.ContextViewVTable = .{
+    .view = bridgeContextView,
+};
+
+fn bridgeContextView(
+    ptr: ?*anyopaque,
+    scratch: std.mem.Allocator,
+    transcript_items: []const message.Message,
+) context_view_mod.ContextViewError!context_view_mod.View {
+    const bridge: *RunBridge = @ptrCast(@alignCast(ptr.?));
+    const a = bridge.agent;
+    const session = bridge.session;
+    const layers = session.layers();
+    const v = context_mod.viewForModel(
+        scratch,
+        transcript_items,
+        a.options.context,
+        layers,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidContext => return error.InvalidContext,
+    };
+    return .{ .messages = v.messages, .compaction = v.compaction };
+}
+
+// ── LoopEventSink adapter: the existing per-event fan-out (Observer + Trace) ─
+
+const bridge_sink_vtable: loop_event_mod.LoopEventSinkVTable = .{
+    .emit = bridgeSinkEmit,
+};
+
+fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_mod.SinkError!void {
+    const bridge: *RunBridge = @ptrCast(@alignCast(ptr.?));
+    const a = bridge.agent;
+    switch (event) {
+        .turn_start => |turn| {
+            if (bridge.trace) |tr| {
+                tr.emitTurn(turn) catch |err| return mapTraceToSink(err);
+            }
+        },
+        .assistant_message => |text| {
+            // user Observer/internal verbose path, then Trace assistant.
+            emitObserver(a, .{ .assistant_text = text });
+            if (bridge.trace) |tr| {
+                tr.emitAssistant(text) catch |err| return mapTraceToSink(err);
+            }
+        },
+        .usage => |u| {
+            // Trace usage, then user Observer/ledger/verbose/cost.
+            if (bridge.trace) |tr| {
+                tr.emitUsage(.{ .usage = u }) catch |err| return mapTraceToSink(err);
+            }
+            emitObserver(a, .{ .usage = u });
+        },
+        .tool_start => |call| {
+            // Observer, then Trace tool_call.
+            emitObserver(a, .{ .tool_call = call });
+            if (bridge.trace) |tr| {
+                tr.emitToolCall(call) catch |err| return mapTraceToSink(err);
+            }
+        },
+        .tool_end => |r| {
+            // Observer, then Trace tool_result.
+            emitObserver(a, .{ .tool_result = .{ .name = r.name, .body = r.body } });
+            if (bridge.trace) |tr| {
+                tr.emitToolResult(r.name, r.body) catch |err| return mapTraceToSink(err);
+            }
+        },
+        .policy_decision => |p| {
+            // Observer, then Trace permission.
+            emitObserver(a, .{
+                .permission = .{
+                    .tool_name = p.tool_name,
+                    .allowed = p.allowed,
+                    .remembered = p.remembered,
+                    .risk = p.risk,
+                },
+            });
+            if (bridge.trace) |tr| {
+                tr.emitPermission(p.tool_name, p.risk orelse "?", p.allowed, p.remembered) catch |err| return mapTraceToSink(err);
+            }
+        },
+        .jail_decision => |j| {
+            // Trace, then generic warning.
+            if (bridge.trace) |tr| {
+                tr.emitJailDeny(j.tool_name, j.path) catch |err| return mapTraceToSink(err);
+            }
+            if (a.options.observer != null) {
+                std.log.warn("jail deny", .{});
+            }
+        },
+        .shell_decision => |command| {
+            // Trace, then generic warning.
+            if (bridge.trace) |tr| {
+                tr.emitShellDeny(command) catch |err| return mapTraceToSink(err);
+            }
+            if (a.options.observer != null) {
+                // Generic only — never log raw command (may contain secrets).
+                std.log.warn("shell policy deny", .{});
+            }
+        },
+        .provider_retry => |r| {
+            // Trace, then generic warning.
+            if (bridge.trace) |tr| {
+                tr.emitProviderRetry(r.attempt, r.err_name) catch |err| return mapTraceToSink(err);
+            }
+            if (a.options.observer != null) {
+                std.log.warn(
+                    "provider retry {d}/{d} after {s}",
+                    .{ r.attempt, a.options.chat_retries, r.err_name },
+                );
+            }
+        },
+        .context_compaction => |ev| {
+            // Session note first, then Trace compaction (h-context-001).
+            bridge.session.noteCompaction(ev) catch return error.OutOfMemory;
+            if (bridge.trace) |tr| {
+                tr.emitCompactionEvent(ev) catch |err| return mapTraceToSink(err);
+            }
+        },
+    }
+}
+
+/// Emit to the user Observer and run the internal usage/verbose ledger path.
+/// Mirrors the prior `onAgentEvent` exactly (user observer first, then
+/// ledger/verbose).
+fn emitObserver(a: *Agent, event: observer_mod.Event) void {
+    if (a.options.observer) |user| {
+        user.emit(event);
+    }
+    switch (event) {
+        .usage => |u| {
+            a.ledger.recordModel(u, a.options.model_info);
+            if (a.options.verbose) {
+                observer_mod.logEventRedacted(a.gpa, a.activeRedactor(), event);
+                if (a.ledger.cost.known) {
+                    std.log.info("cost est cumulative=${d:.6}", .{a.ledger.cost.total});
+                }
+            }
+        },
+        else => {
+            if (a.options.verbose) {
+                observer_mod.logEventRedacted(a.gpa, a.activeRedactor(), event);
+            }
+        },
+    }
+}
+
+/// Map `trace.Error` to the sink error set. `OutOfMemory` stays `OutOfMemory`;
+/// durable/serialization/path faults become `SinkFailed` (→ loop `TraceFailed`).
+fn mapTraceToSink(err: trace_mod.Error) loop_event_mod.SinkError {
+    return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => error.SinkFailed,
+    };
+}
+
 pub const Agent = struct {
     gpa: std.mem.Allocator,
     io: Io,
@@ -477,75 +714,6 @@ pub const Agent = struct {
             if (self.test_tools) |override| return .{ .tools = override };
         }
         return self.tools_storage.toolset();
-    }
-
-    fn deps(self: *Agent, session: *Session) loop.Deps {
-        const gate = self.resolveGate();
-        return .{
-            .gpa = self.gpa,
-            .provider = self.provider,
-            .toolset = self.effectiveToolset(),
-            .tool_ctx = .{
-                .allocator = self.gpa,
-                .io = self.io,
-                .cwd = Io.Dir.cwd(),
-            },
-            .options = .{
-                .max_turns = self.options.max_turns,
-                .observer = .{
-                    .ptr = self,
-                    .on_event = onAgentEvent,
-                },
-                .permission_gate = gate,
-                .context = self.options.context,
-                .get_layers = sessionLayers,
-                .layers_ctx = session,
-                .shell_policy = self.options.shell_policy,
-                .trace = if (self.trace) |*tr| tr else null,
-                .chat_retries = self.options.chat_retries,
-                .retry_base_delay_ms = self.options.retry_base_delay_ms,
-                .cancel = &self.cancel,
-                .provider_timeout_ms = self.options.provider_timeout_ms,
-                .on_compaction = onSessionCompaction,
-                .compaction_ctx = session,
-            },
-        };
-    }
-
-    fn sessionLayers(ctx: ?*anyopaque) context_mod.Layers {
-        const session: *Session = @ptrCast(@alignCast(ctx.?));
-        return session.layers();
-    }
-
-    fn onSessionCompaction(ctx: ?*anyopaque, event: context_mod.CompactionEvent) error{OutOfMemory}!void {
-        const session: *Session = @ptrCast(@alignCast(ctx.?));
-        try session.noteCompaction(event);
-    }
-
-    fn onAgentEvent(ptr: ?*anyopaque, event: observer_mod.Event) void {
-        const self: *Agent = @ptrCast(@alignCast(ptr.?));
-        // User observer receives the event first; internal usage/verbose ledger follows.
-        // A null `on_event` is silently ignored so `.observer = .none()` is harmless.
-        if (self.options.observer) |user| {
-            user.emit(event);
-        }
-        switch (event) {
-            .usage => |u| {
-                self.ledger.recordModel(u, self.options.model_info);
-                if (self.options.verbose) {
-                    // Redact optional log; OOM drops the line (never raw).
-                    observer_mod.logEventRedacted(self.gpa, self.activeRedactor(), event);
-                    if (self.ledger.cost.known) {
-                        std.log.info("cost est cumulative=${d:.6}", .{self.ledger.cost.total});
-                    }
-                }
-            },
-            else => {
-                if (self.options.verbose) {
-                    observer_mod.logEventRedacted(self.gpa, self.activeRedactor(), event);
-                }
-            },
-        }
     }
 
     /// Cooperative cancel request; safe to call from another thread/signal handler.
@@ -738,7 +906,17 @@ pub const Agent = struct {
             return self.failRun(0, .out_of_memory, err);
         };
 
-        const result = loop.run(self.deps(session), &session.transcript) catch |err| {
+        // D-011: build the local RunBridge owning the five seam pointers for
+        // this synchronous run. Its address is stable for the whole loop.run
+        // and is never copied/moved/returned. The seams borrow its fields.
+        var bridge: RunBridge = .{
+            .agent = self,
+            .session = session,
+            .gate = self.resolveGate(),
+            .trace = if (self.trace) |*tr| tr else null,
+        };
+
+        const result = loop.run(bridge.deps(), &session.transcript) catch |err| {
             return self.failRun(0, stopReasonForRunError(err), err);
         };
 
@@ -2463,6 +2641,33 @@ test "h-context: noteCompaction OOM leaves gen and summary unchanged" {
     try std.testing.expect(session.compaction_summary == null);
 }
 
+// ── h-context-001: loop-level on_compaction OOM fixture helpers ──────────────
+//
+// Locally-defined low-level context_view + event_sink vtables for the loop
+// fixture that exercises compaction OOM. No public concrete test adapter is
+// leaked; these are file-local test scaffolding.
+
+const LayeredCtx = struct {
+    layers: context_mod.Layers,
+    opts: context_mod.Options,
+};
+
+const layered_context_vtable: context_view_mod.ContextViewVTable = .{
+    .view = layeredContextView,
+};
+fn layeredContextView(
+    ptr: ?*anyopaque,
+    scratch: std.mem.Allocator,
+    transcript_items: []const message.Message,
+) context_view_mod.ContextViewError!context_view_mod.View {
+    const ctx: *LayeredCtx = @ptrCast(@alignCast(ptr.?));
+    const v = context_mod.viewForModel(scratch, transcript_items, ctx.opts, ctx.layers) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidContext => return error.InvalidContext,
+    };
+    return .{ .messages = v.messages, .compaction = v.compaction };
+}
+
 test "h-context: on_compaction OOM aborts before trace compaction line" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
@@ -2489,13 +2694,6 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
         .vtable = &.{ .chat = Mock.chat },
     };
 
-    const OomSink = struct {
-        fn onCompaction(ctx: ?*anyopaque, _: context_mod.CompactionEvent) error{OutOfMemory}!void {
-            const called: *bool = @ptrCast(@alignCast(ctx.?));
-            called.* = true;
-            return error.OutOfMemory;
-        }
-    };
     var sink_called = false;
 
     var tr = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
@@ -2522,6 +2720,34 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
         });
     }
 
+    // Local sink that runs the session note first (failing OOM) so no trace
+    // compaction line is written — preserving the prior on_compaction OOM contract.
+    const OomEventSink = struct {
+        called: *bool,
+        fn emit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_mod.SinkError!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .context_compaction => {
+                    self.called.* = true;
+                    return error.OutOfMemory;
+                },
+                .turn_start => {},
+                else => {},
+            }
+        }
+    };
+    var oom_sink: OomEventSink = .{ .called = &sink_called };
+    const oom_sink_vtable: loop_event_mod.LoopEventSinkVTable = .{ .emit = OomEventSink.emit };
+
+    var ctx_state: LayeredCtx = .{
+        .layers = .{ .system = "base" },
+        .opts = .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 1,
+        },
+    };
+
     const result = loop.run(.{
         .gpa = gpa,
         .provider = provider,
@@ -2531,18 +2757,13 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
             .io = io,
             .cwd = Io.Dir.cwd(),
         },
+        .tool_policy = loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = .{ .ptr = &ctx_state, .vtable = &layered_context_vtable },
+        .event_sink = .{ .ptr = &oom_sink, .vtable = &oom_sink_vtable },
         .options = .{
             .max_turns = 2,
-            .permission_gate = .yolo(),
-            .layers = .{ .system = "base" },
-            .context = .{
-                .max_tail_messages = 2,
-                .max_chars = 0,
-                .min_tail_messages = 1,
-            },
-            .trace = &tr,
-            .on_compaction = OomSink.onCompaction,
-            .compaction_ctx = &sink_called,
         },
     }, &transcript);
 
