@@ -142,7 +142,11 @@ Fork must reuse this module’s exclusive `create_new` / `createNewWithRedactor`
 typed errors, redaction, advisory lock, and schema v1 without `open_or_create`,
 resume-as-fork, product `*Unredacted`, or schema fallback. JSONL load remains the
 resume path; it is **not** a substitute for live transcript deep-copy (see
-session-fork content_parts boundary).
+session-fork content_parts boundary). Failed create may leave intermediate
+directories and a reusable stale `{path}.lock` sidecar, but not a committed
+target session file or a held lock FD. Create-body fault fixtures need a
+test-only failpoint or a proven in-create seam
+([session-fork §5.1](./session-fork.md#51-create-body-fault-strategy-deterministic-binding)).
 
 ## Non-goals for H
 

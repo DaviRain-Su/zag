@@ -29,11 +29,11 @@ Prerequisite contracts (unchanged):
 ```text
 host (idle Session)
   │
-  │ Session.fork(child_path)     // coding-agent only
+  │ Session.fork(child_path)     // coding-agent only; *const Session
   ▼
 zag-coding-agent Session
   · deep-copy transcript + layers into new arena
-  · clone redactor; empty DualQueues
+  · clone redactor via const-safe field path; empty DualQueues
   · exclusive createNewWithRedactor(child_path)
   · return independent child Session
           │
@@ -60,10 +60,13 @@ zag-agent-core
 // coding-agent Session only (exact name may match package style; behavior is binding)
 pub const ForkError = session_store.Error; // at least InvalidPath | SessionAlreadyExists
                                            // | SessionBusy | IoFailed | OutOfMemory
-                                           // | InvalidSession | UnsupportedSchema as mapped
+                                           // (+ InvalidSession | UnsupportedSchema only if
+                                           //   a mapped resume-style path is ever hit; create
+                                           //   path must not seed on those)
 
 /// Idle-only. Parent is unchanged on every success and every failure path.
 /// `child_path` is a distinct lexical relative-workspace path (not absolute, no `..`).
+/// Receiver is `*const Session`: fork must not mutate parent and must not const-cast.
 pub fn fork(self: *const Session, child_path: []const u8) ForkError!Session;
 ```
 
@@ -93,15 +96,25 @@ pub fn fork(self: *const Session, child_path: []const u8) ForkError!Session;
 | Property | Parent (after fork) | Child (on success) |
 |----------|---------------------|--------------------|
 | transcript bytes in memory | unchanged | independent deep copy |
-| durable file bytes | unchanged | new redacted JSONL at `child_path` |
+| durable file bytes | unchanged (if parent was durable) | new redacted JSONL at `child_path` |
 | writer lease / lock FD | unchanged | exclusive lease on `{child_path}.lock` |
 | control queues | unchanged (pending retained) | **empty** new DualQueues |
 | redactor | unchanged | independent `Redactor.clone` |
 | `compaction_gen` / summary | unchanged | value/deep-copied at fork time |
+| live `base_system` / `project_body` | unchanged | deep-copied at fork time (live child only) |
 | schema / Trace / headless | unchanged | schema **v1**; Trace/headless versions unchanged |
 
 There is **no** durable parent→child edge in schema v1. Lineage is host/process
 knowledge (caller chose `child_path`), not a stored `parent_id`.
+
+### Parent invariant under every target error (binding)
+
+For same-path, invalid path, racy/busy lock, already-exists, prep OOM, and create-body
+faults, the typed error is one of
+`SessionAlreadyExists | InvalidPath | SessionBusy | OutOfMemory | IoFailed`
+(as mapped in §6). **Regardless of which typed result is returned**, fork must
+**never** replace, truncate, or mutate parent durable bytes, parent live fields,
+parent lease, or parent queues.
 
 ## 3. Session field ownership table
 
@@ -116,15 +129,43 @@ must be classified. Omission is a contract bug.
 | `transcript` | **deep-copy** | New `Transcript.init(child_arena)`; deep-copy every message (see §4) |
 | `path` | **independent init** | `gpa.dupe(child_path)`; non-null. Same UTF-8 bytes as `Writer.path` but **different pointer and ownership**; freed only by child `Session.deinit`, not by Writer, and not shared with parent |
 | `writer` | **independent init** | Sole durable create: `createNewWithRedactor(...)` as **last** fallible step; move-only Writer lease |
-| `base_system` | **deep-copy** | `child_arena.dupe` parent bytes (empty string allowed) |
-| `project_body` | **deep-copy** | `child_arena.dupe` parent bytes |
+| `base_system` | **deep-copy** | `child_arena.dupe` parent bytes (empty string allowed). Live child only — see §7 resume honesty |
+| `project_body` | **deep-copy** | `child_arena.dupe` parent bytes. Live child only — see §7 resume honesty |
 | `project_source` | **static rebind / borrowed-safe** | Points at `project.candidates` static names (`AGENTS.md`, …). Rebind same static pointer; do **not** free; do **not** arena-dupe unless implementation chooses owned copy for uniformity (either is correct if deinit never frees static) |
 | `compaction_gen` | **value-copy** | Exact parent `u32` at fork time |
 | `compaction_summary` | **deep-copy** | If parent `null`, child `null`; else `child_arena.dupe` summary bytes |
 | `zag_version` | **borrowed-safe rebind** | Parent holds static default or borrowed Agent version slice; child rebinds the same pointer bytes. Not arena-owned; child deinit must not free it |
-| `owned_redactor` | **independent init** | `parent.activeRedactor().clone(gpa)` (or equivalent independent clone of parent's owned policy). Fail-closed OOM before create. Never share secret buffers with parent |
+| `owned_redactor` | **independent init** | Const-safe clone of parent's owned policy (see §3.1). Fail-closed before create. Never share secret buffers with parent |
 | `control_queues` | **independent init** | `DualQueues.init(gpa)` — **empty**. Do **not** copy parent pending steering/follow-up. Preallocate 32 KiB text backing before create I/O (same OOM-before-lease discipline as `Session.start`) |
 | `fail_next_note_compaction` (test-only) | **independent init** | Child starts `false`; never inherit parent's fault inject arm |
+
+### 3.1 Redactor clone under `*const Session` (binding)
+
+Current product code exposes `Session.activeRedactor(self: *Session)` (mutable
+receiver). `fork(self: *const Session, …)` **must not** const-cast parent to call it.
+
+Binding clone strategy (implementation may pick either; both are const-safe):
+
+1. **Field clone (preferred):** if `self.owned_redactor != null`, call
+   `self.owned_redactor.?.clone(gpa)` (or `clone` on a `*const Redactor` obtained
+   via `&self.owned_redactor.?` without casting away const on `Session`).
+2. **Const accessor:** add / use a `*const Session` (or `*const Redactor`) read
+   path whose only job is to return a borrowed `*const Redactor` for clone; still
+   no mutation of parent.
+
+**Null product redactor:** after a successful product `Session.start`,
+`owned_redactor` is always set (start builds or clones policy before create/resume).
+Fork on a product Session with `owned_redactor == null` is a programming / corrupt
+state:
+
+- Debug: `unreachable` or assert failure is acceptable evidence;
+- Release / typed path: **fail-closed** before any durable create (e.g.
+  `error.OutOfMemory` matching existing product “missing redactor” save mapping,
+  or a dedicated typed error if introduced) — **never** call
+  `createNewUnredacted` / null-redactor create.
+
+Fixtures must prove: successful product start → fork clones independent secrets;
+null-redactor Session (test-constructed) does not create child jsonl.
 
 ### Path / Writer dual ownership (binding)
 
@@ -183,18 +224,26 @@ Pointer non-aliasing after success:
 | **Fork (this contract)** | **Live deep-copy** must preserve parent `content_parts` when present on live messages |
 | JSONL roundtrip as fork implementation | **Forbidden** as the sole deep-copy mechanism: it would silently drop live `content_parts` and is not a correct ownership copy |
 
-Honest limit: after child is saved and later **resumed** through session-v1 load,
-`content_parts` follow the existing load boundary (may be absent). Fork itself
-must not lose live parts at the moment of fork. Schema v1 is unchanged; this task
-does not add load support for multimodal parts.
+Honest limits (binding):
 
-### Compaction and layers
+1. After child is saved and later **resumed** through session-v1 load,
+   `content_parts` are **discarded** by the existing load path (not a fork bug;
+   not fixed by this task). Schema v1 is unchanged.
+2. **Positive live fixture is mandatory** (see §8 item 6): parent message with
+   both `.text` and `.image_url` (including optional `detail`) must deep-copy with
+   **byte-equal** nested strings and **all** nested pointers non-aliasing.
+3. Implementation evidence must not treat JSONL roundtrip equality as proof of
+   deep-copy (that path cannot preserve parts).
+
+### Compaction and layers (live child)
 
 - Copy `compaction_gen` and deep-copy `compaction_summary` as above.
-- `Session.layers()` on child must observe the same system/project/session layer
-  **bytes** as parent at fork time (via deep-copied `base_system` / `project_body` /
-  summary). Ephemeral layer remains empty string as today.
+- Immediately after successful fork, live child `Session.layers()` must observe the
+  same system/project/session layer **bytes** as parent at fork time (via
+  deep-copied `base_system` / `project_body` / summary). Ephemeral layer remains
+  empty string as today.
 - Fork does not run compaction and does not increment gen.
+- **Resume of the child file does not restore fork-time layers** — see §7.
 
 ## 5. Create transaction (strict)
 
@@ -204,11 +253,11 @@ child durable state or hold a child lock FD.
 
 ```text
 1. validate child_path (lexical relative; InvalidPath)
-2. reject non-distinct path policy if documented (same path as parent durable path
-   → AlreadyExists or InvalidPath — must not truncate parent)
+2. same-as-parent durable path (if parent.path non-null and equal) →
+   SessionAlreadyExists | InvalidPath — must not truncate/replace parent
 3. gpa.create(ArenaAllocator) + init          [errdefer destroy]
 4. DualQueues.init(gpa)                       [errdefer deinit]  // empty
-5. Redactor.clone from parent                 [errdefer deinit]
+5. const-safe Redactor.clone from parent      [errdefer deinit]
 6. deep-copy transcript + base_system + project_body + compaction_summary
 7. gpa.dupe(child_path) for Session.path      [errdefer free]
 8. build SessionMeta (schema v1, gen, summary, zag_version borrow)
@@ -224,23 +273,51 @@ child durable state or hold a child lock FD.
 - Child `path != null` ⇒ lifecycle `run_start.session_configured == true` and Trace
   `run_start.session == "configured"` (never raw path) on subsequent child replies
   that use the normal Agent facade (existing `session.path != null` truth).
-- Parent file bytes, every parent field, parent queues, and parent lease are
+- Parent file bytes (if any), every parent field, parent queues, and parent lease are
   byte/pointer-stable relative to pre-fork observation (no mutation by fork).
+- Parent remains a valid product Session: a subsequent `Agent.reply` on parent must
+  still work (see §8 item 11).
+
+### 5.1 Create-body fault strategy (deterministic, binding)
+
+Gate fixtures that claim “create I/O / body fault” **must** be deterministic.
+Allowed strategies (pick one; document which in the implementation PR):
+
+| Strategy | Requirement |
+|----------|-------------|
+| **A. Test-only create failpoint** | A `session_store.testing` (or equivalent) arm that forces the **final** `createNewWithRedactor` / `createNewImpl` body to fail **after** lease acquisition path has begun or would begin, returning a typed error (`IoFailed` or `OutOfMemory`). Must compile out or be unreachable in production (`builtin.is_test` only; **no production enablement path**, same honesty as existing Writer `fail_before_replace`). |
+| **B. Proven in-create seam** | Fault injection via a test allocator or FS seam that is **provably** only exercised inside the final `createNewWithRedactor` call (not during prep deep-copy). Proof = stack/control flow or a create-local counter; prep OOM fixtures alone do **not** satisfy create-body coverage. |
+
+Required observations on that fault (all of):
+
+- parent field + durable file equality;
+- **no committed** child `.jsonl` at the target path;
+- **no held** child lock FD after the error returns to the caller;
+- a later successful create/fork against the same path may proceed when no holder
+  remains (**stale lock sidecar retry** per D-006);
+- intermediate parent directories created by `ensureParentDir` **may** remain
+  (honest residual; not a contract violation) — see failure matrix.
 
 ### Failure matrix
 
-| Failure | Child `.jsonl` | Held child lock FD | Stale `{path}.lock` sidecar | Parent |
-|---------|----------------|--------------------|-----------------------------|--------|
-| InvalidPath (before create) | absent | none | unchanged | unchanged |
-| prep OOM (arena/queues/clone/deep-copy/path) | absent | none | unchanged | unchanged |
-| SessionAlreadyExists | absent (existing bytes untouched) | none | unchanged | unchanged |
-| SessionBusy (active lock holder) | absent | none | may exist (held by other) | unchanged |
-| create I/O / save fault inside createNew* | **absent** target (atomic create must not leave a committed child file); no held FD after return | none | **may** remain; reusable per D-006 when no holder | unchanged |
-| UnsupportedSchema / InvalidSession | N/A for create path; must not be used to seed child | none | — | unchanged |
+| # | Failure | Child committed `.jsonl` | Held child lock FD after return | May remain on disk | Parent |
+|---|---------|--------------------------|---------------------------------|--------------------|--------|
+| F-a | `InvalidPath` (absolute / `..` / non-lexical) | absent | none | nothing required | unchanged |
+| F-b | prep OOM (arena/queues/clone/deep-copy/path) | absent | none | nothing required | unchanged |
+| F-c | `SessionAlreadyExists` (target file present, including same as parent path) | absent; existing target bytes untouched | none | existing target | unchanged (never replaced) |
+| F-d | `SessionBusy` (active lock holder on child) | absent | none | lock held by **other** | unchanged |
+| F-e | create-body fault inside final `createNewWithRedactor` (§5.1) | **absent** committed target | **none** | **may**: intermediate dirs from `ensureParentDir`; **may**: reusable stale `{path}.lock` sidecar | unchanged |
+| F-f | null product redactor (§3.1) | absent | none | nothing required | unchanged |
 
-**errdefer** cleans **prep state only** (arena, queues, redactor clone, path dupe,
-partial message allocs). It must not unlink parent files or claim Writer.deinit
-removes lock sidecars.
+Notes:
+
+- “Absent committed jsonl” means the durable session **target** is not a successful
+  schema-v1 session file created by this call. Atomic create must not leave a
+  half-applied target that resume would treat as valid new child state.
+- Failed create **may** leave intermediate directories and a stale lock sidecar; it
+  must **not** leave a held lock FD or claim `Writer.deinit` unlinks the sidecar.
+- **errdefer** cleans **prep state only** (arena, queues, redactor clone, path dupe,
+  partial message allocs). It must not unlink parent files.
 
 Default product safety remains **ask + workspace jail + shell protect**. Fork does
 not change permission mode, jail, or shell policy.
@@ -252,98 +329,148 @@ Map to existing `session_store.Error` vocabulary where possible:
 | Condition | Error |
 |-----------|-------|
 | absolute / `..` / non-lexical child path | `InvalidPath` |
-| child session file already exists | `SessionAlreadyExists` |
+| child session file already exists (incl. same as parent durable path) | `SessionAlreadyExists` (or `InvalidPath` if implementation chooses that mapping for same-path — either typed result is allowed; **parent never replaced**) |
 | active writer holds `{child}.lock` | `SessionBusy` |
 | allocation failure in prep or create | `OutOfMemory` |
-| filesystem failures on create/lock | `IoFailed` |
+| filesystem / create-body failures on create/lock | `IoFailed` |
+| null product redactor | fail-closed before create (§3.1) |
 | (resume of child later) missing/invalid/unsupported | existing resume errors — not fork create |
 
 No silent fallback to open_or_create, no overwrite, no unredacted product path.
 
-## 7. Lifecycle / Trace / schema compatibility
+## 7. Lifecycle / Trace / schema / resume honesty
 
 | Surface | Fork impact |
 |---------|-------------|
 | session schema | remains **v1**; no `parent_id`, no tree block |
 | Trace schema | remains twelve kinds; `session` field still `"configured"` or null — **never** raw path |
-| lifecycle `run_start.session_configured` | `true` when `Session.path != null` (child always true) |
+| lifecycle `run_start.session_configured` | `true` when `Session.path != null` (child always true after success) |
 | headless-v1 | unchanged; no fork wire opcode |
 | control queues | child empty; parent pending untouched; still process-only / not in schema |
 | redaction | child create and later saves use child redactor; in-memory transcript may remain raw |
 
+### Resume does not restore fork-time layers (binding)
+
+Session schema v1 persists: header (`schema_version`, optional `zag_version`,
+`compaction_gen`, `compaction_summary`) + message rows (`role` / plain `content` /
+`tool_calls` / `tool_call_id`). It does **not** persist fork-time live
+`base_system` or `project_body` as independent Session fields.
+
+Therefore after `Session.start(... open_mode = .resume_existing, path = child_path)`:
+
+| Restored | Not restored from file |
+|----------|------------------------|
+| message rows (within load boundary; **no** `content_parts`) | live `base_system` from fork-time parent |
+| `compaction_gen` + `compaction_summary` from header | live `project_body` / `project_source` from fork-time parent |
+| empty control queues | pending steering/follow-up (process-only) |
+
+`base_system` on resume comes from **host `SessionStartOptions.base_system`**.
+`project_body` comes from **host opts + project reload** when
+`load_project_instructions` is true (existing `Session.start` resume path). Fork
+Gate fixtures that resume a child must assert rows + compaction meta; they must
+**not** claim that resume reconstructs the exact fork-time layer fields unless the
+host opts/reload are set to reproduce them.
+
 ## 8. Verification (exact fixture list)
 
-Implementation Gate **must** include each item. Items are binding, not examples.
+Implementation Gate **must** include each numbered item. Items are binding, not
+examples. Numbering is stable for task cross-reference.
 
 ### Parent integrity
 
-1. **Parent file byte-equal** after successful fork (read parent path before/after).
-2. **Parent file byte-equal** after every fault in the failure matrix (InvalidPath,
-   AlreadyExists, Busy, prep OOM, create I/O fault).
-3. **Parent field equality** on success: `compaction_gen`, summary bytes, base_system,
-   project_body, transcript message count/roles/contents/tool_calls/tool_call_id,
-   queue pending counts, path pointer and writer lock still valid for parent.
+1. **Parent file byte-equal** after successful fork (read parent durable path
+   before/after when parent is durable).
+2. **Parent file byte-equal** after every fault in the failure matrix
+   (F-a…F-f / InvalidPath, AlreadyExists, Busy, prep OOM, create-body fault,
+   null redactor).
+3. **Parent field equality** on success: `compaction_gen`, summary bytes,
+   base_system, project_body, transcript message count/roles/contents/tool_calls/
+   tool_call_id/content_parts (when present), queue pending counts, path pointer
+   and writer lock still valid for parent.
 4. **Parent field equality** on all faults (no partial parent mutation).
 
-### Ownership / non-alias
+### Ownership / non-alias / content_parts
 
-5. Child `arena_impl` is heap-allocated (`gpa.create`) and remains valid after Session
-   is returned/moved by value.
-6. Nested string pointers (content, tool id/name/arguments, tool_call_id,
+5. Child `arena_impl` is heap-allocated (`gpa.create`) and remains valid after
+   Session is returned/moved by value.
+6. **Positive content_parts live fixture (mandatory):** parent transcript contains
+   at least one message whose `content_parts` includes both a `.text` part and an
+   `.image_url` part with non-null `detail`. After fork, child parts are
+   **byte-equal** for text/url/detail and **every** nested pointer (parts slice,
+   text, url, detail) is **non-aliasing** vs parent. Parent parts unchanged.
+7. Nested string pointers (content, tool id/name/arguments, tool_call_id,
    content_parts text/url/detail, base_system, project_body, compaction_summary)
-   **do not alias** parent live pointers.
-7. `Session.path.ptr != Writer.path.ptr` while bytes equal; parent/child path frees
+   **do not alias** parent live pointers (covers non-parts messages too).
+8. `Session.path.ptr != Writer.path.ptr` while bytes equal; parent/child path frees
    are independent (no double-free): parent-first deinit then child, and
    **child-first then parent**.
-8. Layers non-empty case: parent with non-empty system, project, and session summary
-   ⇒ child `layers()` equal by content; summary deep-copied.
+9. Layers non-empty case on **live** child: parent with non-empty system, project,
+   and session summary ⇒ child `layers()` equal by content; summary deep-copied.
 
-### Compaction / reply
+### Compaction / product reply chains
 
-9. **Post-compaction fork:** parent with `compaction_gen >= 1` and non-null summary;
-   child preserves gen/summary; subsequent child `Agent.reply` builds context with
-   that session layer and remains protocol-legal.
-10. Tool-bundle transcript fork: assistant+tool rows with nested calls; child resume
-    or live reply keeps ID pairing.
+10. **Post-compaction fork:** parent with `compaction_gen >= 1` and non-null
+    summary; child preserves gen/summary; subsequent **child** `Agent.reply`
+    builds context with that session layer and remains protocol-legal.
+11. **Parent continues after successful fork:** after fork returns child, host
+    runs a real product `Agent.reply` on the **parent** Session; reply completes
+    with truthful terminal; parent durable bytes advance only via normal save
+    (child file unchanged by parent reply).
+12. **Ephemeral parent → durable child:** parent started with `path == null`;
+    fork to a lexical child path succeeds; child `path != null`,
+    `session_configured == true` on child reply; parent remains ephemeral
+    (`path == null`, no parent file invented).
+13. Tool-bundle transcript fork: assistant+tool rows with nested calls; child
+    live or resumed reply keeps ID pairing under load rules.
 
-### Queues / redaction / resume
+### Queues / redaction / resume honesty
 
-11. **Queue isolation:** parent has pending steering and/or follow-up; child
+14. **Queue isolation:** parent has pending steering and/or follow-up; child
     `steeringPending()==0` and `followUpPending()==0`; parent counts unchanged.
-12. **Redaction:** configured secret in parent live transcript; child durable file
+15. **Redaction:** configured secret in parent live transcript; child durable file
     contains marker / redacted form, not raw secret; parent file still redacted as
     before; child in-memory may retain raw (same product rule as Session.start).
-13. **Child resume:** deinit child; `Session.start(... resume_existing, child_path)`
-    loads expected rows/meta/gen; queues empty on resume.
+16. **Child resume (rows + compaction only):** deinit child;
+    `Session.start(... resume_existing, child_path)` loads expected **message
+    rows** and **compaction_gen/summary**; queues empty. Fixture documents that
+    `base_system`/`project_body` follow host opts/project reload, not fork-time
+    live fields, and that **content_parts are absent** after resume (session-v1
+    load boundary).
 
 ### Path / lock / create faults
 
-14. Child path InvalidPath (absolute / `..`).
-15. Child path AlreadyExists leaves pre-existing bytes unchanged.
-16. Child path SessionBusy when another process/holder owns lock.
-17. Prep allocation failure: no child jsonl; no held lock FD; parent unchanged.
-18. Create I/O / injected create fault: no committed child jsonl; no held lock FD;
-    stale lock sidecar (if any) is releasable/reusable for a later successful create
-    (D-006 stale sidecar retry).
-19. Distinct-path rule: forking onto the parent's own path must not truncate or
-    replace parent (AlreadyExists or InvalidPath).
+17. Child path `InvalidPath` (absolute / `..`).
+18. Child path `SessionAlreadyExists` leaves pre-existing bytes unchanged.
+19. Child path `SessionBusy` when another process/holder owns lock.
+20. Same-as-parent durable path: typed `SessionAlreadyExists | InvalidPath`;
+    parent bytes never replaced/truncated.
+21. Prep allocation failure: no child jsonl; no held lock FD; parent unchanged.
+22. **Create-body fault (§5.1 strategy A or B):** deterministic failure inside
+    final `createNewWithRedactor`; no committed child jsonl; no held lock FD;
+    parent equality; intermediate dirs **may** remain; stale lock sidecar (if any)
+    is releasable/reusable for a later successful create (D-006 retry).
+23. Null product redactor: fail-closed; no child jsonl; no held lock FD.
 
 ### Lifecycle / Core / SDK / backends / maturity
 
-20. Child reply lifecycle: `session_configured == true`; Trace `session="configured"`
-    only (fixture asserts absence of raw child path string in trace output).
-21. **Core no export:** Core root/source scan — no fork symbol/API/state.
-22. **SDK consumer:** external fixture imports coding-agent only; exercises fork or
-    documents deferred consumer step if Gate stages implementation — must not import
-    Core fork (none exists).
-23. **Dual backend Gate:** root std and curl suites green after implementation.
-24. **No maturity change:** Session/Context/SDK/Headless/Phase H rows remain **L2**;
-    no L3 claim for fork/tree/journal.
+24. Child reply lifecycle: `session_configured == true`; Trace
+    `session="configured"` only (fixture asserts absence of raw child path string
+    in trace output).
+25. **Core no export:** Core root/source scan — no fork symbol/API/state.
+26. **SDK consumer (mandatory):** external `tests/sdk-consumer-fixture/` imports
+    coding-agent by module name only; exercises public `Session.fork` **and** a
+    durable smoke (child path create + at least one save/resume or reply that
+    touches durable state). **No deferred / optional escape hatch** — this item
+    is required for Gate close. Must not invent Core fork imports.
+27. **Dual backend Gate:** root std and curl suites green after implementation.
+28. **No maturity change:** Session/Context/SDK/Headless/Phase H rows remain
+    **L2**; no L3 claim for fork/tree/journal.
 
 ### Explicit non-mechanisms
 
-25. A regression or comment-level Gate that a **JSONL save/load roundtrip is not**
-    used as the deep-copy implementation (content_parts live-copy requirement).
+29. Regression or review evidence that a **JSONL save/load roundtrip is not** used
+    as the deep-copy implementation (pairs with item 6; load drops
+    `content_parts`).
 
 ## 9. Non-goals
 
@@ -354,6 +481,7 @@ Implementation Gate **must** include each item. Items are binding, not examples.
 - Graph, subagents, Oracle, Memory Repo
 - Core fork state or durable pending control queues
 - product unredacted create path for fork
+- restoring `base_system`/`project_body`/`content_parts` via session-v1 resume
 - **L3 maturity claim** or any elevation of existing L2 rows
 
 ## 10. Related

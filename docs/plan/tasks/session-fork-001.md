@@ -15,9 +15,9 @@ distinct lexical path with independent arena, deep-copied transcript (including
 live `content_parts`), independent redactor, empty control queues, exclusive
 `create_new` + redaction, and no Core fork API/state.
 
-This commit is **docs-first contract only**. Status `in-progress` means the
-binding contract is authored; code implementation is a subsequent step on this
-task. **No maturity row may be raised** by docs or by implementation happy paths.
+Status `in-progress` means the **binding contract is authored and sharpened**;
+code implementation is a subsequent step. **No maturity row may be raised** by
+docs or by implementation happy paths.
 
 Binding specification: [Session fork](../../modules/session-fork.md).
 
@@ -35,9 +35,10 @@ Binding specification: [Session fork](../../modules/session-fork.md).
 - `docs/phases/C5-context.md`
 - `docs/roadmap.md` · `docs/maturity.md`
 - Live sources (read for field enumeration; do not invent Core APIs):
-  - `packages/zag-coding-agent/src/agent.zig` (`Session`)
-  - `packages/zag-coding-agent/src/session_store.zig`
-  - `packages/zag-coding-agent/src/redact.zig`
+  - `packages/zag-coding-agent/src/agent.zig` (`Session`, `activeRedactor(*Session)`)
+  - `packages/zag-coding-agent/src/session_store.zig` (`createNewWithRedactor`,
+    `ensureParentDir`, test-only Writer failpoints — create-body needs §5.1 strategy)
+  - `packages/zag-coding-agent/src/redact.zig` (`Redactor.clone`)
   - `packages/zag-coding-agent/src/control_queue.zig`
   - `packages/zag-coding-agent/src/context.zig`
   - `packages/zag-agent-core/src/{message,transcript}.zig`
@@ -47,14 +48,16 @@ Binding specification: [Session fork](../../modules/session-fork.md).
 
 ## Implementation (future code step — not this docs commit)
 
-- `packages/zag-coding-agent/src/agent.zig` (Session.fork + ownership)
-- `packages/zag-coding-agent/src/session_store.zig` (reuse createNewWithRedactor only)
+- `packages/zag-coding-agent/src/agent.zig` (`Session.fork(*const Session, …)` +
+  const-safe redactor clone; no parent mutation)
+- `packages/zag-coding-agent/src/session_store.zig` (reuse `createNewWithRedactor`
+  only; optional test-only create failpoint under `testing`, production-impossible)
 - `packages/zag-coding-agent/src/root.zig` (export if needed)
-- coding-agent tests / golden fixtures
-- `tests/sdk-consumer-fixture/` (SDK consumer Gate)
+- coding-agent tests / golden fixtures covering module §8 items **1–29**
+- `tests/sdk-consumer-fixture/` — **mandatory** fork API + durable smoke
 - **no** Core fork module; Core remains Message/Transcript only
 
-## Docs (this step)
+## Docs (contract track)
 
 - `docs/modules/session-fork.md`
 - `docs/plan/tasks/session-fork-001.md`
@@ -65,11 +68,12 @@ Binding specification: [Session fork](../../modules/session-fork.md).
 
 # contract
 
-The module doc is authoritative. Summary of binding rules:
+The module doc is authoritative. Summary of binding rules (F1–F9 review
+sharpening included):
 
-1. **API surface:** coding-agent `Session` only; idle-only host call; Core has no
-   fork state/API; parent success/failure leaves all parent fields, file bytes,
-   lease, and queues unchanged.
+1. **API surface:** coding-agent `Session.fork(*const Session, child_path)` only;
+   idle-only; Core has no fork state/API; parent success/failure leaves all parent
+   fields, file bytes, lease, and queues unchanged.
 2. **Child open mode:** lexical relative **distinct** path; exclusive
    `createNewWithRedactor` / create_new only. Forbidden: `open_or_create`,
    resume-as-fork, product `*Unredacted` for fork. Schema v1 / Trace v1 /
@@ -78,55 +82,73 @@ The module doc is authoritative. Summary of binding rules:
    by-value Session return keeps pointer stable.
 4. **Deep ownership:** deep-copy all transcript nested slices (`content`,
    tool_calls `id`/`name`/`arguments`, `tool_call_id` including parent
-   same-arena aliases, live `content_parts`) plus `base_system` / `project_body`
-   / `compaction_summary`; value-copy `compaction_gen`. Full field table and
-   content_parts load boundary in module §3–§4. **JSONL roundtrip is not a valid
-   deep-copy implementation** (load drops `content_parts`).
+   same-arena aliases, live `content_parts` with text+image_url+detail) plus
+   `base_system` / `project_body` / `compaction_summary`; value-copy
+   `compaction_gen`. **JSONL roundtrip is not a valid deep-copy** (load drops
+   `content_parts`). Positive live parts fixture is mandatory.
 5. **Paths:** `Session.path = gpa.dupe(child_path)`; same bytes as `Writer.path`,
    different pointer/ownership; independent free; no double-free. Child path
    non-null ⇒ lifecycle `session_configured=true`; Trace writes
    `session="configured"` only (no raw path).
-6. **Redactor / queues:** `Redactor.clone(gpa)`; `DualQueues.init` empty — do not
-   copy parent pending steering/follow-up.
+6. **Redactor / queues:** const-safe field/`*const` clone — **no const-cast** of
+   `*const Session` to call mutable `activeRedactor`; null product redactor
+   fail-closed before create (Debug unreachable/assert allowed as evidence).
+   `DualQueues.init` empty — do not copy parent pending.
 7. **Strict transaction:** all fallible alloc/clone/deep-copy/meta/path prep
    before persist; `createNewWithRedactor` is the sole and last fallible durable
-   step; success then only infallible Session assembly. Create failure: no child
-   `.jsonl`, no held lock FD; stale `{path}.lock` sidecar may remain and is
-   D-006-reusable; do not claim `Writer.deinit` unlinks the lock.
+   step; success then only infallible Session assembly. Create failure: no
+   committed child `.jsonl`, no held lock FD; **may** leave intermediate dirs +
+   reusable stale `{path}.lock` sidecar; do not claim `Writer.deinit` unlinks.
+   Create-body faults use module §5.1 strategy A (test-only failpoint) or B
+   (proven in-create allocator/FS seam).
 8. **Errors:** typed fail-closed (`InvalidPath` / `SessionAlreadyExists` /
-   `SessionBusy` / `IoFailed` / `OutOfMemory` / …); errdefer cleans prep only;
-   default ask + jail + protect preserved.
-9. **Verification:** exact fixture list in module §8 (parent equality all faults,
-   non-alias nested/layers/path, non-empty layers+summary, post-compaction fork
-   reply, parent-first/child-first deinit, queue isolation, redaction, child
-   resume, path/lock conflicts, alloc/I/O/create failure absent jsonl + lock
-   retry, lifecycle/Trace configured truth, Core no export, SDK consumer, dual
-   backend Gate, no maturity change).
-10. **Non-goals:** schema v2 / parent_id / tree / journal / UI / RPC / CLI,
+   `SessionBusy` / `IoFailed` / `OutOfMemory` / …). Same/invalid/racy targets
+   return those typed results but **never** replace/mutate parent.
+9. **Resume honesty:** resume restores rows + compaction meta only; does **not**
+   restore fork-time `base_system`/`project_body` (host opts/project reload);
+   resume drops `content_parts` per session-v1 load.
+10. **Product chains:** parent continues `Agent.reply` after successful fork;
+    ephemeral parent → durable child is a required fixture.
+11. **SDK consumer:** mandatory fork API + durable smoke; no deferred escape hatch.
+12. **Verification:** exact fixture list module §8 items **1–29** (aligned with
+    failure matrix F-a…F-f).
+13. **Non-goals:** schema v2 / parent_id / tree / journal / UI / RPC / CLI,
     mid-reply fork, fsync/symlink containment, Graph/subagents/Memory, L3 claim.
 
 # verification
 
-## Docs Gate (this step)
+## Docs Gate (contract track — complete)
 
 - [x] Binding module + task authored (`status: in-progress`)
-- [ ] `zig build docs-lint`
-- [ ] `git diff --check`
-- [ ] Explicit `git add` of intended docs only; commit message documents contract
+- [x] Independent-review F1–F9 folded into module + task
+- [x] `zig build docs-lint` (docs-only commits)
+- [x] `git diff --check` (docs-only commits)
+- [x] Explicit `git add` of intended docs/quality files only
 
-## Implementation Gate (future — module §8 is binding)
+## Implementation Gate (future — **not** complete)
 
-Must pass every fixture in [session-fork.md §8](../../modules/session-fork.md#8-verification-exact-fixture-list), including:
+Must pass every fixture in
+[session-fork.md §8](../../modules/session-fork.md#8-verification-exact-fixture-list)
+items **1–29**, aligned with failure matrix **F-a…F-f**:
 
-- parent file/field equality on success **and** all faults;
-- nested / layers / path pointer non-alias; non-empty layers + summary;
-- post-compaction fork → child reply/context;
-- parent-first and child-first deinit;
-- queue isolation; redaction; child resume;
-- path/lock conflicts; allocation/I/O/create failure ⇒ absent jsonl + lock
-  releasable/stale sidecar retry;
-- lifecycle/Trace configured truth; Core no export; SDK consumer;
-- dual backend Gate; **no maturity change**.
+| Items | Focus |
+|------:|-------|
+| 1–4 | Parent file/field equality on success **and** all faults |
+| 5–9 | Arena heap stability; **positive content_parts** live copy; nested non-alias; path dual-own deinit orders; live layers |
+| 10–13 | Post-compaction child reply; **parent reply after fork**; **ephemeral→durable**; tool-bundle pairing |
+| 14–16 | Queue isolation; redaction; child resume rows+compaction only (no layers/parts claim) |
+| 17–23 | InvalidPath; AlreadyExists; Busy; same-path typed result; prep OOM; **§5.1 create-body**; null redactor |
+| 24–28 | Lifecycle/Trace configured truth; Core no export; **mandatory SDK fork+durable smoke**; dual backend; **no maturity change** |
+| 29 | JSONL roundtrip is not deep-copy evidence |
+
+Additional implementation checklist (maps to module, still unchecked):
+
+- [ ] §5.1 create-body strategy A or B landed and fixture-proven
+- [ ] const-safe redactor clone; no `*const` → `*Session` cast
+- [ ] intermediate dirs + stale lock honesty documented in test comments
+- [ ] SDK consumer fork + durable smoke green
+- [ ] root std + curl Gates green
+- [ ] maturity rows unchanged at closeout
 
 # non-goals
 
@@ -134,10 +156,13 @@ Must pass every fixture in [session-fork.md §8](../../modules/session-fork.md#8
 - mid-reply fork; fsync; symlink session containment;
 - Graph, subagents, Oracle, Memory;
 - Core fork API; durable pending control copy;
-- elevating Session/Context/SDK maturity to L3 or any other row.
+- elevating Session/Context/SDK maturity to L3 or any other row;
+- using session-v1 resume to reconstruct fork-time layers or content_parts.
 
 # closeout
 
 - Docs-first contract: **in-progress** (this file + `docs/modules/session-fork.md`).
-- Code delivery, independent review, ff-only merge, and merged-main Gate remain
-  open. Closeout must reaffirm **no maturity elevation**.
+- Docs Gate checkboxes above are complete for docs-only commits; **implementation
+  Gate remains open**.
+- Code delivery, independent review of code, ff-only merge, and merged-main Gate
+  remain open. Closeout must reaffirm **no maturity elevation**.

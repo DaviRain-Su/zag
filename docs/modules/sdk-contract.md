@@ -251,14 +251,17 @@ still has one lifecycle/Trace run and one terminal. Binding details: [harness-st
 
 ### 6.0 Session fork (docs contract; not implemented)
 
-`session-fork-001` defines an idle-only coding-agent `Session.fork(child_path)`
-that deep-copies live transcript state into a new exclusive `create_new` child
-file. Binding rules: [session-fork](./session-fork.md). Until implementation
-closes its Gate:
+`session-fork-001` defines idle-only coding-agent
+`Session.fork(self: *const Session, child_path)` that deep-copies live
+transcript state (including live `content_parts`) into a new exclusive
+`create_new` child file via `createNewWithRedactor`. Binding rules:
+[session-fork](./session-fork.md). Until implementation closes its Gate:
 
 - Core exports no fork API/state;
 - schema v1 / Trace v1 / headless-v1 stay unchanged;
 - this section’s create/resume/save table remains the durable baseline;
+- Gate requires external SDK consumer fork API **and** durable smoke (no
+  deferred escape hatch);
 - **no maturity elevation** is claimed by the docs contract alone.
 
 `Session.start` semantics:
