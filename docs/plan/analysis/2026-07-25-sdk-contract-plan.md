@@ -320,7 +320,7 @@ Cancellation 与 session 的底层能力已经 L2 闭合：
 
 - `core.cancel.Flag` / `zt.CancelFlag` 是 seq_cst 原子 flag（`packages/zag-agent-core/src/cancel.zig:10-50`）。
 - `loop.run` 在 between-turn / between-tool 检查 cancel，pending tool calls 会回填 `code=cancelled`（`packages/zag-agent-core/src/loop.zig:280-290`）。
-- `Session.start` 支持 `create_new` / `resume_existing` / `open_or_create`（`packages/zag-coding-agent/src/agent.zig:69-74`、`packages/zag-agent-core/src/session_store.zig:250-340`）。
+- `Session.start` 支持 `create_new` / `resume_existing` / `open_or_create`（`packages/zag-coding-agent/src/agent.zig:69-74`、`packages/zag-coding-agent/src/session_store.zig:250-340`；D-011 core-session-ownership-001 将 durable store 从 `zag-agent-core` 移至 `zag-coding-agent`）。
 - `Agent.reply` 在成功路径先 `session.save()` 再 commit trace terminal（`packages/zag-coding-agent/src/agent.zig:680-710`）。
 
 但 **high-level facade 没有给 consumer 暴露 cancel 的显式 API**，consumer 只能靠直接修改 `agent.cancel` 字段或自行安装 SIGINT。`agent.cancel` 字段虽是 public，但文档里应明确这是受支持的 public contract。
@@ -503,7 +503,7 @@ pub const RequestControl = struct {
 - 不承诺 fsync / 断电安全。
 - Session path 仅做 lexical 校验（相对路径、无 `..`、非绝对），不是 symlink containment。
 
-```startLine:37:46:packages/zag-agent-core/src/session_store.zig
+```startLine:37:46:packages/zag-coding-agent/src/session_store.zig
 pub const Error = error{
     OutOfMemory, IoFailed, InvalidSession, UnsupportedSchema,
     SessionNotFound, SessionAlreadyExists, SessionBusy, InvalidPath,
@@ -513,7 +513,7 @@ pub const Error = error{
 ### 3.6 兼容性合同
 
 - Trace schema 版本：导出 `trace.current_schema_version = 1`（`packages/zag-agent-core/src/trace.zig:35`）。
-- Session schema 版本：`session_store.current_schema_version = 1`（`packages/zag-agent-core/src/session_store.zig:49`）。
+- Session schema 版本：`session_store.current_schema_version = 1`（`packages/zag-coding-agent/src/session_store.zig:49`；D-011 移动后归 coding-agent 所有）。
 - 同一版本内允许新增 optional 字段；strict reader 对未知 version 失败。
 - 破坏性重命名必须出新 schema version 并提供迁移或显式拒绝。
 - 在 SDK-ready Gate 闭合前，不承诺 semver；闭合后按 `packaging.md` 的发布策略执行。
@@ -658,11 +658,11 @@ pub const Error = error{
 - `/Users/davirian/orca/zag/packages/zag-agent-core/src/tool.zig`
 - `/Users/davirian/orca/zag/packages/zag-agent-core/src/observer.zig`
 - `/Users/davirian/orca/zag/packages/zag-agent-core/src/cancel.zig`
-- `/Users/davirian/orca/zag/packages/zag-agent-core/src/session_store.zig`
 - `/Users/davirian/orca/zag/packages/zag-agent-core/src/trace.zig`
 - `/Users/davirian/orca/zag/packages/zag-agent-core/src/permissions.zig`
 - `/Users/davirian/orca/zag/packages/zag-coding-agent/src/root.zig`
 - `/Users/davirian/orca/zag/packages/zag-coding-agent/src/agent.zig`
+- `/Users/davirian/orca/zag/packages/zag-coding-agent/src/session_store.zig`
 - `/Users/davirian/orca/zag/packages/zag-coding-agent/src/toolset.zig`
 - `/Users/davirian/orca/zag/packages/zag-coding-agent/src/wire_provider.zig`
 - `/Users/davirian/orca/zag/build.zig`

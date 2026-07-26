@@ -677,6 +677,23 @@ test "session save error returns session_error and preserves prior bytes" {
     try std.testing.expectEqualStrings(prior, after);
 }
 
+// ── D-011 session-store canonical ownership compile assertion ───────────────
+//
+// Proves an external SDK consumer resolves the product-owned `session_store`
+// surface (moved from `zag-agent-core` to `zag-coding-agent` by
+// core-session-ownership-001) through the public `zag-coding-agent` module
+// root — not only indirectly via `coding.Session`. This is a compile-time
+// canonical-ownership check, not a behavior test.
+
+test "coding.session_store canonical symbol resolves from external consumer" {
+    // The schema version constant is a stable product contract (D-006 v1).
+    try std.testing.expectEqual(@as(u32, 1), coding.session_store.current_schema_version);
+    // The Error set is publicly reachable; referencing it proves the canonical
+    // module root compiles the product-owned session surface for consumers.
+    const E = coding.session_store.Error;
+    _ = E; // ownership/compile assertion only; no behavior exercised.
+}
+
 // ── D-011 seam composition fixtures ──────────────────────────────────────────
 
 test "low-level core: explicit five-seam permissive composition" {
