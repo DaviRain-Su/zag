@@ -249,6 +249,18 @@ still has one lifecycle/Trace run and one terminal. Binding details: [harness-st
 
 ## 6. Session persistence
 
+### 6.0 Session fork (docs contract; not implemented)
+
+`session-fork-001` defines an idle-only coding-agent `Session.fork(child_path)`
+that deep-copies live transcript state into a new exclusive `create_new` child
+file. Binding rules: [session-fork](./session-fork.md). Until implementation
+closes its Gate:
+
+- Core exports no fork API/state;
+- schema v1 / Trace v1 / headless-v1 stay unchanged;
+- this section’s create/resume/save table remains the durable baseline;
+- **no maturity elevation** is claimed by the docs contract alone.
+
 `Session.start` semantics:
 
 | Open mode | Behavior |
@@ -305,4 +317,5 @@ The following are explicitly **not** covered by this contract:
 - [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md)
 - [D-007](../decisions/active/D-007-tool-runtime-descriptor.md)
 - [Harness steering](./harness-steering.md)
+- [Session fork](./session-fork.md) (docs in-progress; no code claim)
 - Consumer fixture: [`tests/sdk-consumer-fixture/`](../../tests/sdk-consumer-fixture/)

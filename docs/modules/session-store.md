@@ -132,9 +132,17 @@ Implementation notes:
 
 ## L3 (C5)
 
-- branch/fork/session tree;
+- branch/fork/session tree (binding docs for the first durable fork slice:
+  [session-fork](./session-fork.md), task [session-fork-001](../plan/tasks/session-fork-001.md);
+  **not implemented**; does **not** raise this row above L2);
 - append journal or snapshots when justified by measured session size;
 - subagent transcript indexing.
+
+Fork must reuse this module’s exclusive `create_new` / `createNewWithRedactor`,
+typed errors, redaction, advisory lock, and schema v1 without `open_or_create`,
+resume-as-fork, product `*Unredacted`, or schema fallback. JSONL load remains the
+resume path; it is **not** a substitute for live transcript deep-copy (see
+session-fork content_parts boundary).
 
 ## Non-goals for H
 

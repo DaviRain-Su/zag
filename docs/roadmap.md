@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **20/20** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; session fork planned, then Skills/Prompt Templates、edit、minimal TUI |
+| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; session fork **docs in-progress** ([session-fork-001](./plan/tasks/session-fork-001.md)), then Skills/Prompt Templates、edit、minimal TUI |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -34,7 +34,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
-| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合；fork 仍需独立 Gate |
+| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合；fork binding docs in-progress ([session-fork](./modules/session-fork.md)) — 实现仍需独立 Gate，不升成熟度 |
 | JSON | ✅ `headless-v1` L2 |
 | RPC | 正式后置 `rpc-v1`，独立于 `headless-v1`，不追 Pi command/schema parity |
 | TUI/UI | minimal host TUI；E2/E3 host-rendered intents，stateful view/action 另过 Gate |
@@ -73,7 +73,7 @@ M1 — product Harness controls
   harness-events-001 ✅ aecf402
         │
         ├────► harness-steering-001 ✅ a5ff2b7
-        └────► session-fork-001 (planned)
+        └────► session-fork-001 (docs in-progress)
                        │
                        ▼
 M2 — selected daily UX
@@ -109,13 +109,15 @@ package.
 ### M1 — Product Harness controls
 
 The lifecycle prerequisite and bounded interactive-control slice are closed. `harness-steering-001` passed its
-merged-main Gate at `a5ff2b7`; session fork remains planned and still requires its own task file before implementation.
+merged-main Gate at `a5ff2b7`. Session fork has a binding docs contract
+([task](./plan/tasks/session-fork-001.md), [module](./modules/session-fork.md));
+implementation and its Gate are still open. Docs alone do **not** change maturity.
 
 | Task | Status | Objective | Gate |
 |------|--------|-----------|------|
 | [harness-events-001](./plan/tasks/harness-events-001.md) | **done @ `aecf402`** | coding-agent SDK lifecycle projection from Core source facts + facade run facts | ordering + one terminal + separate SDK/Trace/headless types; no Core lifecycle channel or internal-union serialization |
 | [harness-steering-001](./plan/tasks/harness-steering-001.md) | **done @ `a5ff2b7`** | Session-owned bounded steering/follow-up + thin Core insertion seam | std 567/567; curl 566/566; Core 89/89; Coding 298/298; SDK 20/20; deterministic insertion, ownership/retention, `code=steered`, and compatible Trace/session/lifecycle evidence |
-| `session-fork-001` | planned | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
+| [session-fork-001](./plan/tasks/session-fork-001.md) | **docs in-progress** | safe idle-only durable fork (parent unchanged; child exclusive create_new + deep-copy) | module fixture list; parent equality all faults; no Core fork; no schema/maturity change |
 
 This milestone aligns the smallest valuable Pi Harness semantics. The steering closeout is SDK/Loop enrichment only:
 Phase H, SDK-ready, Headless/Process, Loop, Session, Trace, and Zig source composition remain **L2**. It does **not** add
