@@ -1043,24 +1043,12 @@ test "Agent Phase1Storage grep and glob default missing and empty path in tmp cw
     try parent.dir.createDirPath(io, "ws/src");
     try parent.dir.writeFile(io, .{ .sub_path = "ws/src/hit.zig", .data = "pub const needle = true;\n" });
 
-    var old_buf: [Io.Dir.max_path_bytes]u8 = undefined;
-    const old_n = try Io.Dir.cwd().realPathFile(io, ".", &old_buf);
-    const old_cwd = try gpa.dupe(u8, old_buf[0..old_n]);
-    defer gpa.free(old_cwd);
-
-    var ws_buf: [Io.Dir.max_path_bytes]u8 = undefined;
-    const ws_n = try parent.dir.realPathFile(io, "ws", &ws_buf);
-    const ws_cwd = try gpa.dupe(u8, ws_buf[0..ws_n]);
-    defer gpa.free(ws_cwd);
-
-    // chdir via the Zig-native Io.Threaded syscall wrapper, not std.c.chdir:
-    // on Linux that resolves to the raw `chdir(2)` syscall (std.os.linux.chdir)
-    // and avoids pulling a libc dependency into the package test target, which
-    // Zig 0.16 rejects with `dependency on libc must be explicitly specified`.
-    // Darwin/Windows still go through libc, where the test target already
-    // links libc. Restore on the exit path so a later test never inherits cwd.
-    Io.Threaded.chdir(ws_cwd) catch return error.SkipZigTest;
-    defer Io.Threaded.chdir(old_cwd) catch @panic("failed to restore test cwd");
+    // Handle-based cwd switching reaches the raw `fchdir(2)` syscall through
+    // Io.Threaded on non-libc Linux, while ScopedCwd restores fail-loud.
+    var ws = try parent.dir.openDir(io, "ws", .{});
+    defer ws.close(io);
+    var scoped = try ScopedCwd.enter(io, ws);
+    defer scoped.leave();
 
     const Mock = struct {
         calls: u32 = 0,
@@ -3687,8 +3675,8 @@ test "h-redact: save/resume then new secret id avoids prior zag-rtid" {
 
 const tool_error = core.tool_error;
 
-/// Scoped process-cwd switch for composition fixtures that need a real workspace
-/// root smaller than the monorepo (symlink escape). Always restore via defer.
+/// Scoped process-cwd switch for tests that need a real workspace root.
+/// Always restore via defer.
 ///
 /// Process-global cwd is hygiene debt (hostile to future parallel tests); restore
 /// is fail-loud. Prefer Dir-scoped Agent/tool cwd when product API allows (P2 backlog).
@@ -3710,7 +3698,7 @@ const ScopedCwd = struct {
         const restore_err = std.process.setCurrentDir(self.io, self.saved);
         self.saved.close(self.io);
         self.* = undefined;
-        restore_err catch @panic("h-integration: process cwd restore failed");
+        restore_err catch @panic("test process cwd restore failed");
     }
 };
 
