@@ -51,8 +51,10 @@ pub const Event = union(enum) {
 | `tool_end` | Loop | turn, call index, id, name, body | result body exists, including soft deny/error/cancel bodies |
 | `run_terminal` | Agent facade | turns, ok, controlled stop reason, cumulative usage | final Result/ReplyError truth is known |
 
-`run_terminal.stop_reason` uses a lifecycle-owned controlled enum with the same values as the Agent/Trace terminal
-contract. The lifecycle module must not import `loop.StopReason` in a cycle; the facade performs an exhaustive mapping.
+`run_terminal.stop_reason` uses a lifecycle-owned controlled enum. `loop.zig` imports the lifecycle module and
+re-exports that same type as `loop.StopReason`; the lifecycle module imports only `message.zig`, never `loop.zig`.
+This keeps one in-memory stop enum and avoids a fourth hand-maintained mapping. The Agent facade retains an exhaustive
+mapping from that enum to Trace's independently versioned controlled terminal values.
 
 ## Ordering
 
@@ -68,8 +70,10 @@ run_start
 Invariants:
 
 1. `run_start` is emitted only after fallible run preflight succeeds. A failure before it is not a started lifecycle run.
-2. `assistant_message` is emitted only after a complete validated assistant turn is appended to the transcript.
-3. Every emitted `tool_start` has exactly one matching `tool_end` with the same turn, call index, and call id.
+2. `assistant_message` is emitted only after a complete validated assistant turn is appended to the transcript. It
+   carries no duplicate Tool-call list; consumers correlate subsequent `tool_start` events by turn and program order.
+3. Every emitted `tool_start` has exactly one matching `tool_end` with the same turn, call index, and call id. The Loop
+   passes its existing `turns` and `call_index` values through Tool execution/finish helpers; correlation is not guessed.
 4. Pending accepted calls filled with `code=cancelled` still receive truthful `tool_end` events.
 5. `run_terminal` is the final lifecycle event and is emitted exactly once for every lifecycle-started run.
 6. A trace/session persistence error produces a failed lifecycle terminal; it cannot preserve an earlier success claim.
@@ -103,12 +107,16 @@ delta.
 
 The current low-level `Observer.Event` remains unchanged in `harness-events-001`. It continues to drive verbose logging
 and the existing headless event bridge. `LifecycleObserver` is a separate supported SDK field so adding lifecycle
-variants does not silently break existing exhaustive switches or duplicate headless terminals.
+variants does not silently break existing exhaustive switches or duplicate headless terminals. Existing Observer
+Tool events and lifecycle Tool events are two projections of the same Loop source decision, not independent execution
+or terminal decisions.
 
 ### Trace v1
 
 Trace remains the durable audit contract. Lifecycle events do not change Trace schema, persistence, redaction, sequence,
-or terminal-reserve behavior. Trace failures still determine the truthful Agent outcome.
+or terminal-reserve behavior. `run_terminal` inherits the Agent facade's final outcome after Trace commit/fallback
+precedence; it is not a second truth source. If Trace cannot persist a terminal, the in-process lifecycle still emits
+one failed `trace_error` terminal and never preserves an earlier success claim.
 
 ### `headless-v1`
 
@@ -138,7 +146,9 @@ capability.
 - deterministic golden sequences for completed, Tool, cancelled, provider-error, session-error, trace-error, and OOM
   paths;
 - matching Tool start/end ids across normal, denied, invalid-argument, jail/shell deny, and pending-cancel results;
-- external SDK consumer compiles and copies borrowed lifecycle data;
+- external SDK consumer installs `LifecycleObserver`, observes a completed Tool run, copies borrowed message/Tool data,
+  and safely retains those copies after callback return;
+- deterministic golden sequences live with the lifecycle module tests and cover every accepted terminal family;
 - existing low-level Observer, Trace v1, `headless-v1`, std/curl, and CLI SIGINT Gates remain unchanged;
 - no `message_delta`, `tool_update`, steering, hook, RPC, TUI, or runtime-extension claim.
 
@@ -154,7 +164,7 @@ capability.
 
 ## Related
 
-- [SDK contract](./sdk-contract.md)
+- [SDK contract](./sdk-contract.md) — its Event section is updated when `harness-events-001` is implemented
 - [Loop/turn](./loop-turn.md)
 - [Trace observability](./trace-observability.md)
 - [Headless contract](./headless-contract.md)

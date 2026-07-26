@@ -25,6 +25,8 @@ Analysis: [2026-07-26 harness events contract](../analysis/2026-07-26-harness-ev
 - `docs/modules/trace-observability.md`
 - `docs/modules/headless-contract.md`
 - `docs/plan/tasks/cli-sigint-001.md`
+- `docs/plan/tasks/sdk-contract-001.md` (closed SDK Gate; preserve compatibility)
+- `docs/plan/tasks/headless-001.md` (closed process Gate; preserve schema/terminal behavior)
 
 # path
 
@@ -50,10 +52,13 @@ unless implementation proves a small mapping regression that cannot be fixed els
 1. Add a separate `LifecycleObserver`/`LifecycleEvent`; do not rename or expand the current low-level Observer in M1.
 2. Event payloads are callback-borrowed, synchronous, allocation-free at emission, and trusted E0-only.
 3. Emit only `run_start`, `assistant_message`, `tool_start`, `tool_end`, and `run_terminal`.
-4. Message events contain complete validated assistant text and turn correlation; they are not called deltas.
-5. Tool events contain turn, call index, call id, name, and arguments/body as appropriate.
+4. Message events contain complete validated assistant text and turn correlation; they are not called deltas and do
+   not duplicate the Tool-call list.
+5. Tool events contain turn, the Loop's serial call index, call id, name, and arguments/body. Loop execution and finish
+   helpers receive this correlation explicitly for every soft/cancel path.
 6. Agent facade owns `run_start` and exactly one final `run_terminal`; Loop owns message and Tool source facts.
-7. Terminal stop reasons use a lifecycle-owned controlled enum exhaustively mapped from Agent outcomes.
+7. `lifecycle.StopReason` is the canonical in-memory enum and `loop.StopReason` remains a public alias. The Agent's Trace
+   mapping stays exhaustive, preventing silent reason drift.
 8. Existing Observer, Trace v1, `headless-v1`, and CLI SIGINT behavior remain unchanged.
 
 # verification
@@ -67,11 +72,15 @@ unless implementation proves a small mapping regression that cannot be fixed els
    paths emit one truthful terminal after a start.
 6. **Preflight failure:** a failure before `run_start` emits no lifecycle terminal.
 7. **Ordering:** no lifecycle callback follows `run_terminal`; callback program order matches transcript Tool order.
-8. **Ownership:** external SDK consumer copies borrowed message/Tool bytes and retains them safely after callback return.
-9. **Compatibility:** existing low-level Observer tests and `tests/sdk-consumer-fixture` remain green.
-10. **Isolation:** parsed `headless-v1` output and Trace v1 fixtures are byte/schema compatible; no duplicate terminal.
-11. **No fake phases:** source and docs contain no emitted `message_delta`/`tool_update` claim.
-12. **Gate:** package tests, SDK fixture, headless process fixture, and root std/curl full suites pass on merged main.
+8. **Ownership:** the external SDK fixture installs `LifecycleObserver`, observes a completed Tool run, copies borrowed
+   message/Tool bytes, and retains those copies safely after callback return.
+9. **Golden sequences:** deterministic lifecycle goldens live with `lifecycle.zig` tests and cover completed, Tool,
+   cancel, provider/session/trace error, OOM, invalid-toolset/context, timeout, and unsupported-control terminals.
+10. **Compatibility:** existing low-level Observer tests and all prior SDK consumer cases remain green.
+11. **Isolation:** parsed `headless-v1` output and Trace v1 fixtures are byte/schema compatible; no duplicate terminal.
+12. **Docs:** `sdk-contract.md` gains the lifecycle-v1 ownership/event section and `loop-turn.md` closes its lifecycle gap.
+13. **No fake phases:** source and docs contain no emitted `message_delta`/`tool_update` claim.
+14. **Gate:** package tests, SDK fixture, headless process fixture, and root std/curl full suites pass on merged main.
 
 # non-goals
 

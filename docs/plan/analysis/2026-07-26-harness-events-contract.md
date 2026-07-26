@@ -60,6 +60,7 @@ Selected:
 - preserves the existing Observer and closed headless mapping;
 - gives the Agent facade explicit run start/terminal ownership;
 - gives the Loop correlated complete message and Tool start/end events;
+- uses a one-way dependency (`loop.zig` → `lifecycle.zig` → `message.zig`) with no import cycle;
 - permits exact-one-terminal and Tool id invariants without modifying Trace v1;
 - leaves real streaming/progress to tasks that own those sources.
 
@@ -71,7 +72,11 @@ Selected:
 2. `assistant_message` (complete validated message, never called a delta);
 3. `tool_start` (turn, call index, id, name, arguments);
 4. `tool_end` (same correlation plus result body);
-5. `run_terminal` (turn count, truthful `ok`, controlled stop reason, cumulative usage).
+5. `run_terminal` (turn count, truthful `ok`, lifecycle-owned stop reason, cumulative usage).
+
+`loop.StopReason` becomes a public alias of the lifecycle-owned enum. This removes an extra mapping while preserving
+existing source imports. The Agent's mapping to Trace controlled stops remains exhaustive, so adding a future reason
+fails compilation until persistence mapping is updated.
 
 `usage` and `permission` remain available through the existing Observer in M1. They are not duplicated into the
 lifecycle stream unless a later consumer proves that duplication necessary.
@@ -95,8 +100,9 @@ run and needs no synthetic terminal.
 
 ## Ordering and correlation
 
-- Assistant events carry the Loop turn number.
-- Tool events carry turn, call index, and model Tool call id.
+- Assistant events carry the Loop turn number and complete text, but not a duplicate Tool-call list.
+- Tool events carry turn, the Loop's existing serial call index, and model Tool call id. `executeOneTool`, soft-result
+  helpers, cancel backfill, and `finishTool` must receive that correlation explicitly.
 - Every accepted call, including an unknown Tool, denied call, invalid argument, jail/shell denial, or pending-cancel
   backfill, gets one `tool_start` and one `tool_end`.
 - `run_terminal` is final. No lifecycle event may follow it for that synchronous reply.
@@ -111,8 +117,9 @@ not the redacted payload contract for E2, E3, RPC, or public JSON.
 ## Compatibility
 
 The existing `Observer` remains supported and unchanged. `Agent.Options` and Loop options gain a separate optional
-lifecycle observer defaulting to none. The external SDK fixture must exercise it. This is an additive Zig source change;
-no Trace/session/headless schema version changes.
+lifecycle observer defaulting to none. The external SDK fixture installs it, exercises a completed Tool run, and copies
+borrowed payloads. This is an additive Zig source change; no Trace/session/headless schema version changes. The SDK
+contract Event section and the Loop's current-gap sentence are updated in the implementation closeout.
 
 ## Mapping boundary
 
