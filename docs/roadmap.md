@@ -78,13 +78,14 @@ M2 — selected daily UX
 
 ### M0 — Interaction reliability
 
-Task: [cli-sigint-001](./plan/tasks/cli-sigint-001.md) — **ready**.
+Task: [cli-sigint-001](./plan/tasks/cli-sigint-001.md) — **done** at `d542332`.
 
 - idle direct REPL first Ctrl+C exits cleanly;
 - active first Ctrl+C requests cooperative cancel;
 - second interrupt provides bounded hard escape;
 - direct binary behavior is contractual; `zig build run` parent-process-group behavior is only documented;
-- no new std-HTTP or Tool/shell active-preemption claim。
+- no new std-HTTP or Tool/shell active-preemption claim;
+- independent verification passed; merged-main std **465/465** and curl **464/464** Gates are green.
 
 Contract: [CLI interaction](./modules/cli-interaction.md).
 

@@ -1,20 +1,22 @@
 ---
 id: cli-sigint-001
 scope: product/cli-interaction
-status: in-progress
+status: done
 priority: P1
 depends-on: []
 ---
 
 # objective
 
-Make Ctrl+C predictable and non-hanging in the direct Zag CLI without claiming unsupported mid-flight process or std-HTTP cancellation.
+Make Ctrl+C predictable and non-hanging in the direct Zag CLI without claiming unsupported mid-flight process or
+std-HTTP cancellation.
 
-The binding behavior is [CLI interaction contract](../../modules/cli-interaction.md). Empirical reproduction on macOS found:
+The binding behavior is [CLI interaction contract](../../modules/cli-interaction.md). Empirical reproduction on
+macOS found:
 
-- direct idle REPL swallows SIGINT and remains blocked;
-- current `zig build run` exits with its parent foreground process group (status 130), which is outside Zag’s direct-binary contract;
-- an active std-backend request can remain blocked after the cancellation flag is set.
+- direct idle REPL swallowed SIGINT and remained blocked;
+- `zig build run` shared its parent foreground process group, outside Zag's direct-binary exit-code contract;
+- an active std-backend request could remain blocked after the cancellation flag was set.
 
 # context
 
@@ -25,39 +27,62 @@ The binding behavior is [CLI interaction contract](../../modules/cli-interaction
 - `docs/decisions/active/D-009-pi-semantics-not-parity-fork.md`
 - `docs/plan/tasks/cli-repl-001.md`
 
-Historical design reference only (no source dependency): `DaviRain-Su/pi-mono-zig@9d1f78c`, especially its scoped signal guards and terminal tests. Any copied code/fixture requires explicit MIT provenance; default is an independent implementation.
+Historical design reference only, with no source dependency: `DaviRain-Su/pi-mono-zig@9d1f78c`. Any copied code or
+fixture requires explicit MIT provenance; this task used an independent implementation.
 
 # path
 
 - `packages/zag-agent-core/src/cancel.zig`
 - `packages/zag-cli/src/cli.zig`
-- `packages/zag-cli/src/*sigint*fixture*.zig` (new if needed)
-- `packages/zag-cli/build.zig`
+- `packages/zag-cli/src/sigint.zig`
+- `packages/zag-cli/src/sigint_process_fixture.zig`
+- `packages/zag-cli/src/sigint_slow_mock.zig`
+- `packages/zag-coding-agent/src/agent.zig`
 - `build.zig`
 - `docs/modules/cli-interaction.md`
-- `README.md` and/or `chapters/` when user-visible behavior changes
-- `docs/plan/tasks/cli-sigint-001.md`
+- `README.md`
+- `chapters/00-loop/README.md`
 
-`packages/zag-ai/src/http_std.zig` is out of scope unless investigation proves a small correctness defect. This task must not redesign std HTTP into an actively cancellable backend.
+`packages/zag-ai/src/http_std.zig` remained out of scope. The task did not redesign std HTTP into an actively
+cancellable backend.
 
 # verification
 
-1. **Idle direct REPL:** after the real `zag` process reaches `you>`, first SIGINT exits within a bounded interval with status 0; no runtime `error:`/stack output, and no `ReadFailed`/stack on stderr.
-2. **Active cooperative path:** first SIGINT requests cancellation; where the backend can observe it, normal mode reports cancelled and interactive mode remains usable; headless remains exit 11 with exactly one terminal.
-3. **Hard escape:** second SIGINT while cancellation remains pending exits within a bound with conventional status 130; docs state this may bypass terminal persistence. The second-interrupt predicate is the handler's own unacknowledged `pending` state, NOT the Agent cancel flag.
-4. **No stale cancellation:** a prior idle/finished signal cannot be silently cleared into an unintended next reply. A pre-run pending interrupt (SIGINT after guard install but before the run starts) applies to the current run; the cancel flag is cleared at the run-completion boundary, not at run start.
-5. **Handler ownership:** CLI restores the previous SIGINT disposition; constructing/using the SDK alone does not install a handler. `Guard` install is ONE-SHOT per process (the first successful install latches permanently; `deinit` restores the disposition but a later install is rejected), eliminating the teardown→reinstall ABA; concurrent/nested install is also rejected.
-6. **Capability truth:** std backend is not advertised as bounded active interruption; Tool/shell preemption remains unclaimed.
-7. **Process fixture:** uses the real direct binary, deterministic readiness/request handshake (slow mock writes a `ready` marker after consuming the request, before the response-head stall; the fixture waits on that marker — no blind sleep is the correctness oracle), isolated cwd, and no real credentials. Bounded waits, child reap on failure, no secret/absolute-path leak.
-8. **REPL input integrity:** same-batch stdin bytes after the first newline are retained for the next call (e.g. `first\nsecond\n` yields `first` then `second`); EINTR loops, no recursion; the poll/self-pipe path returns `interrupted`, never `ReadFailed`/stack.
-9. **Linux non-libc:** the product `sigint.zig` module carries no libc dependency on Linux (raw `std.posix.system`/`std.os.linux` syscalls); `zig build -Dtarget=x86_64-linux` compiles. The fixture test artifact may use libc (scoped `link_libc = true`) since it only runs host-native.
-10. **Direct-binary exit-code authority:** `README`/chapters may show `zig build run`, but the exit-code contract is `./zig-out/bin/zag`; `zig build run`'s parent runner may exit 130, but the Zag child must not emit `ReadFailed`/stack.
-11. Existing focused REPL/cancel/headless fixtures pass, then merged-main `zig build test --summary all` and curl equivalent pass before `done`. Task stays `in-progress` until the merged-main Gate passes.
+1. **Idle direct REPL:** after the real `zag` process reaches `you>`, first SIGINT exits within a bound with status `0`;
+   stderr contains no runtime `error:`, stack, or `ReadFailed`.
+2. **Active cooperative path:** first SIGINT requests cancellation. curl observes it actively; interactive mode can
+   return to a usable prompt; observed headless cancellation exits `11` with exactly one terminal.
+3. **Hard escape:** a second unacknowledged SIGINT exits `130`. It is explicitly allowed to bypass persistence.
+4. **No stale cancellation:** pre-run SIGINT applies to the current run; all reply exits, including run-start failure,
+   clear the Agent flag before a later reply.
+5. **Handler ownership:** only the CLI installs the handler and restores the prior disposition. Installation is
+   one-shot per process; concurrent, nested, and teardown/reinstall attempts are rejected.
+6. **Capability truth:** std active interruption and Tool/shell mid-flight preemption remain unclaimed.
+7. **Process fixture:** uses the direct binary, request-ready handshake, isolated cwd, synthetic credentials, bounded
+   waits, child reaping, and output leak checks.
+8. **Input integrity:** retained bytes preserve `first\nsecond\n` across two reads; EINTR uses loops; pending SIGINT wins
+   over queued input.
+9. **Linux non-libc:** the product signal module uses native Linux syscalls; only the host-native process fixture links
+   libc explicitly.
+10. **Build-runner boundary:** `zig build run` may end through its parent group as shell status `130`, but the Zag child
+    emits no `ReadFailed` stack. The direct binary remains authoritative.
+11. **Regression Gate:** focused fixtures, std/curl full suites, docs, SDK/headless fixtures, and Linux cross-build pass.
 
-# non-goals
+# closeout
 
-- fixing or wrapping `zig build run` parent process-group behavior;
-- OS process supervisor/process-tree ownership;
-- changing headless-v1 schema or exit matrix;
-- TUI implementation;
-- graceful persistence after the explicit second-interrupt hard exit.
+Closed on merged local `main` at `d542332` after independent `VERDICT: PASS` and ff-only integration.
+
+Evidence:
+
+- std merged-main Gate: **465/465** tests, 40/40 steps;
+- curl merged-main Gate: **464/464** tests, 42/42 steps;
+- SIGINT process fixture: **2/2** on each backend;
+- Linux `x86_64-linux` product build: success, no undeclared libc dependency;
+- real PTY `zig build run -- --no-project`: Ctrl+C at `you>` ended through SIGINT with clean child output and no
+  `ReadFailed`/stack;
+- OpenAPI coverage **287/287**, model catalog **40**, docs lint passed;
+- final generated docs scores are recorded in `docs/quality/`.
+
+The direct process contract does not normalize build-runner exit behavior, claim process-tree ownership, make std HTTP
+actively cancellable, preempt running Tool/shell handlers, alter `headless-v1`, or promise graceful persistence after
+the explicit hard escape.
