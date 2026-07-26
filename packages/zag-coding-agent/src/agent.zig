@@ -529,36 +529,35 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             }
         },
         .jail_decision => |j| {
-            // Trace, then generic warning (only when a real Observer callback is registered —
-            // matching the baseline `observer.on_event != null` guard, not just a non-null object).
+            // Trace first, then generic warning. The warning is unconditional here
+            // because the RunBridge represents the high-level product composition,
+            // whose baseline loop always wired an internal Observer callback
+            // (onAgentEvent) with on_event != null; that internal path was always
+            // active on the product path regardless of whether the caller supplied
+            // a user Observer. The guard content stays generic (no raw path).
             if (bridge.trace) |tr| {
                 tr.emitJailDeny(j.tool_name, j.path) catch |err| return mapTraceToSink(err);
             }
-            if (observerCallbackActive(a.options.observer)) {
-                std.log.warn("jail deny", .{});
-            }
+            std.log.warn("jail deny", .{});
         },
         .shell_decision => |command| {
-            // Trace, then generic warning.
+            // Trace first, then generic warning (unconditional product path; see
+            // jail_decision). Generic only — never log raw command (secrets).
             if (bridge.trace) |tr| {
                 tr.emitShellDeny(command) catch |err| return mapTraceToSink(err);
             }
-            if (observerCallbackActive(a.options.observer)) {
-                // Generic only — never log raw command (may contain secrets).
-                std.log.warn("shell policy deny", .{});
-            }
+            std.log.warn("shell policy deny", .{});
         },
         .provider_retry => |r| {
-            // Trace, then generic warning.
+            // Trace first, then generic warning (unconditional product path; see
+            // jail_decision). The err_name is a stable error tag, not raw detail.
             if (bridge.trace) |tr| {
                 tr.emitProviderRetry(r.attempt, r.err_name) catch |err| return mapTraceToSink(err);
             }
-            if (observerCallbackActive(a.options.observer)) {
-                std.log.warn(
-                    "provider retry {d}/{d} after {s}",
-                    .{ r.attempt, a.options.chat_retries, r.err_name },
-                );
-            }
+            std.log.warn(
+                "provider retry {d}/{d} after {s}",
+                .{ r.attempt, a.options.chat_retries, r.err_name },
+            );
         },
         .context_compaction => |ev| {
             // Session note first, then Trace compaction (h-context-001).
@@ -595,15 +594,6 @@ fn emitObserver(a: *Agent, event: observer_mod.Event) void {
     }
 }
 
-/// True only when an actual Observer callback (`on_event`) is registered. This
-/// restores the baseline `deps.options.observer.on_event != null` guard for the
-/// inline generic warnings (jail/shell/retry): a non-null observer object with a
-/// null callback does not enter the warning path.
-fn observerCallbackActive(observer: ?observer_mod.Observer) bool {
-    if (observer) |o| return o.on_event != null;
-    return false;
-}
-
 /// Map `trace.Error` to the sink error set. `OutOfMemory` stays `OutOfMemory`;
 /// durable/serialization/path faults become `SinkFailed` (→ loop `TraceFailed`).
 fn mapTraceToSink(err: trace_mod.Error) loop_event_mod.SinkError {
@@ -612,24 +602,6 @@ fn mapTraceToSink(err: trace_mod.Error) loop_event_mod.SinkError {
         error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => error.SinkFailed,
     };
 }
-
-// F2: prove the generic-warning guard matches the baseline `on_event != null`
-// semantics, not just a non-null observer object.
-test "observerCallbackActive: null observer object → false" {
-    try std.testing.expect(!observerCallbackActive(null));
-}
-
-test "observerCallbackActive: observer object with null on_event (.none()) → false" {
-    const o: observer_mod.Observer = .none();
-    try std.testing.expect(!observerCallbackActive(o));
-}
-
-test "observerCallbackActive: observer object with real callback → true" {
-    const o: observer_mod.Observer = .{ .ptr = null, .on_event = f2_dummy_cb };
-    try std.testing.expect(observerCallbackActive(o));
-}
-
-fn f2_dummy_cb(_: ?*anyopaque, _: observer_mod.Event) void {}
 
 pub const Agent = struct {
     gpa: std.mem.Allocator,
