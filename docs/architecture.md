@@ -50,12 +50,17 @@ Decisions: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) and [
 ### Extension boundary
 
 ```text
+feature surface: Extension / Skill / Prompt / Theme / Package / Model / Provider / SDK / RPC / JSON / UI
+                                        ×
 E0 static Zig source composition ──► existing SDK (same process, trusted)
-E1 passive package              ──► product discovery + bounded context
-E2 executable child             ◄─► zag-ext-v1 ◄─ product supervisor
+E1 passive resources             ──► product discovery + bounded context/data
+E2 executable child              ◄─► zag-ext-v1 process binding ◄─ product supervisor
+E3 WASM Component                ◄─► zag-ext-v1 WIT binding ◄──── quarantined runtime
 ```
 
-E2 transports canonical data and constructs validated Tool shims; it never moves allocators, renderer pointers, or private Agent memory across the boundary. Product process ownership is separate from OS sandbox enforcement. E3 WASM Component is the planned portable third-party binding; its runtime stays quarantined from Kernel and is selected only by an evidence Gate.
+The feature and carrier axes are independent: Package is a runtime bundle above E1/E2/E3; E0 remains a build-time source dependency; Custom Model data is distinct from executable Custom Provider behavior; `headless-v1` JSON is distinct from future bidirectional `rpc-v1`.
+
+E2/E3 transport canonical data and construct validated shims; they never move allocators, raw terminal input, renderer pointers, or private Agent memory across the boundary. Product process ownership is separate from OS sandbox enforcement. E3 is selected only by an evidence Gate and starts with compute-only Tools before later separately gated hooks/commands/Provider/UI worlds.
 
 ### 分层职责
 
@@ -169,8 +174,9 @@ Agent Core
 | 模式 | 阶段 | 说明 |
 |------|------|------|
 | CLI / one-shot | default L1 human; headless L2 | `zag-cli` 组装 resolve → WireAdapter → Agent；headless 模式见 [`modules/headless-contract.md`](./modules/headless-contract.md) |
-| Headless JSON/process SDK | ✅ L2 at `a1a1e0f` | versioned JSON/events、stable errors/exit codes；`headless-v1` contract + exit matrix + process fixture；早于 TUI / ACP |
-| TUI · dashboard · polished ACP | **C9** | 只组装，不把 loop 逻辑写进 UI |
+| Headless JSON/process SDK | ✅ L2 at `a1a1e0f` | one-shot/output-only `headless-v1` + exit matrix + process fixture；不等于 RPC |
+| Long-lived RPC | planned separate Gate | Zag-native correlated command/response/event protocol after public events/control/session; no Pi schema parity |
+| TUI · extension UI host · dashboard · polished ACP | **C9 / later Gates** | 只组装；E2/E3 UI uses host-rendered intents/view actions, not raw terminal ownership |
 
 Agent Core 可被多种 shell 嵌入；shell 只处理 I/O、protocol 与 lifecycle。See [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md).
 
@@ -251,8 +257,8 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | Repo map/fork；Memory Repo | context/session backend | C5；Memory later/default-off |
 | Graph / Subagent / Oracle | optional orchestration | C6；依赖 lifecycle/process safety |
 | OS sandbox/process supervisor | product runtime | C7；不进入 Provider/message ABI |
-| Extension tiers | E0 static SDK / E1 passive / E2 process | D-010；E2 needs C7.1, untrusted native also C7.2 |
-| TUI/dashboard/polished ACP | product shell | C9 |
+| Extension carriers | E0 static SDK / E1 passive / E2 process / E3 WASM | D-010；E2 needs C7.1, untrusted native also C7.2; E3 needs WIT/runtime/capability/package Gates |
+| Programmatic/product UI | JSON L2 / future RPC / TUI + host-rendered extension UI | C9 + separate RPC/UI Gates |
 | Third native model protocol | zag-ai adapter | only on user demand；非 H gate |
 
 ## 业务入口（现状）

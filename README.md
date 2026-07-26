@@ -11,7 +11,7 @@
 | Teaching Phase 0–3 | ✅ **tutorial-complete** |
 | Production Floor（Phase H） | ✅ **L2（单用户、受控本机）** |
 | Zig SDK-ready | ✅ **closed at `ebdd7ab`** |
-| Headless/process gate | ⏳ **ready** |
+| Headless/process gate | ✅ **closed at `a1a1e0f`** |
 | Capability C4–C9 | 未开始 |
 
 > Phase 3 教程演示了 jail / policy / trace，**不等于**生产就绪。权威矩阵：[docs/maturity.md](./docs/maturity.md)。

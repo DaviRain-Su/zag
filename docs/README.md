@@ -21,7 +21,8 @@ vision → maturity（看清自己在哪）
 |------|------|
 | [INDEX.md](./INDEX.md) | **桶地图** + lint / score 说明 |
 | [vision.md](./vision.md) | Pi-inspired Zig-native Harness 定位、吸收/删减原则 |
-| [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) | static Zig / passive packages / `zag-ext-v1` 扩展边界 |
+| [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) | 功能面 × E0 static / E1 passive / E2 process / E3 WASM 扩展边界 |
+| [Pi feature correspondence](./plan/analysis/2026-07-26-pi-feature-correspondence.md) | Pi 11 个功能维度 → Zag Zig-native 载体、成熟度、Gate 与明确差异 |
 | [packaging.md](./packaging.md) | Harness × Kernel SDK 包分层与拆包纪律 |
 | [maturity.md](./maturity.md) | **真理源**：子系统 L0–L3 成熟度矩阵 |
 | [roadmap.md](./roadmap.md) | Teaching / Phase H / Capability / Quality |

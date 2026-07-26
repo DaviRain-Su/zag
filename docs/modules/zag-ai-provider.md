@@ -65,8 +65,20 @@ canonical: types.Message / ToolDefinition / ChatOptions
 |----|----------------|
 | `openai_compat` + `anthropic_messages` | Google / Mistral-native / Bedrock / Vertex |
 | env key 预设（OpenAI/Anthropic 系 + 兼容网关） | OAuth（Codex / Copilot） |
-| JSON 模型表 → comptime `catalog_data.zig` + `cost.Ledger` | 运行时解析 JSON（不用） |
+| JSON 模型表 → comptime `catalog_data.zig` + `cost.Ledger` | 运行时 Custom Model catalog（独立后置 task；不属于当前 L2） |
 | （规划）OpenAI Responses、图像生成 | 绑死单一云 |
+
+### Pi Custom Model / Custom Provider 功能对应
+
+| Surface | Meaning | Zag carrier / truth |
+|---------|---------|---------------------|
+| Custom Model | data-only model metadata for a known API shape | current curated E0 catalog; future validated runtime data task, independent of WASM |
+| Custom Provider | executable transport/stream/auth/discovery behavior | E0 custom Provider/WireAdapter is SDK L2; E2/E3 runtime registration remains L0 |
+| Provider registration lifecycle | runtime register/unregister/restore | later `zag-ext-v1` host contract; never a dynamic Zig ABI |
+
+The current `--from-pi` catalog generator intentionally projects only Zag fields (`id/name/provider/context/output/reasoning/vision/cost`) and does not preserve Pi `compat`, `thinkingLevelMap`, headers, OAuth, or model overrides. No richer runtime catalog is claimed.
+
+Credentials are host-owned and separate from model metadata/package content. OAuth browser/device-code flows, keychains, shell-command secret lookup, callback listeners, and ambient cloud credentials belong to the host/E2. A future E3 Provider world may use narrowly mediated network/model/secret-use imports only after separate security Gates; it never receives broad environment, raw sockets, keychain, or unrestricted WASI.
 
 ### 不变式（适配层）
 
@@ -180,9 +192,11 @@ Fixture 目录命名不影响行为合同，可在以后整理；它不再作为
 
 Session usage metadata与 fallback/multi-key 是后续能力，不阻塞 L2。
 
-## L3
+## L3 / separately gated
 
 - provider fallback 链、multi-key
+- validated runtime Custom Model catalog/composition
+- E2/E3 runtime Custom Provider registration only after extension/process/WASM Gates
 - **OpenAI Responses** WireAdapter（与 Completions 并存）
 - **图像生成**独立面（不进 chat loop）
 - Memory / RAG 用 embed 仅作可选后端，见 [memory.md](./memory.md)

@@ -37,15 +37,19 @@ The transferable value is the semantic surface and drop-in ergonomics. jiti/npm/
 ## Chosen architecture
 
 ```text
-common zag-ext-v1 semantics
+user feature surface
+  Extension / Skill / Prompt / Theme / Package / Model / Provider / SDK / RPC / JSON / UI
+                                      ×
+common zag-ext-v1 executable semantics
   ├─ E0 static Zig (SDK-native types)
   ├─ E2 process binding (NDJSON)
   └─ E3 WASM binding (WIT Component)
 
-E1 Skills are passive context packages beside executable bindings.
+E1 Skills/Prompt Templates/theme data are passive resources.
+Runtime Package is a bundle over E1/E2/E3; E0 source distribution remains build-time only.
 ```
 
-E2 and E3 share manifest/Tool/capability/result meanings, not wire bytes.
+E2 and E3 share manifest/Tool/capability/result meanings, not wire bytes. Optional hooks/commands/Provider/UI require separate host contracts and need not appear in the first binding version.
 
 ## Common semantics
 
@@ -120,7 +124,7 @@ A heavy or unsafe runtime belongs behind an adapter/helper so `zag-agent-core` n
 
 ### Packaging/trust
 
-Initial E3 package: bounded manifest + component + deterministic digest/source provenance. Local explicit install only. Enable/disable/quarantine is host-owned. Signature, remote registry, updater, and supply-chain policy form a later independent Gate.
+Initial E3 artifact: bounded manifest + component + deterministic digest/source provenance. A runtime bundle may combine that artifact with E1 resources and optional E2 entries; it never contains E0 source composition as a hot-installable tier. Local explicit install only. Enable/disable/quarantine is host-owned. Signature, remote registry, updater, and supply-chain policy form a later independent Gate. Credentials are never package content.
 
 ## Tool and hook authority
 
@@ -137,24 +141,29 @@ Runtime-installed hooks use E2/E3. Trusted static hooks can arrive after lifecyc
 
 ## UI compatibility
 
-Extensions emit declarative intents (notify/status/progress/select/confirm/input/markdown/diff/list). Host owns renderer/focus/redaction and can reject unavailable UI. No arbitrary component factory or terminal writer crosses E2/E3.
+Runtime UI starts with declarative intents (notify/status/progress/select/confirm/input/markdown/diff/list/table/tree). A later separately gated view/action protocol may let E2/E3 code retain private state, receive sanitized actions, and return bounded view trees. Host owns renderer, raw terminal input, focus, layout, accessibility, redaction, cancellation, and availability. No arbitrary ANSI, native component factory, renderer pointer, or terminal writer crosses E2/E3. E0 trusted product code may add native host components at compile time.
 
 ## Delivery map
 
 ```text
 M0–M2 Harness route
-  events → Skills/minimal TUI
+  events → Skills → Prompt Templates → minimal TUI
+
+Programmatic surface
+  public events/control/session → rpc-v1
 
 Extension foundation
   extension-schema-001
   process-supervisor-001
   extension-process-001
+  extension-ui-schema-001 (basic intents first)
 
 WASM platform (planned)
   extension-wasm-contract-001
   extension-wasm-runtime-001
   extension-wasm-capabilities-001
   extension-wasm-package-001
+  later feature worlds (hooks/commands/Provider/UI) by separate Gates
 ```
 
 The extension track follows M0–M2 sequencing; it is a formal target but does not inflate current L0 maturity.

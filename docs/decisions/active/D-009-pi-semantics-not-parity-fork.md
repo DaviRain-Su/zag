@@ -34,8 +34,10 @@ Near-term alignment is deliberately small:
 1. truthful, ordered message/Tool lifecycle events;
 2. interactive control: cancellation plus steering/follow-up queues;
 3. session branch/fork behavior without weakening Zag durability/redaction;
-4. passive `SKILL.md` discovery with bounded prompt injection;
+4. passive `SKILL.md` discovery plus an explicit Prompt Template surface;
 5. a minimal terminal shell that only assembles Kernel APIs.
+
+The broader correspondence map is also explicit: Extension, Skill, Prompt Template, Theme, Package, Custom Model, Custom Provider, SDK, RPC, JSON, and TUI/UI. Each category receives a Zag outcome, carrier, maturity, and Gate; this does not require shipping all categories together or copying Pi's API.
 
 Names, package layout, CLI flags, JSON wire shapes, and TypeScript APIs do not need Pi compatibility.
 
@@ -55,14 +57,15 @@ Pi parity never weakens Zag’s existing contracts:
 
 ## Deliberately omitted
 
-Zag does not track Pi’s complete feature list. The following are not roadmap parity obligations:
+Zag tracks the major user capability categories, but not Pi's exhaustive method/flag/provider/renderer inventory. The following are not parity obligations:
 
 - exhaustive provider and OAuth coverage;
 - Bun/TypeScript extension compatibility;
-- Pi package-manager or marketplace compatibility;
-- TS-RPC byte compatibility;
+- Pi/npm package-manager or marketplace compatibility;
+- Pi RPC command/schema/byte compatibility (a Zag-native `rpc-v1` remains a separate planned capability);
 - Pi-compatible WASM APIs or runtime parity (Zag E3 follows D-010 and its own WIT/Gates);
-- cloud sharing/collaboration, HTML export, image/UI/theme breadth;
+- raw-terminal/ANSI/renderer-pointer access for E2/E3 UI;
+- cloud sharing/collaboration, HTML export, image/dashboard breadth;
 - Graph, Memory, Oracle, MCP, or OS sandbox without a concrete user failure and prerequisite Gate.
 
 ## Reuse and provenance
@@ -80,7 +83,7 @@ Until that task exists, the snapshots remain local read-only research material a
 
 ## Upstream tracking
 
-Pi is reviewed by pinned snapshots, not followed release-for-release. An update is justified only when it changes one of the selected semantics above or provides a useful failure fixture. New providers, commands, UI features, or package APIs alone do not trigger Zag work.
+Pi is reviewed by pinned snapshots, not followed release-for-release. An update is justified when it changes a mapped capability contract or provides a useful failure fixture. A new Pi provider, method, component, or package API may update the correspondence analysis, but does not by itself trigger Zag implementation.
 
 ## Consequences
 
@@ -96,5 +99,6 @@ Pi is reviewed by pinned snapshots, not followed release-for-release. An update 
 - [roadmap](../../roadmap.md)
 - [packaging](../../packaging.md)
 - [Pi alignment analysis](../../plan/analysis/2026-07-26-pi-zig-alignment.md)
+- [Pi feature correspondence](../../plan/analysis/2026-07-26-pi-feature-correspondence.md)
 - [D-008 SDK/process boundaries](./D-008-sdk-and-process-boundaries.md)
 - [D-010 extension tiers](./D-010-extension-tiers-and-process-protocol.md)

@@ -55,7 +55,7 @@ legacy pi-mono-zig ─────► Zig design + black-box fixture archive
 
 No repository merge, submodule, source dependency, or wire-parity promise is introduced.
 
-Runtime extensibility follows [D-010](../../decisions/active/D-010-extension-tiers-and-process-protocol.md): trusted static Zig via the existing SDK, passive packages, and a future language-neutral `zag-ext-v1` child-process protocol after process supervision. No dynamic Zig ABI or embedded scripting VM.
+Extensibility follows [D-010](../../decisions/active/D-010-extension-tiers-and-process-protocol.md) and the [feature correspondence](./2026-07-26-pi-feature-correspondence.md): Pi's user categories are mapped separately from Zag's trust carriers. E0 uses the existing static Zig SDK, E1 loads passive resources, E2 is a supervised process binding, and E3 is the formal portable WASM Component target. Package, Custom Model/Provider, SDK/RPC/JSON, and TUI/UI retain distinct contracts. No dynamic Zig ABI or embedded scripting VM.
 
 ## Asset disposition
 
@@ -65,11 +65,12 @@ Runtime extensibility follows [D-010](../../decisions/active/D-010-extension-tie
 | Steering/follow-up queues | Reimplement semantics | Bounded ownership; no global god-object |
 | Session tree/fork fixtures | Reimplement behavior; optionally adapt fixtures | Keep atomic save, locking, redaction, schema migration |
 | SignalGuard / terminal lifecycle | Design reference | CLI owns and restores handlers; SDK does not install them implicitly |
-| Skills discovery/frontmatter tests | Reimplement small passive subset | Bounded prompt budget; no executable privilege |
-| TUI renderer/input/tool-card patterns | Design reference | Minimal product shell; Kernel has no TUI dependency |
+| Skills/Prompt discovery and expansion tests | Reimplement selected passive behavior | Bounded budget; deterministic trust/conflict; no loader execution privilege |
+| Theme/package behavior | Functional reference | Theme renderer stays host-owned; runtime bundle is above E1/E2/E3, not an execution tier |
+| TUI renderer/input/tool-card patterns | Design reference | Minimal product shell; Kernel has no TUI dependency; E2/E3 use host-rendered UI data |
 | Provider/SSE goldens | Import only per scoped need | Exact provenance + MIT notice; no provider-count parity |
-| OAuth/provider zoo/Bun/TS-RPC/package manager | Archive | Not roadmap obligations |
-| Legacy WASM WIT/spike | Contract/fixture reference | Zag E3 is planned with its own WIT/runtime/capability Gates; old runtime is not reused as production code |
+| OAuth/provider zoo/Bun/Pi-RPC/package manager | Archive | No parity obligation; Zag-native RPC/Provider/package tasks need independent Gates |
+| Legacy WASM WIT/spike | Contract/fixture reference | Zag E3 is formal and starts narrow, then may add separately gated hooks/commands/Provider/UI; old runtime is not production code |
 
 ## Reduced delivery DAG
 
@@ -86,7 +87,10 @@ M1 — core Harness controls
                        │
                        ▼
 M2 — selected daily UX
-  skills-001       edit-sharpness-001
+  skills-001 → prompt-templates-001
+        │
+        ├──────────────┐
+        │       edit-sharpness-001
         └──────────────┬──────────────┘
                        ▼
                  tui-minimal-001

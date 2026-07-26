@@ -27,6 +27,19 @@
 
 两个客户，一套代码：本地 Zag 产品与 Zig SDK consumer。产品是 Kernel 的第一个、也是最严格的消费者。
 
+### Zig build package 与 runtime extension bundle 不是一回事
+
+| Property | E0 Zig source/build package | Runtime extension bundle |
+|----------|-----------------------------|--------------------------|
+| Owner | Zig build graph / SDK consumer | product extension host |
+| Trust point | compile time | install/enable time |
+| Distribution | source, monorepo, `build.zig.zon` | manifest + content + digest/provenance |
+| Execution | same-process trusted code | E1 passive data, E2 child, E3 Component |
+| Hot install | no; rebuild required | only after its tier Gate |
+| Contents | E0 only | E1 resources + optional E2/E3 artifacts; never E0 |
+
+本文件其余“package/包”默认指 Zig build/package boundary。用户可安装的 runtime bundle 由 [extensions module](./modules/extensions.md#runtime-package-bundle-vs-e0-source-distribution) 与 [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) 定义，不能热安装 E0 Zig 源码。
+
 ---
 
 ## 1. 外部分层纪律参考（Grok Build）

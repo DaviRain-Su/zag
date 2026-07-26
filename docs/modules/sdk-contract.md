@@ -32,6 +32,8 @@ var agent = try coding.Agent.init(gpa, io, provider, .{
 });
 ```
 
+This is D-010 **E0 trusted static Zig composition** and is the functional equivalent of trusted in-process custom Tool/Provider/Observer composition. It is source/build-time extension, not a runtime plugin or installable extension bundle. Future E2/E3 Provider/Tool/UI registration uses separate runtime contracts and does not change this Gate.
+
 ## 2. Ownership and lifetime
 
 All rules below are caller-borrowed unless explicitly stated otherwise.
@@ -184,7 +186,7 @@ The following are explicitly **not** covered by this contract:
 | C ABI | Use the future process/headless contract. |
 | Zig dynamic plugin ABI | Same as C ABI; plugin loading is post-H. |
 | Semver publication | Requires second consumer + release channel. |
-| Headless protocol / JSON-RPC | Covered by `headless-001`, not this task. |
+| Process protocols | Output-only `headless-v1` is closed by `headless-001`; future bidirectional `rpc-v1` is a separate Gate. Neither is part of this in-process SDK contract. |
 | OS sandbox | Process-supervisor work (C7). |
 | Mid-flight Tool/shell preemption | `.cooperative` is metadata only; real preemption is post-H process work. |
 

@@ -36,7 +36,7 @@ Zag Harness contracts
 
 | 参考 | 角色 | 不做什么 |
 |------|------|----------|
-| **Current Pi** (`earendil-works/pi`) | **首要行为参考**：Agent lifecycle、events、steering/follow-up、session fork、Skills、terminal Harness | 不追包名、API、CLI flag、provider 数量或完整功能表 |
+| **Current Pi** (`earendil-works/pi`) | **首要功能/行为参考**：Extension、Skills/Prompts/Themes/Packages、Model/Provider、SDK/RPC/JSON/TUI 与 Harness lifecycle | 不追包名、API、schema、CLI flag、provider 数量或 TypeScript 实现；功能按 Zag Gate 分批对应 |
 | **Historical `pi-mono-zig`** (`DaviRain-Su/pi-mono-zig`) | 冻结的 Zig 设计/fixture 档案：events、session tree、SignalGuard、TUI、goldens | 不恢复为 parity fork；不整体 merge |
 | Hyper / Grok Build | 依赖单向、quarantine、安全/进程边界 | 不采用 batteries-included 产品范围，不复制包粒度 |
 | omp / Aider / Codex / Amp | edit/review/repo-map/Oracle 的按需机制 | 不按竞品功能表排期 |
@@ -61,7 +61,7 @@ Zag 的稳定核心是少量可组合合同，不是功能集合：
 - message/Tool 细粒度事件；
 - steering/follow-up；
 - session fork/tree；
-- passive Skills；
+- passive Skills 与 Prompt Templates；
 - edit review 与最小 TUI。
 
 ## Zig-native 的具体含义
@@ -80,16 +80,28 @@ Zag 的稳定核心是少量可组合合同，不是功能集合：
 
 ## 扩展策略
 
-[D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) 选择三层机制：
+Pi 的分类是用户功能面；Zag 的 E0–E3 是执行/信任载体。两轴正交：
 
 ```text
-E0 trusted static Zig       已由 SDK Gate 覆盖
-E1 passive Skills/prompts   运行时发现，无代码执行
-E2 process binding          兼容 MCP/现有程序；先过 process-supervisor Gate
-E3 WASM Component           计划中的首选可安装第三方扩展格式；独立 runtime/capability Gates
+功能面: Extension · Skill · Prompt · Theme · Package · Model · Provider
+        SDK · RPC · JSON · TUI/UI
+                              ×
+载体:  host built-in · E0 static Zig · E1 passive resource
+       E2 supervised process · E3 WASM Component
 ```
 
-不提供 Zig `.so`/`.dylib` 动态 ABI，也不嵌 Lua/QuickJS/Bun。进程隔离不等于 sandbox；untrusted native 扩展另需 required OS enforcement。扩展 UI 只发送声明式数据，由 Zag 产品壳渲染，不注入 renderer/component 代码。
+[D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md) 选择四类载体：
+
+```text
+E0 trusted static Zig       已由 SDK Gate 覆盖当前范围
+E1 passive resources        Skills → Prompt Templates → later theme data
+E2 process binding          兼容 MCP/现有程序/OS 集成；先过 process-supervisor Gate
+E3 WASM Component           正式的首选可安装第三方可执行格式；独立 WIT/runtime/capability/package Gates
+```
+
+Package 是 E1/E2/E3 之上的 bundle，不是 E4；E0 是 build-time source dependency，不能被 runtime package 热安装。Custom Model 是 data，Custom Provider 才含 executable behavior。SDK/JSON 已各自 L2；Zag-native `rpc-v1` 与 TUI/UI 是独立后置 Gate。
+
+不提供 Zig `.so`/`.dylib` 动态 ABI，也不嵌 Lua/QuickJS/Bun。进程隔离不等于 sandbox；untrusted native 扩展另需 required OS enforcement。E2/E3 UI 由扩展维护行为/状态并发送 host-rendered intent/view/action data；raw terminal、任意 ANSI、renderer/component pointer 不跨边界。
 
 ## 吸收原则（强制）
 
@@ -112,7 +124,7 @@ E3 WASM Component           计划中的首选可安装第三方扩展格式；�
 ## 近期明确不做
 
 - provider zoo / OAuth 全家桶；仅按真实需求扩现有 WireAdapter；
-- Bun/TypeScript compatibility host、Pi package manager、TS-RPC byte parity；
+- Bun/TypeScript compatibility host、Pi/npm package manager、Pi RPC byte/API parity；Zag-native `rpc-v1` 另走独立 Gate；
 - 在 E3 WIT/runtime/capability/package Gates 前发布或宣传 WASM extension platform；
 - Oracle/subagents/Graph、Memory Repo、MCP（无当前失败场景）；
 - OS sandbox/background jobs（需独立 process-supervisor Gate）；

@@ -42,7 +42,8 @@ completed foundation
            └────► session-fork-001
                            │
                            ▼
-          skills-001 + edit-sharpness-001 (M2)
+          skills-001 → prompt-templates-001
+                    + edit-sharpness-001 (M2)
                            │
                            ▼
                      tui-minimal-001
@@ -50,7 +51,7 @@ completed foundation
 
 Only `pi-alignment-001` and `cli-sigint-001` currently have binding task docs. Later IDs are roadmap placeholders until their own analysis/task contracts land.
 
-D-010 also records a formal post-foundation extension track: `extension-schema-001` → C7.1 / E2 process binding → E3 `extension-wasm-contract-001` → runtime → capabilities → package. These are planned directions, not ready tasks or implementation claims.
+The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
 ## Task index
 
