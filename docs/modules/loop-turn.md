@@ -3,23 +3,24 @@
 | Item | Content |
 |------|---------|
 | Code | `packages/zag-agent-core/src/loop.zig` |
-| Layer | Agent Core Kernel |
+| Layer | Thin Agent Core Kernel; ownership contract [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current maturity | **L2** — core loop/goldens + truthful terminals + provider control + accepted multi-Tool between-call Agent composition passed independent/main Gate |
 | Target | L2 (H) → L3 steer/read-only parallelism (C6) |
 | Reference | Pi agent loop; Nanocodex Turn |
 
 ## Purpose
 
-Run one agent loop: build model view, request one assistant turn, execute requested Tools through policy/enforcement, append results, and stop with an auditable outcome.
+Run one generic agent loop: obtain a model view through `ContextView`, request one assistant turn, execute requested Tools through required policy/jail/shell ports, append results, emit source facts, and return a typed loop outcome. Product persistence and run terminals are facade responsibilities.
 
 ## Invariants
 
 1. The model chooses Tool calls; the harness validates, executes, and returns results.
 2. Expected Tool failures are machine-readable soft results, not process crashes.
 3. Provider input is a context view; transcript remains authoritative.
-4. Every started run has one truthful terminal lifecycle across Result, error, Observer, and trace.
-5. Permission → workspace containment → shell policy → execution remains ordered.
+4. Loop source facts are emitted once in program order; product run preflight/start/terminal remain facade-owned.
+5. Required `ToolPolicy → Jail → ShellPolicy → execution` remains ordered; no missing safety port becomes allow/yolo.
 6. Cancellation never leaves unmatched accepted Tool calls in transcript.
+7. Core owns Toolset/protocol-history validation and execution ordering, not concrete product policy, compaction, persistence, redaction, or logging.
 
 ## Public result/error contract
 
@@ -32,9 +33,9 @@ Stable stop categories include:
 - Loop returns Result for `completed` / `max_turns` / `cancelled` / **`timeout`** / **`unsupported_control`**.
 - Loop returns `error.ProviderFailed` for provider/auth failures (facade → `ok=false`, `provider_error`).
 - **Timeout** → `timeout` (ok=false); **Cancelled** → `cancelled` (ok=true); **UnsupportedControl** → `unsupported_control` (ok=false).
-- Loop returns `error.InvalidToolset` / `error.OutOfMemory` / `error.TraceFailed` as typed errors (facade maps to `invalid_toolset` / `out_of_memory` / `trace_error` — **never** misclassified as `provider_error`).
+- Loop returns `error.InvalidToolset` / `error.InvalidContext` / `error.OutOfMemory` / visible port/sink failures as typed errors (facade maps them exhaustively — **never** misclassified as provider success). During D-011 migration, the existing Trace adapter preserves `TraceFailed` / `trace_error`.
 - `session_error` / `trace_error` terminals are committed by the **facade** only.
-- Mid-run trace emit failures are never swallowed (`mapTraceEmit` → `OutOfMemory` or `TraceFailed`).
+- Mid-run durable observation failures are never swallowed: the fallible product `LoopEventSink` preserves `OutOfMemory` versus audit/sink failure and the facade's truthful terminal mapping.
 
 ## Tool error shape
 
@@ -66,8 +67,9 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 ## Current gaps
 
+- D-011 responsibility migration is not complete: current `loop.zig` still imports concrete product context/policy/workspace/shell/Trace modules. See [core-boundary](./core-boundary.md).
 - Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work and is not an H L2 requirement.
-- High-level Observer event lifecycle is not yet an SDK contract.
+- High-level SDK lifecycle is re-queued after the boundary migration; no core `lifecycle.zig` is planned.
 
 ## L2 acceptance
 

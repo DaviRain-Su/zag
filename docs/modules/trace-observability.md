@@ -2,7 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Code | `packages/zag-agent-core/src/{trace,observer}.zig`; run facade in coding-agent `agent.zig` |
+| Current code | `packages/zag-agent-core/src/{trace,observer}.zig`; run facade in coding-agent `agent.zig` |
+| D-011 target | source `LoopEventSink` contract in Core; Trace/redaction/logger/fan-out in coding-agent |
 | Current maturity | **L2** (lifecycle/schema/atomic persistence + redaction before serialize) |
 | Target | L2 (H) → L3 dashboard (C9) |
 | Reference | Hyper telemetry/dashboard; SECURITY audit |

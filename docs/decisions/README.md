@@ -30,3 +30,4 @@ Index (keep in sync when adding notes):
 | [D-008](./active/D-008-sdk-and-process-boundaries.md) | active | SDK readiness and process interfaces use separate gates |
 | [D-009](./active/D-009-pi-semantics-not-parity-fork.md) | active | Follow Pi harness semantics without becoming a parity fork |
 | [D-010](./active/D-010-extension-tiers-and-process-protocol.md) | active | Feature surface mapped over static Zig, passive resources, process adapters, and planned WASM Components |
+| [D-011](./active/D-011-thin-agent-core-boundary.md) | active | Keep `zag-agent-core` as a thin loop kernel; product policy/state live in coding-agent |

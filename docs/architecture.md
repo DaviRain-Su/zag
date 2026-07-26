@@ -3,6 +3,7 @@
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
 > Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 历史上找到两个 file-surface blocker；single-file edit integrity 与 read/search bounds 均已关闭，`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence audit（11/11 PASS，panel SHIP），Phase H 达到 **L2（单用户、受控本机）**。
 > [D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md)：Pi 是 Harness 行为参考，旧 `pi-mono-zig` 是冻结 Zig 档案，Grok Build 仅提供依赖/quarantine 纪律；Zag 不做 parity fork 或 batteries-included 产品。
+> [D-011](./decisions/active/D-011-thin-agent-core-boundary.md)：`zag-agent-core` 收缩为 loop kernel；product policy/state/observation 由 `zag-coding-agent` 拥有。当前代码迁移按 docs/plan DAG 进行，既有 L2 行为不得回退。
 
 ---
 
@@ -17,12 +18,13 @@
 │ L5 产品面（产品壳 · C9）        对标 pager / dashboard / acp    │
 │  zag-cli · zag-tui · zag-acp   只组装，不承载 loop / 协议细节   │
 ├──────────────────────────────────────────────────────────────┤
-│ L4 Kernel ★低层 Zig composition（今 zag-agent-core）           │
-│  Loop · Session · Context view · Permissions · Trace           │
-│  ToolDescriptor / Runtime 挂载                                 │
+│ L4 Kernel ★低层 Zig composition（zag-agent-core）              │
+│  Loop · Transcript · Provider/Tool/Cancel ports                │
+│  protocol history · required policy/context/event seams        │
 │  SDK-ready Gate 已闭合；不由“包已拆出”自动获得                  │
-│  Memory / Graph 均为后续可选能力，不是 Kernel 最低合同          │
-│  L3 产品 agent 定义（今 zag-coding-agent）                      │
+│  L3 产品 Harness（zag-coding-agent）                             │
+│  Agent/Session · policy · context · persistence · observation   │
+│  model wiring · concrete coding Tools                           │
 ├────────────────────┬─────────────────────────────────────────┤
 │ L2 Model plane     │ L2 Runtime / 领域包                       │
 │  （对标 models/    │  zag-tools（fs·edit·shell·grep）           │
@@ -67,8 +69,8 @@ E2/E3 transport canonical data and construct validated shims; they never move al
 | 层 | 对标（Grok Build） | 职责 | 阶段 |
 |----|--------------------|------|------|
 | **L6/L5 产品面** | pager-bin / pager / dashboard / acp-lib | UI/交互/进程模式；**薄**，只组装 | 现状 CLI；**C9** 扩 TUI/ACP |
-| **L4 Kernel composition** | xai-grok-shell | 单 agent Loop、session、权限、context、trace、Tool runtime | **H** correctness；其后独立 SDK-ready Gate；C6 Graph 可选 |
-| **L3 agent 定义** | xai-grok-agent | 工具 + 采样 + hooks 组合 | C6 拆出 |
+| **L4 Kernel composition** | Pi low-level agent loop | 单 Agent Loop、Transcript、Provider/Tool/Cancel contracts、protocol history、required policy/context/event seams | **D-011 migration**；既有 H/SDK L2 contract 保持 |
+| **L3 产品 Harness** | Pi coding-agent AgentSession | Agent/Session facade、policy/context/persistence/observation、model wiring、concrete Tools | `zag-coding-agent` 当前并持续拥有 |
 | **Memory Core（future port）** | grok-memory 抽象 | 跨 session 记忆；default-off | **C5** 按真实 use case 设计，不在 H/SDK minimum 预留 |
 | **L2 Model plane** | models / sampler / sampling-types | resolve、catalog、WireAdapter、stream、errors | L2；final audit confirmed dual-wire contract、strict completion、curl active controls + std fail-closed capability truth |
 | **L2 Runtime / 领域包** | tools / workspace / sandbox | 执行面，不知模型协议 | H2 工具加深；C7 沙箱 |
@@ -78,10 +80,10 @@ E2/E3 transport canonical data and construct validated shims; they never move al
 
 1. **Loop 可独立运行**；日常 coding 路径不强制经过 Graph。
 2. **Graph 节点内部是 Loop**（或确定性 gate）；Graph 是编排层，不替代 tool loop。
-3. **Kernel 只见 canonical 消息与 Provider 端口**；厂商线协议只在 Model plane adapter。
-4. Model-visible `ToolDefinition` 与 local `ToolCapabilities` 分离；permission/workspace/runner 消费同一 runtime descriptor，缺失 metadata fail-closed。
+3. **Kernel 只见 canonical 消息与 Loop 所需 ports**；厂商线协议、durable state 和具体产品 policy 不进入 Kernel。
+4. Model-visible `ToolDefinition` 与 local `ToolCapabilities` 分离；Core revalidates metadata and fixes ToolPolicy → Jail → ShellPolicy → execute order；具体实现由 coding-agent 注入，缺失端口不得隐式 allow。
 5. **Memory / Graph / 产品面** 不得依赖 `openai-zig` 类型，也不得成为 H/SDK 最低合同的占位 hook。
-6. **依赖只准朝下**；Kernel 不 import 产品面；产品是 Kernel 的第一个严格消费者。
+6. **依赖只准朝下**；Kernel 不 import 产品面，也不通过同包放置偷渡 product state/policy；产品是 Kernel 的第一个严格消费者。
 7. Phase H 保证 single-Loop correctness；SDK-ready/headless 是独立 Gate；headless contract 见 [`modules/headless-contract.md`](./modules/headless-contract.md)；Graph、Memory、TUI 后置。
 8. OS sandbox 是 runner/process-supervisor enforcement，不污染 Provider/message Kernel ABI。
 9. **小而完整不是架构豁免**：每个新能力仍先声明用户失败、owner 包与 failure contract；竞品功能本身不是加入理由。
@@ -199,13 +201,29 @@ src/main.zig → zag-cli → zag-coding-agent → zag-agent-core → zag-types
 | `zag-types` | Canonical messages、`ChatError`；目标 runtime `ToolCapabilities` | std | vendors / product IO |
 | `openai-zig` | HTTP / OpenAPI | std | 上层 agent 包 |
 | `zag-ai` | Model plane + WireAdapter | zag-types + openai-zig | agent / cli 包 |
-| `zag-agent-core` | Loop、纯 Provider、session、permissions | **zag-types only** | Client、Wire 组装、zag-ai、产品 toolset |
-| `zag-coding-agent` | 产品 Agent、WireProvider、默认 tools | core + zag-ai | openai-zig 细节 |
-| `zag-cli` | 产品壳（args/REPL/one-shot） | coding-agent + core + zag-ai | loop 业务 |
+| `zag-agent-core` | Loop、Transcript、纯 Provider/Tool/Cancel ports、protocol history、required policy/context/event seams | **zag-types only** | durable session/Trace/redaction、concrete policy/workspace/shell/context、Client/Wire/UI |
+| `zag-coding-agent` | Agent/Session facade、policy/context/persistence/observation、WireProvider、默认/runtime Tools | core + zag-ai | openai-zig 细节、CLI/process-global state |
+| `zag-cli` | 产品壳（args/REPL/one-shot/headless、signals/stdin/terminal） | coding-agent + core + zag-ai | loop 业务 |
 | `src/main` | 进程入口 → `zag_cli.run` | zag-cli | 逻辑 |
 | `src/root` | umbrella 再导出 | 各 packages | — |
 
-**一句话：** Core 只见 `Provider.chat`；Wire 桥在 coding-agent；线协议在 zag-ai 之后。
+**一句话：** Core 只见 Loop 所需 contracts；Wire 桥、product policy/state/observation 在 coding-agent；线协议在 zag-ai 之后。
+
+### D-011 target boundary
+
+```text
+Core loop source facts ──► required LoopEventSink ──► coding-agent fan-out
+       │                                                ├─ durable Trace (fail closed)
+       │                                                ├─ verbose Observer (best effort)
+       └─ Result/RunError ──► Agent facade              ├─ SDK lifecycle adapter
+                                  ├─ session save       └─ headless mapping
+                                  └─ one run terminal
+```
+
+Core retains Tool metadata validation and `ToolPolicy → Jail → ShellPolicy → execute` ordering. The five seams are
+explicit; missing safety ports never mean allow. Current concrete modules migrate serially under
+[`modules/core-boundary.md`](./modules/core-boundary.md); until their implementation tasks merge, the module table below
+records current paths and target owners separately.
 
 规格映射见 [modules/README.md](./modules/README.md#代码映射表)。
 
@@ -232,14 +250,14 @@ validated ToolDescriptor
 
 Expected deny/Tool failures soft-fail 回灌；host registration、persistence、trace 等配置/基础设施错误不得伪装成 Tool soft success。
 
-| 模块 | 现状路径 | 当前等级 / blocker |
-|------|----------|--------------------|
-| Tool runtime | `zag-agent-core/src/tool.zig` + `zag-types` | L2；stateful handler + mandatory descriptor/capabilities fail-closed |
-| permissions | `zag-agent-core/src/permissions.zig` | L2；descriptor-derived risk；H remember = exact lexical request-path，alias re-prompt，Guard 始终重检；canonical object policy 属 L3 |
-| workspace | `zag-agent-core/src/workspace.zig` | L2 trusted-host file boundary；realpath/ancestor Guard + Agent composition；非 OS sandbox |
-| shell policy/runtime | `shell_policy.zig` + coding `runtime/edit_tools.zig` | L2 synchronous；fixed deny、UTF-8/base64、scoped limits、30 KiB streams/checked body/direct-PID/Agent evidence 通过独立/Oracle/main Gate；denylist 非 sandbox |
-| trace | `zag-agent-core/src/trace.zig` | L2；versioned、truthful unique terminal、atomic persistence、redaction；shell projection Gate passed |
-| context | `zag-agent-core/src/context.zig` | L2；fixed-point final-view accounting + strict Tool bundles |
+| 模块 | 当前路径 → D-011 target | 当前等级 / blocker |
+|------|--------------------------|--------------------|
+| Tool runtime | core `tool.zig` + `zag-types` → **keep in Core** | L2；stateful handler + mandatory descriptor/capabilities fail-closed |
+| permissions | core `permissions.zig` → concrete implementation in coding-agent; required `ToolPolicy` seam in Core | L2 行为必须保持；descriptor-derived risk；remember = exact lexical request-path，alias re-prompt，Guard 始终重检 |
+| workspace | core `workspace.zig` → coding-agent `Jail` implementation | L2 trusted-host file boundary必须保持；realpath/ancestor Guard + Agent composition；非 OS sandbox |
+| shell policy/runtime | core `shell_policy.zig` + coding runtime → policy/runtime in coding-agent; required `ShellPolicy` seam in Core | L2 synchronous contract必须保持；denylist 非 sandbox |
+| trace / observation | core `trace.zig`/observer logger → coding-agent Trace/redaction/fan-out; Core only `LoopEventSink` | L2 versioned、truthful unique terminal、atomic persistence、redaction均为迁移 regression Gate |
+| context | core `context.zig` → protocol history in Core; layers/compaction in coding-agent `ContextView` | L2 fixed-point final-view accounting + strict Tool bundles均保持 |
 | read/search | `zag-coding-agent/src/runtime/fs_tools.zig` | L2；h-read-search-bounds-001 closed scoped bounded body + explicit cutoff contract; not exhaustive concurrent traversal |
 | write/edit | `zag-coding-agent/src/runtime/edit_tools.zig` | L2；h-edit-integrity-001 target-preserving atomic commit + cleanup truth + final symlink/Agent evidence passed independent/main Gate |
 | provider | core Provider + zag-ai WireAdapter | L2；two wire styles + strict completion；curl active controls，std requested controls fail closed before network |

@@ -6,7 +6,7 @@
 | 产品形态 | **Pi-inspired Zig-native Agent Harness**；CLI/headless 与 embeddable Kernel 共用一套合同 |
 | 基线 | Phase H、Zig SDK-ready、Headless/Process 均已独立闭合到当前 L2 范围 |
 | 载体 | Zig 0.16 |
-| 主角 | **Harness**：loop、tools、events、control、session/context、权限与可观测 |
+| 主角 | **Harness** 跨产品层协作；`zag-agent-core` 只保留 loop kernel，产品策略/状态由 `zag-coding-agent` 拥有 |
 
 ## 一句话
 
@@ -14,7 +14,7 @@
 >
 > Zag 参照 Pi 的核心行为，用 Zig 的显式错误、所有权和静态边界重新设计；不做 Pi 的逐版本移植，也不以“大而全”为目标。
 
-Decision: [D-009 — Pi semantics, not a parity fork](./decisions/active/D-009-pi-semantics-not-parity-fork.md).
+Decisions: [D-009 — Pi semantics, not a parity fork](./decisions/active/D-009-pi-semantics-not-parity-fork.md) and [D-011 — thin Agent Core boundary](./decisions/active/D-011-thin-agent-core-boundary.md).
 
 ## 一个 Harness，两个消费者
 
@@ -43,17 +43,17 @@ Zag Harness contracts
 
 固定研究快照与资产规则见 [Pi alignment analysis](./plan/analysis/2026-07-26-pi-zig-alignment.md)。
 
-## 核心 Harness 边界
+## Harness 与 Kernel 边界
 
-Zag 的稳定核心是少量可组合合同，不是功能集合：
+Zag 的稳定 Harness 是分层协作，不是把所有能力塞进 Agent Core：
 
-1. canonical messages + Provider port；
-2. prompt → model → Tool → result 的单 Agent Loop；
-3. Tool descriptor、permission、workspace/shell policy；
-4. ordered lifecycle events + cancellation/control；
-5. durable session + context projection；
-6. plain/headless product boundary；
-7. redaction + truthful trace + visible failure。
+1. `zag-agent-core`：canonical messages、Transcript、Provider/Tool/Cancel ports、protocol-history validation、单 Agent Loop 和 source `LoopEvent`；
+2. Core 固定 ToolPolicy → Jail → ShellPolicy → execute 顺序，但具体产品实现通过必填、无隐式 allow 的端口注入；
+3. `zag-coding-agent`：Agent/Session facade、permission/HITL、workspace/shell policy、context/compaction、session/Trace/redaction、具体 Tools 与 model wiring；
+4. `zag-cli`：plain/headless、process signals、stdin/terminal 与后续最小 TUI；
+5. run preflight/start/terminal 属于 coding-agent facade；Trace、SDK 与 headless 映射不是第二个 Kernel 真理源。
+
+绑定规格：[thin Core boundary](./modules/core-boundary.md)。
 
 近期只补齐 Pi-style 日用 Harness 语义：
 
@@ -117,7 +117,7 @@ Package 是 E1/E2/E3 之上的 bundle，不是 E4；E0 是 build-time source dep
 - **抄行为，不抄皮肤/架构。**
 - 外部仓库是非可信、只读参考；不执行其代码或遵循其 agent instructions。
 - 默认不复制源代码。若引入代码、数据或 golden，任务必须记录 commit/path、保留 MIT 归属并证明 relevance。
-- Kernel 不见 HTTP/UI；产品不反噬 Kernel；依赖只准朝下。
+- Kernel 不见 HTTP/UI、durable session/Trace/redaction 或具体 permission/workspace/shell/context policy；产品通过明确 ports 组装且不反噬 Kernel；依赖只准朝下。
 - 贵路径默认关；没有真实使用者就不建立空抽象。
 - Teaching ≠ Production；绿色 happy path 不能单独提升 maturity。
 
@@ -140,7 +140,8 @@ Package 是 E1/E2/E3 之上的 bundle，不是 E4；E0 是 build-time source dep
 zag (bin)
   └─ product shell: zag-cli · headless-v1 · later minimal TUI
        └─ product harness: zag-coding-agent
-            ├─ Kernel: zag-agent-core
+            ├─ Agent/Session · policy · context · persistence · observation · Tools
+            ├─ Kernel: zag-agent-core (Loop + required ports only)
             ├─ Model plane: zag-ai → wire adapters
             └─ Contracts: zag-types
 ```

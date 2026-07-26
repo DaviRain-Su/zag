@@ -2,7 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Code | `packages/zag-agent-core/src/permissions.zig` |
+| Current code | `packages/zag-agent-core/src/permissions.zig` |
+| D-011 target | required `ToolPolicy` contract in Core; concrete Gate/remember/prompt policy in coding-agent |
 | Current maturity | **L2** — descriptor-derived risk; custom tools share the same gate |
 | Target | L3 fine-grained rules + product Plan UX |
 | Decision | [D-007](../decisions/active/D-007-tool-runtime-descriptor.md) |

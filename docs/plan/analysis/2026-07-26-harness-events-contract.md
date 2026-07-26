@@ -1,5 +1,9 @@
 # Harness events contract analysis — 2026-07-26
 
+> **Superseded boundary:** D-011 rejects the separate Core `lifecycle.zig` selected below. This file remains historical
+> analysis. The active target is [thin Core boundary](./2026-07-26-thin-core-boundary.md) and the rewritten
+> [harness-events module](../../modules/harness-events.md).
+
 ## Question
 
 What is the smallest public lifecycle event contract that truthfully unlocks steering, session fork, and a later TUI

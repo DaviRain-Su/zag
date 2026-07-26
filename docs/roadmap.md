@@ -1,6 +1,6 @@
 # Zag 路线图
 
-> Zag 是 **Pi-inspired Zig-native Agent Harness**。成熟度真理源：[maturity](./maturity.md)；范围决策：[D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md)；三方分析：[Pi alignment](./plan/analysis/2026-07-26-pi-zig-alignment.md)。
+> Zag 是 **Pi-inspired Zig-native Agent Harness**。成熟度真理源：[maturity](./maturity.md)；范围决策：[D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md) 与 [D-011](./decisions/active/D-011-thin-agent-core-boundary.md)；三方分析：[Pi alignment](./plan/analysis/2026-07-26-pi-zig-alignment.md)。
 
 ## 当前状态
 
@@ -10,7 +10,8 @@
 | Production Floor H | ✅ **L2** | single-user trusted-host；11/11 audit PASS；panel SHIP |
 | Zig SDK-ready | ✅ **L2** | public composition + external consumer fixture 7/7 |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
-| Pi-inspired daily Harness | **next** | interaction、events/control、fork、Skills/Prompt Templates、edit、minimal TUI |
+| Thin Core responsibility migration | **next / in progress** | seam-first move of product policy/state/observation out of `zag-agent-core`; no L2 behavior change |
+| Pi-inspired daily Harness | queued | events/control、fork、Skills/Prompt Templates、edit、minimal TUI after D-011 migration |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -59,7 +60,16 @@ M0 — interaction reliability
   cli-sigint-001
         │
         ▼
-M1 — core Harness controls
+M0.5 — thin Core responsibility migration
+  core-boundary-001
+    → core-seams-001
+    → core-session-ownership-001
+    → core-observation-ownership-001
+    → core-policy-ownership-001
+    → core-context-ownership-001
+        │
+        ▼
+M1 — product Harness controls
   harness-events-001
         │
         ├────► harness-steering-001
@@ -89,13 +99,19 @@ Task: [cli-sigint-001](./plan/tasks/cli-sigint-001.md) — **done** at `d542332`
 
 Contract: [CLI interaction](./modules/cli-interaction.md).
 
-### M1 — Core Harness controls
+### M0.5 — Thin Core responsibility migration
 
-These tasks require their own analysis/task docs before implementation.
+[D-011](./decisions/active/D-011-thin-agent-core-boundary.md) corrects the package responsibility model before more
+Harness features land. The serialized tasks are listed in [the Core boundary module](./modules/core-boundary.md).
+They preserve all closed L2 contracts and create no new Zig package.
+
+### M1 — Product Harness controls
+
+These tasks start only after the D-011 migration.
 
 | Task | Objective | Gate |
 |------|-----------|------|
-| [harness-events-001](./plan/tasks/harness-events-001.md) | source-backed message/Tool/run lifecycle vocabulary | ordering + one terminal + separate SDK/Trace/headless types; no internal-union serialization |
+| [harness-events-001](./plan/tasks/harness-events-001.md) | coding-agent SDK lifecycle projection from Core source facts + facade run facts | ordering + one terminal + separate SDK/Trace/headless types; no Core lifecycle channel or internal-union serialization |
 | `harness-steering-001` | bounded steering/follow-up queues | deterministic insertion, ownership, cancel, transcript/session/trace evidence |
 | `session-fork-001` | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
 
@@ -187,7 +203,7 @@ The detailed phase docs describe domain constraints. A deferred item is not an i
 
 | Action | Timing |
 |--------|--------|
-| Keep current monorepo/package boundaries | now |
+| Keep current monorepo package set; migrate responsibility within Core/coding-agent per D-011 | now |
 | Add new package | only after real ownership/dependency pressure; no empty future packages |
 | Repo mirror / semver publication | second real consumer + release channel |
 | C/Zig dynamic plugin ABI | no current commitment; prefer versioned process contracts |

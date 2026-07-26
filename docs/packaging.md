@@ -4,7 +4,7 @@
 |----|------|
 | 状态 | **Active design**；包边界已落地，SDK-ready Gate 已闭合；发布 Gate 仍开放 |
 | 对标 | Pi Harness 语义 + Grok Build 单向 workspace discipline；不复制源码/API/包粒度 |
-| 决策 | **单 monorepo 多包**；拆 repo 是发布动作，不是架构动作；见 [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) |
+| 决策 | **单 monorepo 多包**；拆 repo 是发布动作，不是架构动作；见 [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) 与 [D-011](./decisions/active/D-011-thin-agent-core-boundary.md) |
 
 ---
 
@@ -14,7 +14,7 @@
 
 1. **产品目标 = 小而完整的 Harness**：只把已复现失败所需的能力放进近期产品面。
 2. **实现纪律 = 严格分层**：每个能力有 owner 包、failure contract 和独立 Gate；依赖只准朝下。
-3. **SDK 目标 = 内核可嵌入**：`zag-agent-core` low-level composition 与 high-level injection 已闭合 SDK-ready Gate；不等于所有未来包都自动成为发布 API。
+3. **SDK 目标 = Harness 可嵌入**：`zag-agent-core` low-level composition 与 `zag-coding-agent` high-level injection 已闭合 SDK-ready Gate；D-011 在无 semver 发布承诺下收窄 Core，external consumer fixture 记录迁移。
 4. **参考纪律 = 行为对齐，不追源码/API/功能表**：current Pi 与旧 `pi-mono-zig` 是固定快照参考，不是依赖或同步上游。
 
 ```text
@@ -79,12 +79,12 @@ L1 基础设施      （暂并入各包；token 估算 / paths 膨胀后再拆 z
 L2 领域服务      openai-zig          HTTP SDK ✅
                  zag-ai              resolve · WireAdapter · catalog · stream · contract ✅
                  zag-tools           fs/edit/grep/shell 实现（今在 coding-agent/runtime；H2 稳定后拆出）
-                 zag-workspace       jail · git · worktree（今在 agent-core；H5 稳定后拆出）
+                 zag-workspace       future only if a second owner appears; D-011 first moves implementation to coding-agent
                  zag-sandbox         OS 沙箱（C7 新包）
-                 future extension/memory/compaction packages（仅真实 ownership pressure 时创建）
-L3 产品 harness  zag-coding-agent ✅  Agent/Session 外观 · 默认 toolset · WireProvider 桥 · runtime tools
+                 future extension/memory packages（仅真实 ownership pressure 时创建）
+L3 产品 harness  zag-coding-agent ✅  Agent/Session · policy/context · persistence/observation · model wiring · runtime tools
 L4 内核 ★low-level composition
-                 zag-agent-core ✅    loop · 纯 Provider 端口 · session · policy · trace（**仅依赖 zag-types**）
+                 zag-agent-core ✅    loop · Transcript · Provider/Tool/Cancel ports · protocol history · required seams（**仅依赖 zag-types**）
                  SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel contract 已闭合；external consumer fixture 7/7
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
                  zag-tui / zag-acp   （C9）
@@ -100,14 +100,33 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 3. HTTP/network/WASM runtime details stay quarantined in `openai-zig` / `zag-ai` / future consumed extension adapters; `zag-agent-core` sees no wire client or engine type.
 4. Model-visible `ToolDefinition` 与 local runtime `ToolCapabilities` 分离；见 [D-007](./decisions/active/D-007-tool-runtime-descriptor.md)。
 5. 每个包独立 `zig build test`；契约测试放在被依赖方；SDK Gate 另有 external consumer fixture。
+6. 同包不是 ownership 豁免：durable state、concrete product policy、logging/redaction 即使只依赖 L0，也不得因此留在 loop kernel。
+
+### D-011 responsibility migration
+
+D-011 does not create another package. It changes owner within the existing monorepo:
+
+| Concern | Current location | Target owner |
+|---|---|---|
+| Loop/Transcript/Provider/Tool/Cancel/protocol history | Core | Core |
+| Required ToolPolicy/Jail/ShellPolicy/ContextView/LoopEventSink contracts | implicit/concrete Core coupling | Core contracts |
+| Session store | Core | coding-agent |
+| Trace/redaction/verbose logger | Core | coding-agent (CLI renders terminal/log output) |
+| permission/workspace/shell implementations | Core | coding-agent |
+| context layers/compaction | Core | coding-agent |
+| run preflight/start/terminal | coding-agent | coding-agent |
+
+Migration is seam-first and serialized. Existing L2 schemas and behavior do not inherit a maturity downgrade or an
+exemption: every move reruns package, SDK, headless, std/curl, and security fixtures. See
+[`modules/core-boundary.md`](./modules/core-boundary.md).
 
 ### 概念层 ↔ 实际包名
 
 | 概念层（architecture） | 实际包 | 状态 |
 |------------------------|--------|------|
 | Product shell | zag-cli（+ C9 zag-tui / zag-acp）+ zag (bin) | ✅ |
-| Kernel low-level composition | **zag-agent-core** | ✅；SDK-ready ✅ |
-| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅；caller injection 已闭合 |
+| Kernel low-level composition | **zag-agent-core** | ✅ SDK-ready baseline；D-011 responsibility migration in progress |
+| 产品 harness（agent 定义 + 组装） | **zag-coding-agent** | ✅ caller injection；D-011 target owner for policy/context/persistence/observation |
 | Model plane（canonical + WireAdapter） | zag-ai + openai-zig | L2 H contract；dual-wire strict completion + curl active controls + std unsupported-control truth |
 | Runtime / 领域包 | coding-agent runtime / core workspace；未来 sandbox | Tool descriptor/file containment/synchronous shell-v1 Gates 已通过；OS sandbox 仍后置；SDK compatibility 已闭合 |
 | 契约 | **zag-types** | canonical + runtime ToolCapabilities/Descriptor 已落地；SDK-ready Gate 已闭合；semver publication 仍待第二真实 consumer + 发布通道 |
@@ -117,8 +136,9 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 | 拆什么 | 从哪拆 | 时机 | 动机 |
 |--------|--------|------|------|
 | ~~**zag-types**~~ | ~~`zag-ai/types`~~ | ✅ 已完成 | core 仅依赖 zag-types；`ChatError` 中性 |
+| D-011 Core responsibility migration | core session/trace/redact/policy/workspace/shell/context | `core-boundary-*` serialized DAG | 先移动 ownership，不新增 Zig package |
 | zag-tools | `zag-coding-agent/src/runtime/*` + toolset | SDK Gate 后且有第二消费边界 | 不是 H2 完成的自动动作 |
-| zag-workspace | core workspace/shell policy | containment contract 稳定且 C7 需要独立演进时 | sandbox runner 不强制与 lexical policy 同包 |
+| zag-workspace | coding-agent workspace/shell policy after D-011 | containment implementation出现第二 owner且 C7 需要独立演进时 | sandbox runner 不强制与 lexical policy 同包 |
 | zag-agent（若需要） | coding-agent agent definition | C6 出现真实多 agent composition 后 | 不提前建空包 |
 
 ### 2.1 ~~已知残留：core → zag-ai~~（已解）

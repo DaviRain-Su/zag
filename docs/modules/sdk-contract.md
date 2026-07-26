@@ -5,6 +5,11 @@
 > and `zag-coding-agent`. It does **not** promise C ABI, dynamic plugin ABI,
 > semver publication, headless protocol, OS sandbox, or mid-flight Tool/shell
 > preemption. See [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md).
+>
+> **D-011 migration:** the closed behavior Gate remains valid, but the unpublished source surface is being narrowed:
+> `zag-agent-core` becomes a thin loop kernel and product policy/session/Trace/redaction/context ownership moves to
+> `zag-coding-agent`. Each task updates this document and the external consumer fixture. No semver publication promise
+> freezes the current module ownership. See [core-boundary](./core-boundary.md).
 
 ## 1. What is covered
 
@@ -79,6 +84,8 @@ retried. Loop-level retries apply only to `RateLimited`, `ServerError`, and
 
 ## 4. Event contract
 
+### Current supported baseline
+
 `Observer.Event` is emitted by the loop:
 
 ```zig
@@ -107,6 +114,13 @@ provider_retry, compaction, run_end
 ```
 
 Source: [`packages/zag-agent-core/src/trace.zig:67-75`](../../packages/zag-agent-core/src/trace.zig).
+
+### D-011 target
+
+Core will expose one borrowed/fallible source `LoopEventSink`; durable Trace and verbose logging become coding-agent
+adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The later
+`harness-events-001` public callback is a coding-agent projection and does not add Core `lifecycle.zig`. Existing
+Observer behavior remains supported until its migration task records the exact source transition.
 
 ### 4.1 Event invariants
 
@@ -163,7 +177,7 @@ Save semantics:
 - Session paths are validated lexically (relative, no `..`, not absolute); this
   is **not** symlink containment.
 
-Source: [`packages/zag-agent-core/src/session_store.zig:37-46`](../../packages/zag-agent-core/src/session_store.zig).
+Current source: [`packages/zag-agent-core/src/session_store.zig:37-46`](../../packages/zag-agent-core/src/session_store.zig). D-011 moves this durable product surface to `zag-coding-agent`; Transcript stays in Core. `core-session-ownership-001` must update the import/migration record without changing these semantics.
 
 ## 7. Compatibility
 
@@ -176,7 +190,8 @@ Source: [`packages/zag-agent-core/src/session_store.zig:37-46`](../../packages/z
 - Destructive renames require a new schema version plus migration or explicit
   rejection.
 - **No semver promise** until a second real consumer plus release channel exist
-  (see [packaging.md](../packaging.md)).
+  (see [packaging.md](../packaging.md)). D-011 source ownership moves therefore require an explicit fixture/docs migration,
+  not indefinite duplicate Core re-exports.
 
 ## 8. Non-goals
 

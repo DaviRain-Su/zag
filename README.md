@@ -12,6 +12,7 @@
 | Production Floor（Phase H） | ✅ **L2（单用户、受控本机）** |
 | Zig SDK-ready | ✅ **closed at `ebdd7ab`** |
 | Headless/process gate | ✅ **closed at `a1a1e0f`** |
+| Thin Core responsibility migration | docs-first in progress（D-011；L2 behavior unchanged） |
 | Capability C4–C9 | 未开始 |
 
 > Phase 3 教程演示了 jail / policy / trace，**不等于**生产就绪。权威矩阵：[docs/maturity.md](./docs/maturity.md)。
@@ -26,7 +27,8 @@
 | [docs/roadmap.md](./docs/roadmap.md) | Phase H P0/P1、SDK/headless Gate、Capability DAG |
 | [production-floor assessment](./docs/plan/analysis/2026-07-24-production-floor-assessment.md) | 2026-07-24 评估、P0/P1/P2 与实施任务 |
 | [latest Phase H audit](./docs/plan/analysis/2026-07-25-phase-h-final-audit.md) | 2026-07-25 FAIL verdict → 后续在 `d22ce6e` closeout；11/11 exit PASS、panel SHIP、gate 数字见 [h-integration-001](./docs/plan/tasks/h-integration-001.md) |
-| [docs/architecture.md](./docs/architecture.md) | 分层：Loop⊂Graph · Tool runtime · WireAdapter · 产品壳 |
+| [docs/architecture.md](./docs/architecture.md) | 分层：thin Core · product Harness · Model plane · 产品壳 |
+| [thin Core boundary](./docs/modules/core-boundary.md) | D-011 ownership contract 与串行迁移 DAG |
 | [chapters/00-loop](./chapters/00-loop/README.md) | Teaching 0：loop |
 | [chapters/01-edit-permissions](./chapters/01-edit-permissions/README.md) | Teaching 1：编辑 + 权限 |
 | [chapters/02-session-context](./chapters/02-session-context/README.md) | Teaching 2：会话 + context |
@@ -90,8 +92,8 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 src/main.zig                    可执行入口（几行 → zag-cli.run）
 src/root.zig                    umbrella 再导出（库消费者）
 packages/zag-cli/               产品壳：flags · resolve · REPL · one-shot
-packages/zag-coding-agent/      Agent 门面 · toolset · WireProvider · runtime tools
-packages/zag-agent-core/        loop · 纯 Provider 端口 · session · permissions
+packages/zag-coding-agent/      Agent/Session · policy/context/persistence/observation · WireProvider · runtime tools
+packages/zag-agent-core/        loop · Transcript · Provider/Tool/Cancel ports · required seams
 packages/zag-ai/                WireAdapter · resolve · catalog
 packages/openai-zig/            线协议 · transport · OpenAPI
 ```

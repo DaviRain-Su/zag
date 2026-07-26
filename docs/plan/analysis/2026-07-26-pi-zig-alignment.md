@@ -2,7 +2,12 @@
 
 Date: 2026-07-26
 
-Decision: [D-009](../../decisions/active/D-009-pi-semantics-not-parity-fork.md)
+Decisions: [D-009](../../decisions/active/D-009-pi-semantics-not-parity-fork.md) and [D-011](../../decisions/active/D-011-thin-agent-core-boundary.md).
+
+> **Boundary correction:** the initial reduced DAG treated lifecycle events as the next Core feature. Source comparison
+> later showed Pi keeps its low-level loop narrow and composes product policy/state in coding-agent. D-011 therefore
+> inserts a thin-Core migration and re-queues `harness-events-001` as a coding-agent adapter. See
+> [thin-Core analysis](./2026-07-26-thin-core-boundary.md).
 
 ## Question
 
@@ -80,7 +85,16 @@ M0 — interaction reliability
   cli-sigint-001
         │
         ▼
-M1 — core Harness controls
+M0.5 — responsibility correction
+  core-boundary-001
+    → core-seams-001
+    → core-session-ownership-001
+    → core-observation-ownership-001
+    → core-policy-ownership-001
+    → core-context-ownership-001
+        │
+        ▼
+M1 — product Harness controls
   harness-events-001
         │
         ├────► harness-steering-001
@@ -112,7 +126,7 @@ C4–C9 remain domain labels. They no longer imply that every listed feature (Or
 
 ### `harness-events-001`
 
-Define a stable source-backed lifecycle vocabulary before adding UI: complete assistant messages, correlated Tool start/end, and run start/terminal. Preserve one truthful terminal and map — do not serialize — internal events into headless output. Real message deltas and Tool updates wait for provider-stream and Tool-progress sources; M1 must not fabricate empty phases.
+After D-011 migration, define a coding-agent SDK lifecycle adapter: complete assistant messages and correlated Tool start/end come from Core `LoopEvent`; run start/terminal come from the facade. Preserve one truthful terminal and map — do not serialize — internal events into headless output. Do not add a separate Core lifecycle channel. Real message deltas and Tool updates wait for provider-stream and Tool-progress sources.
 
 ### `harness-steering-001`
 

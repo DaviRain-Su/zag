@@ -2,7 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Code | `packages/zag-agent-core/src/context.zig`; `zag-coding-agent/src/project.zig`; session sink in `agent.zig` |
+| Current code | `packages/zag-agent-core/src/context.zig`; `zag-coding-agent/src/project.zig`; session sink in `agent.zig` |
+| D-011 target | protocol-history legality in Core; prompt layers/compaction behind coding-agent `ContextView` |
 | Current maturity | **L2** — final-view accounting, ID-exact tool bundles, lineage, shared cap (h-context-001) |
 | Target | L3 repo map/intelligent selection (C5) |
 | Reference | Pi session/compaction; Aider repo map; Hyper compaction |

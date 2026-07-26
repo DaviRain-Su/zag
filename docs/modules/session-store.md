@@ -2,7 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Code | `packages/zag-agent-core/src/{session_store,transcript}.zig`; facade in coding-agent `agent.zig` |
+| Current code | `packages/zag-agent-core/src/{session_store,transcript}.zig`; facade in coding-agent `agent.zig` |
+| D-011 target | Transcript remains Core; durable session store/writer/schema move to coding-agent |
 | Current maturity | **L2** — explicit open modes, atomic save, visible errors, one active writer |
 | Target | L3 fork/tree (C5) |
 | Decision | [D-006](../decisions/active/D-006-session-open-and-durability.md) |
