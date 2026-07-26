@@ -3048,21 +3048,19 @@ test "harness-steering: ordinary appendUser OOM does not commit or emit control_
 }
 
 test "harness-steering: mid-batch prepareUser OOM before any steered side effect" {
-    // After Tool 1 runs, exhaust the transcript arena so prepareUser OOM occurs
-    // before any code=steered tool_end / transcript row / commit.
+    // Fault injection is timed precisely:
+    //   provider turn + Tool1 start/end + tool result append complete
+    //   → between_tools peek returns steering
+    //   → (peek hook exhausts transcript fixed arena here)
+    //   → prepareUser OOM (no steered side effect, no commit).
+    // Exhaustion is NOT done in the Tool1 handler (that could OOM appendToolResult).
     const gpa = std.testing.allocator;
 
-    const State = struct {
-        n: u32 = 0,
-        transcript_alloc: std.mem.Allocator,
-    };
+    const State = struct { n: u32 = 0 };
     const Stub = struct {
         fn h(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
             const s: *State = @ptrCast(@alignCast(instance.?));
             s.n += 1;
-            if (s.n == 1) {
-                while (s.transcript_alloc.alloc(u8, 1)) |_| {} else |_| {}
-            }
             return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
         }
     };
@@ -3070,7 +3068,7 @@ test "harness-steering: mid-batch prepareUser OOM before any steered side effect
     var storage: [8 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&storage);
     const transcript_alloc = fba.allocator();
-    var state: State = .{ .transcript_alloc = transcript_alloc };
+    var state: State = .{};
     const tools = [_]tool.Tool{.{
         .descriptor = readOnlyDesc("read_file"),
         .instance = &state,
@@ -3119,16 +3117,35 @@ test "harness-steering: mid-batch prepareUser OOM before any steered side effect
     var transcript = transcript_mod.Transcript.init(transcript_alloc);
     try transcript.appendUser("go");
 
-    // Skip pre_turn + first between_tools so Tool 1 runs, then prepare fails on Tool 2.
+    // Path markers on the ControlInput peek hook (test-only; no production change).
     const Delayed = struct {
         inner: *TestControlQueue,
+        transcript_alloc: std.mem.Allocator,
+        /// Skip first between_tools so Tool1 executes fully first.
         between_skips: u32 = 1,
+        between_tools_peeks: u32 = 0,
+        /// Non-null steering returns from between_tools after Tool1.
+        steering_returns: u32 = 0,
+        exhausted_before_steering_return: bool = false,
+
         fn peek(ptr: ?*anyopaque, boundary: control_input_mod.Boundary) ?control_input_mod.Item {
             const self: *@This() = @ptrCast(@alignCast(ptr.?));
             if (boundary == .pre_turn) return null;
-            if (boundary == .between_tools and self.between_skips > 0) {
-                self.between_skips -= 1;
-                return null;
+            if (boundary == .between_tools) {
+                self.between_tools_peeks += 1;
+                if (self.between_skips > 0) {
+                    self.between_skips -= 1;
+                    return null;
+                }
+                // Tool1 result is already in the transcript when this second peek
+                // runs. Exhaust the fixed transcript arena *after* that success and
+                // immediately before returning steering so the next fallible Core
+                // step is prepareUser (not appendToolResult for Tool1).
+                while (self.transcript_alloc.alloc(u8, 1)) |_| {} else |_| {}
+                self.exhausted_before_steering_return = true;
+                const item = TestControlQueue.peek(self.inner, boundary);
+                if (item != null) self.steering_returns += 1;
+                return item;
             }
             return TestControlQueue.peek(self.inner, boundary);
         }
@@ -3137,7 +3154,10 @@ test "harness-steering: mid-batch prepareUser OOM before any steered side effect
             TestControlQueue.commit(self.inner, kind);
         }
     };
-    var delayed: Delayed = .{ .inner = &q };
+    var delayed: Delayed = .{
+        .inner = &q,
+        .transcript_alloc = transcript_alloc,
+    };
     const delayed_vtable: control_input_mod.ControlInputVTable = .{
         .peek = Delayed.peek,
         .commit = Delayed.commit,
@@ -3149,9 +3169,26 @@ test "harness-steering: mid-batch prepareUser OOM before any steered side effect
 
     const err = run(deps, &transcript);
     try std.testing.expectError(error.OutOfMemory, err);
+
+    // Path proof: provider + Tool1 completed before the prepare-stage OOM.
+    try std.testing.expectEqual(@as(u32, 1), mock.calls);
     try std.testing.expectEqual(@as(u32, 1), state.n);
     try std.testing.expectEqual(@as(u32, 1), sink.tool_starts);
-    // No steered end events and no control_applied.
+    try std.testing.expectEqual(@as(u32, 1), sink.tool_ends); // ordinary Tool1 end only
+    try std.testing.expectEqualStrings("c1", sink.last_tool_end_id);
+    try std.testing.expect(!tool_error.hasCode(sink.last_tool_end_body, .steered));
+    var saw_tool1_result = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and std.mem.eql(u8, m.content, "ran")) saw_tool1_result = true;
+    }
+    try std.testing.expect(saw_tool1_result);
+
+    // between_tools peeked twice (skip then steering return); arena exhausted at return.
+    try std.testing.expectEqual(@as(u32, 2), delayed.between_tools_peeks);
+    try std.testing.expectEqual(@as(u32, 1), delayed.steering_returns);
+    try std.testing.expect(delayed.exhausted_before_steering_return);
+
+    // Prepare-stage failure: no steered ends, no prepared user, no commit/event.
     try std.testing.expectEqual(@as(u32, 0), sink.steered_tool_ends_seen);
     try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
     try std.testing.expectEqual(@as(u32, 0), q.commits);
