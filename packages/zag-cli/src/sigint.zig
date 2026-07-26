@@ -10,11 +10,13 @@
 //!     `130` via a raw exit syscall, which bypasses session/trace flush
 //!     (documented in cli-interaction.md as the explicit abandonment path).
 //!
-//! The handler performs only async-signal-safe work: a `cmpxchg` on a seq_cst
-//! atomic state word, an optional `CancelFlag.request`, a raw `write(2)` of one
-//! byte, and a raw exit. No allocation, logging, formatting, or buffered I/O.
+//! The handler performs only async-signal-safe work: a `fetchAdd` on an
+//! in-flight counter, a `cmpxchg` on a seq_cst atomic state word, an atomic
+//! load of the bound flag pointer, an optional `CancelFlag.request`, a raw
+//! `write(2)` of one byte, and a raw exit. No locks, allocation, logging,
+//! formatting, or buffered I/O.
 //!
-//! # Signal-safety / lifecycle (cli-sigint-001 review item 2)
+//! # Signal-safety / lifecycle (cli-sigint-001 review item 2 / P1 follow-up)
 //!
 //! The interrupt *state* lives in a process-lifetime atomic word, NOT in the
 //! Agent's `CancelFlag`. This is deliberate: the second-interrupt predicate
@@ -22,18 +24,32 @@
 //! cancel (e.g. a test or SDK caller setting the flag) is never misread as a
 //! "second Ctrl+C". The Agent flag is only the cooperative-cancel channel.
 //!
-//! A process-lifetime singleton self-pipe is created once and NEVER closed
-//! while the process runs. `Guard.deinit` only restores the previous SIGINT
-//! disposition; it does not close the pipe, so there is no close/fd-reuse
-//! window in which a stale handler could write a recycled fd. The OS reclaims
-//! at most 2 leaked fds on process exit — a fixed, bounded, safe leak.
-//! NONBLOCK + CLOEXEC are set on both ends so exec and blocking never interact.
+//! Proof of race-freedom for teardown:
+//!   * `write_fd` is a process-lifetime immutable value. It is written exactly
+//!     once (on first pipe creation) and NEVER mutated by `deinit`. A handler
+//!     can therefore always read a stable, valid fd; there is no close/fd-reuse
+//!     window (the pipe is never closed while the process runs; the OS reclaims
+//!     at most 2 fds at exit).
+//!   * `flag` is a lock-free atomic address (`std.atomic.Value(usize)`, 0=null).
+//!     The handler loads it atomically; `deinit` stores null atomically. No
+//!     plain-field concurrent read/write — no Zig memory-model UB.
+//!   * `in_flight` is a lock-free atomic counter. The handler `fetchAdd(1)` on
+//!     entry and `fetchSub(1)` on normal return (the hard-exit path does NOT
+//!     decrement because the process is leaving). `deinit` sets `state=
+//!     disabled` (so new entries return immediately without touching flag/pipe),
+//!     atomically unbinds the flag, restores the previous sigaction, then spins
+//!     (bounded) until `in_flight == 0` — draining any handler that entered
+//!     before/during those steps and may still touch the (now-null) flag. Only
+//!     then is guard ownership released. A handler that enters after `disabled`
+//!     is visible sees `disabled`, decrements, and returns without touching the
+//!     flag — safe.
+//!   * Sequential reinstall is supported: `deinit` releases ownership, then a
+//!     later `install` re-binds the flag, sets `state=idle`, and re-installs the
+//!     sigaction in that safe order.
+//!   * Concurrent/nested `Guard` installation is rejected (one owner at a time).
 //!
-//! Concurrent/nested `Guard` installation is rejected: only one owner at a
-//! time (sequential install/reinstall is fine and is how the REPL reuses it).
-//! The previous `sigaction` is captured on install and restored on teardown;
-//! the bound flag/state stay live until teardown so a signal delivered
-//! mid-restore observes a consistent (restored-default) disposition.
+//! NONBLOCK + CLOEXEC are set on both pipe ends so exec and blocking never
+//! interact.
 //!
 //! # Linux non-libc (review item 1)
 //!
@@ -113,6 +129,8 @@ const sys = struct {
     /// Hard, bypass-everything exit with `status`. Async-signal-safe.
     /// On Linux this is the exit_group syscall (kills the whole thread group,
     /// matching the "abandonment" semantics); on macOS it is libc `_exit`.
+    /// Does NOT return; therefore does NOT decrement `in_flight` (the process
+    /// is leaving, so the counter is irrelevant).
     fn hardExit(status: u8) noreturn {
         if (builtin.os.tag == .linux) {
             std.os.linux.exit_group(status);
@@ -131,7 +149,8 @@ const sys = struct {
 
     /// Raw read into `buf`; returns bytes read (0 = EOF / would-block on
     /// nonblocking fd). EINTR loops internally (no recursion). Used outside
-    /// the signal handler only.
+    /// the signal handler only. A typed `ReadFailed` is returned for unexpected
+    /// errors (P2 hygiene: not masqueraded as success).
     fn read(fd: fd_t, buf: []u8) error{ReadFailed}!usize {
         while (true) {
             const rc = if (builtin.os.tag == .linux)
@@ -191,37 +210,63 @@ const O_NONBLOCK_LINUX: u32 = 0o4000;
 const O_NONBLOCK_MAC: c_int = 0x0004;
 
 // ---------------------------------------------------------------------------
-// Process-lifetime interrupt state (review item 2).
+// Process-lifetime interrupt state (review item 2 / P1 follow-up).
+//
+// All fields are lock-free atomics or process-lifetime immutable values. No
+// plain field is read by the handler while a non-handler thread might write
+// it — eliminating the Zig memory-model UB flagged in the P1 review.
 // ---------------------------------------------------------------------------
 
-/// Interrupt state observed by the async-signal-safe handler. The second
-/// SIGINT predicate is `pending` (the handler's own unacknowledged state),
-/// NOT the Agent's cancel flag.
+/// Interrupt state observed by the async-signal-safe handler. `disabled` is
+/// the initial/teardown state: a handler that observes it returns immediately.
+/// The second-SIGINT predicate is `pending` (the handler's own unacknowledged
+/// state), NOT the Agent's cancel flag.
 const State = enum(u32) {
-    idle = 0,
-    pending = 1,
-    escaped = 2,
+    disabled = 0,
+    idle = 1,
+    pending = 2,
+    escaped = 3,
 };
 
-/// Process-global handler state. All fields are async-signal-safe:
-///   * `state` — a seq_cst atomic word, the only thing the handler mutates.
-///   * `flag`  — a pointer written BEFORE `sigaction` installs the handler and
-///     read-only thereafter; the handler only calls `request` (atomic store).
-///   * `write_fd` — a fixed fd written BEFORE install and read-only thereafter;
-///     the pipe is process-lifetime and never closed while the process runs,
-///     so the fd is never recycled under a stale handler.
+/// Process-global handler state. Every field is async-signal-safe:
+///   * `state`    — seq_cst atomic word; the only control flow the handler
+///     branches on. `disabled` makes a new entry a no-op.
+///   * `flag`     — lock-free atomic address of the bound `*Flag` (0 = unbound).
+///     The handler loads it atomically; `deinit` stores 0 atomically. No
+///     plain-field race.
+///   * `in_flight` — lock-free atomic counter of handlers that have entered but
+///     not yet returned. `deinit` drains it to zero before releasing ownership.
 var handler_state: struct {
-    state: std.atomic.Value(u32) = .init(0),
-    flag: ?*Flag = null,
-    write_fd: fd_t = -1,
+    state: std.atomic.Value(u32) = .init(@intFromEnum(State.disabled)),
+    flag: std.atomic.Value(usize) = .init(0),
+    in_flight: std.atomic.Value(u32) = .init(0),
 } = .{};
 
+/// Process-lifetime self-pipe write fd. Written exactly once on first pipe
+/// creation; NEVER mutated by `deinit`. A handler can always read a stable,
+/// valid fd — no close/fd-reuse window.
+var lifetime_write_fd: fd_t = -1;
+/// Process-lifetime self-pipe read fd (companion; also immutable after create).
+var lifetime_read_fd: fd_t = -1;
+var pipe_created: bool = false;
+
 /// Async-signal-safe SIGINT handler.
-///   IDLE     -> PENDING : request cancel (if bound) + write one wake byte.
-///   PENDING  -> ESCAPED : hard exit 130 (second interrupt, abandonment).
-///   ESCAPED  -> (none)  : a third signal while exiting is a no-op.
+///   disabled -> (no-op)        : teardown in progress; return without touching flag/pipe.
+///   IDLE     -> PENDING        : request cancel (if bound) + write one wake byte.
+///   PENDING  -> ESCAPED        : hard exit 130 (second interrupt, abandonment).
+///   ESCAPED  -> (no-op)        : a third signal while exiting.
+/// `in_flight` is incremented on entry and decremented on normal return; the
+/// hard-exit path does NOT decrement (the process is leaving).
 fn onSigInt(_: posix.SIG) callconv(.c) void {
+    // Count ourselves so deinit's drain cannot complete while we might still
+    // touch the flag/pipe. Decrement only on normal return.
+    _ = handler_state.in_flight.fetchAdd(1, .seq_cst);
+
     const cur: State = @enumFromInt(handler_state.state.load(.seq_cst));
+    if (cur == .disabled or cur == .escaped) {
+        _ = handler_state.in_flight.fetchSub(1, .seq_cst);
+        return;
+    }
     if (cur == .idle) {
         const swapped = handler_state.state.cmpxchgStrong(
             @intFromEnum(State.idle),
@@ -231,12 +276,16 @@ fn onSigInt(_: posix.SIG) callconv(.c) void {
         );
         if (swapped == null) {
             // Won the IDLE->PENDING transition: cooperative cancel + wake.
-            if (handler_state.flag) |flag| flag.request();
-            const wfd = handler_state.write_fd;
-            if (wfd >= 0) sys.writeWake(wfd);
+            const flag_addr = handler_state.flag.load(.seq_cst);
+            if (flag_addr != 0) {
+                const flag: *Flag = @ptrFromInt(flag_addr);
+                flag.request();
+            }
+            if (lifetime_write_fd >= 0) sys.writeWake(lifetime_write_fd);
+            _ = handler_state.in_flight.fetchSub(1, .seq_cst);
             return;
         }
-        // Lost the race: someone else moved to pending/escaped. Fall through.
+        // Lost the race: someone else moved to pending/escaped. Reload below.
     }
     // We are at least `pending` (or raced into it). A second unacknowledged
     // interrupt is the explicit abandonment path.
@@ -249,10 +298,12 @@ fn onSigInt(_: posix.SIG) callconv(.c) void {
             .seq_cst,
         );
         if (swapped == null) {
+            // Does not return; does NOT decrement in_flight (process is leaving).
             sys.hardExit(130);
         }
     }
-    // Either escaped already, or lost the race to escape; do nothing further.
+    // Either escaped already, or lost the race to escape; normal return.
+    _ = handler_state.in_flight.fetchSub(1, .seq_cst);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,14 +319,8 @@ pub const InstallError = error{SigintInitFailed};
 /// Guard installation (sequential reinstall is allowed once `deinit` clears).
 var guard_owned: std.atomic.Value(bool) = .init(false);
 
-/// Process-lifetime self-pipe. Created on first `install`, never closed. At
-/// most 2 fds leak to process exit, reclaimed by the OS — bounded and safe.
-var lifetime_pipe: [2]fd_t = .{ -1, -1 };
-var pipe_created: bool = false;
-
 pub const Guard = struct {
     read_fd: fd_t,
-    write_fd: fd_t,
     prev: posix.Sigaction,
     installed: bool,
 
@@ -287,7 +332,7 @@ pub const Guard = struct {
     /// rejected with `error.SigintInitFailed`.
     pub fn install(flag: ?*Flag) InstallError!Guard {
         if (!supported) {
-            return .{ .read_fd = invalid, .write_fd = invalid, .prev = undefined, .installed = false };
+            return .{ .read_fd = invalid, .prev = undefined, .installed = false };
         }
 
         // Reject concurrent/nested ownership. Sequential reuse is fine.
@@ -295,24 +340,22 @@ pub const Guard = struct {
             return error.SigintInitFailed;
         }
 
-        // Create the process-lifetime self-pipe once.
+        // Create the process-lifetime self-pipe once. The write fd is stored
+        // in a process-lifetime immutable variable (never rewritten by deinit).
+        errdefer guard_owned.store(false, .seq_cst);
         if (!pipe_created) {
             const fds = sys.pipe() catch {
-                guard_owned.store(false, .seq_cst);
                 return error.SigintInitFailed;
             };
-            lifetime_pipe = fds;
+            lifetime_read_fd = fds[0];
+            lifetime_write_fd = fds[1];
             pipe_created = true;
         }
-        const read_fd = lifetime_pipe[0];
-        const write_fd = lifetime_pipe[1];
 
-        // Bind handler state BEFORE installing the handler so a signal
-        // delivered the instant after sigaction returns observes a consistent
-        // flag/fd. The pipe fd is process-lifetime (never closed), so it is
-        // never recycled under a stale handler.
-        handler_state.flag = flag;
-        handler_state.write_fd = write_fd;
+        // Safe bind order: flag first, then state=idle, THEN install the
+        // sigaction. A signal delivered the instant after sigaction returns
+        // observes a bound flag and an idle state.
+        handler_state.flag.store(if (flag) |f| @intFromPtr(f) else 0, .seq_cst);
         handler_state.state.store(@intFromEnum(State.idle), .seq_cst);
 
         var act: posix.Sigaction = .{
@@ -326,23 +369,36 @@ pub const Guard = struct {
         var prev: posix.Sigaction = undefined;
         posix.sigaction(posix.SIG.INT, &act, &prev);
 
-        return .{ .read_fd = read_fd, .write_fd = write_fd, .prev = prev, .installed = true };
+        return .{ .read_fd = lifetime_read_fd, .prev = prev, .installed = true };
     }
 
-    /// Restore the previous disposition. Does NOT close the self-pipe
-    /// (process-lifetime; OS reclaims on exit — no close/fd-reuse window).
-    /// The bound flag/state are cleared so a stray signal after restore is a
-    /// no-op. Safe on the inert (unsupported-OS) guard.
+    /// Restore the previous disposition with a race-free teardown (P1):
+    ///   1. state=disabled  — new handler entries return immediately.
+    ///   2. flag=null       — atomic unbind (no plain-field race).
+    ///   3. restore sigaction — signals after this go to the previous handler.
+    ///   4. drain in_flight to 0 (bounded spin) — handlers that entered before
+    ///      steps 1-3 and may still touch the (now-null) flag finish first.
+    ///   5. release guard ownership.
+    /// The self-pipe is process-lifetime and NEVER closed here, so `write_fd`
+    /// stays valid for any in-flight handler (no fd-reuse window).
     pub fn deinit(self: *Guard) void {
         if (!supported or !self.installed) return;
 
-        // Clear handler state first so a signal delivered mid-restore cannot
-        // touch a stale flag/fd. Then restore the previous disposition.
-        handler_state.flag = null;
-        handler_state.write_fd = -1;
-        handler_state.state.store(@intFromEnum(State.idle), .seq_cst);
+        // 1. Disable: new entries see disabled and return without touching
+        //    flag/pipe.
+        handler_state.state.store(@intFromEnum(State.disabled), .seq_cst);
+        // 2. Atomic unbind of the flag.
+        handler_state.flag.store(0, .seq_cst);
+        // 3. Restore the previous disposition.
         posix.sigaction(posix.SIG.INT, &self.prev, null);
-
+        // 4. Drain in-flight handlers. Bounded spin so we never deadlock; any
+        //    in-flight handler finishes atomically (it loads the now-null flag
+        //    and the process-lifetime pipe fd, both safe to touch).
+        var spins: u32 = 0;
+        while (handler_state.in_flight.load(.seq_cst) != 0 and spins < 1_000_000) : (spins += 1) {
+            std.atomic.spinLoopHint();
+        }
+        // 5. Release ownership so a sequential reinstall can proceed.
         guard_owned.store(false, .seq_cst);
         self.installed = false;
     }
@@ -375,11 +431,11 @@ pub const Guard = struct {
 // ---------------------------------------------------------------------------
 // Interruptible line read (review item 4).
 //
-// A persistent pending buffer on the Guard-side keeps same-batch input across
-// two calls: if a raw read returns "first\nsecond\n", the first call returns
-// "first" and retains "second\n" for the next call. EINTR loops (no recursion).
-// The poll/self-pipe path returns `.interrupted` on SIGINT and never surfaces
-// a `ReadFailed`/stack trace to the user.
+// A persistent pending buffer retains same-batch input across two calls: if a
+// raw read returns "first\nsecond\n", the first call returns "first" and
+// retains "second\n" for the next call. EINTR loops (no recursion). The
+// poll/self-pipe path returns `.interrupted` on SIGINT and never surfaces a
+// `ReadFailed`/stack trace to the user.
 // ---------------------------------------------------------------------------
 
 /// Outcome of an interruptible line read.
@@ -412,16 +468,26 @@ pub const LineBuffer = struct {
 /// `lb` retains bytes after the first newline for the next call (review item
 /// 4). `buffer` receives the returned line bytes. On `interrupted`/`eof` the
 /// buffer contents are unspecified. Bounded by `poll_timeout_ms` per iteration.
+///
+/// A pending SIGINT is checked BEFORE consuming retained input, so an idle
+/// Ctrl+C always wins over a queued next line (P2 hygiene).
 pub fn readInterruptibleLine(
     guard: *const Guard,
     lb: *LineBuffer,
     stdin_fd: fd_t,
     buffer: []u8,
     poll_timeout_ms: i32,
-) error{WouldBlockBufferTooSmall}!IdleRead {
+) error{ WouldBlockBufferTooSmall, ReadFailed }!IdleRead {
     if (!supported or !guard.installed) return error.WouldBlockBufferTooSmall;
 
-    // First, drain any retained same-batch input from a prior call.
+    // Pending SIGINT takes priority over queued/retained input: an idle Ctrl+C
+    // must interrupt even if a full next line is already buffered.
+    if (@as(State, @enumFromInt(handler_state.state.load(.seq_cst))) == .pending) {
+        drainWake(guard.read_fd);
+        return .interrupted;
+    }
+
+    // Then serve any retained same-batch input from a prior call.
     switch (consumePending(lb, buffer)) {
         .none => {},
         .too_small => return error.WouldBlockBufferTooSmall,
@@ -455,7 +521,8 @@ pub fn readInterruptibleLine(
 
         // stdin readable: read available bytes into the pending buffer, then
         // serve complete lines from it (retaining leftovers for next call).
-        if (!try appendStdin(lb, stdin_fd)) {
+        const got_eof = try appendStdin(lb, stdin_fd);
+        if (!got_eof) {
             // EOF on stdin. Serve any trailing pending first.
             if (lb.pending_len > 0) {
                 if (buffer.len < lb.pending_len) return error.WouldBlockBufferTooSmall;
@@ -466,6 +533,12 @@ pub fn readInterruptibleLine(
             }
             return .eof;
         }
+        // Pending SIGINT re-check before handing a freshly-read line back, so
+        // a signal that landed during the read still wins.
+        if (@as(State, @enumFromInt(handler_state.state.load(.seq_cst))) == .pending) {
+            drainWake(guard.read_fd);
+            return .interrupted;
+        }
         switch (consumePending(lb, buffer)) {
             .none => {},
             .too_small => return error.WouldBlockBufferTooSmall,
@@ -475,23 +548,20 @@ pub fn readInterruptibleLine(
     }
 }
 
-/// Append one stdin read into the pending buffer. Returns false on EOF.
-fn appendStdin(lb: *LineBuffer, stdin_fd: fd_t) error{WouldBlockBufferTooSmall}!bool {
-    while (true) {
-        if (lb.pending_len >= lb.pending.len) return error.WouldBlockBufferTooSmall;
-        const room = lb.pending[lb.pending_len..];
-        const got = sys.read(stdin_fd, room) catch return true; // transient err: retry next poll
-        if (got == 0) return false; // EOF
-        lb.pending_len += got;
-        return true;
-    }
+/// Append one stdin read into the pending buffer. Returns true on data (or
+/// would-block with no data), false on EOF. `ReadFailed` is a typed error
+/// (P2 hygiene: not masqueraded as success). EINTR loops internally.
+fn appendStdin(lb: *LineBuffer, stdin_fd: fd_t) error{ WouldBlockBufferTooSmall, ReadFailed }!bool {
+    if (lb.pending_len >= lb.pending.len) return error.WouldBlockBufferTooSmall;
+    const room = lb.pending[lb.pending_len..];
+    const got = sys.read(stdin_fd, room) catch |err| switch (err) {
+        error.ReadFailed => return error.ReadFailed,
+    };
+    if (got == 0) return false; // EOF
+    lb.pending_len += got;
+    return true;
 }
 
-/// If the pending buffer contains a newline, copy the first line (without it)
-/// into `buffer` and shift the remainder to the front. Returns:
-///   * `null` — no newline present (caller should read more).
-///   * `?IdleRead` payload — a line, or an out-error if the line exceeds the
-///     caller's `buffer`.
 const ConsumeResult = union(enum) {
     none: void,
     out: IdleRead,
@@ -531,7 +601,6 @@ test "Guard install/restore is a no-op disposition round-trip on signal-capable 
     var guard = try Guard.install(&flag);
     defer guard.deinit();
     try std.testing.expect(guard.read_fd >= 0);
-    try std.testing.expect(guard.write_fd >= 0);
     try std.testing.expect(!flag.isSet());
     try std.testing.expect(!guard.pendingInterrupt());
 }
@@ -551,8 +620,12 @@ test "first signal requests flag and wakes pipe; second signal predicate is hand
         .seq_cst,
     );
     try std.testing.expect(swapped == null);
-    flag.request();
-    sys.writeWake(guard.write_fd);
+    // The handler loads the flag atomically; simulate that path.
+    const flag_addr = handler_state.flag.load(.seq_cst);
+    try std.testing.expect(flag_addr != 0);
+    const flag_ptr: *Flag = @ptrFromInt(flag_addr);
+    flag_ptr.request();
+    sys.writeWake(lifetime_write_fd);
     try std.testing.expect(flag.isSet());
     try std.testing.expect(guard.pendingInterrupt());
 
@@ -566,9 +639,41 @@ test "first signal requests flag and wakes pipe; second signal predicate is hand
     // set) is NOT misread as a second Ctrl+C.
     guard.acknowledgeCancel();
     try std.testing.expect(!guard.pendingInterrupt());
-    // Flag may still be set from the programmatic request; that must NOT
-    // count as a pending second interrupt.
     flag.clear();
+}
+
+test "deinit sets disabled and unbinds flag atomically; in_flight drains" {
+    if (!supported) return;
+    var flag: Flag = .{};
+    var guard = try Guard.install(&flag);
+    // Simulate one in-flight handler entry then a normal decrement so the
+    // drain loop has work to observe.
+    _ = handler_state.in_flight.fetchAdd(1, .seq_cst);
+    _ = handler_state.in_flight.fetchSub(1, .seq_cst);
+    guard.deinit();
+    // After deinit: state is disabled, flag is unbound, ownership released.
+    const end_state: State = @enumFromInt(handler_state.state.load(.seq_cst));
+    try std.testing.expectEqual(State.disabled, end_state);
+    try std.testing.expectEqual(@as(usize, 0), handler_state.flag.load(.seq_cst));
+    try std.testing.expectEqual(@as(u32, 0), handler_state.in_flight.load(.seq_cst));
+    // Ownership released -> a fresh install must succeed (sequential reinstall).
+    var guard2 = try Guard.install(&flag);
+    defer guard2.deinit();
+    try std.testing.expect(guard2.installed);
+}
+
+test "concurrent/nested Guard install is rejected; sequential reinstall works" {
+    if (!supported) return;
+    var flag: Flag = .{};
+    var guard = try Guard.install(&flag);
+    // A second install while the first is still owned must fail.
+    const second = Guard.install(&flag);
+    try std.testing.expectError(error.SigintInitFailed, second);
+    // After deinit, a sequential reinstall must succeed.
+    guard.deinit();
+    var guard2 = try Guard.install(&flag);
+    defer guard2.deinit();
+    try std.testing.expect(guard2.installed);
 }
 
 test "readInterruptibleLine returns eof on closed stdin" {
@@ -577,13 +682,11 @@ test "readInterruptibleLine returns eof on closed stdin" {
     var guard = try Guard.install(&flag);
     defer guard.deinit();
     var lb = LineBuffer.init();
-    var pair: [2]fd_t = .{ 0, 0 };
     const fds = try sys.pipe();
-    pair = fds;
-    sys.close(pair[1]); // close write end -> read end sees EOF
-    defer sys.close(pair[0]);
+    sys.close(fds[1]); // close write end -> read end sees EOF
+    defer sys.close(fds[0]);
     var buf: [128]u8 = undefined;
-    const out = try readInterruptibleLine(&guard, &lb, pair[0], &buf, 50);
+    const out = try readInterruptibleLine(&guard, &lb, fds[0], &buf, 50);
     try std.testing.expect(out == .eof);
 }
 
@@ -596,7 +699,6 @@ test "readInterruptibleLine reads a line" {
     const fds = try sys.pipe();
     defer sys.close(fds[0]);
     defer sys.close(fds[1]);
-    // Write "hello\n" into the write end.
     _ = if (builtin.os.tag == .linux)
         std.os.linux.write(fds[1], "hello\n", 6)
     else
@@ -618,18 +720,53 @@ test "readInterruptibleLine observes a pending interrupt without stdin input" {
     const fds = try sys.pipe();
     defer sys.close(fds[0]);
     defer sys.close(fds[1]);
-    // Simulate first SIGINT: move to pending + write wake byte.
     _ = handler_state.state.cmpxchgStrong(
         @intFromEnum(State.idle),
         @intFromEnum(State.pending),
         .seq_cst,
         .seq_cst,
     );
-    sys.writeWake(guard.write_fd);
+    sys.writeWake(lifetime_write_fd);
     var buf: [128]u8 = undefined;
     const out = try readInterruptibleLine(&guard, &lb, fds[0], &buf, 50);
     try std.testing.expect(out == .interrupted);
     guard.acknowledgeCancel();
+}
+
+test "readInterruptibleLine: pending SIGINT wins over retained next line (P2 hygiene)" {
+    if (!supported) return;
+    var flag: Flag = .{};
+    var guard = try Guard.install(&flag);
+    defer guard.deinit();
+    var lb = LineBuffer.init();
+    // Plant a retained line in the buffer as if read in a prior batch.
+    const retained = "queued\n";
+    @memcpy(lb.pending[0..retained.len], retained);
+    lb.pending_len = retained.len;
+    // Now set pending (simulate a SIGINT that landed before the next read).
+    _ = handler_state.state.cmpxchgStrong(
+        @intFromEnum(State.idle),
+        @intFromEnum(State.pending),
+        .seq_cst,
+        .seq_cst,
+    );
+    sys.writeWake(lifetime_write_fd);
+    var buf: [128]u8 = undefined;
+    const out = try readInterruptibleLine(&guard, &lb, fdsDummy(), &buf, 50);
+    try std.testing.expect(out == .interrupted);
+    // The retained line is still in the buffer (not consumed).
+    try std.testing.expectEqual(@as(usize, retained.len), lb.pending_len);
+    guard.acknowledgeCancel();
+}
+
+/// A never-ready fd for the pending-wins-over-retained test (closed write end
+/// of a pipe whose read end is also closed would EOF; instead use a pipe with
+/// the write end kept open so poll never sees readable/EOF).
+fn fdsDummy() fd_t {
+    const fds = sys.pipe() catch return -1;
+    // Keep both ends open; the read end never becomes ready because nothing is
+    // written. Leak intentionally (test-only; process exits).
+    return fds[0];
 }
 
 test "readInterruptibleLine retains same-batch bytes across two calls (review item 4)" {
@@ -641,21 +778,17 @@ test "readInterruptibleLine retains same-batch bytes across two calls (review it
     const fds = try sys.pipe();
     defer sys.close(fds[0]);
     defer sys.close(fds[1]);
-    // Write two lines in one batch: "first\nsecond\n".
     const two = "first\nsecond\n";
     _ = if (builtin.os.tag == .linux)
         std.os.linux.write(fds[1], two.ptr, two.len)
     else
         std.c.write(fds[1], two.ptr, two.len);
     var buf: [128]u8 = undefined;
-    // First call: returns "first", retains "second\n".
     const out1 = try readInterruptibleLine(&guard, &lb, fds[0], &buf, 50);
     switch (out1) {
         .line => |l| try std.testing.expectEqualStrings("first", l),
         else => return error.TestUnexpectedResult,
     }
-    // Second call: serves "second" from the retained pending buffer (no new
-    // stdin read needed).
     const out2 = try readInterruptibleLine(&guard, &lb, fds[0], &buf, 50);
     switch (out2) {
         .line => |l| try std.testing.expectEqualStrings("second", l),

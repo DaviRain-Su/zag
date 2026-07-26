@@ -10,19 +10,20 @@
 //!   * Idle REPL: first SIGINT wakes the blocking read and the direct process
 //!     exits with code 0 within a bound; no runtime error/stack on stderr.
 //!   * Active std-backend request blocked in response-head: first SIGINT
-//!     requests cooperative cancel; a second SIGINT while the cancel is still
-//!     pending hard-exits with conventional status 130.
+//!     requests cooperative cancel; the fixture then uses a bounded retry
+//!     escape loop — periodic re-SIGINT until the process actually exits 130
+//!     (no "assume the first signal landed after 10ms" correctness premise).
 //!   * Active curl-backend request: first SIGINT actively aborts the in-flight
 //!     transfer; the run returns a headless `cancelled` terminal (exit 11);
-//!     stdout is parsed to prove EXACTLY one terminal and that it is
-//!     `cancelled`.
+//!     stdout is read to EOF and parsed to prove EXACTLY one terminal and that
+//!     it is `cancelled`.
 //!
-//! Determinism (cli-sigint-001 review item 5): no blind sleep decides the
-//! injection point. The slow mock writes a `ready` marker after consuming the
-//! full HTTP request and before the response-head stall; the fixture waits on
-//! that marker, THEN sends the first SIGINT. All waits are bounded; on failure
-//! the fixture reaps/kills children for clean diagnosis. Output must not leak
-//! secrets or absolute paths.
+//! Determinism (cli-sigint-001 review item 5 / P2 follow-up): no blind sleep
+//! decides the injection point. The slow mock writes a `ready` marker after
+//! consuming the full HTTP request and before the response-head stall; the
+//! fixture waits on that marker, THEN sends the first SIGINT. All waits are
+//! bounded; on failure the fixture reaps/kills children for clean diagnosis.
+//! Output must not leak secrets or absolute paths.
 
 const std = @import("std");
 const Io = std.Io;
@@ -43,7 +44,8 @@ const port_file_name = "sigint_slow_mock.port";
 const ready_file_name = "sigint_slow_mock.ready";
 
 /// Wait for `pid` to exit using `waitpid(WNOHANG)` with bounded polling.
-/// Returns the raw status word, or `null` if the bound elapsed.
+/// Returns the raw status word, or `null` if the bound elapsed. Does NOT reap
+/// (caller decides); safe to call repeatedly — only one waitpid will succeed.
 fn waitBounded(io: Io, pid: std.posix.pid_t, bound_ms: u64) ?u32 {
     var elapsed: u64 = 0;
     const step_ms: u64 = 10;
@@ -58,8 +60,9 @@ fn waitBounded(io: Io, pid: std.posix.pid_t, bound_ms: u64) ?u32 {
     return null;
 }
 
-/// Reap a child unconditionally: SIGKILL then waitpid (blocking) so no zombies
-/// leak between tests. Best-effort; ignores errors.
+/// Reap a child unconditionally: SIGKILL then blocking waitpid so no zombies
+/// leak between tests. Best-effort; ignores errors. Idempotent — calling after
+/// a successful waitBounded reap is safe (waitpid returns -1/ECHILD).
 fn reap(io: Io, pid: std.posix.pid_t) void {
     _ = std.c.kill(pid, std.posix.SIG.KILL);
     var status: c_int = 0;
@@ -67,8 +70,50 @@ fn reap(io: Io, pid: std.posix.pid_t) void {
     _ = io;
 }
 
-/// Read from `fd` into `buf`, polling for readability with a per-iteration
-/// timeout. Accumulates until `marker` is found, EOF, or `bound_ms` elapses.
+/// Read `fd` to EOF with bounded polling. Accumulates everything until EOF or
+/// `bound_ms` elapses (no marker-based early truncation — P2 hygiene). The
+/// caller owns the returned bytes.
+const ReadEofResult = struct {
+    bytes: []u8,
+    eof: bool,
+    timed_out: bool,
+};
+
+fn readToEof(gpa: std.mem.Allocator, io: Io, fd: std.posix.fd_t, bound_ms: u64) !ReadEofResult {
+    _ = io;
+    var acc: std.ArrayList(u8) = .empty;
+    errdefer acc.deinit(gpa);
+    var elapsed: u64 = 0;
+    const step_ms: i32 = 10;
+    while (elapsed < bound_ms) {
+        var pfds: [1]std.posix.pollfd = .{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
+        const n = std.posix.poll(&pfds, step_ms) catch return .{
+            .bytes = try acc.toOwnedSlice(gpa),
+            .eof = false,
+            .timed_out = false,
+        };
+        elapsed += @intCast(step_ms);
+        if (n == 0) continue;
+        if (pfds[0].revents == 0) continue;
+        var chunk: [4096]u8 = undefined;
+        const rc = std.c.read(fd, &chunk, chunk.len);
+        if (rc < 0) {
+            switch (std.posix.errno(rc)) {
+                .INTR => continue,
+                .AGAIN => continue,
+                else => return error.ReadFailed,
+            }
+        }
+        if (rc == 0) {
+            return .{ .bytes = try acc.toOwnedSlice(gpa), .eof = true, .timed_out = false };
+        }
+        try acc.appendSlice(gpa, chunk[0..@intCast(rc)]);
+    }
+    return .{ .bytes = try acc.toOwnedSlice(gpa), .eof = false, .timed_out = true };
+}
+
+/// Read from `fd` until `marker` is found, EOF, or `bound_ms` elapses. Used
+/// only for the `you>` prompt readiness poll (a real marker, not a sentinel).
 const ReadResult = struct {
     bytes: []u8,
     found: bool,
@@ -136,7 +181,8 @@ fn makeEnvPairs(gpa: std.mem.Allocator, port: u16) ![]const []const u8 {
 }
 
 /// Start the slow mock server (separate process), wait for the port file, and
-/// return (pid, port). Caller must reap the mock child.
+/// return (pid, port). On any failure after spawn (port-file timeout/parse
+/// error), the child is killed+reaped via errdefer so it cannot leak (P2).
 fn startSlowMock(io: Io, cwd: Io.Dir, stall_ms: u64, want_ready: bool) !struct {
     pid: std.posix.pid_t,
     port: u16,
@@ -166,6 +212,10 @@ fn startSlowMock(io: Io, cwd: Io.Dir, stall_ms: u64, want_ready: bool) !struct {
         .stderr = .ignore,
     }) catch return error.SpawnFailed;
     const pid = child.id orelse return error.NoPid;
+
+    // P2 hygiene: if anything below fails, kill+reap the mock child so it
+    // cannot leak as a zombie/orphan between tests.
+    errdefer reap(io, pid);
 
     var port: u16 = 0;
     var spins: u32 = 0;
@@ -266,19 +316,20 @@ test "sigint idle REPL: first SIGINT wakes and direct process exits 0 within bou
 
     var child = try spawnZag(io, tmp.dir, &.{"--no-project"}, env_pairs);
     // Keep stdin pipe open so the REPL blocks reading (no prompt args → REPL).
-    defer {
+    var zag_reaped = false;
+    defer if (!zag_reaped) {
         if (child.id != null) {
             reap(io, child.id.?);
             child.id = null;
         }
-    }
+    };
 
     const ready_marker = "you> ";
     const rr = try readUntilMarker(gpa, io, childStdoutFd(&child), ready_marker, 8000);
     defer gpa.free(rr.bytes);
     if (rr.timed_out or !rr.found) {
-        const stderr_rr = readUntilMarker(gpa, io, childStderrFd(&child), "x", 50) catch null;
-        defer if (stderr_rr) |s| gpa.free(s.bytes);
+        const stderr_eof = readToEof(gpa, io, childStderrFd(&child), 50) catch null;
+        defer if (stderr_eof) |s| gpa.free(s.bytes);
         try std.testing.expect(rr.found);
     }
 
@@ -291,15 +342,17 @@ test "sigint idle REPL: first SIGINT wakes and direct process exits 0 within bou
     const status = status_opt.?;
     try std.testing.expect(std.c.W.IFEXITED(status));
     try std.testing.expectEqual(@as(u8, 0), std.c.W.EXITSTATUS(status));
-    child.id = null; // reaped
+    child.id = null;
+    zag_reaped = true; // waitBounded reaped it; do not double-reap.
 
-    // stderr must not contain Zig runtime error/stack traces (review item 4/6).
-    const err_rr = try readUntilMarker(gpa, io, childStderrFd(&child), "x", 100);
-    defer gpa.free(err_rr.bytes);
-    try std.testing.expect(std.mem.indexOf(u8, err_rr.bytes, "error:") == null);
-    try std.testing.expect(std.mem.indexOf(u8, err_rr.bytes, "stack trace") == null);
-    try std.testing.expect(std.mem.indexOf(u8, err_rr.bytes, "ReadFailed") == null);
-    try assertNoSecretOrPath(err_rr.bytes);
+    // stderr read to EOF (no marker truncation — P2 hygiene). Must not contain
+    // a Zig runtime error/stack trace / ReadFailed (review item 4/6).
+    const err_eof = try readToEof(gpa, io, childStderrFd(&child), 200);
+    defer gpa.free(err_eof.bytes);
+    try std.testing.expect(std.mem.indexOf(u8, err_eof.bytes, "error:") == null);
+    try std.testing.expect(std.mem.indexOf(u8, err_eof.bytes, "stack trace") == null);
+    try std.testing.expect(std.mem.indexOf(u8, err_eof.bytes, "ReadFailed") == null);
+    try assertNoSecretOrPath(err_eof.bytes);
 }
 
 test "sigint active request: backend-honest second-signal escape (std=130) / active cancel (curl)" {
@@ -322,12 +375,13 @@ test "sigint active request: backend-honest second-signal escape (std=130) / act
     }
 
     var child = try spawnZag(io, tmp.dir, &.{ "--json", "hello" }, env_pairs);
-    defer {
+    var zag_reaped = false;
+    defer if (!zag_reaped) {
         if (child.id != null) {
             reap(io, child.id.?);
             child.id = null;
         }
-    }
+    };
 
     // Deterministic handshake: wait for the mock's request-ready marker so we
     // know the std-backend request is in-flight and blocked BEFORE signalling.
@@ -340,46 +394,59 @@ test "sigint active request: backend-honest second-signal escape (std=130) / act
     switch (http_backend) {
         .std => {
             // std has no active in-flight cancel; the request stays blocked, so
-            // the interrupt stays pending. Second SIGINT hard-exits 130.
-            // No blind sleep: a tiny bounded grace lets the first signal land
-            // and the handler transition IDLE->PENDING; the bound is NOT the
-            // correctness oracle (the exit status + readiness handshake are).
-            std.Io.sleep(io, std.Io.Duration.fromMilliseconds(10), .real) catch {};
-            try std.posix.kill(pid, std.posix.SIG.INT);
-            const status_opt = waitBounded(io, pid, 4000);
-            try std.testing.expect(status_opt != null);
-            const status = status_opt.?;
-            try std.testing.expect(std.c.W.IFEXITED(status));
-            try std.testing.expectEqual(@as(u8, 130), std.c.W.EXITSTATUS(status));
+            // the interrupt stays pending. Bounded retry escape (P2): poll
+            // waitpid(WNOHANG); if the process has not exited, periodically
+            // re-send SIGINT until a second unacknowledged delivery actually
+            // lands and the handler hard-exits 130. The sleep is ONLY the poll
+            // cadence — never a "10ms then assume the first landed" premise.
+            const total_bound_ms: u64 = 6000;
+            const cadence_ms: u64 = 50;
+            var elapsed: u64 = 0;
+            var escaped = false;
+            while (elapsed < total_bound_ms) {
+                if (waitBounded(io, pid, cadence_ms)) |status| {
+                    try std.testing.expect(std.c.W.IFEXITED(status));
+                    try std.testing.expectEqual(@as(u8, 130), std.c.W.EXITSTATUS(status));
+                    escaped = true;
+                    break;
+                }
+                // Not yet exited: re-send SIGINT. A handler that already
+                // transitioned IDLE->PENDING on the first delivery will, on
+                // this next delivery, see pending and hard-exit 130. If the
+                // first delivery had not yet landed, this becomes the first.
+                try std.posix.kill(pid, std.posix.SIG.INT);
+                elapsed += cadence_ms;
+            }
+            try std.testing.expect(escaped);
             child.id = null;
+            zag_reaped = true;
         },
         .curl => {
             // curl actively aborts the in-flight request on the first SIGINT;
             // the run returns a headless cancelled terminal (exit 11) within a
-            // bound. Parse stdout to prove EXACTLY one terminal and that it is
-            // `cancelled` (review item 5).
+            // bound. Read stdout to EOF (no marker truncation) and verify
+            // exactly one headless terminal envelope, cancelled (review item 5).
             const status_opt = waitBounded(io, pid, 4000);
             try std.testing.expect(status_opt != null);
             const status = status_opt.?;
             try std.testing.expect(std.c.W.IFEXITED(status));
             try std.testing.expectEqual(@as(u8, 11), std.c.W.EXITSTATUS(status));
             child.id = null;
+            zag_reaped = true;
 
-            // Read stdout and verify exactly one headless terminal envelope,
-            // and that it is a `cancelled` result (review item 5).
-            const out_rr = try readUntilMarker(gpa, io, childStdoutFd(&child), "x", 200);
-            defer gpa.free(out_rr.bytes);
+            const out_eof = try readToEof(gpa, io, childStdoutFd(&child), 300);
+            defer gpa.free(out_eof.bytes);
             // `--json` emits exactly one `"type":"result"` terminal envelope.
             const term_tag = "\"type\":\"result\"";
-            const first = std.mem.indexOf(u8, out_rr.bytes, term_tag);
+            const first = std.mem.indexOf(u8, out_eof.bytes, term_tag);
             try std.testing.expect(first != null);
-            const second = std.mem.indexOfPos(u8, out_rr.bytes, first.? + term_tag.len, term_tag);
+            const second = std.mem.indexOfPos(u8, out_eof.bytes, first.? + term_tag.len, term_tag);
             try std.testing.expect(second == null);
             // No competing terminal type (error/run_end) may also appear.
-            try std.testing.expect(std.mem.indexOf(u8, out_rr.bytes, "\"type\":\"error\"") == null);
+            try std.testing.expect(std.mem.indexOf(u8, out_eof.bytes, "\"type\":\"error\"") == null);
             // The terminal is a cancelled result.
-            try std.testing.expect(std.mem.indexOf(u8, out_rr.bytes, "\"stop_reason\":\"cancelled\"") != null);
-            try assertNoSecretOrPath(out_rr.bytes);
+            try std.testing.expect(std.mem.indexOf(u8, out_eof.bytes, "\"stop_reason\":\"cancelled\"") != null);
+            try assertNoSecretOrPath(out_eof.bytes);
         },
     }
 }

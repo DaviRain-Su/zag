@@ -719,16 +719,19 @@ pub const Agent = struct {
     /// if committing a failure terminal itself fails, the trace error is returned
     /// rather than silently keeping only the primary error.
     pub fn reply(self: *Agent, session: *Session, user_text: []const u8) ReplyError!loop.Result {
-        try self.beginRun(session);
+        // cli-sigint-001 (review item 3 + P2 follow-up): clear the cancel flag
+        // at the run-completion boundary so the next interaction starts clean.
+        // The defer is registered BEFORE `beginRun` so a beginRun preflight
+        // failure (trace/session-redactor OOM) still clears the flag — a
+        // pre-set cancel cannot survive a failed run start and bleed into the
+        // next reply. A cancel that landed during a successful run already
+        // produced its `.cancelled` result (or was observed by `loop.run`);
+        // pre-run pending cancels are applied to this run by `loop.run` (which
+        // checks the flag before the first provider call), not erased here.
+        defer self.cancel.clear();
         // Clear borrowed trace redactor on every exit (success, failRun, persist fault).
         defer self.clearTraceRedactor();
-        // cli-sigint-001 (review item 3): clear the cancel flag at the run
-        // completion boundary so the next interaction starts clean. A cancel
-        // that landed during this run already produced its `.cancelled` result
-        // (or was observed by `loop.run`); keeping the flag set would let a
-        // stale interrupt bleed into the next reply. Pre-run pending cancels
-        // are NOT cleared here-they are applied to this run by `loop.run`.
-        defer self.cancel.clear();
+        try self.beginRun(session);
         session.zag_version = self.options.version;
 
         session.transcript.appendUser(user_text) catch |err| {
@@ -1609,6 +1612,93 @@ test "h-trace: pre-run pending cancel applies to the current run (cli-sigint-001
     });
     defer session2.deinit();
     const result2 = try agent.reply(&session2, "second");
+    try std.testing.expectEqual(loop.StopReason.completed, result2.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), calls);
+}
+
+test "h-trace: beginRun preflight OOM clears a pre-set cancel flag (cli-sigint-001 P2)" {
+    // Goal (P2 follow-up): the run-completion cancel clear must cover the
+    // beginRun-failure path. Preset the cancel flag, then make beginRun fail
+    // in its ensureSessionRedactor preflight (OOM). After the failed reply
+    // returns, the flag MUST be cleared so the next reply is not stale-cancel.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const Mock = struct {
+        calls: *u32,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = undefined,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .toolset = &[_]tool.Tool{},
+        .verbose = false,
+        .max_turns = 4,
+        .secrets = &.{redact_mod.testing.fake_api_key},
+        .pattern_redaction = true,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var mock_state: Mock = .{ .calls = undefined };
+    agent.provider = .{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+    var calls: u32 = 0;
+    mock_state.calls = &calls;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session.deinit();
+    // Force the ensureSessionRedactor clone path so a failing allocator can
+    // trigger OOM inside beginRun's preflight.
+    if (session.owned_redactor) |*old| {
+        old.deinit();
+        session.owned_redactor = null;
+    }
+
+    // Preset the cancel flag (simulates a pre-run SIGINT).
+    agent.cancel.request();
+    try std.testing.expect(agent.cancel.isSet());
+
+    // Make beginRun's ensureSessionRedactor allocation fail.
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const saved = session.gpa;
+    session.gpa = failing.allocator();
+    const err = agent.reply(&session, "hi");
+    session.gpa = saved;
+    try std.testing.expectError(error.OutOfMemory, err);
+    // P2: the completion-boundary clear ran (defer registered before beginRun),
+    // so the pre-set cancel flag did NOT survive the failed run start.
+    try std.testing.expect(!agent.cancel.isSet());
+    try std.testing.expectEqual(@as(u32, 0), calls);
+
+    // A subsequent reply must NOT inherit a stale cancel; it completes.
+    var session2 = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+    });
+    defer session2.deinit();
+    const result2 = try agent.reply(&session2, "again");
     try std.testing.expectEqual(loop.StopReason.completed, result2.stop_reason);
     try std.testing.expectEqual(@as(u32, 1), calls);
 }
