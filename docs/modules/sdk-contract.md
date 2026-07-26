@@ -127,13 +127,14 @@ Two supported cancellation mechanisms:
    `CancelFlag`). The flag is checked between turns and between tools, **not**
    inside a running Tool handler.
 
-`Agent.reply` defines **per-run cancel semantics**: at the start of each reply
-any stale flag from a previous run is cleared, so a single `requestCancel()`
-affects only the current run. A flag that is set during the current run — either
-between Tools or while the provider request is in flight — is still observed and
-produces `stop_reason=cancelled`. The CLI installs a single SIGINT handler
-against `agent.cancel`; per-run clearing prevents one Ctrl-C from permanently
-cancelling every future REPL turn.
+`Agent.reply` defines **per-run cancel semantics**: a flag already set before
+`reply` applies to that run, so a host can request cancellation immediately
+before entry without the request being erased. Every reply exit clears the flag,
+including run-start/preflight failure, so a completed or failed run cannot leak
+a stale cancel into the next reply. A flag set between Tools or while a provider
+request is in flight is still observed and produces `stop_reason=cancelled`.
+The CLI binds its one-shot SIGINT Guard to `agent.cancel` and separately
+acknowledges the consumed interrupt after an interactive run completes.
 
 When both cancel and deadline fire, **cancel wins**. The curl backend performs
 active in-flight cancellation; the std backend returns `UnsupportedControl` for
