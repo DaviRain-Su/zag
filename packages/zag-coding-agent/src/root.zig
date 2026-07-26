@@ -20,7 +20,7 @@ pub const tool = core.tool;
 pub const tool_args = core.tool_args;
 pub const transcript = core.transcript;
 pub const provider = core.provider;
-pub const context = core.context;
+pub const context = @import("context.zig");
 pub const loop = core.loop;
 
 // D-011 product-owned persistence surface (moved from Core by core-session-ownership-001).

@@ -33,7 +33,7 @@ const transcript_mod = @import("transcript.zig");
 const provider_mod = @import("provider.zig");
 const tool_error = @import("tool_error.zig");
 const cancel_mod = @import("cancel.zig");
-const context_mod = @import("context.zig");
+const protocol_history = @import("protocol_history.zig");
 
 // D-011 required seams.
 const tool_policy_mod = @import("tool_policy.zig");
@@ -196,6 +196,14 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         if (v.compaction) |ev| {
             deps_run.event_sink.emit(.{ .context_compaction = ev }) catch |err| return mapSinkEmit(err);
         }
+
+        // Independent Core gate: validate the protocol-visible body of the
+        // projected view **before** any Provider.chat, regardless of how the
+        // product ContextView built it (D-011 core-context-ownership-001).
+        // The view may carry leading system layers; those are skipped. This
+        // catches a hostile/malformed ContextView that returns an invalid bundle
+        // even when the product algorithm would have validated internally.
+        protocol_history.validateViewBody(v.messages) catch return error.InvalidContext;
 
         const outcome = try chatWithRetry(deps_run, scratch, v.messages);
         const turn = switch (outcome) {
@@ -1793,4 +1801,194 @@ test "core-policy-ownership-001: shell deny body OOM — shell_decision emitted 
     for (transcript.items()) |m| {
         if (m.role == .tool) return error.TestUnexpectedResult;
     }
+}
+
+// ── core-context-ownership-001 regression tests ────────────────────────────
+//
+// The loop must independently validate the protocol-visible body of the
+// ContextView projection **before** any Provider.chat, regardless of how the
+// product built the view. These tests prove:
+// 1. identity view passes through a valid transcript (explicit low-level
+//    composition, not a missing-state fallback);
+// 2. a hostile ContextView that returns a malformed Tool bundle is rejected
+//    with InvalidContext and the provider is never called (provider call
+//    count = 0).
+
+test "core-context-001: identity view passes valid transcript to provider" {
+    const gpa = std.testing.allocator;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            // Identity view: provider sees the full transcript unchanged.
+            if (messages.len < 3) return error.InvalidResponse;
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    try transcript.appendAssistantTurn(.{
+        .content = "hello",
+        .tool_calls = &.{},
+        .finish_reason = "stop",
+    });
+    try transcript.appendUser("again");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.context_view = ContextView.identity();
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqualStrings("done", result.final_text);
+    try std.testing.expectEqual(@as(u32, 1), mock.calls);
+}
+
+test "core-context-001: hostile ContextView malformed bundle → InvalidContext, provider=0" {
+    const gpa = std.testing.allocator;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return .{
+                .content = try arena.dupe(u8, "should-not-reach"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    // Hostile ContextView: returns a view with a malformed tool bundle
+    // (orphan tool result with no preceding assistant tool_calls). The loop
+    // must reject this before calling the provider.
+    const HostileView = struct {
+        fn view(
+            _: ?*anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+        ) context_view_mod.ContextViewError!context_view_mod.View {
+            const msgs = try arena.alloc(message.Message, 2);
+            msgs[0] = message.Message.user("ask");
+            msgs[1] = message.Message.toolResult("orphan-id", "no-carrier");
+            return .{ .messages = msgs, .compaction = null };
+        }
+    };
+    const hostile_vtable: context_view_mod.ContextViewVTable = .{
+        .view = HostileView.view,
+    };
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.context_view = .{ .ptr = null, .vtable = &hostile_vtable };
+
+    const err = run(deps, &transcript);
+    try std.testing.expectError(error.InvalidContext, err);
+    // Provider must never have been called.
+    try std.testing.expectEqual(@as(u32, 0), mock.calls);
+    // No assistant event emitted (provider was not called).
+    try std.testing.expectEqual(@as(u32, 0), sink.assistant_messages);
+}
+
+test "core-context-001: hostile ContextView with leading system layers then malformed body → InvalidContext" {
+    const gpa = std.testing.allocator;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return .{
+                .content = try arena.dupe(u8, "should-not-reach"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    // Hostile ContextView: leading system layers (valid) then a malformed body
+    // (incomplete tool bundle — assistant with 2 calls but only 1 result).
+    const HostileView = struct {
+        fn view(
+            _: ?*anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+        ) context_view_mod.ContextViewError!context_view_mod.View {
+            const calls = try arena.alloc(message.ToolCall, 2);
+            calls[0] = .{ .id = "c1", .name = "list_dir", .arguments = "{}" };
+            calls[1] = .{ .id = "c2", .name = "read_file", .arguments = "{}" };
+            const msgs = try arena.alloc(message.Message, 4);
+            msgs[0] = message.Message.system("base-sys");
+            msgs[1] = message.Message.user("ask");
+            msgs[2] = message.Message.assistantToolCalls("tools", calls);
+            msgs[3] = message.Message.toolResult("c1", "only-one"); // missing c2
+            return .{ .messages = msgs, .compaction = null };
+        }
+    };
+    const hostile_vtable: context_view_mod.ContextViewVTable = .{
+        .view = HostileView.view,
+    };
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.context_view = .{ .ptr = null, .vtable = &hostile_vtable };
+
+    const err = run(deps, &transcript);
+    try std.testing.expectError(error.InvalidContext, err);
+    try std.testing.expectEqual(@as(u32, 0), mock.calls);
 }

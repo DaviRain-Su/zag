@@ -5,7 +5,7 @@
 | Decision | [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current code | `packages/zag-agent-core/src/` plus product facade in `packages/zag-coding-agent/src/agent.zig` |
 | Target | Thin loop kernel with explicit required ports; product policy/state in coding-agent |
-| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001). Concrete permission/HITL/remember, workspace containment, and shell protection moved to coding-agent (core-policy-ownership-001). Remaining context-layer ownership move pending. |
+| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001). Concrete permission/HITL/remember, workspace containment, and shell protection moved to coding-agent (core-policy-ownership-001). Context-layer ownership moved to coding-agent: protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent` and `ContextView.View` are single authoritative definitions in Core `context_view.zig` (core-context-ownership-001). |
 | Reference | Pi low-level `agent-loop.ts` / `agent.ts` / `types.ts`, semantics only |
 
 ## Purpose
@@ -40,13 +40,15 @@ The kernel owns only behavior that cannot be delegated without changing the mean
 
 1. validate the Toolset and protocol-visible history before any provider request;
 2. project the current transcript through an injected `ContextView`;
-3. call `Provider.chat` with definitions only and propagate `RequestControl`;
-4. process assistant Tool calls in deterministic order;
-5. validate arguments, invoke every required pre-execution gate, then execute exactly once or create one soft result;
-6. append complete assistant/Tool messages exactly once;
-7. backfill accepted pending Tool calls with cancellation results;
-8. emit source facts synchronously in program order;
-9. return a typed loop `Result` or `RunError` without inventing run-level persistence success.
+3. independently validate the protocol-visible body of the projected view before
+   any `Provider.chat` (regardless of how the product built the view);
+4. call `Provider.chat` with definitions only and propagate `RequestControl`;
+5. process assistant Tool calls in deterministic order;
+6. validate arguments, invoke every required pre-execution gate, then execute exactly once or create one soft result;
+7. append complete assistant/Tool messages exactly once;
+8. backfill accepted pending Tool calls with cancellation results;
+9. emit source facts synchronously in program order;
+10. return a typed loop `Result` or `RunError` without inventing run-level persistence success.
 
 The kernel does not own Provider configuration, user prompting, filesystem policy implementation, shell deny lists,
 compaction policy, durable session/Trace files, secret redaction, CLI output, or a public process protocol.
@@ -87,12 +89,18 @@ always install ask/jail/protect unless the caller explicitly selects another doc
 
 ## Context split
 
-The current `context.zig` mixes two categories:
+The former `context.zig` has been split (core-context-ownership-001):
 
-| Category | Target owner |
-|---|---|
-| Message/tool-result bundle legality required by the provider protocol | Core |
-| Four prompt layers, token/character budget, fixed-point compaction, summary/lineage | Coding-agent |
+| Category | Target owner | Location |
+|---|---|---|
+| Message/tool-result bundle legality required by the provider protocol | Core | `protocol_history.zig` (`validateBodyHistory`, `alignToLegalStart`, `unitEnd`, `validateViewBody`) |
+| `CompactionEvent` and `ContextView.View` (single authoritative types) | Core | `context_view.zig` |
+| Four prompt layers, token/character budget, fixed-point compaction, summary/lineage | Coding-agent | `context.zig` (`Options`, `Layers`, `viewForModel`, summary/lineage) |
+
+The loop independently validates the protocol-visible body of the projected view
+**after** the `ContextView` returns and **before** `Provider.chat`, regardless of
+how the product built the view. A hostile `ContextView` that returns a malformed
+bundle is rejected with `InvalidContext` and the provider is never called.
 
 `ContextView` returns a view borrowed from its supplied scratch allocator. Any compaction summary is borrowed for the
 callback only. The product Session must copy data it retains.
@@ -203,7 +211,7 @@ core-observation-ownership-001   ✓ done — Trace/redaction/Observer moved to 
 core-policy-ownership-001   ✓ done — concrete permissions/HITL/remember, workspace Guard/Root/realpath/symlink containment, and shell protect/off moved to coding-agent; Core retains required ports + deniedBody renderers + pure lexical `tool_args.checkToolPath`
         │
         ▼
-core-context-ownership-001
+core-context-ownership-001   ✓ done — protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent`/`View` single authoritative definitions in Core `context_view.zig`; loop independently validates projected view body before Provider.chat
         │
         ▼
 harness-events-001 (redesigned product SDK lifecycle; no core lifecycle.zig)

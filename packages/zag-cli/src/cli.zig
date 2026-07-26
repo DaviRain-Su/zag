@@ -248,8 +248,8 @@ pub fn run(init: std.process.Init) !void {
     const resolved = resolve_result.resolved;
     const use_stream = want_stream or resolve_result.stream;
 
-    const context_defaults = core.context.Options{};
-    const context_opts = core.context.optionsFromBudget(
+    const context_defaults = coding.context.Options{};
+    const context_opts = coding.context.optionsFromBudget(
         resolve_result.contextCharBudget(context_defaults.max_chars),
         .{
             .max_chars = resolve_result.context_max_chars,

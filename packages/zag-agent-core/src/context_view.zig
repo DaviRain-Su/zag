@@ -1,8 +1,13 @@
 //! ContextView port — required context projection gate (D-011).
 //!
-//! Replaces the loop's direct dependency on `context.viewForModel` with an
-//! explicit, borrowed port. The port projects the authoritative transcript
-//! into a borrowed provider message view plus an optional compaction fact.
+//! Replaces the loop's direct dependency on a product context implementation
+//! with an explicit, borrowed port. The port projects the authoritative
+//! transcript into a borrowed provider message view plus an optional compaction
+//! fact.
+//!
+//! `CompactionEvent` and `View` are the **single authoritative definitions** for
+//! these types across all packages (D-011 core-context-ownership-001). Product
+//! layers (`zag-coding-agent`) alias these types; they do not redefine them.
 //!
 //! Identity projection is an explicit implementation (`identity`); missing
 //! state is not silently normalized to an empty/identity view. The product
@@ -12,18 +17,30 @@
 const std = @import("std");
 const message = @import("message.zig");
 const transcript_mod = @import("transcript.zig");
-const context_mod = @import("context.zig");
 
 pub const ContextViewError = error{
     OutOfMemory,
     InvalidContext,
 };
 
+/// Single authoritative compaction fact type (D-011 core-context-ownership-001).
+/// Describes the **final returned view**, not an intermediate trim. Product
+/// layers construct this; Core and Trace consume it.
+pub const CompactionEvent = struct {
+    /// Number of non-system body messages omitted from the **final** returned view.
+    dropped: usize,
+    /// Arena-owned summary text suitable for session meta / session layer / trace.
+    /// Always valid UTF-8 and `len <= summary_cap` (product-owned constant).
+    summary: []const u8,
+};
+
+/// Single authoritative context view type (D-011 core-context-ownership-001).
+/// Returned by the `ContextView` port; consumed by the loop and product adapters.
 pub const View = struct {
     /// Borrowed / arena-owned messages for the provider call.
     messages: []const message.Message,
     /// Set when history was trimmed for the view (transcript unchanged).
-    compaction: ?context_mod.CompactionEvent = null,
+    compaction: ?CompactionEvent = null,
 };
 
 pub const ContextViewVTable = struct {

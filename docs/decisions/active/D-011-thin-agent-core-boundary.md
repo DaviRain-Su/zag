@@ -114,7 +114,7 @@ the boundary migration and must not add a third core event channel.
 | `tool.zig`, `tool_error.zig` | Keep as generic Tool runtime and soft-error contract. |
 | `cancel.zig` | Keep the cancel token only; process SIGINT already belongs to CLI. |
 | `observer.zig` | Moved to coding-agent (core-observation-ownership-001); the whole module lives in `zag-coding-agent`. Core's only event port is `LoopEventSink`. |
-| `context.zig` | Split: protocol-history validation stays; layers/compaction implementation moves to coding-agent. |
+| `context.zig` | Split (core-context-ownership-001): protocol-history validation stays in Core as `protocol_history.zig`; layers/compaction implementation moved to coding-agent `context.zig`; `CompactionEvent`/`View` single authoritative definitions in Core `context_view.zig`. |
 | `permissions.zig` | Replace core dependency with `ToolPolicy`; concrete Gate/remember/prompt wiring moves out. |
 | `workspace.zig`, `shell_policy.zig` | Replace core dependencies with required ports; implementations move to coding-agent. |
 | `session_store.zig` | Moved to coding-agent (core-session-ownership-001); Transcript remains core. |

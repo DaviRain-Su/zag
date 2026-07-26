@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Current code | `packages/zag-agent-core/src/context.zig`; `zag-coding-agent/src/project.zig`; session sink in `agent.zig` |
+| Current code | `packages/zag-coding-agent/src/context.zig` (product layers/compaction/summary/lineage); `packages/zag-agent-core/src/protocol_history.zig` (Tool-bundle legality); `packages/zag-agent-core/src/context_view.zig` (`CompactionEvent`/`View` port types); session sink in `agent.zig` |
 | D-011 target | protocol-history legality in Core; prompt layers/compaction behind coding-agent `ContextView` |
 | Current maturity | **L2** — final-view accounting, ID-exact tool bundles, lineage, shared cap (h-context-001) |
 | Target | L3 repo map/intelligent selection (C5) |
@@ -33,6 +33,11 @@ Transcript is authoritative. Context view is a per-provider-call projection asse
 | ephemeral | turn-only hints/doctor/Oracle advice | one turn |
 
 ## Tool-bundle policy (fail-closed)
+
+Protocol-history validation is owned by Core (`protocol_history.zig`). The loop
+independently validates the projected view body **after** the product `ContextView`
+returns and **before** `Provider.chat`, regardless of how the product built the view.
+The product `viewForModel` also validates internally before any trim.
 
 Body history (after leading transcript systems) is validated before trim:
 

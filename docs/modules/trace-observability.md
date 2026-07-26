@@ -138,7 +138,7 @@ transcript/session-owned. Fixtures infer neither process-tree cleanup nor mid-fl
 | Field | Cap / rule |
 |-------|------------|
 | `dropped` | Final omitted body-prefix count (same as session event) |
-| `summary` | Bounded UTF-8; `cap_compaction_summary` = `context.summary_cap` (**800**). Prefer `emitCompactionEvent(CompactionEvent)`. |
+| `summary` | Bounded UTF-8; `cap_compaction_summary` = `context.summary_cap` (**800**, product-owned `zag-coding-agent/src/context.zig`). Prefer `emitCompactionEvent(CompactionEvent)`. |
 
 Loop order: session `on_compaction` sink first; on sink OOM the run fails with `OutOfMemory` and **no** compaction line is written. Success-path session meta and trace summary are byte-equal. Note-then-trace-emit failure is a visible run error (not silent success). Do not weaken exact-terminal / error behavior for other kinds.
 

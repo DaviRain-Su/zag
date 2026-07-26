@@ -29,7 +29,7 @@ const Io = std.Io;
 const core = @import("zag-agent-core");
 const message = core.message;
 const workspace = @import("workspace.zig");
-const context_mod = core.context;
+const context_mod = @import("context.zig");
 const redact_mod = @import("redact.zig");
 
 /// Stable exported trace schema version written on every `run_start`.

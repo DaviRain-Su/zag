@@ -115,7 +115,7 @@ provider_retry, compaction, run_end
 
 Source: [`packages/zag-coding-agent/src/trace.zig:67-75`](../../packages/zag-coding-agent/src/trace.zig).
 
-### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001, core-policy-ownership-001 done)
+### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001, core-policy-ownership-001, core-context-ownership-001 done)
 
 Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace, redaction, and verbose logging are coding-agent
 adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The later
@@ -141,6 +141,17 @@ root itself (the product facade `Agent.reply` resolves `resolveCwdReal` before f
 `LoopEventSink` — as borrowed dependencies. Missing is never implicitly allow/yolo/identity/discard; a
 low-level host selects permissive helpers (`allowAllForTrustedHost`, `identity`, `discard`) explicitly.
 `zag-coding-agent.Agent` always installs product defaults equivalent to `ask + workspace jail + shell protect`.
+
+`core-context-ownership-001` split the former Core `context.zig`: protocol-history validation
+(`validateBodyHistory`, `alignToLegalStart`, `unitEnd`, `validateViewBody`) stays in Core
+(`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to
+`zag-coding-agent` (`context.zig`). `CompactionEvent` and `ContextView.View` are single authoritative
+definitions in Core `context_view.zig`; the coding-agent `context` module aliases these types and never
+redefines them. The loop independently validates the protocol-visible body of the projected view **after**
+the `ContextView` returns and **before** `Provider.chat`, regardless of how the product built the view —
+a hostile `ContextView` returning a malformed bundle is rejected with `InvalidContext` and the provider is
+never called. The CLI resolves `coding.context` (`Options`, `optionsFromBudget`) through the public
+`zag-coding-agent` root; Core root no longer exports a product `context` module.
 
 ### 4.1 Event invariants
 

@@ -1,8 +1,17 @@
-//! Context window policy — what the model sees vs full transcript (H4 / h-context-001).
+//! Context window policy — product-owned prompt layers, budget, and
+//! fixed-point compaction (H4 / h-context-001 / D-011 core-context-ownership-001).
 //!
 //! **Transcript is authoritative.** Compaction never deletes transcript rows;
 //! it only shapes the model **view** and may return a `CompactionEvent` for
 //! session metadata / trace.
+//!
+//! Protocol-history validation (Tool-call/result bundle legality) is owned by
+//! Core (`protocol_history.zig`); this module calls it and adds product-owned
+//! prompt layers, token/character budget, fixed-point compaction, and
+//! summary/lineage.
+//!
+//! `CompactionEvent` and `View` are the single authoritative definitions in
+//! Core `context_view.zig`; this module aliases them and never redefines them.
 //!
 //! Four prompt layers (assembled into leading `system` messages in the view):
 //! system → project → session → ephemeral, then the selected history tail.
@@ -56,7 +65,10 @@
 //! not claimed as transactional across that failure.
 
 const std = @import("std");
-const message = @import("message.zig");
+const core = @import("zag-agent-core");
+const message = core.message;
+const context_view = core.context_view;
+const protocol_history = core.protocol_history;
 
 /// Shared hard cap for heuristic compaction summaries (session + trace + view).
 /// Built events never exceed this after clamp.
@@ -67,6 +79,12 @@ pub const default_summary_max_chars: usize = summary_cap;
 
 /// Explicit truncation marker embedded in lineage records (never silent).
 pub const lineage_truncated_marker = "[LINEAGE_TRUNCATED]";
+
+/// Single authoritative compaction fact type (Core `context_view.zig`).
+pub const CompactionEvent = context_view.CompactionEvent;
+
+/// Single authoritative context view type (Core `context_view.zig`).
+pub const View = context_view.View;
 
 pub const Error = error{
     OutOfMemory,
@@ -119,21 +137,6 @@ pub fn optionsFromBudget(
         .min_tail_messages = overrides.min_tail_messages orelse defaults.min_tail_messages,
     };
 }
-
-pub const CompactionEvent = struct {
-    /// Number of non-system body messages omitted from the **final** returned view.
-    dropped: usize,
-    /// Arena-owned summary text suitable for session meta / session layer / trace.
-    /// Always valid UTF-8 and `len <= summary_cap`.
-    summary: []const u8,
-};
-
-pub const View = struct {
-    /// Borrowed / arena-owned messages for the provider call.
-    messages: []const message.Message,
-    /// Set when history was trimmed for the view (transcript unchanged).
-    compaction: ?CompactionEvent = null,
-};
 
 /// Clamp requested summary budget: 0 → full cap; always ≤ `summary_cap`; at least
 /// `summaryFloor` so the dropped header (and minimal lineage when prior exists)
@@ -260,14 +263,14 @@ pub fn viewForModel(
     const body = full[hist_start..];
 
     // Fail closed on malformed tool bundles before any trim/provider path.
-    try validateBodyHistory(body);
+    protocol_history.validateBodyHistory(body) catch return error.InvalidContext;
 
     // --- Stage A: count trim + legal Tool-bundle align ---
     var start: usize = 0;
     if (opts.max_tail_messages > 0 and body.len > opts.max_tail_messages) {
         start = body.len - opts.max_tail_messages;
     }
-    start = try alignToLegalStart(body, start);
+    start = protocol_history.alignToLegalStart(body, start) catch return error.InvalidContext;
 
     // Layer cost without a new compaction summary (prior session layer may exist).
     var layer_chars: usize = if (use_layers)
@@ -363,79 +366,6 @@ pub fn viewForModel(
     return .{ .messages = out, .compaction = compaction };
 }
 
-// ── Tool-bundle validation & legal boundaries ───────────────────────────────
-
-/// Fail-closed body policy (non-system history):
-/// - every assistant `tool_calls` bundle has nonempty **unique** call IDs;
-/// - immediately followed by **exactly one** contiguous `tool` result per call
-///   in **deterministic call-list order** (same order as `tool_calls`);
-/// - no unknown / duplicate / missing / empty IDs;
-/// - no orphan `tool` rows;
-/// - no partial/incomplete bundles at end of body.
-pub fn validateBodyHistory(body: []const message.Message) error{InvalidContext}!void {
-    var i: usize = 0;
-    while (i < body.len) {
-        switch (body[i].role) {
-            .system, .user => i += 1,
-            .assistant => {
-                if (body[i].tool_calls) |calls| {
-                    if (calls.len == 0) {
-                        i += 1;
-                        continue;
-                    }
-                    try validateCallIds(calls);
-                    if (i + 1 + calls.len > body.len) return error.InvalidContext;
-                    for (calls, 0..) |c, j| {
-                        const t = body[i + 1 + j];
-                        if (t.role != .tool) return error.InvalidContext;
-                        const tid = t.tool_call_id orelse return error.InvalidContext;
-                        if (tid.len == 0) return error.InvalidContext;
-                        if (!std.mem.eql(u8, tid, c.id)) return error.InvalidContext;
-                    }
-                    i += 1 + calls.len;
-                } else {
-                    i += 1;
-                }
-            },
-            .tool => return error.InvalidContext,
-        }
-    }
-}
-
-fn validateCallIds(calls: []const message.ToolCall) error{InvalidContext}!void {
-    for (calls, 0..) |c, ci| {
-        if (c.id.len == 0) return error.InvalidContext;
-        for (calls[0..ci]) |prev| {
-            if (std.mem.eql(u8, prev.id, c.id)) return error.InvalidContext;
-        }
-    }
-}
-
-/// If `start` lands inside tool results, walk back to the carrier assistant.
-/// Body must already pass `validateBodyHistory` (or this returns InvalidContext).
-pub fn alignToLegalStart(body: []const message.Message, start: usize) error{InvalidContext}!usize {
-    if (start >= body.len) return start;
-    if (body[start].role != .tool) return start;
-    var s = start;
-    while (s > 0 and body[s].role == .tool) s -= 1;
-    if (body[s].role != .assistant or body[s].tool_calls == null or body[s].tool_calls.?.len == 0) {
-        return error.InvalidContext;
-    }
-    return s;
-}
-
-/// Exclusive end index of the atomic unit starting at `start` (legal start).
-/// Assistant with N calls → assistant + N results; otherwise one message.
-pub fn unitEnd(body: []const message.Message, start: usize) usize {
-    if (start >= body.len) return start;
-    if (body[start].role == .assistant) {
-        if (body[start].tool_calls) |calls| {
-            if (calls.len > 0) return start + 1 + calls.len;
-        }
-    }
-    return start + 1;
-}
-
 /// Soft char-trim: advance absolute `start` by atomic legal units while over
 /// budget, respecting `min_tail_messages`.
 fn charTrimStart(
@@ -450,7 +380,7 @@ fn charTrimStart(
         const selected = body[start..];
         const total = layer_chars + estimateChars(selected);
         if (total <= opts.max_chars) break;
-        const next = unitEnd(body, start);
+        const next = protocol_history.unitEnd(body, start);
         if (next <= start or next > body.len) break;
         // Keep min_tail messages; unit may span multiple messages.
         if (body.len - next < opts.min_tail_messages) break;
@@ -465,7 +395,7 @@ pub fn initialCountTrimStart(body: []const message.Message, opts: Options) error
     if (opts.max_tail_messages > 0 and body.len > opts.max_tail_messages) {
         start = body.len - opts.max_tail_messages;
     }
-    return try alignToLegalStart(body, start);
+    return protocol_history.alignToLegalStart(body, start) catch return error.InvalidContext;
 }
 
 /// Count-trim + first-pass char trim without summary re-cost (legacy intermediate).
@@ -479,7 +409,7 @@ pub fn intermediateDroppedBeforeSummary(
     var hist_start: usize = 0;
     while (hist_start < full.len and full[hist_start].role == .system) : (hist_start += 1) {}
     const body = full[hist_start..];
-    try validateBodyHistory(body);
+    protocol_history.validateBodyHistory(body) catch return error.InvalidContext;
     const start = try initialCountTrimStart(body, opts);
     const layer_chars: usize = if (use_layers)
         layerEstimate(layers, null)
@@ -1031,21 +961,6 @@ test "h-context: multi-tool exact IDs atomic align and advance" {
         .assistantText("done"),
     };
 
-    // Count trim that would land on a2 result → align back to carrier assistant.
-    const body = full[1..];
-    // Index of toolResult a2 within body: user, asst, user, asst_tools, a1, a2 → 5
-    const land_on_a2: usize = 5;
-    try std.testing.expect(body[land_on_a2].role == .tool);
-    try std.testing.expectEqualStrings("a2", body[land_on_a2].tool_call_id.?);
-    const aligned = try alignToLegalStart(body, land_on_a2);
-    try std.testing.expect(body[aligned].role == .assistant);
-    try std.testing.expect(body[aligned].tool_calls != null);
-    try std.testing.expectEqual(@as(usize, 2), body[aligned].tool_calls.?.len);
-
-    // Atomic unit end skips assistant + both results.
-    const end = unitEnd(body, aligned);
-    try std.testing.expectEqual(aligned + 3, end);
-
     const v = try viewForModel(arena, &full, .{
         .max_tail_messages = 4,
         .max_chars = 0,
@@ -1099,7 +1014,6 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .user("u"),
         .toolResult("z", "nope"),
     };
-    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&orphan));
     try std.testing.expectError(error.InvalidContext, viewForModel(arena, &orphan, .{}, .{ .system = "b" }));
 
     // Unknown / wrong ID.
@@ -1109,7 +1023,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .toolResult("a1", "ok"),
         .toolResult("WRONG", "bad"),
     };
-    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&wrong_id));
+    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &wrong_id, .{}, .{}));
 
     // Out of order.
     const ooo = [_]message.Message{
@@ -1118,7 +1032,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .toolResult("a2", "second-first"),
         .toolResult("a1", "first-second"),
     };
-    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&ooo));
+    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &ooo, .{}, .{}));
 
     // Missing result (incomplete).
     const incomplete = [_]message.Message{
@@ -1126,7 +1040,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .assistantToolCalls("", &calls),
         .toolResult("a1", "only-one"),
     };
-    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&incomplete));
+    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &incomplete, .{}, .{}));
 
     // Duplicate IDs in calls.
     const dups = [_]message.Message{
@@ -1135,7 +1049,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .toolResult("x", "1"),
         .toolResult("x", "2"),
     };
-    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&dups));
+    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &dups, .{}, .{}));
 
     // Empty call id.
     const empty = [_]message.Message{
@@ -1143,7 +1057,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .assistantToolCalls("", &empty_id),
         .toolResult("", "x"),
     };
-    try std.testing.expectError(error.InvalidContext, validateBodyHistory(&empty));
+    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &empty, .{}, .{}));
 }
 
 test "h-context: min_tail soft budget terminates honestly" {

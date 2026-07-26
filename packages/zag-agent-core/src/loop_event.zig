@@ -14,7 +14,7 @@
 
 const std = @import("std");
 const message = @import("message.zig");
-const context_mod = @import("context.zig");
+const context_view_mod = @import("context_view.zig");
 
 /// One Core source fact. Variants mirror the existing trace/observer facts
 /// the loop already produced (D-011 module: loop-turn / trace-observability).
@@ -56,7 +56,7 @@ pub const LoopEvent = union(enum) {
         err_name: []const u8,
     },
     /// Context projection/compaction fact (session note + trace `compaction`).
-    context_compaction: context_mod.CompactionEvent,
+    context_compaction: context_view_mod.CompactionEvent,
 };
 
 /// Sink errors. `OutOfMemory` is a typed allocator failure; `SinkFailed` is a
