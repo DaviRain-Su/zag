@@ -115,11 +115,12 @@ provider_retry, compaction, run_end
 
 Source: [`packages/zag-coding-agent/src/trace.zig:67-75`](../../packages/zag-coding-agent/src/trace.zig).
 
-### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001, core-policy-ownership-001, core-context-ownership-001 done)
+### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001, core-policy-ownership-001, core-context-ownership-001 done; harness-events-001 in-progress)
 
 Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace, redaction, and verbose logging are coding-agent
-adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The later
-`harness-events-001` public callback is a coding-agent projection and does not add Core `lifecycle.zig`. Existing
+adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The
+`harness-events-001` public callback is a coding-agent projection (`LifecycleObserver` + `LifecycleEvent` in
+`packages/zag-coding-agent/src/lifecycle.zig`) and does not add Core `lifecycle.zig`. Existing
 Observer behavior is preserved via the `RunBridge` event-sink adapter in `zag-coding-agent`.
 
 `core-observation-ownership-001` moved `trace.zig`, `redact.zig`, and `observer.zig` from `zag-agent-core` to

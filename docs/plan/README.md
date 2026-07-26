@@ -20,7 +20,7 @@ docs/plan/
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
 | Core responsibility correction | **done** at `6667c03` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); protocol-history validation stays in Core while product layers/compaction live in coding-agent; merged-main std **513/513**, curl **512/512** |
-| Next code task | `harness-events-001` **ready** — product SDK lifecycle adapter over Core source facts and facade run facts |
+| Next code task | `harness-events-001` **in-progress** — product SDK lifecycle adapter over Core source facts and facade run facts |
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -56,7 +56,7 @@ completed foundation
    core-context-ownership-001 (done) ✅
                   │
                   ▼
-        harness-events-001 (M1 product adapter)
+        harness-events-001 (M1 product adapter, in-progress)
            ├────► harness-steering-001
            └────► session-fork-001
                            │
@@ -78,7 +78,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
-| [harness-events-001](./tasks/harness-events-001.md) | P1 | ready | Coding-agent SDK lifecycle adapter after D-011 migration |
+| [harness-events-001](./tasks/harness-events-001.md) | P1 | in-progress | Coding-agent SDK lifecycle adapter after D-011 migration |
 
 ### Completed foundation
 

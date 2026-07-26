@@ -21,15 +21,24 @@ const context_view_mod = @import("context_view.zig");
 pub const LoopEvent = union(enum) {
     /// Turn counter increment (trace `turn`).
     turn_start: u32,
-    /// Complete validated assistant message text (observer `assistant_text` +
-    /// trace `assistant`).
-    assistant_message: []const u8,
+    /// Complete validated assistant message (observer `assistant_text` +
+    /// trace `assistant`). `has_tools` is `turn.wantsTools()` — mandatory, no
+    /// default false, so adapters cannot misreport whether the turn requested
+    /// tool execution.
+    assistant_message: struct {
+        text: []const u8,
+        has_tools: bool,
+    },
     /// Provider-reported usage for the just-appended assistant turn.
     usage: message.Usage,
     /// Tool dispatch start (observer `tool_call` + trace `tool_call`).
     tool_start: message.ToolCall,
     /// Tool dispatch end (observer `tool_result` + trace `tool_result`).
+    /// `id` is the borrowed Tool-call id (mandatory, no `""` fallback) so
+    /// adapters can correlate start/end by turn + call index + id without
+    /// relying on transcript/session ownership.
     tool_end: struct {
+        id: []const u8,
         name: []const u8,
         body: []const u8,
     },
@@ -105,5 +114,5 @@ fn discardEmit(_: ?*anyopaque, _: LoopEvent) SinkError!void {
 test "discard sink swallows events without error" {
     const sink = LoopEventSink.discard();
     try sink.emit(.{ .turn_start = 1 });
-    try sink.emit(.{ .assistant_message = "hi" });
+    try sink.emit(.{ .assistant_message = .{ .text = "hi", .has_tools = false } });
 }

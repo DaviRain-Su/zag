@@ -46,6 +46,12 @@ pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
 pub const golden_tests = @import("golden_tests.zig");
 
+// harness-events-001: public SDK lifecycle observer (product adapter over Core
+// source facts + facade run facts). No Core lifecycle.zig.
+pub const lifecycle = @import("lifecycle.zig");
+pub const LifecycleObserver = lifecycle.LifecycleObserver;
+pub const LifecycleEvent = lifecycle.LifecycleEvent;
+
 /// WireAdapter → Provider bridge (not in core).
 pub const WireProvider = wire_provider.WireProvider;
 pub const Adapter = wire_provider.Adapter;

@@ -124,8 +124,8 @@ failure. Moving the algorithm does not weaken `invalid_context`, byte-equality, 
 Core emits only facts it directly witnesses:
 
 - turn start/count;
-- complete validated assistant message and provider usage;
-- Tool start and Tool end with turn/call-index/call-id correlation;
+- complete validated assistant message (`{ text, has_tools }`) and provider usage;
+- Tool start and Tool end with turn/call-index/call-id correlation (`tool_end` carries a borrowed `id`);
 - policy, jail, and shell decisions;
 - provider retry;
 - context projection/compaction fact;
@@ -161,8 +161,9 @@ Trace commit failure takes precedence over an earlier successful loop result. `d
 | In-process SDK lifecycle | coding-agent | Borrowed synchronous callbacks; copy to retain. |
 | `headless-v1` | CLI | Independently versioned mapping; exactly one process terminal; never serialize a Zig union directly. |
 
-There is no separate core `LifecycleObserver`. The paused `harness-events-001` task is redesigned after this migration as
-a product SDK event adapter over Core source facts and facade run facts.
+There is no separate core `LifecycleObserver`. The `harness-events-001` task is implemented as
+a product SDK event adapter (`packages/zag-coding-agent/src/lifecycle.zig`) over Core source facts
+and facade run facts; implementation is present, closeout pending merged-main Gate.
 
 ## Product-owned state
 
@@ -214,7 +215,7 @@ core-policy-ownership-001   ✓ done — concrete permissions/HITL/remember, wor
 core-context-ownership-001   ✓ done — protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent`/`View` single authoritative definitions in Core `context_view.zig`; loop independently validates projected view body before Provider.chat
         │
         ▼
-harness-events-001 (redesigned product SDK lifecycle; no core lifecycle.zig)
+harness-events-001 (in-progress — product SDK lifecycle adapter; no core lifecycle.zig)
 ```
 
 Tasks are serialized because they overlap `loop.zig`, `agent.zig`, roots, SDK fixture, and Product Spec docs.

@@ -1,5 +1,5 @@
 ---
-status: re-queued
+status: in-progress
 scope: in-process Zig SDK lifecycle events
 prerequisite: core-context-ownership-001
 ---
@@ -7,7 +7,9 @@ prerequisite: core-context-ownership-001
 # Harness lifecycle events
 
 This module records the post-D-011 target for trusted in-process Zig consumers. It supersedes the proposed core
-`lifecycle.zig`/separate `LifecycleObserver` design. Implementation is blocked until the thin-Core migration is complete.
+`lifecycle.zig`/separate `LifecycleObserver` design. Implementation is present (closeout pending merged-main Gate):
+`zag-coding-agent` owns the public `LifecycleObserver` + `LifecycleEvent` union over Core `LoopEvent` source facts
+and facade run facts. No Core `lifecycle.zig` is created.
 
 ## Boundary
 
@@ -36,10 +38,10 @@ The public SDK lifecycle is a **coding-agent adapter** over two truthful owners:
 
 No third Core event channel is added.
 
-## Planned public vocabulary
+## Public vocabulary
 
-Exact Zig type names are selected by `harness-events-001` after the ownership migration. The minimum source-backed
-vocabulary remains:
+Exact Zig type names are defined by `harness-events-001` in `packages/zag-coding-agent/src/lifecycle.zig`. The
+source-backed vocabulary is:
 
 | Event | Owner | Required payload | Source fact |
 |---|---|---|---|
@@ -49,8 +51,21 @@ vocabulary remains:
 | `tool_end` | Core Loop fact mapped by coding-agent | same correlation plus final body | one result exists, including deny/error/cancel bodies |
 | `run_terminal` | Coding-agent facade | turns, truthful `ok`, stop reason, cumulative usage | session/Trace precedence and final public outcome are known |
 
-`run_start` and `run_terminal` are not variants of Core `LoopEvent`. The SDK adapter may expose them in one product
+`run_start` and `run_terminal` are not variants of Core `LoopEvent`. The SDK adapter exposes them in one product
 callback union because coding-agent witnesses both facade and loop facts.
+
+### Source-truth: start vs end-only
+
+A Tool call that **enters serial execution** emits `tool_start` then `tool_end` (ordinary, soft-result, deny, jail,
+shell, handler-failure, invalid-arguments, unknown-tool paths). A **pending accepted** Tool call that is cancelled
+**between tools** never enters serial execution: it emits `tool_end` only with a `cancelled` body — **no fabricated
+`tool_start`**. The call index is still derived from program order (the index the call would have occupied), so
+consumers can correlate by turn + call index + id without a synthetic start.
+
+A hard failure (OOM / sink failure) that occurs **after** `tool_start` but **before** any result exists does **not**
+fabricate a `tool_end`: the run terminates with a truthful `run_terminal` (out_of_memory / trace_error) and the
+started Tool call has no end event. Consumers must not assume every `tool_start` has a matching `tool_end` when a
+hard failure stops the run mid-call.
 
 ## Ordering
 
@@ -67,11 +82,12 @@ Required invariants:
 
 1. A preflight failure before `run_start` produces no started-run terminal.
 2. `assistant_message` is emitted only after a complete validated assistant turn is appended.
-3. Every `tool_start` has one matching `tool_end` with identical turn, call index, and call id.
-4. Pending accepted calls backfilled with `code=cancelled` receive truthful `tool_end`.
-5. `run_terminal` is final and emitted exactly once by coding-agent after session/Trace outcome precedence is known.
-6. Trace failure cannot preserve an earlier successful lifecycle claim.
-7. Callback order is synchronous program order; no queue/reordering is introduced.
+3. Every `tool_start` that is **not** interrupted by a hard failure has one matching `tool_end` with identical turn, call index, and call id.
+4. Pending accepted calls backfilled with `code=cancelled` between tools receive truthful `tool_end` **only** (no fabricated `tool_start`); their call index is derived from program order.
+5. A hard failure (OOM / sink failure) after `tool_start` and before a result does not fabricate `tool_end`; the run ends with a truthful `run_terminal`.
+6. `run_terminal` is final and emitted exactly once by coding-agent after session/Trace outcome precedence is known.
+7. Trace failure cannot preserve an earlier successful lifecycle claim.
+8. Callback order is synchronous program order; no queue/reordering is introduced.
 
 ## Ownership and callback behavior
 
@@ -130,7 +146,8 @@ a deliberate projection, not an alias or serialized representation of that inter
 
 ## Delivery status
 
-`harness-events-001` is `pending` behind:
+`harness-events-001` is **in-progress** (implementation present, closeout pending merged-main Gate). The dependency
+chain is complete:
 
 ```text
 core-boundary-001
@@ -139,11 +156,12 @@ core-boundary-001
   → core-observation-ownership-001
   → core-policy-ownership-001
   → core-context-ownership-001
-  → harness-events-001
+  → harness-events-001 (in-progress)
 ```
 
 The existing `task/harness-events-001` implementation branch is not a merge candidate because it implements the
-superseded Core lifecycle boundary.
+superseded Core lifecycle boundary. The `task/harness-events-001-v2` branch implements the product adapter over Core
+source facts and facade run facts.
 
 ## Related
 

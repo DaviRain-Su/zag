@@ -235,7 +235,10 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         try transcript.appendAssistantTurn(turn);
         last_text = transcript.items()[transcript.items().len - 1].content;
         // assistant_message: user Observer/internal verbose path, then Trace assistant.
-        deps_run.event_sink.emit(.{ .assistant_message = last_text }) catch |err| return mapSinkEmit(err);
+        deps_run.event_sink.emit(.{ .assistant_message = .{
+            .text = last_text,
+            .has_tools = turn.wantsTools(),
+        } }) catch |err| return mapSinkEmit(err);
         if (turn.usage) |u| {
             // usage: Trace usage, then user Observer/ledger/verbose/cost.
             deps_run.event_sink.emit(.{ .usage = u }) catch |err| return mapSinkEmit(err);
@@ -566,7 +569,7 @@ fn finishTool(
 ) RunError!void {
     // tool_end: Observer, then Trace tool_result.
     deps.event_sink.emit(.{
-        .tool_end = .{ .name = call.name, .body = body },
+        .tool_end = .{ .id = call.id, .name = call.name, .body = body },
     }) catch |err| return mapSinkEmit(err);
     try transcript.appendToolResult(call.id, body);
 }
@@ -601,13 +604,18 @@ fn writeDesc(name: []const u8) zt.ToolDescriptor {
     };
 }
 
-/// Recording sink for loop tests: counts event kinds (no payload storage).
+/// Recording sink for loop tests: counts event kinds and captures last payload
+/// values for correlation assertions (has_tools, tool_end id).
 const RecordingSink = struct {
     turn_starts: u32 = 0,
     assistant_messages: u32 = 0,
+    last_assistant_has_tools: bool = false,
+    /// OR of every assistant_message.has_tools (multi-turn runs may end text-only).
+    any_assistant_has_tools: bool = false,
     usages: u32 = 0,
     tool_starts: u32 = 0,
     tool_ends: u32 = 0,
+    last_tool_end_id: []const u8 = "",
     policy_decisions: u32 = 0,
     jail_decisions: u32 = 0,
     shell_decisions: u32 = 0,
@@ -627,10 +635,17 @@ const RecordingSink = struct {
         }
         switch (event) {
             .turn_start => self.turn_starts += 1,
-            .assistant_message => self.assistant_messages += 1,
+            .assistant_message => |am| {
+                self.assistant_messages += 1;
+                self.last_assistant_has_tools = am.has_tools;
+                if (am.has_tools) self.any_assistant_has_tools = true;
+            },
             .usage => self.usages += 1,
             .tool_start => self.tool_starts += 1,
-            .tool_end => self.tool_ends += 1,
+            .tool_end => |te| {
+                self.tool_ends += 1;
+                self.last_tool_end_id = te.id;
+            },
             .policy_decision => self.policy_decisions += 1,
             .jail_decision => self.jail_decisions += 1,
             .shell_decision => self.shell_decisions += 1,
@@ -741,6 +756,8 @@ test "loop stops when model returns text only" {
 
     try std.testing.expectEqualStrings("done", result.final_text);
     try std.testing.expectEqual(@as(u32, 1), result.turns);
+    try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
+    try std.testing.expect(!sink.last_assistant_has_tools);
 }
 
 test "permission deny yields tool error without executing" {
@@ -812,6 +829,13 @@ test "permission deny yields tool error without executing" {
         }
     }
     try std.testing.expect(found_deny);
+    // Turn 1 requested tools; turn 2 is text-only (last_assistant_has_tools=false).
+    try std.testing.expect(sink.any_assistant_has_tools);
+    try std.testing.expect(!sink.last_assistant_has_tools);
+    try std.testing.expectEqual(@as(u32, 2), sink.assistant_messages);
+    try std.testing.expectEqual(@as(u32, 1), sink.tool_starts);
+    try std.testing.expectEqual(@as(u32, 1), sink.tool_ends);
+    try std.testing.expectEqualStrings("c1", sink.last_tool_end_id);
 }
 
 test "jail deny absolute path without writing" {
@@ -1016,6 +1040,12 @@ test "cancel after chat completes open tool pairs" {
 
     try std.testing.expect(result.stop_reason == .cancelled);
     try std.testing.expect(result.turns == 1);
+    try std.testing.expect(sink.last_assistant_has_tools);
+    // Both accepted calls were cancelled before serial execution: truthful
+    // end-only facts, with no fabricated tool_start.
+    try std.testing.expectEqual(@as(u32, 0), sink.tool_starts);
+    try std.testing.expectEqual(@as(u32, 2), sink.tool_ends);
+    try std.testing.expectEqualStrings("c2", sink.last_tool_end_id);
 
     var cancelled_tools: u32 = 0;
     for (transcript.items()) |m| {

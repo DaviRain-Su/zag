@@ -17,7 +17,7 @@ Run one generic agent loop: obtain a model view through `ContextView`, request o
 1. The model chooses Tool calls; the harness validates, executes, and returns results.
 2. Expected Tool failures are machine-readable soft results, not process crashes.
 3. Provider input is a context view; transcript remains authoritative.
-4. Loop source facts are emitted once in program order; product run preflight/start/terminal remain facade-owned.
+4. Loop source facts are emitted once in program order; product run preflight/start/terminal remain facade-owned. Core `LoopEvent.assistant_message` carries `{ text, has_tools }` (mandatory, no default false); `LoopEvent.tool_end` carries a borrowed `id` (mandatory, no `""` fallback).
 5. Required `ToolPolicy → Jail → ShellPolicy → execution` remains ordered; no missing safety port becomes allow/yolo.
 6. Cancellation never leaves unmatched accepted Tool calls in transcript.
 7. Core owns Toolset/protocol-history validation and execution ordering, not concrete product policy, compaction, persistence, redaction, or logging.
@@ -58,7 +58,7 @@ Malformed host registration is not an `unknown_tool` soft result; it fails befor
 - **curl** actively enforces deadline/cancel; **std** fails closed with `unsupported_control` when a deadline is configured (ordinary no-timeout std remains usable).
 - Loop is sole retry/backoff owner (overflow-safe ≤25ms slices); Timeout/Cancelled/UnsupportedControl are not retried.
 - Only a complete validated `AssistantTurn` is appended; partial streamed tool-call fragments are discarded on cancel/timeout.
-- Pending **accepted** tool calls still get cancelled bodies for transcript consistency when cancel fires between tools.
+- Pending **accepted** tool calls still get cancelled bodies for transcript consistency when cancel fires between tools. These pending-cancel calls emit `tool_end` **only** (no fabricated `tool_start`); the call index is derived from program order so consumers can correlate by turn + call index + id.
 - Tool handlers that declare `.cooperative` cancel metadata do not yet receive mid-flight preemption. This is post-H shell/process ownership work, not part of h-provider-001 or the between-Tool H fixture.
 
 ## Execution strategy
@@ -69,7 +69,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 - D-011 seam migration step 1 (core-seams-001) is complete: `loop.run` routes through explicit `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`, and fallible canonical `LoopEventSink`. Current product behavior is preserved via adapters in `zag-coding-agent.RunBridge`. Ownership moves (session/Trace/policy/context files) remain pending later tasks. See [core-boundary](./core-boundary.md).
 - Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work and is not an H L2 requirement.
-- High-level SDK lifecycle is re-queued after the boundary migration; no core `lifecycle.zig` is planned.
+- High-level SDK lifecycle is **in-progress** (implementation present, closeout pending) as a product adapter in `zag-coding-agent`; no core `lifecycle.zig` is planned.
 
 ## L2 acceptance
 

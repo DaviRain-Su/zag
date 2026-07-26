@@ -29,6 +29,7 @@ const shell_policy = @import("shell_policy.zig");
 const workspace = @import("workspace.zig");
 const trace_mod = @import("trace.zig");
 const redact_mod = @import("redact.zig");
+const lifecycle_mod = @import("lifecycle.zig");
 const loop = core.loop;
 const cancel_mod = core.cancel;
 
@@ -77,6 +78,11 @@ pub const Options = struct {
     /// The observer value is copied into options; the pointer/data it references
     /// must remain valid for the lifetime of every `Agent.reply` call.
     observer: ?observer_mod.Observer = null,
+    /// Optional SDK lifecycle observer (harness-events-001). Synchronous,
+    /// callback-borrowed, infallible. Invoked in program order during
+    /// `Agent.reply`. Not a replacement for the required Core sink or the
+    /// existing `Observer`. Copy retained data inside the callback.
+    lifecycle: ?lifecycle_mod.LifecycleObserver = null,
     /// Optional source redactor to **clone** into Agent-owned policy.
     /// When set, `secrets` / `pattern_redaction` are ignored for construction.
     redactor: ?*const redact_mod.Redactor = null,
@@ -397,6 +403,24 @@ const RunBridge = struct {
     /// exit. Null when resolve failed (handlers/jail lazy-resolve or fail closed).
     workspace_root_real: ?[]u8 = null,
 
+    // ── harness-events-001 lifecycle derivation ────────────────────────────
+    //
+    // `current_turn` and `next_call_index` are derived from the Core source
+    // facts that flow through `bridgeSinkEmit`. `turn_start` resets
+    // `next_call_index` to 0 and sets `current_turn`. `tool_start` uses the
+    // current index but does NOT increment (the matching `tool_end` increments
+    // after emit). `tool_end` (including end-only cancelled) uses the current
+    // index and increments after emit. This keeps ordinary start→end pairs at
+    // the same index, and pending-cancel end-only calls at the index they would
+    // have occupied in program order.
+
+    /// 1-based turn counter, derived from `LoopEvent.turn_start`.
+    current_turn: u32 = 0,
+    /// 0-based call index within the current turn, derived from tool_start/tool_end.
+    /// A start uses this index without advancing it; the corresponding end (or
+    /// an end-only pending cancellation) advances it after successful fan-out.
+    next_call_index: u32 = 0,
+
     /// Build the `loop.Deps` borrowing this bridge's fields. The caller must
     /// keep this `RunBridge` alive and unmoved for the duration of `loop.run`.
     fn deps(self: *RunBridge) loop.Deps {
@@ -596,15 +620,23 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
     const a = bridge.agent;
     switch (event) {
         .turn_start => |turn| {
+            bridge.current_turn = turn;
+            bridge.next_call_index = 0;
             if (bridge.trace) |tr| {
                 tr.emitTurn(turn) catch |err| return mapTraceToSink(err);
             }
         },
-        .assistant_message => |text| {
-            // user Observer/internal verbose path, then Trace assistant.
-            emitObserver(a, .{ .assistant_text = text });
+        .assistant_message => |am| {
+            // Existing Observer remains first; lifecycle is an infallible
+            // product projection; durable Trace keeps its prior final position.
+            emitObserver(a, .{ .assistant_text = am.text });
+            a.emitLifecycle(.{ .assistant_message = .{
+                .turn = bridge.current_turn,
+                .text = am.text,
+                .has_tools = am.has_tools,
+            } });
             if (bridge.trace) |tr| {
-                tr.emitAssistant(text) catch |err| return mapTraceToSink(err);
+                tr.emitAssistant(am.text) catch |err| return mapTraceToSink(err);
             }
         },
         .usage => |u| {
@@ -615,18 +647,35 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             emitObserver(a, .{ .usage = u });
         },
         .tool_start => |call| {
-            // Observer, then Trace tool_call.
+            // Existing Observer remains first, then lifecycle, then Trace.
+            // The index advances only when the final tool_end source fact arrives.
             emitObserver(a, .{ .tool_call = call });
+            a.emitLifecycle(.{ .tool_start = .{
+                .turn = bridge.current_turn,
+                .call_index = bridge.next_call_index,
+                .id = call.id,
+                .name = call.name,
+                .arguments = call.arguments,
+            } });
             if (bridge.trace) |tr| {
                 tr.emitToolCall(call) catch |err| return mapTraceToSink(err);
             }
         },
         .tool_end => |r| {
-            // Observer, then Trace tool_result.
+            // End-only pending cancellations use the next program-order index;
+            // no synthetic tool_start is invented for a call that never ran.
             emitObserver(a, .{ .tool_result = .{ .name = r.name, .body = r.body } });
+            a.emitLifecycle(.{ .tool_end = .{
+                .turn = bridge.current_turn,
+                .call_index = bridge.next_call_index,
+                .id = r.id,
+                .name = r.name,
+                .body = r.body,
+            } });
             if (bridge.trace) |tr| {
                 tr.emitToolResult(r.name, r.body) catch |err| return mapTraceToSink(err);
             }
+            bridge.next_call_index +|= 1;
         },
         .policy_decision => |p| {
             // Observer, then Trace permission.
@@ -732,6 +781,9 @@ pub const Agent = struct {
     ledger: ai.cost.Ledger = .{},
     /// Cooperative cancel; CLI installs SIGINT against this flag.
     cancel: cancel_mod.Flag = .{},
+    /// Facade-owned public lifecycle state for the current synchronous reply.
+    /// Set only after beginRun succeeds; cleared before the terminal callback.
+    lifecycle_run_open: bool = false,
     /// Always owned after successful init (clone of options.redactor or built from secrets).
     owned_redactor: redact_mod.Redactor,
     /// Test-only toolset override for InvalidToolset fixtures (production always null).
@@ -766,6 +818,7 @@ pub const Agent = struct {
             .trace = null,
             .ledger = .{},
             .cancel = .{},
+            .lifecycle_run_open = false,
             .owned_redactor = owned_redactor,
         };
         self.permission_gate = self.resolveGate();
@@ -794,6 +847,55 @@ pub const Agent = struct {
 
     pub fn getRedactor(self: *const Agent) *const redact_mod.Redactor {
         return &self.owned_redactor;
+    }
+
+    /// Open the optional public lifecycle only after facade preflight and Trace
+    /// run_start preparation succeed. Preflight failures never call this.
+    fn startLifecycle(self: *Agent, session_configured: bool) void {
+        std.debug.assert(!self.lifecycle_run_open);
+        self.lifecycle_run_open = true;
+        if (self.options.lifecycle) |observer| {
+            observer.emit(.{ .run_start = .{ .session_configured = session_configured } });
+        }
+    }
+
+    /// Emit one nonterminal lifecycle projection while this reply is open.
+    /// The callback is infallible and receives callback-borrowed slices.
+    fn emitLifecycle(self: *Agent, event: lifecycle_mod.LifecycleEvent) void {
+        if (!self.lifecycle_run_open) return;
+        if (self.options.lifecycle) |observer| observer.emit(event);
+    }
+
+    fn lifecycleUsage(self: *const Agent) message.Usage {
+        return lifecycle_mod.usageFromLedger(
+            self.ledger.prompt_tokens,
+            self.ledger.completion_tokens,
+            self.ledger.total_tokens,
+            self.ledger.reasoning_tokens,
+        );
+    }
+
+    /// Emit the exactly-once final public lifecycle fact. Close the run before
+    /// entering host code so unsupported callback re-entry cannot duplicate it.
+    fn emitLifecycleTerminal(
+        self: *Agent,
+        turns: u32,
+        ok: bool,
+        stop_reason: loop.StopReason,
+    ) void {
+        if (!self.lifecycle_run_open) {
+            std.debug.assert(false);
+            return;
+        }
+        self.lifecycle_run_open = false;
+        if (self.options.lifecycle) |observer| {
+            observer.emit(.{ .run_terminal = .{
+                .turns = turns,
+                .ok = ok,
+                .stop_reason = stop_reason,
+                .usage = self.lifecycleUsage(),
+            } });
+        }
     }
 
     pub fn initPhase0(
@@ -934,7 +1036,13 @@ pub const Agent = struct {
         else
             turns_hint;
         // Redactor clear is owned by reply()'s defer covering all exits.
-        self.commitTerminal(turns, false, stop_reason) catch |terr| return terr;
+        // The public terminal reflects final error precedence even when the
+        // durable Trace terminal operation itself fails.
+        self.commitTerminal(turns, false, stop_reason) catch |terr| {
+            self.emitLifecycleTerminal(turns, false, stopReasonForTraceError(terr));
+            return terr;
+        };
+        self.emitLifecycleTerminal(turns, false, stop_reason);
         return primary;
     }
 
@@ -946,6 +1054,16 @@ pub const Agent = struct {
             error.InvalidToolset => .invalid_toolset,
             error.InvalidContext => .invalid_context,
             error.MaxTurnsExceeded => .max_turns,
+        };
+    }
+
+    /// A terminal Trace operation can itself fail. Preserve the established
+    /// facade distinction: allocator failure remains out_of_memory; durable,
+    /// path, and serialization failures become trace_error.
+    fn stopReasonForTraceError(err: trace_mod.Error) loop.StopReason {
+        return switch (err) {
+            error.OutOfMemory => .out_of_memory,
+            error.TraceIoFailed, error.InvalidPath, error.TraceSerializationFailed => .trace_error,
         };
     }
 
@@ -1013,7 +1131,12 @@ pub const Agent = struct {
         defer self.cancel.clear();
         // Clear borrowed trace redactor on every exit (success, failRun, persist fault).
         defer self.clearTraceRedactor();
+        // Never inherit an open public lifecycle from a prior reply. This defer
+        // is cleanup only; it never fabricates a missing terminal.
+        self.lifecycle_run_open = false;
+        defer self.lifecycle_run_open = false;
         try self.beginRun(session);
+        self.startLifecycle(session.path != null);
         session.zag_version = self.options.version;
 
         session.transcript.appendUser(user_text) catch |err| {
@@ -1048,8 +1171,14 @@ pub const Agent = struct {
             return self.failRun(result.turns, .session_error, err);
         };
 
-        // Final persist on success path: TraceIoFailed (no audited success).
-        try self.commitTerminal(result.turns, resultOk(result.stop_reason), result.stop_reason);
+        // Final persist on success path. A terminal Trace failure overrides the
+        // earlier Result for both the returned error and public lifecycle truth.
+        const ok = resultOk(result.stop_reason);
+        self.commitTerminal(result.turns, ok, result.stop_reason) catch |terr| {
+            self.emitLifecycleTerminal(result.turns, false, stopReasonForTraceError(terr));
+            return terr;
+        };
+        self.emitLifecycleTerminal(result.turns, ok, result.stop_reason);
         return result;
     }
 
@@ -5789,4 +5918,965 @@ test "core-policy-ownership-001: remember alias still re-enters Guard" {
     try std.testing.expect(alias.decision == .allow and !alias.remembered);
     try std.testing.expectEqual(@as(u32, 2), allow_count);
     try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "./escape_file"));
+}
+
+// ── harness-events-001: public LifecycleObserver product adapter ────────────
+//
+// Records the full public callback sequence with owned copies of borrowed
+// slices. Proves start/terminal invariants, Tool correlation (including
+// end-only pending cancel), soft-result paths, and terminal error mapping.
+
+const LifecycleKind = enum {
+    run_start,
+    assistant_message,
+    tool_start,
+    tool_end,
+    run_terminal,
+};
+
+const OwnedLifecycleEvent = struct {
+    kind: LifecycleKind,
+    session_configured: bool = false,
+    turn: u32 = 0,
+    call_index: u32 = 0,
+    text: ?[]u8 = null,
+    has_tools: bool = false,
+    id: ?[]u8 = null,
+    name: ?[]u8 = null,
+    arguments: ?[]u8 = null,
+    body: ?[]u8 = null,
+    turns: u32 = 0,
+    ok: bool = false,
+    stop_reason: loop.StopReason = .completed,
+    usage: message.Usage = .{},
+
+    fn deinit(self: *OwnedLifecycleEvent, gpa: std.mem.Allocator) void {
+        if (self.text) |s| gpa.free(s);
+        if (self.id) |s| gpa.free(s);
+        if (self.name) |s| gpa.free(s);
+        if (self.arguments) |s| gpa.free(s);
+        if (self.body) |s| gpa.free(s);
+        self.* = .{ .kind = self.kind };
+    }
+};
+
+const LifecycleRecorder = struct {
+    gpa: std.mem.Allocator,
+    events: std.ArrayListUnmanaged(OwnedLifecycleEvent) = .empty,
+    /// True when a callback arrives outside an open run (after terminal without a
+    /// new start, or terminal when not open). Multi-reply: start after terminal is OK.
+    after_terminal: bool = false,
+    terminal_count: u32 = 0,
+    /// Facade-open mirror: true between run_start and run_terminal.
+    open: bool = false,
+
+    fn init(gpa: std.mem.Allocator) LifecycleRecorder {
+        return .{ .gpa = gpa };
+    }
+
+    fn deinit(self: *LifecycleRecorder) void {
+        for (self.events.items) |*e| e.deinit(self.gpa);
+        self.events.deinit(self.gpa);
+    }
+
+    fn observer(self: *LifecycleRecorder) lifecycle_mod.LifecycleObserver {
+        return .{
+            .ptr = self,
+            .on_event = onEvent,
+        };
+    }
+
+    fn onEvent(ptr: ?*anyopaque, event: lifecycle_mod.LifecycleEvent) void {
+        const self: *LifecycleRecorder = @ptrCast(@alignCast(ptr.?));
+        switch (event) {
+            .run_start => {
+                // A start while still open would be a duplicate/re-entry bug.
+                if (self.open) self.after_terminal = true;
+                self.open = true;
+            },
+            .run_terminal => {
+                if (!self.open) self.after_terminal = true;
+                self.open = false;
+            },
+            else => {
+                // Non-terminal events after a closed run (no callback after terminal).
+                if (!self.open) self.after_terminal = true;
+            },
+        }
+        var owned: OwnedLifecycleEvent = switch (event) {
+            .run_start => |rs| .{
+                .kind = .run_start,
+                .session_configured = rs.session_configured,
+            },
+            .assistant_message => |am| blk: {
+                const text = self.gpa.dupe(u8, am.text) catch return;
+                break :blk .{
+                    .kind = .assistant_message,
+                    .turn = am.turn,
+                    .text = text,
+                    .has_tools = am.has_tools,
+                };
+            },
+            .tool_start => |ts| blk: {
+                const id = self.gpa.dupe(u8, ts.id) catch return;
+                const name = self.gpa.dupe(u8, ts.name) catch {
+                    self.gpa.free(id);
+                    return;
+                };
+                const arguments = self.gpa.dupe(u8, ts.arguments) catch {
+                    self.gpa.free(id);
+                    self.gpa.free(name);
+                    return;
+                };
+                break :blk .{
+                    .kind = .tool_start,
+                    .turn = ts.turn,
+                    .call_index = ts.call_index,
+                    .id = id,
+                    .name = name,
+                    .arguments = arguments,
+                };
+            },
+            .tool_end => |te| blk: {
+                const id = self.gpa.dupe(u8, te.id) catch return;
+                const name = self.gpa.dupe(u8, te.name) catch {
+                    self.gpa.free(id);
+                    return;
+                };
+                const body = self.gpa.dupe(u8, te.body) catch {
+                    self.gpa.free(id);
+                    self.gpa.free(name);
+                    return;
+                };
+                break :blk .{
+                    .kind = .tool_end,
+                    .turn = te.turn,
+                    .call_index = te.call_index,
+                    .id = id,
+                    .name = name,
+                    .body = body,
+                };
+            },
+            .run_terminal => |rt| .{
+                .kind = .run_terminal,
+                .turns = rt.turns,
+                .ok = rt.ok,
+                .stop_reason = rt.stop_reason,
+                .usage = rt.usage,
+            },
+        };
+        if (event == .run_terminal) self.terminal_count += 1;
+        self.events.append(self.gpa, owned) catch {
+            owned.deinit(self.gpa);
+        };
+    }
+
+    fn firstTerminal(self: *const LifecycleRecorder) ?OwnedLifecycleEvent {
+        for (self.events.items) |e| {
+            if (e.kind == .run_terminal) return e;
+        }
+        return null;
+    }
+};
+
+fn expectKindSequence(rec: *const LifecycleRecorder, expected: []const LifecycleKind) !void {
+    try std.testing.expectEqual(expected.len, rec.events.items.len);
+    for (expected, rec.events.items) |want, got| {
+        try std.testing.expectEqual(want, got.kind);
+    }
+}
+
+test "harness-events: completed run_start → assistant → run_terminal(completed)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text_with_usage };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try expectKindSequence(&rec, &.{ .run_start, .assistant_message, .run_terminal });
+    try std.testing.expect(!rec.events.items[0].session_configured);
+    try std.testing.expectEqual(@as(u32, 1), rec.events.items[1].turn);
+    try std.testing.expectEqualStrings("done", rec.events.items[1].text.?);
+    try std.testing.expect(!rec.events.items[1].has_tools);
+    const term = rec.firstTerminal().?;
+    try std.testing.expect(term.ok);
+    try std.testing.expectEqual(loop.StopReason.completed, term.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), term.turns);
+    try std.testing.expectEqual(@as(u32, 10), term.usage.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 5), term.usage.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 15), term.usage.total_tokens);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+    try std.testing.expect(!agent.lifecycle_run_open);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "completed");
+    try std.testing.expectEqual(@as(u32, 1), tr.terminal_count);
+}
+
+test "harness-events: tool start/end correlation + soft permission deny" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    const Stub = struct {
+        ran: bool = false,
+        fn h(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const self: *@This() = @ptrCast(@alignCast(instance.?));
+            self.ran = true;
+            return error.ToolFailed;
+        }
+    };
+    var stub: Stub = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{
+                .name = "write_file",
+                .description = "write",
+                .parameters_json = "{\"type\":\"object\"}",
+            },
+            .capabilities = .{
+                .risk = .write,
+                .workspace = .{ .path_field = "path" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .instance = &stub,
+        .handler = Stub.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "deny-1"),
+                    .name = try arena.dupe(u8, "write_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"x.txt\",\"content\":\"y\"}"),
+                };
+                return .{
+                    .content = try arena.dupe(u8, "calling"),
+                    .tool_calls = tc,
+                    .finish_reason = "tool_calls",
+                };
+            }
+            return .{
+                .content = try arena.dupe(u8, "soft-done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        // Default product policy surface: ask mode + deny gate (no stdin HITL).
+        .permission_mode = .ask,
+        .permission_gate = permissions.Gate.denyAllDangerous(),
+        .verbose = false,
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+    agent.test_tools = &tools;
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "write");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expect(!stub.ran);
+
+    try expectKindSequence(&rec, &.{
+        .run_start,
+        .assistant_message,
+        .tool_start,
+        .tool_end,
+        .assistant_message,
+        .run_terminal,
+    });
+    try std.testing.expect(rec.events.items[1].has_tools);
+    try std.testing.expectEqualStrings("calling", rec.events.items[1].text.?);
+    try std.testing.expectEqual(@as(u32, 1), rec.events.items[2].turn);
+    try std.testing.expectEqual(@as(u32, 0), rec.events.items[2].call_index);
+    try std.testing.expectEqualStrings("deny-1", rec.events.items[2].id.?);
+    try std.testing.expectEqualStrings("write_file", rec.events.items[2].name.?);
+    try std.testing.expectEqualStrings("{\"path\":\"x.txt\",\"content\":\"y\"}", rec.events.items[2].arguments.?);
+    try std.testing.expectEqual(@as(u32, 0), rec.events.items[3].call_index);
+    try std.testing.expectEqualStrings("deny-1", rec.events.items[3].id.?);
+    try std.testing.expectEqualStrings("write_file", rec.events.items[3].name.?);
+    try std.testing.expect(core.tool_error.hasCode(rec.events.items[3].body.?, .permission_denied));
+    try std.testing.expect(!rec.events.items[4].has_tools);
+    try std.testing.expectEqualStrings("soft-done", rec.events.items[4].text.?);
+    const term = rec.firstTerminal().?;
+    try std.testing.expect(term.ok);
+    try std.testing.expectEqual(loop.StopReason.completed, term.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "completed");
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_result"));
+}
+
+test "harness-events: cancel end-only pending tools preserve program-order index" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var first_ran: u32 = 0;
+    var second_ran: u32 = 0;
+    var third_ran: u32 = 0;
+
+    const Mock = struct {
+        step: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 3);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "lc-1"),
+                    .name = try arena.dupe(u8, "first_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                tc[1] = .{
+                    .id = try arena.dupe(u8, "lc-2"),
+                    .name = try arena.dupe(u8, "second_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                tc[2] = .{
+                    .id = try arena.dupe(u8, "lc-3"),
+                    .name = try arena.dupe(u8, "third_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{ .content = "batch", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "unexpected"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var first_state: BetweenCancelFirst = .{ .cancel = &agent.cancel, .ran = &first_ran };
+    var second_state: BetweenCancelPending = .{ .ran = &second_ran, .label = "second" };
+    var third_state: BetweenCancelPending = .{ .ran = &third_ran, .label = "third" };
+    const tools = [_]tool.Tool{
+        .{
+            .descriptor = .{
+                .definition = .{ .name = "first_tool", .description = "", .parameters_json = "{\"type\":\"object\"}" },
+                .capabilities = .{ .risk = .read, .workspace = .none, .cancellation = .none, .shell = .none },
+            },
+            .instance = &first_state,
+            .handler = BetweenCancelFirst.handle,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{ .name = "second_tool", .description = "", .parameters_json = "{\"type\":\"object\"}" },
+                .capabilities = .{ .risk = .read, .workspace = .none, .cancellation = .none, .shell = .none },
+            },
+            .instance = &second_state,
+            .handler = BetweenCancelPending.handle,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{ .name = "third_tool", .description = "", .parameters_json = "{\"type\":\"object\"}" },
+                .capabilities = .{ .risk = .read, .workspace = .none, .cancellation = .none, .shell = .none },
+            },
+            .instance = &third_state,
+            .handler = BetweenCancelPending.handle,
+        },
+    };
+    agent.test_tools = &tools;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "multi");
+    try std.testing.expectEqual(loop.StopReason.cancelled, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), first_ran);
+    try std.testing.expectEqual(@as(u32, 0), second_ran);
+    try std.testing.expectEqual(@as(u32, 0), third_ran);
+
+    // run_start, assistant(has_tools), tool_start/end for first, end-only for 2+3, terminal.
+    try expectKindSequence(&rec, &.{
+        .run_start,
+        .assistant_message,
+        .tool_start,
+        .tool_end,
+        .tool_end,
+        .tool_end,
+        .run_terminal,
+    });
+    try std.testing.expect(rec.events.items[1].has_tools);
+    // Ordinary first call: start+end at index 0.
+    try std.testing.expectEqual(@as(u32, 0), rec.events.items[2].call_index);
+    try std.testing.expectEqualStrings("lc-1", rec.events.items[2].id.?);
+    try std.testing.expectEqual(@as(u32, 0), rec.events.items[3].call_index);
+    try std.testing.expectEqualStrings("lc-1", rec.events.items[3].id.?);
+    try std.testing.expectEqualStrings("first-handler-done", rec.events.items[3].body.?);
+    // Pending cancel end-only at program-order indices 1 and 2 — no fabricated starts.
+    try std.testing.expectEqual(@as(u32, 1), rec.events.items[4].call_index);
+    try std.testing.expectEqualStrings("lc-2", rec.events.items[4].id.?);
+    try std.testing.expect(core.tool_error.hasCode(rec.events.items[4].body.?, .cancelled));
+    try std.testing.expectEqual(@as(u32, 2), rec.events.items[5].call_index);
+    try std.testing.expectEqualStrings("lc-3", rec.events.items[5].id.?);
+    try std.testing.expect(core.tool_error.hasCode(rec.events.items[5].body.?, .cancelled));
+    const term = rec.firstTerminal().?;
+    try std.testing.expect(term.ok); // cancelled is ok=true (cooperative)
+    try std.testing.expectEqual(loop.StopReason.cancelled, term.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try expectRunEnd(tr, true, "cancelled");
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
+    try std.testing.expectEqual(@as(u32, 3), tr.countKind("tool_result"));
+}
+
+test "harness-events: preflight failure emits no lifecycle events" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .trace_path = "/tmp/zag-lifecycle-absolute.jsonl",
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const err = agent.reply(&session, "hi");
+    try std.testing.expectError(error.InvalidPath, err);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+    try std.testing.expectEqual(@as(usize, 0), rec.events.items.len);
+    try std.testing.expectEqual(@as(u32, 0), rec.terminal_count);
+    try std.testing.expect(!agent.lifecycle_run_open);
+}
+
+test "harness-events: provider/session/timeout/unsupported terminals are exact-one" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // provider_error
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .chat_retries = 0,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        try std.testing.expectError(error.ProviderFailed, agent.reply(&session, "hi"));
+        try expectKindSequence(&rec, &.{ .run_start, .run_terminal });
+        try std.testing.expect(!rec.firstTerminal().?.ok);
+        try std.testing.expectEqual(loop.StopReason.provider_error, rec.firstTerminal().?.stop_reason);
+        try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+        try std.testing.expect(!rec.after_terminal);
+        try expectRunEnd(&(agent.trace.?), false, "provider_error");
+    }
+
+    // timeout (Result path, ok=false)
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        const Mock = struct {
+            calls: *u32,
+            fn chat(
+                ptr: *anyopaque,
+                _: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+                _: provider_mod.RequestControl,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.calls.* += 1;
+                return error.Timeout;
+            }
+        };
+        var calls: u32 = 0;
+        var mock: Mock = .{ .calls = &calls };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        }, .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .chat_retries = 2,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const result = try agent.reply(&session, "hi");
+        try std.testing.expectEqual(loop.StopReason.timeout, result.stop_reason);
+        try expectKindSequence(&rec, &.{ .run_start, .run_terminal });
+        try std.testing.expect(!rec.firstTerminal().?.ok);
+        try std.testing.expectEqual(loop.StopReason.timeout, rec.firstTerminal().?.stop_reason);
+        try expectRunEnd(&(agent.trace.?), false, "timeout");
+    }
+
+    // unsupported_control
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        const Mock = struct {
+            calls: *u32,
+            fn chat(
+                ptr: *anyopaque,
+                _: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+                _: provider_mod.RequestControl,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.calls.* += 1;
+                return error.UnsupportedControl;
+            }
+        };
+        var calls: u32 = 0;
+        var mock: Mock = .{ .calls = &calls };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        }, .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const result = try agent.reply(&session, "hi");
+        try std.testing.expectEqual(loop.StopReason.unsupported_control, result.stop_reason);
+        try expectKindSequence(&rec, &.{ .run_start, .run_terminal });
+        try std.testing.expect(!rec.firstTerminal().?.ok);
+        try std.testing.expectEqual(loop.StopReason.unsupported_control, rec.firstTerminal().?.stop_reason);
+        try expectRunEnd(&(agent.trace.?), false, "unsupported_control");
+    }
+
+    // session_error (save fail after successful loop)
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        const dir_name = ".zag-test-lifecycle-session-err";
+        const path = ".zag-test-lifecycle-session-err/s.jsonl";
+        Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+        defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        // Seed a successful first save so the writer exists, then force replace fail.
+        const writer = if (session.writer) |*w| w else return error.TestUnexpectedResult;
+        session_store.testing.setFailBeforeReplace(writer, true);
+
+        try std.testing.expectError(error.IoFailed, agent.reply(&session, "hi"));
+        try std.testing.expect(rec.events.items.len >= 2);
+        try std.testing.expectEqual(LifecycleKind.run_start, rec.events.items[0].kind);
+        try std.testing.expect(rec.events.items[0].session_configured);
+        const term = rec.firstTerminal().?;
+        try std.testing.expect(!term.ok);
+        try std.testing.expectEqual(loop.StopReason.session_error, term.stop_reason);
+        try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+        try std.testing.expect(!rec.after_terminal);
+        try expectRunEnd(&(agent.trace.?), false, "session_error");
+    }
+}
+
+test "harness-events: invalid_toolset + invalid_context post-start terminals" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // invalid_toolset
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        const forged: tool.Tool = .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "forged_path",
+                    .description = "",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .{ .path_field = "" },
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .handler = struct {
+                fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                    return error.ToolFailed;
+                }
+            }.h,
+        };
+        const tools = [_]tool.Tool{forged};
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+        agent.test_tools = &tools;
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        try std.testing.expectError(error.InvalidToolset, agent.reply(&session, "hi"));
+        try expectKindSequence(&rec, &.{ .run_start, .run_terminal });
+        try std.testing.expect(!rec.firstTerminal().?.ok);
+        try std.testing.expectEqual(loop.StopReason.invalid_toolset, rec.firstTerminal().?.stop_reason);
+        try std.testing.expectEqual(@as(u32, 0), calls);
+        try expectRunEnd(&(agent.trace.?), false, "invalid_toolset");
+    }
+
+    // invalid_context
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const calls_tc = try session.arena_impl.allocator().alloc(message.ToolCall, 2);
+        calls_tc[0] = .{
+            .id = try session.arena_impl.allocator().dupe(u8, "a1"),
+            .name = try session.arena_impl.allocator().dupe(u8, "list_dir"),
+            .arguments = try session.arena_impl.allocator().dupe(u8, "{}"),
+        };
+        calls_tc[1] = .{
+            .id = try session.arena_impl.allocator().dupe(u8, "a2"),
+            .name = try session.arena_impl.allocator().dupe(u8, "read_file"),
+            .arguments = try session.arena_impl.allocator().dupe(u8, "{}"),
+        };
+        try session.transcript.appendUser("ask");
+        try session.transcript.appendAssistantTurn(.{
+            .content = "tools",
+            .tool_calls = calls_tc,
+            .finish_reason = "tool_calls",
+        });
+        try session.transcript.appendToolResult("a1", "partial");
+        try std.testing.expectError(error.InvalidContext, agent.reply(&session, "continue"));
+        try expectKindSequence(&rec, &.{ .run_start, .run_terminal });
+        try std.testing.expect(!rec.firstTerminal().?.ok);
+        try std.testing.expectEqual(loop.StopReason.invalid_context, rec.firstTerminal().?.stop_reason);
+        try std.testing.expectEqual(@as(u32, 0), calls);
+        try expectRunEnd(&(agent.trace.?), false, "invalid_context");
+    }
+}
+
+test "harness-events: Trace terminal failure maps OOM→out_of_memory and IO→trace_error" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Durable Trace replace failure after successful provider → trace_error.
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        const dir_name = ".zag-test-lifecycle-trace-err";
+        const path = ".zag-test-lifecycle-trace-err/run.jsonl";
+        Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+        defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .trace_path = path,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        trace_mod.testing.setFailBeforeReplace(tr, true);
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        try std.testing.expectError(error.TraceIoFailed, agent.reply(&session, "hi"));
+        try std.testing.expectEqual(LifecycleKind.run_start, rec.events.items[0].kind);
+        const term = rec.firstTerminal().?;
+        try std.testing.expect(!term.ok);
+        try std.testing.expectEqual(loop.StopReason.trace_error, term.stop_reason);
+        try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+        try std.testing.expect(!rec.after_terminal);
+        // Public lifecycle prefers Trace commit error over completed Result.
+        try std.testing.expect(calls >= 1);
+    }
+
+    // Provider failure + Trace terminal replace failure still maps to trace_error.
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        const dir_name = ".zag-test-lifecycle-trace-err2";
+        const path = ".zag-test-lifecycle-trace-err2/run.jsonl";
+        Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+        defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .provider_fail };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .chat_retries = 0,
+            .trace_path = path,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        trace_mod.testing.setFailBeforeReplace(tr, true);
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        try std.testing.expectError(error.TraceIoFailed, agent.reply(&session, "hi"));
+        const term = rec.firstTerminal().?;
+        try std.testing.expect(!term.ok);
+        try std.testing.expectEqual(loop.StopReason.trace_error, term.stop_reason);
+        try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+        try std.testing.expect(!rec.after_terminal);
+    }
+}
+
+test "harness-events: noteCompaction OOM maps to out_of_memory terminal exactly once" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .context = .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 1,
+            .summary_max_chars = 400,
+        },
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    var i: usize = 0;
+    while (i < 10) : (i += 1) {
+        try session.transcript.appendUser("u");
+        try session.transcript.appendAssistantTurn(.{
+            .content = "a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+    }
+    session.fail_next_note_compaction = true;
+
+    try std.testing.expectError(error.OutOfMemory, agent.reply(&session, "hi"));
+    try std.testing.expectEqual(@as(u32, 0), calls);
+    try expectKindSequence(&rec, &.{ .run_start, .run_terminal });
+    try std.testing.expect(!rec.firstTerminal().?.ok);
+    try std.testing.expectEqual(loop.StopReason.out_of_memory, rec.firstTerminal().?.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+    try expectRunEnd(&(agent.trace.?), false, "out_of_memory");
+}
+
+test "harness-events: no lifecycle without observer; no duplicate terminal on two replies" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Null observer is silent.
+    {
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .lifecycle = null,
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const result = try agent.reply(&session, "hi");
+        try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+        try std.testing.expect(!agent.lifecycle_run_open);
+        try expectRunEnd(&(agent.trace.?), true, "completed");
+    }
+
+    // Two consecutive replies: each has exactly one start + one terminal.
+    {
+        var rec = LifecycleRecorder.init(gpa);
+        defer rec.deinit();
+        var calls: u32 = 0;
+        var mock: MockChat = .{ .calls = &calls, .mode = .text };
+        var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+            .permission_mode = .yolo,
+            .verbose = false,
+            .lifecycle = rec.observer(),
+        });
+        defer agent.deinit();
+        agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        _ = try agent.reply(&session, "one");
+        _ = try agent.reply(&session, "two");
+
+        var starts: u32 = 0;
+        var terminals: u32 = 0;
+        for (rec.events.items) |e| {
+            switch (e.kind) {
+                .run_start => starts += 1,
+                .run_terminal => terminals += 1,
+                else => {},
+            }
+        }
+        try std.testing.expectEqual(@as(u32, 2), starts);
+        try std.testing.expectEqual(@as(u32, 2), terminals);
+        try std.testing.expectEqual(@as(u32, 2), rec.terminal_count);
+        try std.testing.expect(!rec.after_terminal);
+        try std.testing.expect(!agent.lifecycle_run_open);
+        // Trace buffer is per-reply (beginReply resets); latest has one terminal.
+        try expectRunEnd(&(agent.trace.?), true, "completed");
+    }
 }

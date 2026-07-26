@@ -1001,10 +1001,10 @@ const borrow_evidence_vtable: core.loop_event.LoopEventSinkVTable = .{
 fn borrowEvidenceEmit(ptr: ?*anyopaque, event: core.loop_event.LoopEvent) core.loop_event.SinkError!void {
     const self: *BorrowEvidenceSink = @ptrCast(@alignCast(ptr.?));
     switch (event) {
-        .assistant_message => |text| {
+        .assistant_message => |am| {
             // The slice is borrowed for the duration of this call only. Dupe
             // into owned bytes using the host allocator so the copy survives.
-            const owned = self.gpa.dupe(u8, text) catch return error.OutOfMemory;
+            const owned = self.gpa.dupe(u8, am.text) catch return error.OutOfMemory;
             // Free any prior copy (one event per run for this fixture).
             if (self.owned_assistant) |o| self.gpa.free(o);
             self.owned_assistant = owned;
@@ -1027,7 +1027,7 @@ test "borrowed LoopEvent assistant_message is owned-safe after source mutation" 
 
     const sink = sink_state.vtable();
     // Emit a borrowed slice (the loop would pass a borrowed text slice).
-    try sink.emit(.{ .assistant_message = mut });
+    try sink.emit(.{ .assistant_message = .{ .text = mut, .has_tools = false } });
 
     // After the callback returns, the host mutates the original mutable buffer.
     // This simulates the turn arena being reused / the borrowed slice going away.
@@ -1040,4 +1040,276 @@ test "borrowed LoopEvent assistant_message is owned-safe after source mutation" 
 
     // The mutated buffer no longer equals the original.
     try std.testing.expect(!std.mem.eql(u8, mut, original));
+}
+
+// ── harness-events-001: public LifecycleObserver from external consumer ────
+//
+// Installs the public `coding.LifecycleObserver`, copies borrowed assistant/
+// tool id/name/args/body inside the callback, then proves the owned copies
+// remain valid after `Agent.reply` returns and the reply arena is gone.
+// Low-level Core sink fixtures above stay independent (no lifecycle pollution).
+
+const SdkLifecycleOwned = struct {
+    kind: enum { run_start, assistant_message, tool_start, tool_end, run_terminal },
+    turn: u32 = 0,
+    call_index: u32 = 0,
+    text: ?[]u8 = null,
+    has_tools: bool = false,
+    id: ?[]u8 = null,
+    name: ?[]u8 = null,
+    arguments: ?[]u8 = null,
+    body: ?[]u8 = null,
+    session_configured: bool = false,
+    turns: u32 = 0,
+    ok: bool = false,
+    stop_reason: coding.loop.StopReason = .completed,
+
+    fn deinit(self: *SdkLifecycleOwned, gpa: std.mem.Allocator) void {
+        if (self.text) |s| gpa.free(s);
+        if (self.id) |s| gpa.free(s);
+        if (self.name) |s| gpa.free(s);
+        if (self.arguments) |s| gpa.free(s);
+        if (self.body) |s| gpa.free(s);
+    }
+};
+
+const SdkLifecycleRecorder = struct {
+    gpa: std.mem.Allocator,
+    events: std.ArrayListUnmanaged(SdkLifecycleOwned) = .empty,
+    terminal_count: u32 = 0,
+    after_terminal: bool = false,
+    open: bool = false,
+
+    fn init(gpa: std.mem.Allocator) SdkLifecycleRecorder {
+        return .{ .gpa = gpa };
+    }
+
+    fn deinit(self: *SdkLifecycleRecorder) void {
+        for (self.events.items) |*e| e.deinit(self.gpa);
+        self.events.deinit(self.gpa);
+    }
+
+    fn observer(self: *SdkLifecycleRecorder) coding.LifecycleObserver {
+        return .{
+            .ptr = self,
+            .on_event = onEvent,
+        };
+    }
+
+    fn onEvent(ptr: ?*anyopaque, event: coding.LifecycleEvent) void {
+        const self: *SdkLifecycleRecorder = @ptrCast(@alignCast(ptr.?));
+        switch (event) {
+            .run_start => {
+                if (self.open) self.after_terminal = true;
+                self.open = true;
+            },
+            .run_terminal => {
+                if (!self.open) self.after_terminal = true;
+                self.open = false;
+            },
+            else => {
+                if (!self.open) self.after_terminal = true;
+            },
+        }
+        var owned: SdkLifecycleOwned = switch (event) {
+            .run_start => |rs| .{
+                .kind = .run_start,
+                .session_configured = rs.session_configured,
+            },
+            .assistant_message => |am| blk: {
+                const text = self.gpa.dupe(u8, am.text) catch return;
+                break :blk .{
+                    .kind = .assistant_message,
+                    .turn = am.turn,
+                    .text = text,
+                    .has_tools = am.has_tools,
+                };
+            },
+            .tool_start => |ts| blk: {
+                const id = self.gpa.dupe(u8, ts.id) catch return;
+                const name = self.gpa.dupe(u8, ts.name) catch {
+                    self.gpa.free(id);
+                    return;
+                };
+                const arguments = self.gpa.dupe(u8, ts.arguments) catch {
+                    self.gpa.free(id);
+                    self.gpa.free(name);
+                    return;
+                };
+                break :blk .{
+                    .kind = .tool_start,
+                    .turn = ts.turn,
+                    .call_index = ts.call_index,
+                    .id = id,
+                    .name = name,
+                    .arguments = arguments,
+                };
+            },
+            .tool_end => |te| blk: {
+                const id = self.gpa.dupe(u8, te.id) catch return;
+                const name = self.gpa.dupe(u8, te.name) catch {
+                    self.gpa.free(id);
+                    return;
+                };
+                const body = self.gpa.dupe(u8, te.body) catch {
+                    self.gpa.free(id);
+                    self.gpa.free(name);
+                    return;
+                };
+                break :blk .{
+                    .kind = .tool_end,
+                    .turn = te.turn,
+                    .call_index = te.call_index,
+                    .id = id,
+                    .name = name,
+                    .body = body,
+                };
+            },
+            .run_terminal => |rt| .{
+                .kind = .run_terminal,
+                .turns = rt.turns,
+                .ok = rt.ok,
+                .stop_reason = rt.stop_reason,
+            },
+        };
+        if (event == .run_terminal) self.terminal_count += 1;
+        self.events.append(self.gpa, owned) catch owned.deinit(self.gpa);
+    }
+};
+
+test "public LifecycleObserver copies assistant/tool bytes; owned after reply returns" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const Echo = struct {
+        fn h(ctx: core.tool.Context, _: ?*anyopaque, args: []const u8) core.tool.HandlerError![]u8 {
+            // Echo a distinctive body so the owned tool_end copy is identifiable.
+            return std.fmt.allocPrint(ctx.allocator, "echo:{s}", .{args}) catch return error.OutOfMemory;
+        }
+    };
+    const custom_tool = try coding.tool.buildTool(gpa, .{
+        .definition = .{
+            .name = "echo_tool",
+            .description = "echo args",
+            .parameters_json = "{\"type\":\"object\"}",
+        },
+        .capabilities = .{
+            .risk = .read,
+            .workspace = .none,
+            .cancellation = .none,
+            .shell = .none,
+        },
+        .instance = null,
+        .handler = Echo.h,
+    });
+
+    const MockProvider = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const coding.message.Message,
+            _: []const coding.tool.Definition,
+            _: coding.provider.RequestControl,
+        ) coding.provider.ChatError!coding.message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(coding.message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "sdk-tool-1"),
+                    .name = try arena.dupe(u8, "echo_tool"),
+                    .arguments = try arena.dupe(u8, "{\"v\":\"owned-safe\"}"),
+                };
+                return .{
+                    .content = try arena.dupe(u8, "sdk-assistant-with-tools"),
+                    .tool_calls = tc,
+                    .finish_reason = "tool_calls",
+                };
+            }
+            return .{
+                .content = try arena.dupe(u8, "sdk-final-assistant"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: MockProvider = .{};
+    const provider = coding.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = MockProvider.chat },
+    };
+
+    var rec = SdkLifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var agent = try coding.Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .toolset = &[_]coding.tool.Tool{custom_tool},
+        .lifecycle = rec.observer(),
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+
+    var session = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "run echo");
+    try std.testing.expectEqualStrings("sdk-final-assistant", result.final_text);
+    try std.testing.expectEqual(coding.loop.StopReason.completed, result.stop_reason);
+
+    // Exact public sequence and correlation (program order).
+    try std.testing.expectEqual(@as(usize, 6), rec.events.items.len);
+    try std.testing.expectEqual(.run_start, rec.events.items[0].kind);
+    try std.testing.expect(!rec.events.items[0].session_configured);
+
+    try std.testing.expectEqual(.assistant_message, rec.events.items[1].kind);
+    try std.testing.expectEqual(@as(u32, 1), rec.events.items[1].turn);
+    try std.testing.expect(rec.events.items[1].has_tools);
+    try std.testing.expectEqualStrings("sdk-assistant-with-tools", rec.events.items[1].text.?);
+
+    try std.testing.expectEqual(.tool_start, rec.events.items[2].kind);
+    try std.testing.expectEqual(@as(u32, 0), rec.events.items[2].call_index);
+    try std.testing.expectEqualStrings("sdk-tool-1", rec.events.items[2].id.?);
+    try std.testing.expectEqualStrings("echo_tool", rec.events.items[2].name.?);
+    try std.testing.expectEqualStrings("{\"v\":\"owned-safe\"}", rec.events.items[2].arguments.?);
+
+    try std.testing.expectEqual(.tool_end, rec.events.items[3].kind);
+    try std.testing.expectEqual(@as(u32, 0), rec.events.items[3].call_index);
+    try std.testing.expectEqualStrings("sdk-tool-1", rec.events.items[3].id.?);
+    try std.testing.expectEqualStrings("echo_tool", rec.events.items[3].name.?);
+    try std.testing.expectEqualStrings("echo:{\"v\":\"owned-safe\"}", rec.events.items[3].body.?);
+
+    try std.testing.expectEqual(.assistant_message, rec.events.items[4].kind);
+    try std.testing.expect(!rec.events.items[4].has_tools);
+    try std.testing.expectEqualStrings("sdk-final-assistant", rec.events.items[4].text.?);
+
+    try std.testing.expectEqual(.run_terminal, rec.events.items[5].kind);
+    try std.testing.expect(rec.events.items[5].ok);
+    try std.testing.expectEqual(coding.loop.StopReason.completed, rec.events.items[5].stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+
+    // After reply returns, session arena may be reused by further work; the
+    // owned copies retained by the external consumer must still match.
+    try session.transcript.appendUser("post-reply-mutation");
+    try std.testing.expectEqualStrings("sdk-assistant-with-tools", rec.events.items[1].text.?);
+    try std.testing.expectEqualStrings("sdk-tool-1", rec.events.items[2].id.?);
+    try std.testing.expectEqualStrings("echo_tool", rec.events.items[2].name.?);
+    try std.testing.expectEqualStrings("{\"v\":\"owned-safe\"}", rec.events.items[2].arguments.?);
+    try std.testing.expectEqualStrings("echo:{\"v\":\"owned-safe\"}", rec.events.items[3].body.?);
+    try std.testing.expectEqualStrings("sdk-final-assistant", rec.events.items[4].text.?);
+}
+
+test "coding.LifecycleObserver/LifecycleEvent public types resolve from external consumer" {
+    const O = coding.LifecycleObserver;
+    const E = coding.LifecycleEvent;
+    const L = coding.lifecycle;
+    _ = O;
+    _ = E;
+    _ = L;
 }
