@@ -15,6 +15,7 @@
 const std = @import("std");
 const message = @import("message.zig");
 const context_view_mod = @import("context_view.zig");
+const control_input_mod = @import("control_input.zig");
 
 /// One Core source fact. Variants mirror the existing trace/observer facts
 /// the loop already produced (D-011 module: loop-turn / trace-observability).
@@ -66,6 +67,16 @@ pub const LoopEvent = union(enum) {
     },
     /// Context projection/compaction fact (session note + trace `compaction`).
     context_compaction: context_view_mod.CompactionEvent,
+    /// Control input applied into the authoritative Transcript and committed
+    /// from the product queue (harness-steering-001). Not a run terminal.
+    /// `text` is transcript-owned and valid only during `emit`. `next_turn` is
+    /// the intended provider-turn number (`turns + 1` after proving another
+    /// turn is available), not proof that turn completes.
+    control_applied: struct {
+        kind: control_input_mod.Kind,
+        next_turn: u32,
+        text: []const u8,
+    },
 };
 
 /// Sink errors. `OutOfMemory` is a typed allocator failure; `SinkFailed` is a

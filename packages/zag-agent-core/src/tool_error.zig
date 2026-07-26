@@ -16,6 +16,10 @@ pub const Code = enum {
     shell_deny,
     tool_failed,
     cancelled,
+    /// Mid-batch steering selected; pending accepted Tool did not enter serial execution.
+    /// Distinct from `cancelled` (which ends the run). Stable body is fixed by
+    /// harness-steering-001: `error: code=steered message=steering selected; pending tool did not execute.`
+    steered,
 
     pub fn name(self: Code) []const u8 {
         return switch (self) {
@@ -26,6 +30,7 @@ pub const Code = enum {
             .shell_deny => "shell_deny",
             .tool_failed => "tool_failed",
             .cancelled => "cancelled",
+            .steered => "steered",
         };
     }
 
@@ -72,6 +77,10 @@ pub fn extractCode(body: []const u8) ?[]const u8 {
     return body[from..end];
 }
 
+/// Stable full body for mid-batch steering interruption (harness-steering-001).
+pub const steered_body =
+    "error: code=steered message=steering selected; pending tool did not execute.";
+
 test "format and hasCode" {
     // Goal: stable prefix is parseable by golden/evals.
     const gpa = std.testing.allocator;
@@ -82,4 +91,14 @@ test "format and hasCode" {
     try std.testing.expectEqualStrings("permission_denied", extractCode(s).?);
     try std.testing.expect(Code.parse("jail_deny").? == .jail_deny);
     try std.testing.expect(Code.parse("nope") == null);
+}
+
+test "steered body is exact and parseable" {
+    try std.testing.expect(hasCode(steered_body, .steered));
+    try std.testing.expect(!hasCode(steered_body, .cancelled));
+    try std.testing.expectEqualStrings("steered", extractCode(steered_body).?);
+    const gpa = std.testing.allocator;
+    const formatted = try format(gpa, .steered, "steering selected; pending tool did not execute.");
+    defer gpa.free(formatted);
+    try std.testing.expectEqualStrings(steered_body, formatted);
 }

@@ -25,6 +25,8 @@ pub const jail = @import("jail.zig");
 pub const shell_policy = @import("shell_policy.zig");
 pub const context_view = @import("context_view.zig");
 pub const loop_event = @import("loop_event.zig");
+// harness-steering-001: explicit borrowed control seam (no Core queue).
+pub const control_input = @import("control_input.zig");
 
 pub const loop = @import("loop.zig");
 
@@ -52,6 +54,9 @@ pub const ShellPolicyPort = ShellPolicy;
 pub const ContextView = context_view.ContextView;
 pub const LoopEventSink = loop_event.LoopEventSink;
 pub const LoopEvent = loop_event.LoopEvent;
+pub const ControlInput = control_input.ControlInput;
+pub const ControlKind = control_input.Kind;
+pub const ControlBoundary = control_input.Boundary;
 
 pub const version = "0.5.0";
 

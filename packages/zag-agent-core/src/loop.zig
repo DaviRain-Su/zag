@@ -41,6 +41,7 @@ const jail_mod = @import("jail.zig");
 const shell_policy_mod = @import("shell_policy.zig");
 const context_view_mod = @import("context_view.zig");
 const loop_event_mod = @import("loop_event.zig");
+const control_input_mod = @import("control_input.zig");
 
 pub const default_max_turns: u32 = 20;
 
@@ -50,6 +51,7 @@ pub const ShellPolicy = shell_policy_mod.ShellPolicy;
 pub const ContextView = context_view_mod.ContextView;
 pub const LoopEventSink = loop_event_mod.LoopEventSink;
 pub const LoopEvent = loop_event_mod.LoopEvent;
+pub const ControlInput = control_input_mod.ControlInput;
 
 pub const Options = struct {
     max_turns: u32 = default_max_turns,
@@ -150,6 +152,10 @@ pub const Deps = struct {
     context_view: ContextView,
     /// D-011 required canonical source-event sink.
     event_sink: LoopEventSink,
+    /// harness-steering-001 required control seam. Low-level hosts write
+    /// `.control_input = .none()` explicitly; product installs a Session adapter.
+    /// No default — missing is a compile error, not a silent empty queue.
+    control_input: ControlInput,
     options: Options = .{},
 };
 
@@ -167,6 +173,9 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
     var turns: u32 = 0;
     var last_text: []const u8 = "";
     var usage_total: message.Usage = .{};
+    // One-at-a-time: a boundary that injects control suppresses the immediately
+    // following pre-turn poll so one control message feeds one provider turn.
+    var suppress_pre_turn: bool = false;
 
     while (turns < deps_run.options.max_turns) {
         if (isCancelled(deps_run.options)) {
@@ -176,6 +185,27 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
                 .usage = usage_total,
                 .stop_reason = .cancelled,
             };
+        }
+
+        // ── pre-turn boundary (cancel-before-peek) ──────────────────────────
+        // `turns` is the completed count; the upcoming provider turn is turns+1.
+        if (suppress_pre_turn) {
+            suppress_pre_turn = false;
+        } else {
+            if (isCancelled(deps_run.options)) {
+                return .{
+                    .final_text = last_text,
+                    .turns = turns,
+                    .usage = usage_total,
+                    .stop_reason = .cancelled,
+                };
+            }
+            if (deps_run.control_input.peek(.pre_turn)) |item| {
+                // Another provider turn is available (loop condition). next_turn
+                // cannot overflow past max_turns.
+                const next_turn = turns + 1;
+                try applyOrdinaryControl(deps_run, transcript, item, next_turn);
+            }
         }
 
         turns += 1;
@@ -246,16 +276,46 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         }
 
         if (!turn.wantsTools()) {
+            // ── would-complete boundary ─────────────────────────────────────
+            // Non-destructive atomic peek first. Empty → existing completed
+            // without a new late-cancel classification. Non-null → recheck
+            // cancel before append/commit; observed cancel wins and retains.
+            const item = deps_run.control_input.peek(.would_complete);
+            if (item == null) {
+                return .{
+                    .final_text = last_text,
+                    .turns = turns,
+                    .usage = usage_total,
+                    .stop_reason = .completed,
+                };
+            }
+            if (isCancelled(deps_run.options)) {
+                return .{
+                    .final_text = last_text,
+                    .turns = turns,
+                    .usage = usage_total,
+                    .stop_reason = .cancelled,
+                };
+            }
+            // Another provider turn available only when turns < max_turns.
+            if (turns < deps_run.options.max_turns) {
+                const next_turn = turns + 1;
+                try applyOrdinaryControl(deps_run, transcript, item.?, next_turn);
+                suppress_pre_turn = true;
+                continue;
+            }
+            // Last turn: do not consume; host may inspect pending counts.
             return .{
                 .final_text = last_text,
                 .turns = turns,
                 .usage = usage_total,
-                .stop_reason = .completed,
+                .stop_reason = .max_turns,
             };
         }
 
         const last_msg = transcript.items()[transcript.items().len - 1];
         const calls = last_msg.tool_calls orelse {
+            // No calls despite wantsTools — treat as would-complete empty.
             return .{
                 .final_text = last_text,
                 .turns = turns,
@@ -267,6 +327,7 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         // Serial execution (H1): one tool at a time, call-list order.
         const registry = deps_run.toolset.registry();
         var call_index: u32 = 0;
+        var steered_mid_batch = false;
         while (call_index < calls.len) : (call_index += 1) {
             if (isCancelled(deps_run.options)) {
                 try finishRemainingCancelled(deps_run, transcript, calls[call_index..]);
@@ -278,9 +339,37 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
                 };
             }
 
+            // Between-tools: only when another provider turn remains. On the
+            // last turn, finish the Tool batch normally and leave steering queued.
+            if (turns < deps_run.options.max_turns) {
+                if (deps_run.control_input.peek(.between_tools)) |item| {
+                    // Prepare before any steered side effect.
+                    const remaining = calls[call_index..];
+                    const reserve_rows = remaining.len + 1;
+                    const prepared = transcript.prepareUser(item.text, reserve_rows) catch
+                        return error.OutOfMemory;
+                    try finishRemainingSteered(deps_run, transcript, remaining);
+                    transcript.appendPreparedUser(prepared);
+                    deps_run.control_input.commit(item.kind);
+                    const next_turn = turns + 1;
+                    // text is transcript-owned (last message content).
+                    const applied_text = transcript.items()[transcript.items().len - 1].content;
+                    deps_run.event_sink.emit(.{ .control_applied = .{
+                        .kind = item.kind,
+                        .next_turn = next_turn,
+                        .text = applied_text,
+                    } }) catch |err| return mapSinkEmit(err);
+                    suppress_pre_turn = true;
+                    steered_mid_batch = true;
+                    break;
+                }
+            }
+
             const call = calls[call_index];
             try executeOneTool(deps_run, transcript, registry, call);
         }
+        if (steered_mid_batch) continue;
+        // After a normal Tool batch: return to outer pre-turn boundary.
     }
 
     return .{
@@ -289,6 +378,24 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         .usage = usage_total,
         .stop_reason = .max_turns,
     };
+}
+
+/// Ordinary (pre-turn / would-complete) apply: append user → commit → control_applied.
+/// Append OOM does not commit and leaves the item pending.
+fn applyOrdinaryControl(
+    deps: Deps,
+    transcript: *transcript_mod.Transcript,
+    item: control_input_mod.Item,
+    next_turn: u32,
+) RunError!void {
+    try transcript.appendUser(item.text);
+    deps.control_input.commit(item.kind);
+    const applied_text = transcript.items()[transcript.items().len - 1].content;
+    deps.event_sink.emit(.{ .control_applied = .{
+        .kind = item.kind,
+        .next_turn = next_turn,
+        .text = applied_text,
+    } }) catch |err| return mapSinkEmit(err);
 }
 
 fn isCancelled(opts: Options) bool {
@@ -313,6 +420,17 @@ fn finishRemainingCancelled(
         const body = try cancelledBody(deps.tool_ctx.allocator);
         defer deps.tool_ctx.allocator.free(body);
         try finishTool(deps, transcript, call, body);
+    }
+}
+
+fn finishRemainingSteered(
+    deps: Deps,
+    transcript: *transcript_mod.Transcript,
+    remaining: []const message.ToolCall,
+) RunError!void {
+    // End-only: no synthetic tool_start. Body is the stable steered string.
+    for (remaining) |call| {
+        try finishTool(deps, transcript, call, tool_error.steered_body);
     }
 }
 
@@ -616,12 +734,19 @@ const RecordingSink = struct {
     tool_starts: u32 = 0,
     tool_ends: u32 = 0,
     last_tool_end_id: []const u8 = "",
+    last_tool_end_body: []const u8 = "",
     policy_decisions: u32 = 0,
     jail_decisions: u32 = 0,
     shell_decisions: u32 = 0,
     provider_retries: u32 = 0,
     context_compactions: u32 = 0,
+    control_applieds: u32 = 0,
+    last_control_kind: ?control_input_mod.Kind = null,
+    last_control_next_turn: u32 = 0,
+    last_control_text: []const u8 = "",
     fail_next: ?loop_event_mod.SinkError = null,
+    /// Fail only on control_applied (post-commit sink fault fixture).
+    fail_on_control_applied: ?loop_event_mod.SinkError = null,
 
     fn sink(self: *RecordingSink) LoopEventSink {
         return .{ .ptr = self, .vtable = &recording_vtable };
@@ -645,12 +770,23 @@ const RecordingSink = struct {
             .tool_end => |te| {
                 self.tool_ends += 1;
                 self.last_tool_end_id = te.id;
+                self.last_tool_end_body = te.body;
             },
             .policy_decision => self.policy_decisions += 1,
             .jail_decision => self.jail_decisions += 1,
             .shell_decision => self.shell_decisions += 1,
             .provider_retry => self.provider_retries += 1,
             .context_compaction => self.context_compactions += 1,
+            .control_applied => |c| {
+                if (self.fail_on_control_applied) |e| {
+                    self.fail_on_control_applied = null;
+                    return e;
+                }
+                self.control_applieds += 1;
+                self.last_control_kind = c.kind;
+                self.last_control_next_turn = c.next_turn;
+                self.last_control_text = c.text;
+            },
         }
     }
 };
@@ -679,8 +815,87 @@ fn defaultDeps(
         .shell_policy = ShellPolicy.allowAllForTrustedHost(),
         .context_view = ContextView.identity(),
         .event_sink = sink,
+        .control_input = ControlInput.none(),
     };
 }
+
+// ── harness-steering-001 test ControlInput (in-memory dual queue) ────────────
+
+const TestControlQueue = struct {
+    steering: std.ArrayListUnmanaged([]const u8) = .empty,
+    follow_up: std.ArrayListUnmanaged([]const u8) = .empty,
+    gpa: std.mem.Allocator,
+    /// When true, next ordinary append path will still peek but prepare/append
+    /// is not instrumented here — OOM is induced via a FailingAllocator gpa on
+    /// the transcript arena instead.
+    commits: u32 = 0,
+    peeks: u32 = 0,
+
+    fn deinit(self: *TestControlQueue) void {
+        for (self.steering.items) |s| self.gpa.free(s);
+        for (self.follow_up.items) |s| self.gpa.free(s);
+        self.steering.deinit(self.gpa);
+        self.follow_up.deinit(self.gpa);
+    }
+
+    fn pushSteering(self: *TestControlQueue, text: []const u8) !void {
+        const owned = try self.gpa.dupe(u8, text);
+        errdefer self.gpa.free(owned);
+        try self.steering.append(self.gpa, owned);
+    }
+
+    fn pushFollowUp(self: *TestControlQueue, text: []const u8) !void {
+        const owned = try self.gpa.dupe(u8, text);
+        errdefer self.gpa.free(owned);
+        try self.follow_up.append(self.gpa, owned);
+    }
+
+    fn controlInput(self: *TestControlQueue) ControlInput {
+        return .{ .ptr = self, .vtable = &test_control_vtable };
+    }
+
+    fn peek(ptr: ?*anyopaque, boundary: control_input_mod.Boundary) ?control_input_mod.Item {
+        const self: *TestControlQueue = @ptrCast(@alignCast(ptr.?));
+        self.peeks += 1;
+        switch (boundary) {
+            .pre_turn, .between_tools => {
+                if (self.steering.items.len == 0) return null;
+                return .{ .kind = .steering, .text = self.steering.items[0] };
+            },
+            .would_complete => {
+                if (self.steering.items.len > 0) {
+                    return .{ .kind = .steering, .text = self.steering.items[0] };
+                }
+                if (self.follow_up.items.len > 0) {
+                    return .{ .kind = .follow_up, .text = self.follow_up.items[0] };
+                }
+                return null;
+            },
+        }
+    }
+
+    fn commit(ptr: ?*anyopaque, kind: control_input_mod.Kind) void {
+        const self: *TestControlQueue = @ptrCast(@alignCast(ptr.?));
+        self.commits += 1;
+        switch (kind) {
+            .steering => {
+                std.debug.assert(self.steering.items.len > 0);
+                const owned = self.steering.orderedRemove(0);
+                self.gpa.free(owned);
+            },
+            .follow_up => {
+                std.debug.assert(self.follow_up.items.len > 0);
+                const owned = self.follow_up.orderedRemove(0);
+                self.gpa.free(owned);
+            },
+        }
+    }
+};
+
+const test_control_vtable: control_input_mod.ControlInputVTable = .{
+    .peek = TestControlQueue.peek,
+    .commit = TestControlQueue.commit,
+};
 
 // File-local fake jail for loop tests: denies any non-null path with a generic
 // `jail_deny` body (simulates Guard rejecting an absolute/escaping path). Not
@@ -2104,4 +2319,668 @@ test "core-context-001: hostile ContextView compaction + malformed body → Inva
     try std.testing.expectEqual(@as(u32, 0), sink.assistant_messages);
     // turn_start was emitted before the view/validation gate (expected).
     try std.testing.expectEqual(@as(u32, 1), sink.turn_starts);
+}
+
+// ── harness-steering-001 Core fixtures ──────────────────────────────────────
+
+test "harness-steering: none() preserves completed text-only" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+    try std.testing.expectEqual(StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
+}
+
+test "harness-steering: pre-turn steering before turn 1; one-at-a-time" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                // First provider turn must already see steering user after explicit user.
+                var users: u32 = 0;
+                for (messages) |m| {
+                    if (m.role == .user) users += 1;
+                }
+                if (users < 2) return error.InvalidResponse;
+                if (!std.mem.eql(u8, messages[messages.len - 1].content, "steer-1"))
+                    return error.InvalidResponse;
+                return .{
+                    .content = try arena.dupe(u8, "acked-steer"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+            return .{
+                .content = try arena.dupe(u8, "second"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    try q.pushSteering("steer-1");
+    try q.pushSteering("steer-2");
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("explicit");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.max_turns = 4;
+
+    const result = try run(deps, &transcript);
+    // First would-complete peeks remaining steer-2 and continues the run.
+    try std.testing.expectEqual(StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+    try std.testing.expectEqual(@as(u32, 2), sink.control_applieds);
+    // Last apply was would-complete → next_turn = 2 (turns was 1).
+    try std.testing.expectEqual(@as(u32, 2), sink.last_control_next_turn);
+    try std.testing.expectEqual(@as(usize, 0), q.steering.items.len);
+}
+
+test "harness-steering: mid-batch steered exact body + prepared user" {
+    const gpa = std.testing.allocator;
+
+    const State = struct { n: u32 = 0 };
+    const Stub = struct {
+        fn h(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.n += 1;
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = readOnlyDesc("read_file"),
+        .instance = &state,
+        .handler = Stub.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 2);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"a\"}"),
+                };
+                tc[1] = .{
+                    .id = try arena.dupe(u8, "c2"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"b\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "after-steer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("go");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
+    deps.options.max_turns = 4;
+
+    // Skip pre_turn (and first between_tools) so Tool 1 runs; second between_tools
+    // yields steering — simulates enqueue during Tool 1 execution.
+    try q.pushSteering("mid-steer");
+    const Delayed = struct {
+        inner: *TestControlQueue,
+        between_skips: u32 = 1,
+        fn peek(ptr: ?*anyopaque, boundary: control_input_mod.Boundary) ?control_input_mod.Item {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            if (boundary == .pre_turn) return null;
+            if (boundary == .between_tools and self.between_skips > 0) {
+                self.between_skips -= 1;
+                return null;
+            }
+            return TestControlQueue.peek(self.inner, boundary);
+        }
+        fn commit(ptr: ?*anyopaque, kind: control_input_mod.Kind) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            TestControlQueue.commit(self.inner, kind);
+        }
+    };
+    var delayed: Delayed = .{ .inner = &q };
+    const delayed_vtable: control_input_mod.ControlInputVTable = .{
+        .peek = Delayed.peek,
+        .commit = Delayed.commit,
+    };
+    deps.control_input = .{ .ptr = &delayed, .vtable = &delayed_vtable };
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), state.n); // only tool 1 ran
+    try std.testing.expectEqual(@as(u32, 1), sink.tool_starts);
+    try std.testing.expectEqual(@as(u32, 2), sink.tool_ends);
+    try std.testing.expectEqualStrings("c2", sink.last_tool_end_id);
+    try std.testing.expectEqualStrings(tool_error.steered_body, sink.last_tool_end_body);
+    try std.testing.expectEqual(@as(u32, 1), sink.control_applieds);
+    try std.testing.expectEqual(@as(u32, 2), sink.last_control_next_turn);
+    try std.testing.expectEqualStrings("mid-steer", sink.last_control_text);
+
+    // Transcript protocol legal: tool c1 body, tool c2 steered, then user.
+    var saw_steered = false;
+    var saw_user_steer = false;
+    for (transcript.items()) |m| {
+        if (m.role == .tool and tool_error.hasCode(m.content, .steered)) {
+            saw_steered = true;
+            try std.testing.expectEqualStrings(tool_error.steered_body, m.content);
+        }
+        if (m.role == .user and std.mem.eql(u8, m.content, "mid-steer")) saw_user_steer = true;
+    }
+    try std.testing.expect(saw_steered);
+    try std.testing.expect(saw_user_steer);
+    try std.testing.expectEqual(@as(usize, 0), q.steering.items.len);
+}
+
+test "harness-steering: would-complete steering priority over follow-up" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        calls: u32 = 0,
+        q: *TestControlQueue,
+        first_control: ?[]const u8 = null,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                // Enqueue during provider so pre-turn cannot consume them.
+                self.q.pushFollowUp("F") catch return error.InvalidResponse;
+                self.q.pushSteering("S") catch return error.InvalidResponse;
+                return .{
+                    .content = try arena.dupe(u8, "first"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+            // First post-turn-1 control user must be steering "S".
+            if (self.first_control == null) {
+                const last = messages[messages.len - 1];
+                if (last.role != .user) return error.InvalidResponse;
+                self.first_control = last.content;
+            }
+            return .{
+                .content = try arena.dupe(u8, "cont"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    var mock: Mock = .{ .q = &q };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.max_turns = 4;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.completed, result.stop_reason);
+    try std.testing.expectEqualStrings("S", mock.first_control.?);
+    // First control_applied is steering; both eventually drained in one run.
+    try std.testing.expectEqual(@as(u32, 2), sink.control_applieds);
+    try std.testing.expectEqual(@as(usize, 0), q.steering.items.len);
+    try std.testing.expectEqual(@as(usize, 0), q.follow_up.items.len);
+}
+
+test "harness-steering: follow-up alone continues same run" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                return .{
+                    .content = try arena.dupe(u8, "first"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+            const last = messages[messages.len - 1];
+            if (!std.mem.eql(u8, last.content, "more")) return error.InvalidResponse;
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    try q.pushFollowUp("more");
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.max_turns = 3;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), result.turns);
+    try std.testing.expectEqual(@as(u32, 1), sink.control_applieds);
+    try std.testing.expectEqual(control_input_mod.Kind.follow_up, sink.last_control_kind.?);
+    try std.testing.expectEqual(@as(u32, 2), sink.last_control_next_turn);
+}
+
+test "harness-steering: cancel before pre-turn leaves queue uncommitted" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "should-not"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    try q.pushSteering("pending");
+
+    var flag: cancel_mod.Flag = .{};
+    flag.request();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.cancel = &flag;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.cancelled, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
+    try std.testing.expectEqual(@as(usize, 1), q.steering.items.len);
+    try std.testing.expectEqual(@as(u32, 0), q.commits);
+}
+
+test "harness-steering: cancel after non-null would-complete peek retains item" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        flag: *cancel_mod.Flag,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            // After chat returns text-only, would-complete peeks then rechecks cancel.
+            self.flag.request();
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var flag: cancel_mod.Flag = .{};
+    var mock: Mock = .{ .flag = &flag };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    try q.pushFollowUp("later");
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.cancel = &flag;
+    deps.options.max_turns = 4;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.cancelled, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
+    try std.testing.expectEqual(@as(usize, 1), q.follow_up.items.len);
+}
+
+test "harness-steering: empty would-complete returns completed (no late cancel)" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        flag: *cancel_mod.Flag,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            // Cancel after chat: empty would-complete must still complete (no new late-cancel check).
+            self.flag.request();
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var flag: cancel_mod.Flag = .{};
+    var mock: Mock = .{ .flag = &flag };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.cancel = &flag;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.completed, result.stop_reason);
+}
+
+test "harness-steering: max_turns retains pending control" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "only"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    try q.pushFollowUp("no-room");
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.max_turns = 1;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.max_turns, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
+    try std.testing.expectEqual(@as(usize, 1), q.follow_up.items.len);
+}
+
+test "harness-steering: last-turn tools finish; steering retained" {
+    const gpa = std.testing.allocator;
+    const State = struct { n: u32 = 0 };
+    const Stub = struct {
+        fn h(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.n += 1;
+            return ctx.allocator.dupe(u8, "ok") catch return error.OutOfMemory;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = readOnlyDesc("read_file"),
+        .instance = &state,
+        .handler = Stub.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        q: *TestControlQueue,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            // Enqueue mid-provider so pre-turn cannot consume; last turn refuses apply.
+            self.q.pushSteering("late") catch return error.InvalidResponse;
+            const tc = try arena.alloc(message.ToolCall, 1);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "c1"),
+                .name = try arena.dupe(u8, "read_file"),
+                .arguments = try arena.dupe(u8, "{\"path\":\"x\"}"),
+            };
+            return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+        }
+    };
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    var mock: Mock = .{ .q = &q };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("go");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.max_turns = 1;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.max_turns, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), state.n);
+    try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
+    try std.testing.expectEqual(@as(usize, 1), q.steering.items.len);
+    // No steered codes — tools finished normally.
+    for (transcript.items()) |m| {
+        if (m.role == .tool) {
+            try std.testing.expect(!tool_error.hasCode(m.content, .steered));
+        }
+    }
+}
+
+test "harness-steering: multi-tool cancel still uses code=cancelled never steered" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        cancel_ptr: *cancel_mod.Flag,
+        q: *TestControlQueue,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            // Enqueue during chat so pre-turn cannot consume; cancel before tools.
+            self.q.pushSteering("ignored-on-cancel") catch return error.InvalidResponse;
+            self.cancel_ptr.request();
+            const tc = try arena.alloc(message.ToolCall, 2);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "c1"),
+                .name = try arena.dupe(u8, "list_dir"),
+                .arguments = try arena.dupe(u8, "{}"),
+            };
+            tc[1] = .{
+                .id = try arena.dupe(u8, "c2"),
+                .name = try arena.dupe(u8, "read_file"),
+                .arguments = try arena.dupe(u8, "{}"),
+            };
+            return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+        }
+    };
+    var cancel_flag: cancel_mod.Flag = .{};
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    var mock: Mock = .{ .cancel_ptr = &cancel_flag, .q = &q };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("explore");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+    deps.options.cancel = &cancel_flag;
+    deps.options.max_turns = 4;
+
+    const result = try run(deps, &transcript);
+    try std.testing.expectEqual(StopReason.cancelled, result.stop_reason);
+    var cancelled_n: u32 = 0;
+    for (transcript.items()) |m| {
+        if (m.role == .tool) {
+            try std.testing.expect(tool_error.hasCode(m.content, .cancelled));
+            try std.testing.expect(!tool_error.hasCode(m.content, .steered));
+            cancelled_n += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(u32, 2), cancelled_n);
+    try std.testing.expectEqual(@as(usize, 1), q.steering.items.len);
+    try std.testing.expectEqual(@as(u32, 0), sink.control_applieds);
+}
+
+test "harness-steering: post-commit control_applied sink failure leaves applied row" {
+    const gpa = std.testing.allocator;
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "never"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+    var sink: RecordingSink = .{ .fail_on_control_applied = error.SinkFailed };
+    var q: TestControlQueue = .{ .gpa = gpa };
+    defer q.deinit();
+    try q.pushSteering("applied-once");
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.control_input = q.controlInput();
+
+    const err = run(deps, &transcript);
+    try std.testing.expectError(error.TraceFailed, err);
+    // Committed: queue empty; transcript has the user row.
+    try std.testing.expectEqual(@as(usize, 0), q.steering.items.len);
+    var found = false;
+    for (transcript.items()) |m| {
+        if (m.role == .user and std.mem.eql(u8, m.content, "applied-once")) found = true;
+    }
+    try std.testing.expect(found);
 }

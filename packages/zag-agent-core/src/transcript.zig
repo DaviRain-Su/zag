@@ -9,6 +9,17 @@ const message = @import("message.zig");
 
 pub const Error = error{OutOfMemory};
 
+/// Single-use internal value for mid-batch steering (harness-steering-001).
+///
+/// `prepareUser` copies text into the transcript arena and reserves message-list
+/// capacity for every remaining Tool row plus the user row. Abandoning a
+/// prepared value exposes no message; arena bytes live until Session deinit.
+/// A later attempt prepares an independent value rather than reusing this one.
+/// `appendPreparedUser` is infallible after a successful prepare (no allocation).
+pub const PreparedUser = struct {
+    text: []const u8,
+};
+
 pub const Transcript = struct {
     /// All message string/tool_call bytes live here for the transcript lifetime.
     arena: std.mem.Allocator,
@@ -32,6 +43,23 @@ pub const Transcript = struct {
         const owned = self.arena.dupe(u8, text) catch return error.OutOfMemory;
         self.messages.append(self.arena, message.Message.user(owned)) catch
             return error.OutOfMemory;
+    }
+
+    /// Pre-copy user text and reserve `reserve_rows` additional message slots.
+    /// Does not expose a user row. On OOM, no row is visible and the caller must
+    /// not write steered side effects.
+    pub fn prepareUser(self: *Transcript, text: []const u8, reserve_rows: usize) Error!PreparedUser {
+        const owned = self.arena.dupe(u8, text) catch return error.OutOfMemory;
+        self.messages.ensureUnusedCapacity(self.arena, reserve_rows) catch
+            return error.OutOfMemory;
+        return .{ .text = owned };
+    }
+
+    /// Append a previously prepared user row without allocation. Single-use:
+    /// the caller must not call this twice with the same prepared value after a
+    /// successful append (Debug builds may assert via capacity bookkeeping).
+    pub fn appendPreparedUser(self: *Transcript, prepared: PreparedUser) void {
+        self.messages.appendAssumeCapacity(message.Message.user(prepared.text));
     }
 
     /// Persist an assistant turn (text and optional tool_calls) into the ledger.
@@ -81,4 +109,38 @@ test "transcript append user and assistant text" {
     try std.testing.expectEqual(@as(usize, 3), t.items().len);
     try std.testing.expectEqualStrings("hi", t.items()[1].content);
     try std.testing.expectEqualStrings("hello", t.items()[2].content);
+}
+
+test "transcript prepareUser then appendPreparedUser is allocation-free append" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    var t = Transcript.init(arena_impl.allocator());
+
+    try t.appendUser("first");
+    const prepared = try t.prepareUser("steered-in", 3);
+    // Capacity reserved; prepared row not yet visible.
+    try std.testing.expectEqual(@as(usize, 1), t.items().len);
+
+    // Fill remaining reserved tool slots then the user row.
+    try t.appendToolResult("c1", "ok1");
+    try t.appendToolResult("c2", "ok2");
+    t.appendPreparedUser(prepared);
+
+    try std.testing.expectEqual(@as(usize, 4), t.items().len);
+    try std.testing.expectEqualStrings("steered-in", t.items()[3].content);
+}
+
+test "transcript abandoned PreparedUser exposes no user row" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    var t = Transcript.init(arena_impl.allocator());
+
+    _ = try t.prepareUser("hidden", 1);
+    try std.testing.expectEqual(@as(usize, 0), t.items().len);
+
+    // Independent later prepare works.
+    const again = try t.prepareUser("visible", 1);
+    t.appendPreparedUser(again);
+    try std.testing.expectEqual(@as(usize, 1), t.items().len);
+    try std.testing.expectEqualStrings("visible", t.items()[0].content);
 }
