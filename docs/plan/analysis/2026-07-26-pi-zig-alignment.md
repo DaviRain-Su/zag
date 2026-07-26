@@ -1,6 +1,7 @@
 # Pi-inspired Zig harness alignment
 
-Date: 2026-07-26  
+Date: 2026-07-26
+
 Decision: [D-009](../../decisions/active/D-009-pi-semantics-not-parity-fork.md)
 
 ## Question

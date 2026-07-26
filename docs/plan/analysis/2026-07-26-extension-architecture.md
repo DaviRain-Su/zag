@@ -1,6 +1,7 @@
 # Zig-native extension architecture
 
-Date: 2026-07-26  
+Date: 2026-07-26
+
 Decision: [D-010](../../decisions/active/D-010-extension-tiers-and-process-protocol.md)
 
 ## Question
