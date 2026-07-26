@@ -44,8 +44,10 @@ const port_file_name = "sigint_slow_mock.port";
 const ready_file_name = "sigint_slow_mock.ready";
 
 /// Wait for `pid` to exit using `waitpid(WNOHANG)` with bounded polling.
-/// Returns the raw status word, or `null` if the bound elapsed. Does NOT reap
-/// (caller decides); safe to call repeatedly — only one waitpid will succeed.
+/// Returns the raw status word, or `null` if the bound elapsed. When waitpid
+/// returns `pid` the child HAS been reaped (waitpid is not just a peek); the
+/// caller must not wait/reap that pid again. Safe to call repeatedly until it
+/// returns non-null — only one waitpid will succeed.
 fn waitBounded(io: Io, pid: std.posix.pid_t, bound_ms: u64) ?u32 {
     var elapsed: u64 = 0;
     const step_ms: u64 = 10;
@@ -87,11 +89,8 @@ fn readToEof(gpa: std.mem.Allocator, io: Io, fd: std.posix.fd_t, bound_ms: u64) 
     const step_ms: i32 = 10;
     while (elapsed < bound_ms) {
         var pfds: [1]std.posix.pollfd = .{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
-        const n = std.posix.poll(&pfds, step_ms) catch return .{
-            .bytes = try acc.toOwnedSlice(gpa),
-            .eof = false,
-            .timed_out = false,
-        };
+        // Unexpected poll error -> typed ReadFailed (no silent infinite continue).
+        const n = std.posix.poll(&pfds, step_ms) catch return error.ReadFailed;
         elapsed += @intCast(step_ms);
         if (n == 0) continue;
         if (pfds[0].revents == 0) continue;
@@ -135,12 +134,8 @@ fn readUntilMarker(
     const step_ms: i32 = 10;
     while (elapsed < bound_ms) {
         var pfds: [1]std.posix.pollfd = .{.{ .fd = fd, .events = std.posix.POLL.IN, .revents = 0 }};
-        const n = std.posix.poll(&pfds, step_ms) catch return .{
-            .bytes = try acc.toOwnedSlice(gpa),
-            .found = false,
-            .eof = false,
-            .timed_out = false,
-        };
+        // Unexpected poll error -> typed ReadFailed (no silent masking).
+        const n = std.posix.poll(&pfds, step_ms) catch return error.ReadFailed;
         elapsed += @intCast(step_ms);
         if (n == 0) continue;
         if (pfds[0].revents == 0) continue;
@@ -345,10 +340,12 @@ test "sigint idle REPL: first SIGINT wakes and direct process exits 0 within bou
     child.id = null;
     zag_reaped = true; // waitBounded reaped it; do not double-reap.
 
-    // stderr read to EOF (no marker truncation — P2 hygiene). Must not contain
-    // a Zig runtime error/stack trace / ReadFailed (review item 4/6).
+    // stderr read to EOF (no marker truncation — P2 hygiene). Must reach EOF
+    // (not time out) so truncated output cannot pass the assertions below.
     const err_eof = try readToEof(gpa, io, childStderrFd(&child), 200);
     defer gpa.free(err_eof.bytes);
+    try std.testing.expect(err_eof.eof);
+    try std.testing.expect(!err_eof.timed_out);
     try std.testing.expect(std.mem.indexOf(u8, err_eof.bytes, "error:") == null);
     try std.testing.expect(std.mem.indexOf(u8, err_eof.bytes, "stack trace") == null);
     try std.testing.expect(std.mem.indexOf(u8, err_eof.bytes, "ReadFailed") == null);
@@ -436,6 +433,9 @@ test "sigint active request: backend-honest second-signal escape (std=130) / act
 
             const out_eof = try readToEof(gpa, io, childStdoutFd(&child), 300);
             defer gpa.free(out_eof.bytes);
+            // Must reach EOF so a truncated terminal stream cannot pass.
+            try std.testing.expect(out_eof.eof);
+            try std.testing.expect(!out_eof.timed_out);
             // `--json` emits exactly one `"type":"result"` terminal envelope.
             const term_tag = "\"type\":\"result\"";
             const first = std.mem.indexOf(u8, out_eof.bytes, term_tag);

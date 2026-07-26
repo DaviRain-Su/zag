@@ -16,7 +16,7 @@
 //! `write(2)` of one byte, and a raw exit. No locks, allocation, logging,
 //! formatting, or buffered I/O.
 //!
-//! # Signal-safety / lifecycle (cli-sigint-001 review item 2 / P1 follow-up)
+//! # Signal-safety / lifecycle (cli-sigint-001 review item 2 / P1 final)
 //!
 //! The interrupt *state* lives in a process-lifetime atomic word, NOT in the
 //! Agent's `CancelFlag`. This is deliberate: the second-interrupt predicate
@@ -24,7 +24,7 @@
 //! cancel (e.g. a test or SDK caller setting the flag) is never misread as a
 //! "second Ctrl+C". The Agent flag is only the cooperative-cancel channel.
 //!
-//! Proof of race-freedom for teardown:
+//! Proof of race-freedom for teardown (P1 final — no teardown→reinstall ABA):
 //!   * `write_fd` is a process-lifetime immutable value. It is written exactly
 //!     once (on first pipe creation) and NEVER mutated by `deinit`. A handler
 //!     can therefore always read a stable, valid fd; there is no close/fd-reuse
@@ -38,15 +38,28 @@
 //!     decrement because the process is leaving). `deinit` sets `state=
 //!     disabled` (so new entries return immediately without touching flag/pipe),
 //!     atomically unbinds the flag, restores the previous sigaction, then spins
-//!     (bounded) until `in_flight == 0` — draining any handler that entered
-//!     before/during those steps and may still touch the (now-null) flag. Only
-//!     then is guard ownership released. A handler that enters after `disabled`
-//!     is visible sees `disabled`, decrements, and returns without touching the
-//!     flag — safe.
-//!   * Sequential reinstall is supported: `deinit` releases ownership, then a
-//!     later `install` re-binds the flag, sets `state=idle`, and re-installs the
-//!     sigaction in that safe order.
-//!   * Concurrent/nested `Guard` installation is rejected (one owner at a time).
+//!     until `in_flight == 0` (UNbounded — see below) — draining any handler
+//!     that entered before/during those steps and may still touch the (now-null)
+//!     flag. A handler that enters after `disabled` is visible sees `disabled`,
+//!     decrements, and returns without touching the flag — safe.
+//!   * The `in_flight` drain is unbounded because the handler does ONLY
+//!     lock-free atomics + a nonblocking one-byte `write`; a normal-path
+//!     handler is therefore bounded and MUST complete before the Agent
+//!     proceeds to later destroy the flag. A handler that already loaded the
+//!     old flag before `deinit` stored null will finish its atomic work in a
+//!     bounded number of instructions. There is no allocation/lock/IO to stall
+//!     on, so the wait cannot deadlock in practice.
+//!   * ONE-SHOT install (P1 final ABA fix): `ever_installed` is a one-way
+//!     atomic. The first successful `install` sets it permanently; `deinit`
+//!     restores the previous sigaction but does NOT clear it. Any later
+//!     `install` returns `error.SigintInitFailed`. This eliminates the
+//!     teardown→reinstall ABA: POSIX does not guarantee that an old handler
+//!     already committed but not yet executing its first instruction cannot
+//!     enter AFTER `sigaction(restore)` returns, and a userspace
+//!     generation/in_flight counter cannot distinguish an old-generation entry
+//!     from a new one. The CLI has exactly one Guard for the whole process
+//!     lifetime, so reinstall is unnecessary; forbidding it removes the ABA.
+//!   * Concurrent/nested `Guard` installation is also rejected (one owner).
 //!
 //! NONBLOCK + CLOEXEC are set on both pipe ends so exec and blocking never
 //! interact.
@@ -210,7 +223,7 @@ const O_NONBLOCK_LINUX: u32 = 0o4000;
 const O_NONBLOCK_MAC: c_int = 0x0004;
 
 // ---------------------------------------------------------------------------
-// Process-lifetime interrupt state (review item 2 / P1 follow-up).
+// Process-lifetime interrupt state (review item 2 / P1 final).
 //
 // All fields are lock-free atomics or process-lifetime immutable values. No
 // plain field is read by the handler while a non-handler thread might write
@@ -235,7 +248,7 @@ const State = enum(u32) {
 ///     The handler loads it atomically; `deinit` stores 0 atomically. No
 ///     plain-field race.
 ///   * `in_flight` — lock-free atomic counter of handlers that have entered but
-///     not yet returned. `deinit` drains it to zero before releasing ownership.
+///     not yet returned. `deinit` drains it to zero before returning.
 var handler_state: struct {
     state: std.atomic.Value(u32) = .init(@intFromEnum(State.disabled)),
     flag: std.atomic.Value(usize) = .init(0),
@@ -249,6 +262,13 @@ var lifetime_write_fd: fd_t = -1;
 /// Process-lifetime self-pipe read fd (companion; also immutable after create).
 var lifetime_read_fd: fd_t = -1;
 var pipe_created: bool = false;
+
+/// One-shot install latch (P1 final ABA fix). Set permanently on the first
+/// successful `install`; NEVER cleared by `deinit`. Any later `install`
+/// (including after teardown) returns `error.SigintInitFailed`. This removes
+/// the teardown→reinstall ABA: an old-generation handler committed but not yet
+/// executing cannot be confused with a new-generation entry.
+var ever_installed: std.atomic.Value(bool) = .init(false);
 
 /// Async-signal-safe SIGINT handler.
 ///   disabled -> (no-op)        : teardown in progress; return without touching flag/pipe.
@@ -311,12 +331,14 @@ fn onSigInt(_: posix.SIG) callconv(.c) void {
 // ---------------------------------------------------------------------------
 
 /// Errors from installing the guard. Distinct from `OutOfMemory` (review item
-/// 7): a pipe/fcntl/sigaction failure is an initialization fault, not memory
-/// exhaustion. Callers map this to an honest init error, not OOM.
+/// 7): a pipe/fcntl/sigaction failure, a concurrent/nested install, OR an
+/// attempt to reinstall after the one-shot install already succeeded — all are
+/// initialization faults, not memory exhaustion. Callers map this to an honest
+/// init error, not OOM.
 pub const InstallError = error{SigintInitFailed};
 
 /// Process-lifetime singleton guard ownership flag. Prevents concurrent/nested
-/// Guard installation (sequential reinstall is allowed once `deinit` clears).
+/// Guard installation (one owner at a time).
 var guard_owned: std.atomic.Value(bool) = .init(false);
 
 pub const Guard = struct {
@@ -327,15 +349,20 @@ pub const Guard = struct {
     const invalid: fd_t = -1;
 
     /// `flag` must outlive every `reply`/`run` made under this guard (it is
-    /// the Agent's cancel flag, owned by the Agent). Sequential reinstall is
-    /// supported (deinit then install again); concurrent/nested install is
-    /// rejected with `error.SigintInitFailed`.
+    /// the Agent's cancel flag, owned by the Agent). Installation is ONE-SHOT
+    /// per process (P1 final ABA fix): the first successful `install` latches
+    /// `ever_installed` permanently; `deinit` restores the previous sigaction
+    /// but a later `install` returns `error.SigintInitFailed`. The CLI has
+    /// exactly one Guard for the process lifetime and never reinstalls.
+    /// Concurrent/nested install is also rejected with `error.SigintInitFailed`.
     pub fn install(flag: ?*Flag) InstallError!Guard {
         if (!supported) {
             return .{ .read_fd = invalid, .prev = undefined, .installed = false };
         }
 
-        // Reject concurrent/nested ownership. Sequential reuse is fine.
+        // One-shot latch: once any install has succeeded, never again.
+        if (ever_installed.load(.seq_cst)) return error.SigintInitFailed;
+        // Reject concurrent/nested ownership.
         if (guard_owned.cmpxchgStrong(false, true, .seq_cst, .seq_cst) != null) {
             return error.SigintInitFailed;
         }
@@ -369,18 +396,29 @@ pub const Guard = struct {
         var prev: posix.Sigaction = undefined;
         posix.sigaction(posix.SIG.INT, &act, &prev);
 
+        // One-shot latch: mark permanently installed. This is intentionally
+        // NOT cleared by deinit, so a later install cannot ABA onto a stale
+        // old-generation handler.
+        ever_installed.store(true, .seq_cst);
+
         return .{ .read_fd = lifetime_read_fd, .prev = prev, .installed = true };
     }
 
-    /// Restore the previous disposition with a race-free teardown (P1):
+    /// Restore the previous disposition with a race-free teardown (P1 final):
     ///   1. state=disabled  — new handler entries return immediately.
     ///   2. flag=null       — atomic unbind (no plain-field race).
     ///   3. restore sigaction — signals after this go to the previous handler.
-    ///   4. drain in_flight to 0 (bounded spin) — handlers that entered before
+    ///   4. wait in_flight to 0 (UNbounded spin) — handlers that entered before
     ///      steps 1-3 and may still touch the (now-null) flag finish first.
-    ///   5. release guard ownership.
+    ///      The handler does only lock-free atomics + a nonblocking one-byte
+    ///      write, so a normal-path entry is bounded and cannot deadlock here.
+    ///      A handler that already loaded the old flag will finish its atomic
+    ///      work before the Agent later destroys the flag.
+    ///   5. clear guard ownership (but NOT `ever_installed` — install is one-shot).
     /// The self-pipe is process-lifetime and NEVER closed here, so `write_fd`
-    /// stays valid for any in-flight handler (no fd-reuse window).
+    /// stays valid for any in-flight handler (no fd-reuse window). Reinstall is
+    /// forbidden (one-shot), so a late old-generation handler that enters after
+    /// step 3 sees disabled + atomic flag=0 and cannot ABA to a new generation.
     pub fn deinit(self: *Guard) void {
         if (!supported or !self.installed) return;
 
@@ -391,14 +429,14 @@ pub const Guard = struct {
         handler_state.flag.store(0, .seq_cst);
         // 3. Restore the previous disposition.
         posix.sigaction(posix.SIG.INT, &self.prev, null);
-        // 4. Drain in-flight handlers. Bounded spin so we never deadlock; any
-        //    in-flight handler finishes atomically (it loads the now-null flag
-        //    and the process-lifetime pipe fd, both safe to touch).
-        var spins: u32 = 0;
-        while (handler_state.in_flight.load(.seq_cst) != 0 and spins < 1_000_000) : (spins += 1) {
+        // 4. Drain in-flight handlers. UNbounded: the handler is lock-free +
+        //    nonblocking-write only, so every in-flight entry is bounded and
+        //    MUST complete. No allocation/lock/IO can stall it, so this cannot
+        //    deadlock in practice.
+        while (handler_state.in_flight.load(.seq_cst) != 0) {
             std.atomic.spinLoopHint();
         }
-        // 5. Release ownership so a sequential reinstall can proceed.
+        // 5. Release ownership (but NOT ever_installed — install is one-shot).
         guard_owned.store(false, .seq_cst);
         self.installed = false;
     }
@@ -470,7 +508,8 @@ pub const LineBuffer = struct {
 /// buffer contents are unspecified. Bounded by `poll_timeout_ms` per iteration.
 ///
 /// A pending SIGINT is checked BEFORE consuming retained input, so an idle
-/// Ctrl+C always wins over a queued next line (P2 hygiene).
+/// Ctrl+C always wins over a queued next line (P2 hygiene). An unexpected
+/// `poll` error is mapped to a typed `ReadFailed` (no infinite `continue`).
 pub fn readInterruptibleLine(
     guard: *const Guard,
     lb: *LineBuffer,
@@ -505,8 +544,9 @@ pub fn readInterruptibleLine(
             .{ .fd = stdin_fd, .events = posix.POLL.IN, .revents = 0 },
             .{ .fd = guard.read_fd, .events = posix.POLL.IN, .revents = 0 },
         };
-        _ = posix.poll(&fds, poll_timeout_ms) catch continue;
         // std.posix.poll auto-restarts on EINTR; a timeout (0) just re-checks.
+        // An unexpected error is typed (no infinite continue) — P2 hygiene.
+        _ = posix.poll(&fds, poll_timeout_ms) catch return error.ReadFailed;
 
         // Wake pipe fired → SIGINT. Drain and report interrupted (never
         // ReadFailed — review item 4).
@@ -592,11 +632,79 @@ fn drainWake(read_fd: fd_t) void {
 }
 
 // ---------------------------------------------------------------------------
+// Test-only reset hook (P1 final).
+//
+// Because `install` is one-shot per process, unit tests that need to exercise
+// multiple install scenarios MUST reset the process-global latch/state. This
+// hook is gated on `builtin.is_test` and compiles to a `@compileError` in the
+// product executable, so it is NOT present/callable in the final product.
+// It MUST only be called when no real signal is in flight and `in_flight == 0`
+// (i.e. between tests, with the previous Guard deinit'd). It is NOT a product
+// API and never appears in the shipped binary.
+// ---------------------------------------------------------------------------
+
+const testing_internal = if (builtin.is_test) struct {
+    /// Reset the one-shot latch + globals so a subsequent test can `install`
+    /// again. Caller guarantees no real signal delivery is in progress and
+    /// `in_flight == 0` (the prior Guard has been deinit'd). NOT a product API.
+    fn resetForTesting() void {
+        assert(handler_state.in_flight.load(.seq_cst) == 0);
+        assert(@as(State, @enumFromInt(handler_state.state.load(.seq_cst))) == .disabled);
+        handler_state.state.store(@intFromEnum(State.disabled), .seq_cst);
+        handler_state.flag.store(0, .seq_cst);
+        ever_installed.store(false, .seq_cst);
+        guard_owned.store(false, .seq_cst);
+        pipe_created = false;
+        lifetime_read_fd = -1;
+        lifetime_write_fd = -1;
+    }
+} else struct {
+    fn resetForTesting() callconv(.c) noreturn {
+        @compileError("resetForTesting is a test-only hook and must not be called in the product binary");
+    }
+};
+
+const assert = std.debug.assert;
+
+/// Public test namespace. Only available under `builtin.is_test`; in the
+/// product executable it triggers a `@compileError` on any use.
+pub const testing = if (builtin.is_test) struct {
+    pub const resetForTesting = testing_internal.resetForTesting;
+    pub const State_ = State;
+    pub const handlerStateSnapshot = struct {
+        pub fn state() State {
+            return @enumFromInt(handler_state.state.load(.seq_cst));
+        }
+        pub fn flagAddr() usize {
+            return handler_state.flag.load(.seq_cst);
+        }
+        pub fn inFlight() u32 {
+            return handler_state.in_flight.load(.seq_cst);
+        }
+        pub fn everInstalled() bool {
+            return ever_installed.load(.seq_cst);
+        }
+        pub fn guardOwned() bool {
+            return guard_owned.load(.seq_cst);
+        }
+    };
+} else struct {
+    pub const resetForTesting = testing_internal.resetForTesting;
+};
+
+// ---------------------------------------------------------------------------
 // Tests
+//
+// Strategy (P1 final): the product `install` is one-shot per process, so tests
+// that need multiple install scenarios call `testing.resetForTesting()` between
+// scenarios (only when no real signal is in flight and in_flight==0). This keeps
+// the product binary free of reinstall support while still allowing focused
+// unit tests. Real Guard install is minimised where possible.
 // ---------------------------------------------------------------------------
 
 test "Guard install/restore is a no-op disposition round-trip on signal-capable OS" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
@@ -607,6 +715,7 @@ test "Guard install/restore is a no-op disposition round-trip on signal-capable 
 
 test "first signal requests flag and wakes pipe; second signal predicate is handler state" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
@@ -642,8 +751,9 @@ test "first signal requests flag and wakes pipe; second signal predicate is hand
     flag.clear();
 }
 
-test "deinit sets disabled and unbinds flag atomically; in_flight drains" {
+test "deinit sets disabled and unbinds flag atomically; in_flight drains; install is one-shot" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     // Simulate one in-flight handler entry then a normal decrement so the
@@ -656,28 +766,31 @@ test "deinit sets disabled and unbinds flag atomically; in_flight drains" {
     try std.testing.expectEqual(State.disabled, end_state);
     try std.testing.expectEqual(@as(usize, 0), handler_state.flag.load(.seq_cst));
     try std.testing.expectEqual(@as(u32, 0), handler_state.in_flight.load(.seq_cst));
-    // Ownership released -> a fresh install must succeed (sequential reinstall).
-    var guard2 = try Guard.install(&flag);
-    defer guard2.deinit();
-    try std.testing.expect(guard2.installed);
+    try std.testing.expect(!testing.handlerStateSnapshot.guardOwned());
+    // P1 final: install is ONE-SHOT. ever_installed stays true after deinit,
+    // so a later install must FAIL (no teardown->reinstall ABA).
+    try std.testing.expect(testing.handlerStateSnapshot.everInstalled());
+    const again = Guard.install(&flag);
+    try std.testing.expectError(error.SigintInitFailed, again);
 }
 
-test "concurrent/nested Guard install is rejected; sequential reinstall works" {
+test "concurrent/nested Guard install is rejected" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     // A second install while the first is still owned must fail.
     const second = Guard.install(&flag);
     try std.testing.expectError(error.SigintInitFailed, second);
-    // After deinit, a sequential reinstall must succeed.
     guard.deinit();
-    var guard2 = try Guard.install(&flag);
-    defer guard2.deinit();
-    try std.testing.expect(guard2.installed);
+    // After deinit, install is STILL rejected (one-shot, not sequential reinstall).
+    const again = Guard.install(&flag);
+    try std.testing.expectError(error.SigintInitFailed, again);
 }
 
 test "readInterruptibleLine returns eof on closed stdin" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
@@ -692,6 +805,7 @@ test "readInterruptibleLine returns eof on closed stdin" {
 
 test "readInterruptibleLine reads a line" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
@@ -713,6 +827,7 @@ test "readInterruptibleLine reads a line" {
 
 test "readInterruptibleLine observes a pending interrupt without stdin input" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
@@ -735,6 +850,7 @@ test "readInterruptibleLine observes a pending interrupt without stdin input" {
 
 test "readInterruptibleLine: pending SIGINT wins over retained next line (P2 hygiene)" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
@@ -751,26 +867,23 @@ test "readInterruptibleLine: pending SIGINT wins over retained next line (P2 hyg
         .seq_cst,
     );
     sys.writeWake(lifetime_write_fd);
+    // A pipe whose write end is kept open but never written: poll never sees
+    // readable/EOF, so the pending-interrupt path is exercised cleanly. Both
+    // ends are closed on scope exit (no fd leak).
+    const fds = try sys.pipe();
+    defer sys.close(fds[0]);
+    defer sys.close(fds[1]);
     var buf: [128]u8 = undefined;
-    const out = try readInterruptibleLine(&guard, &lb, fdsDummy(), &buf, 50);
+    const out = try readInterruptibleLine(&guard, &lb, fds[0], &buf, 50);
     try std.testing.expect(out == .interrupted);
     // The retained line is still in the buffer (not consumed).
     try std.testing.expectEqual(@as(usize, retained.len), lb.pending_len);
     guard.acknowledgeCancel();
 }
 
-/// A never-ready fd for the pending-wins-over-retained test (closed write end
-/// of a pipe whose read end is also closed would EOF; instead use a pipe with
-/// the write end kept open so poll never sees readable/EOF).
-fn fdsDummy() fd_t {
-    const fds = sys.pipe() catch return -1;
-    // Keep both ends open; the read end never becomes ready because nothing is
-    // written. Leak intentionally (test-only; process exits).
-    return fds[0];
-}
-
 test "readInterruptibleLine retains same-batch bytes across two calls (review item 4)" {
     if (!supported) return;
+    testing.resetForTesting();
     var flag: Flag = .{};
     var guard = try Guard.install(&flag);
     defer guard.deinit();
