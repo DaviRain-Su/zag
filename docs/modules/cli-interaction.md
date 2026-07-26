@@ -26,6 +26,16 @@ This module owns plain CLI and REPL behavior. Machine output remains defined by 
 
 The second interrupt is an explicit abandonment path. It may bypass session/trace flush and therefore is not evidence of a normal truthful run terminal.
 
+## Signal-safety & lifecycle
+
+- The handler maintains its own process-lifetime interrupt state (`idle` → `pending` → `escaped`), NOT the Agent's cancel flag. The second-interrupt predicate is the handler's unacknowledged `pending` state, so a programmatic cancel (a test or SDK caller setting the flag) is never misread as a "second Ctrl+C".
+- A process-lifetime singleton self-pipe (NONBLOCK + CLOEXEC on both ends) is created once and never closed while the process runs. `Guard.deinit` only restores the previous SIGINT disposition; the pipe is reclaimed by the OS at exit (at most 2 leaked fds, bounded and safe — no close/fd-reuse window under a stale handler).
+- Concurrent/nested `Guard` installation is rejected; sequential reinstall (deinit then install) is supported so the REPL can reuse it.
+- The previous `sigaction` is captured on install and restored on teardown; the bound flag/state stay live until teardown so a signal delivered mid-restore observes a consistent disposition.
+- The handler performs only: a `cmpxchg` on a seq_cst atomic state word, an optional `CancelFlag.request`, a raw `write(2)` of one byte, and a raw exit. No allocation, logging, formatting, or buffered I/O.
+- The run loop acknowledges a consumed interrupt (`pending` → `idle`) at the run-completion boundary so the next interaction can use Ctrl+C again; `escaped` is terminal (the process is exiting).
+- A pre-run pending interrupt (a SIGINT that arrives after the guard is installed but before a run begins) applies to the current run, not a silent drop. The cancel flag is cleared at the run-completion boundary (not at run start) so the pending cancel is not erased.
+
 ## Backend truth
 
 The first interrupt does not create a new active-preemption claim:
@@ -38,15 +48,16 @@ The second interrupt guarantees that the user still has an escape path without c
 
 ## Build runner boundary
 
-The public contract applies to the direct `zag` process. `zig build run` shares a foreground process group with Zig’s build runner on current macOS tooling; Ctrl+C may terminate the parent runner with status `130` before Zag completes its graceful path. Tests therefore spawn the built `zag` binary directly.
+The public contract applies to the direct `zag` process. `zig build run` shares a foreground process group with Zig’s build runner on current macOS tooling; Ctrl+C may terminate the parent runner with status `130` before Zag completes its graceful path. The parent runner's `130` is not a Zag contract violation; the contract is that the direct `zag` child must not emit a Zig runtime `error`/stack (e.g. `ReadFailed`) on Ctrl+C. Tests therefore spawn the built `zag` binary directly. `README`/chapters may still show `zig build run` for convenience, but the exit-code authority is `./zig-out/bin/zag`.
 
 ## Verification
 
 - Process fixture starts the real direct binary with isolated cwd and an empty/synthetic environment; no `.env` or real key is read.
 - Idle prompt readiness is detected from output before SIGINT; no blind sleep decides the injection point.
-- A deterministic mock-provider handshake marks an active request before SIGINT.
-- Tests bound exit time and fail on hangs.
-- std and curl expectations remain capability-specific.
+- A deterministic mock-provider handshake marks an active request before SIGINT: the slow mock writes a `ready` marker after consuming the full HTTP request and before the response-head stall; the fixture waits on that marker, then sends the first SIGINT.
+- Tests bound exit time, reap/kill children on failure, and assert no secret/absolute-path leak in child output.
+- std active second-signal expects exit `130`; curl active first-signal expects exit `11` with exactly one headless terminal envelope (`"type":"result"`, `stop_reason="cancelled"`).
+- The direct child's stderr must not contain a Zig runtime `error:`/stack trace / `ReadFailed`.
 - Existing REPL delimiter, default-mode, SDK cancel, and headless terminal tests remain green.
 
 ## Non-goals

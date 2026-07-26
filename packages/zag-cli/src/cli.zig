@@ -341,10 +341,12 @@ pub fn run(init: std.process.Init) !void {
     defer agent.deinit();
     // cli-sigint-001: CLI owns the SIGINT handler. It installs a self-pipe
     // wakeup + cooperative cancel against `agent.cancel`, and restores the
-    // previous disposition on scope exit. The SDK alone never installs this.
+    // previous disposition on scope end. The SDK alone never installs this.
+    // Install failure is an initialization fault (pipe/fcntl/sigaction), NOT
+    // out-of-memory — map honestly (review item 7), without lying OOM.
     var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
         if (headless_mode) |mode| {
-            headlessErrorExit(gpa, io, mode, null, .{ .code = .out_of_memory, .message = "sigint guard init failed" });
+            headlessErrorExit(gpa, io, mode, null, .{ .code = .trace_error, .message = "sigint guard init failed" });
         }
         std.log.err("sigint guard init failed", .{});
         std.process.exit(1);
@@ -575,13 +577,18 @@ fn runRepl(
     // blocking read and the direct process exits cleanly with code 0. The
     // self-pipe + poll path is POSIX-only (macOS/Linux), which are the only
     // platforms Zag targets; the guard is inert on others.
+    //
+    // A persistent LineBuffer retains same-batch stdin bytes across calls so
+    // a raw read of "first\nsecond\n" yields "first" then "second" (review
+    // item 4), never dropping the second line.
     const stdin_fd = std.posix.STDIN_FILENO;
+    var line_state = sigint.LineBuffer.init();
 
     while (true) {
         try writeStdout(io, "you> ");
 
         var line_buf: [4096]u8 = undefined;
-        const read_out = sigint.readInterruptibleLine(guard, stdin_fd, &line_buf, 250) catch |err| {
+        const read_out = sigint.readInterruptibleLine(guard, &line_state, stdin_fd, &line_buf, 250) catch |err| {
             std.log.err("repl read failed: {s}", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -600,8 +607,16 @@ fn runRepl(
 
         const result = agent.reply(&session, user_text) catch |err| {
             std.log.err("agent failed: {s}", .{@errorName(err)});
+            // Acknowledge any SIGINT-driven cancel so the next Ctrl+C works
+            // afresh; the flag was cleared at the reply completion boundary.
+            guard.acknowledgeCancel();
             continue;
         };
+
+        // Acknowledge the SIGINT-driven cancel now that the run has consumed
+        // it (review item 3): the next interaction can use Ctrl+C again. The
+        // cancel flag itself was cleared at the reply completion boundary.
+        guard.acknowledgeCancel();
 
         if (agent.options.verbose) {
             agent.logCostSummary();

@@ -568,10 +568,15 @@ pub const Agent = struct {
     /// Per-reply prep: reset ledger + trace buffer, non-destructive preflight,
     /// then `run_start`. Lifecycle owner: facade (loop + session save + persist).
     fn beginRun(self: *Agent, session: *Session) ReplyError!void {
-        // Per-run cancel: stale flags from a prior reply (e.g. SIGINT) are cleared
-        // here so that one cancel only affects the current run. A flag set during
-        // this run (between Tools or inside a provider in-flight call) still wins.
-        self.cancel.clear();
+        // cli-sigint-001 (review item 3): the cancel flag is cleared at the
+        // run-COMPLETION boundary (see `reply`/`completeWithSession`), NOT
+        // here. Clearing here would silently drop a SIGINT that arrived after
+        // the guard was installed but before this run began (a pre-run pending
+        // cancel that must apply to the current run). A flag set before this
+        // run's first loop iteration is observed immediately by `loop.run` as
+        // a cooperative cancel, so a pre-run interrupt lands on this run
+        // instead of being erased. The completion boundary clears the flag so
+        // the NEXT interaction starts clean (no stale cancel inherited).
         // Fresh run-local cost ledger each reply.
         self.ledger = .{};
         // Drop any stale borrowed redactor **before** fallible ensure/bind so a
@@ -717,6 +722,13 @@ pub const Agent = struct {
         try self.beginRun(session);
         // Clear borrowed trace redactor on every exit (success, failRun, persist fault).
         defer self.clearTraceRedactor();
+        // cli-sigint-001 (review item 3): clear the cancel flag at the run
+        // completion boundary so the next interaction starts clean. A cancel
+        // that landed during this run already produced its `.cancelled` result
+        // (or was observed by `loop.run`); keeping the flag set would let a
+        // stale interrupt bleed into the next reply. Pre-run pending cancels
+        // are NOT cleared here-they are applied to this run by `loop.run`.
+        defer self.cancel.clear();
         session.zag_version = self.options.version;
 
         session.transcript.appendUser(user_text) catch |err| {
@@ -1523,6 +1535,82 @@ test "h-trace: per-run cancel clears stale flag; second reply completes" {
     const result2 = try agent.reply(&session2, "second");
     try std.testing.expectEqual(loop.StopReason.completed, result2.stop_reason);
     try std.testing.expectEqual(@as(u32, 2), calls);
+}
+
+test "h-trace: pre-run pending cancel applies to the current run (cli-sigint-001 review item 3)" {
+    // Goal: a cancel flag set BEFORE reply begins (simulating a SIGINT that
+    // arrived after the guard was installed but before the run started) must
+    // apply to the current run, not be silently cleared. The run must observe
+    // the cancel and end `.cancelled` without ever calling the provider; the
+    // completion boundary then clears the flag so the next reply starts clean.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const Mock = struct {
+        calls: *u32,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls.* += 1;
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = undefined,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .toolset = &[_]tool.Tool{},
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+
+    var mock_state: Mock = .{ .calls = undefined };
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = Mock.chat },
+    };
+    agent.provider = provider;
+    var calls: u32 = 0;
+    mock_state.calls = &calls;
+
+    // Pre-run pending cancel: set the flag BEFORE the first reply (mirrors a
+    // SIGINT that landed between guard install and the first run).
+    agent.cancel.request();
+    try std.testing.expect(agent.cancel.isSet());
+
+    var session1 = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session1.deinit();
+    const result1 = try agent.reply(&session1, "first");
+    // The pre-run pending cancel applied to this run; provider never called.
+    try std.testing.expectEqual(loop.StopReason.cancelled, result1.stop_reason);
+    try std.testing.expectEqual(@as(u32, 0), calls);
+    // Completion boundary cleared the flag.
+    try std.testing.expect(!agent.cancel.isSet());
+
+    // Second reply starts clean and completes normally.
+    var session2 = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session2.deinit();
+    const result2 = try agent.reply(&session2, "second");
+    try std.testing.expectEqual(loop.StopReason.completed, result2.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), calls);
 }
 
 test "h-trace: explicit .observer = .none() runs without event chain error" {
@@ -3422,7 +3510,8 @@ test "h-redact: ensure/clone OOM clears stale trace redactor before bind" {
     session.gpa = saved;
     try std.testing.expectError(error.OutOfMemory, err);
     try std.testing.expect(failing.has_induced_failure);
-    // beginRun clears before ensure; ensure OOM never re-binds — no stale pointer.
+    // reply's completion boundary clears the cancel flag after the OOM; ensure
+    // OOM never re-binds a stale redactor pointer.
     try std.testing.expect(agent.trace.?.redactor == null);
 }
 

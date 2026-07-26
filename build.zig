@@ -404,6 +404,13 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    // cli-sigint-001 review item 1: the fixture uses libc process-control
+    // primitives (waitpid/kill/W macros) which are only available with libc.
+    // This is scoped to the TEST ARTIFACT only (never the product exe) and the
+    // fixture only ever runs on the host-native target where libc is present.
+    // The product `sigint.zig` module itself carries NO libc dependency on
+    // Linux (it uses raw std.posix.system / std.os.linux syscalls).
+    sigint_process_tests.root_module.link_libc = true;
     const run_sigint_process_tests = b.addRunArtifact(sigint_process_tests);
     const sigint_fixture_step = b.step(
         "sigint-process-fixture",

@@ -66,6 +66,9 @@ zig build run -- --yolo -v --trace "list_dir ."
 # 空闲等待输入时按一次 Ctrl+C 干净退出（code 0）；活动回复中第一次 Ctrl+C 请求
 # 协作取消，再按一次在取消未落定前强退（code 130，可能跳过会话/trace 落盘）
 zig build run
+# 退出码契约以直接二进制 ./zig-out/bin/zag 为准。`zig build run` 的父 build
+# runner 与 Zag 共享前台进程组，Ctrl+C 可能让父 runner 先退 130；但 Zag 子进程
+# 不得吐 Zig 运行时 error/stack（如 ReadFailed）。退出码以直接二进制为准。
 
 # 应被 jail 拒绝：
 zig build run -- --yolo -v "read_file /etc/passwd"

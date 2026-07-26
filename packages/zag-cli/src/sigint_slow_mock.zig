@@ -6,8 +6,18 @@
 //! exercise the active second-SIGINT hard-exit (130) path without real network
 //! or credentials.
 //!
-//! Flags: `--port-file PATH` writes the ephemeral port; `--stall-ms N` sets the
-//! pre-response-head stall (default 20000ms). Handles exactly one request.
+//! Flags:
+//!   `--port-file PATH`  writes the ephemeral port once the listener is bound.
+//!   `--ready-file PATH` writes a one-line marker AFTER the full HTTP request
+//!                       is received and any 100-continue handshake is sent,
+//!                       but BEFORE the response-head stall. The fixture waits
+//!                       on this marker to know the request is in-flight and
+//!                       blocked, then sends the first SIGINT — a deterministic
+//!                       handshake, not a blind sleep (cli-sigint-001 review
+//!                       item 5).
+//!   `--stall-ms N`      sets the pre-response-head stall (default 20000ms).
+//!
+//! Handles exactly one request.
 
 const std = @import("std");
 const Io = std.Io;
@@ -17,7 +27,7 @@ const json_response_body =
 ;
 
 fn usage() void {
-    std.log.err("usage: sigint-slow-mock --port-file PATH [--stall-ms N]", .{});
+    std.log.err("usage: sigint-slow-mock --port-file PATH [--ready-file PATH] [--stall-ms N]", .{});
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -26,6 +36,7 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     var port_file: ?[]const u8 = null;
+    var ready_file: ?[]const u8 = null;
     var stall_ms: u64 = 20_000;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -37,6 +48,13 @@ pub fn main(init: std.process.Init) !void {
                 return error.MissingPortFile;
             }
             port_file = args[i];
+        } else if (std.mem.eql(u8, a, "--ready-file")) {
+            i += 1;
+            if (i >= args.len) {
+                usage();
+                return error.MissingReadyFile;
+            }
+            ready_file = args[i];
         } else if (std.mem.eql(u8, a, "--stall-ms")) {
             i += 1;
             if (i >= args.len) {
@@ -93,11 +111,22 @@ pub fn main(init: std.process.Init) !void {
         }
     }
 
-    var write_buf: [8192]u8 = undefined;
+    var write_buf: [8196]u8 = undefined;
     if (expect_100_continue) {
         var continue_writer = std.Io.net.Stream.writer(conn, io, &write_buf);
         try continue_writer.interface.writeAll("HTTP/1.1 100 Continue\r\n\r\n");
         try continue_writer.interface.flush();
+    }
+
+    // Deterministic request-ready handshake (review item 5): write the marker
+    // AFTER the full request is consumed and the 100-continue (if any) is
+    // sent, but BEFORE the response-head stall. The fixture waits on this to
+    // know the std-backend request is now blocked in receiveHead.
+    if (ready_file) |rf| {
+        const ready_text = "ready\n";
+        var rfile = try Io.Dir.cwd().createFile(io, rf, .{});
+        defer rfile.close(io);
+        try rfile.writeStreamingAll(io, ready_text);
     }
 
     // Deterministic stall: block before the response head so a std-backend
@@ -105,7 +134,8 @@ pub fn main(init: std.process.Init) !void {
     // when the process is otherwise idle.
     std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(stall_ms)), .real) catch {};
 
-    const response = try std.fmt.allocPrint(gpa,
+    const response = try std.fmt.allocPrint(
+        gpa,
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
         .{ json_response_body.len, json_response_body },
     );
