@@ -15,7 +15,7 @@
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | runtime `run_shell` + current core `shell_policy` | policy/runtime target coding-agent; required Core seam |
 | [permissions.md](./permissions.md) | H3 **L2** | current core `permissions.zig` | concrete policy target coding-agent; required Core seam |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | current core `context`；coding `project` | protocol validation stays Core; projection moves coding-agent |
-| [session-store.md](./session-store.md) | H4 → C5 | current core `session_store.zig` | move durable store to coding-agent; Transcript stays Core |
+| [session-store.md](./session-store.md) | H4 → C5 | `packages/zag-coding-agent/src/session_store.zig` | move durable store to coding-agent; Transcript stays Core |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | current core `workspace` + `shell_policy` + `redact.zig` | implementations move coding-agent; future C7 sandbox separate |
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
 | [trace-observability.md](./trace-observability.md) | H7 | current core `trace.zig` + redaction | move implementation to coding-agent; Core emits source facts |
@@ -33,7 +33,7 @@
 | `zag-ai` | `resolve`、`WireAdapter`、`ChatOptions`、catalog | openai_compat |
 | `zag-types` | Message / ToolDefinition / ToolRisk / ToolCapabilities / ToolDescriptor / ChatError | — |
 | `zag-agent-core` | `loop`、Transcript、纯 Provider/Tool/Cancel ports、protocol history、required policy/context/event seams | 无 durable session/Trace/redaction、无 concrete product policy/Tools、无 zag-ai |
-| `zag-coding-agent` | Agent/Session、policy/context/persistence/observation、WireProvider、toolset/runtime tools | 组装 core + wire |
+| `zag-coding-agent` | Agent/Session、policy/context/persistence/observation、WireProvider、toolset/runtime tools、durable session store | 组装 core + wire |
 | `zag-cli` | flags / REPL / one-shot/headless / signal + terminal ownership | 产品壳 |
 | `src/main` | 进程入口 → `zag_cli.run` | 薄 |
 

@@ -175,7 +175,7 @@ core-seams-001
         │
         ▼
 core-session-ownership-001
-  move durable session store to coding-agent; keep Transcript in Core
+  move durable session store to coding-agent; keep Transcript in Core — DONE
         │
         ▼
 core-observation-ownership-001

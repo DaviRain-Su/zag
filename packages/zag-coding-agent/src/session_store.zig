@@ -29,10 +29,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
-const message = @import("message.zig");
-const transcript_mod = @import("transcript.zig");
-const workspace = @import("workspace.zig");
-const redact_mod = @import("redact.zig");
+const core = @import("zag-agent-core");
+const message = core.message;
+const transcript_mod = core.transcript;
+const workspace = core.workspace;
+const redact_mod = core.redact;
 
 pub const Error = error{
     OutOfMemory,

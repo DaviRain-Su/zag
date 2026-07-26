@@ -5,7 +5,7 @@
 | Decision | [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current code | `packages/zag-agent-core/src/` plus product facade in `packages/zag-coding-agent/src/agent.zig` |
 | Target | Thin loop kernel with explicit required ports; product policy/state in coding-agent |
-| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Ownership moves pending. |
+| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Remaining ownership moves pending. |
 | Reference | Pi low-level `agent-loop.ts` / `agent.ts` / `types.ts`, semantics only |
 
 ## Purpose
@@ -194,7 +194,7 @@ core-boundary-001  (this contract)
 core-seams-001     required ports + canonical LoopEvent; current behavior via adapters
         │
         ▼
-core-session-ownership-001
+core-session-ownership-001   ✓ done — durable session store moved to coding-agent; Transcript stays Core
         │
         ▼
 core-observation-ownership-001

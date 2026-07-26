@@ -13,7 +13,6 @@ pub const provider = @import("provider.zig");
 pub const observer = @import("observer.zig");
 pub const permissions = @import("permissions.zig");
 pub const context = @import("context.zig");
-pub const session_store = @import("session_store.zig");
 pub const shell_policy = @import("shell_policy.zig");
 pub const workspace = @import("workspace.zig");
 pub const tool_error = @import("tool_error.zig");

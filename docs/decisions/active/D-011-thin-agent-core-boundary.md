@@ -109,7 +109,7 @@ the boundary migration and must not add a third core event channel.
 | `context.zig` | Split: protocol-history validation stays; layers/compaction implementation moves to coding-agent. |
 | `permissions.zig` | Replace core dependency with `ToolPolicy`; concrete Gate/remember/prompt wiring moves out. |
 | `workspace.zig`, `shell_policy.zig` | Replace core dependencies with required ports; implementations move to coding-agent. |
-| `session_store.zig` | Move to coding-agent; Transcript remains core. |
+| `session_store.zig` | Moved to coding-agent (core-session-ownership-001); Transcript remains core. |
 | `trace.zig`, `redact.zig` | Move to coding-agent; loop emits facts through `LoopEventSink`. |
 | `root.zig` | Export the reduced kernel surface; product exports product-owned contracts. |
 

@@ -2,8 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Current code | `packages/zag-agent-core/src/{session_store,transcript}.zig`; facade in coding-agent `agent.zig` |
-| D-011 target | Transcript remains Core; durable session store/writer/schema move to coding-agent |
+| Current code | `packages/zag-coding-agent/src/session_store.zig` (durable store/writer/schema); Core `transcript.zig` (in-memory authority); facade in coding-agent `agent.zig` |
+| D-011 target | Transcript remains Core; durable session store/writer/schema moved to coding-agent |
 | Current maturity | **L2** — explicit open modes, atomic save, visible errors, one active writer |
 | Target | L3 fork/tree (C5) |
 | Decision | [D-006](../decisions/active/D-006-session-open-and-durability.md) |
@@ -94,10 +94,11 @@ None for the D-006 L2 contract. Honest limits that remain out of scope:
 
 Implementation notes:
 
-- `createNew` / `resumeExisting` / `openOrCreate` live in `session_store.zig` and are surfaced through `coding.OpenMode`.
+- `createNew` / `resumeExisting` / `openOrCreate` live in `packages/zag-coding-agent/src/session_store.zig` and are surfaced through `coding.OpenMode`. Core owns only the authoritative in-memory `Transcript`; no durable session path/writer/schema API remains in `zag-agent-core`.
 - **Writer ownership:** move-only by convention — obtain only from create/resume/open_or_create and `deinit` once. Do not copy or forge a Writer; Zig cannot enforce this against hostile callers (not a lock-contract guarantee).
 - The active writer holds an exclusive advisory lock on `{path}.lock` for its lifetime; the session file itself is not locked.
 - Save serializes to a same-filesystem temporary file and atomically replaces the target via `createFileAtomic`. Test builds may inject a per-Writer before-replace fault via `session_store.testing` (absent as an enablement path in production); failure leaves the prior bytes intact and loadable.
+- The D-006 strict parser, writer conflict, fault preservation, OOM allocation sweep, redaction, schema, and create/resume/open-or-create tests run from the `zag-coding-agent` package test binary via `root.zig` `refAllDecls`. `session_store.zig` imports `message`, `transcript`, `workspace`, and `redact` through the public `zag-agent-core` module; Core never imports `zag-coding-agent`.
 - Typed header lines require integer `schema_version` and/or legacy `v` (missing both → `InvalidSession`); header-less message files still load as implied v1.
 - Final read `FileNotFound` maps to `SessionNotFound`; other read/access failures map to `IoFailed` (fixture: session path is a directory so open/read fails as general I/O).
 - `Session.save` errors propagate through `Agent.reply` and `Agent.complete`; the CLI exits with a non-zero status and a logged error.

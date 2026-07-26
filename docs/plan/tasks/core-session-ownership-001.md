@@ -1,7 +1,7 @@
 ---
 id: core-session-ownership-001
 scope: coding-agent/session-ownership
-status: ready
+status: in-progress
 priority: P1
 depends-on:
   - core-seams-001

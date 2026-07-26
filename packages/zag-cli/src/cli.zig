@@ -187,7 +187,7 @@ pub fn run(init: std.process.Init) !void {
     // including `--doctor`, before any doctor/provider work. Validation does not
     // open or create session files.
     if (session_path) |sp| {
-        core.session_store.validateSessionPath(sp) catch {
+        coding.session_store.validateSessionPath(sp) catch {
             std.log.err("session path must be a relative workspace path (no absolute/'..')", .{});
             std.process.exit(2);
         };

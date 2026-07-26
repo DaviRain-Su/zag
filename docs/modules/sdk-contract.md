@@ -182,14 +182,14 @@ Save semantics:
 - Session paths are validated lexically (relative, no `..`, not absolute); this
   is **not** symlink containment.
 
-Current source: [`packages/zag-agent-core/src/session_store.zig:37-46`](../../packages/zag-agent-core/src/session_store.zig). D-011 moves this durable product surface to `zag-coding-agent`; Transcript stays in Core. `core-session-ownership-001` must update the import/migration record without changing these semantics.
+Current source: [`packages/zag-coding-agent/src/session_store.zig:37-46`](../../packages/zag-coding-agent/src/session_store.zig). D-011 moved this durable product surface from `zag-agent-core` to `zag-coding-agent`; Core retains only the authoritative in-memory `Transcript`. `core-session-ownership-001` completed the move; the import/migration record is updated here without changing these semantics.
 
 ## 7. Compatibility
 
 - Trace schema version: `trace.current_schema_version = 1`
   ([`packages/zag-agent-core/src/trace.zig:35`](../../packages/zag-agent-core/src/trace.zig)).
 - Session schema version: `session_store.current_schema_version = 1`
-  ([`packages/zag-agent-core/src/session_store.zig:49`](../../packages/zag-agent-core/src/session_store.zig)).
+  ([`packages/zag-coding-agent/src/session_store.zig:49`](../../packages/zag-coding-agent/src/session_store.zig)).
 - Within a major schema version, only optional fields may be added. Strict
   readers fail on unknown versions.
 - Destructive renames require a new schema version plus migration or explicit

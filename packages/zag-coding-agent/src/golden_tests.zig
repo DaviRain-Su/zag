@@ -14,7 +14,7 @@ const message = core.message;
 const tool = core.tool;
 const provider_mod = core.provider;
 const tool_error = core.tool_error;
-const session_store = core.session_store;
+const session_store = @import("session_store.zig");
 
 test "golden readonly-list-build" {
     // Goal: fixed mock drives list_dir → read_file → final text; tool names stable.
