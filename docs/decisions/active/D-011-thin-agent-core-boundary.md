@@ -78,6 +78,14 @@ sink; missing required state is not silently normalized to either behavior.
 - Observer logging/fan-out and public SDK/headless adapters;
 - default and caller-supplied coding Toolsets plus concrete filesystem/edit/shell handlers.
 
+`core-observation-ownership-001` completed the Trace/redaction/Observer move: `trace.zig`, `redact.zig`, and
+`observer.zig` were moved whole-file from `zag-agent-core` to `zag-coding-agent` via `git mv`. Core no longer
+exports or implements any observation surface; its only event port is the canonical borrowed/fallible
+`LoopEventSink`. The twelve durable Trace kinds source exactly once from `LoopEvent` facts or the facade
+(`run_start`/`run_end` are facade-only; see [core-boundary.md](../../modules/core-boundary.md#trace-vocabulary-source-map-core-observation-ownership-001)).
+Behavior, schemas (Trace v1, headless-v1, session v1), byte/sequence/error/terminal precedence, and redaction
+OOM fail-closed semantics are unchanged.
+
 `zag-cli` continues to own process signals, stdin permission prompting, terminal logging, arguments, REPL, and process
 protocol output.
 
@@ -105,12 +113,12 @@ the boundary migration and must not add a third core event channel.
 | `provider.zig` | Keep as the pure Provider port. |
 | `tool.zig`, `tool_error.zig` | Keep as generic Tool runtime and soft-error contract. |
 | `cancel.zig` | Keep the cancel token only; process SIGINT already belongs to CLI. |
-| `observer.zig` | Split: source event/sink protocol stays; stderr/redaction helpers move to product/CLI. |
+| `observer.zig` | Moved to coding-agent (core-observation-ownership-001); the whole module lives in `zag-coding-agent`. Core's only event port is `LoopEventSink`. |
 | `context.zig` | Split: protocol-history validation stays; layers/compaction implementation moves to coding-agent. |
 | `permissions.zig` | Replace core dependency with `ToolPolicy`; concrete Gate/remember/prompt wiring moves out. |
 | `workspace.zig`, `shell_policy.zig` | Replace core dependencies with required ports; implementations move to coding-agent. |
 | `session_store.zig` | Moved to coding-agent (core-session-ownership-001); Transcript remains core. |
-| `trace.zig`, `redact.zig` | Move to coding-agent; loop emits facts through `LoopEventSink`. |
+| `trace.zig`, `redact.zig` | Moved to coding-agent (core-observation-ownership-001); loop emits facts through `LoopEventSink`. |
 | `root.zig` | Export the reduced kernel surface; product exports product-owned contracts. |
 
 No new Zig package is required for this migration. A future `zag-workspace` or other domain package still requires real

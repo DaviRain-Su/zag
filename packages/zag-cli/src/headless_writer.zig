@@ -8,8 +8,9 @@
 const std = @import("std");
 const Io = std.Io;
 const core = @import("zag-agent-core");
-const redact_mod = core.redact;
-const observer_mod = core.observer;
+const coding = @import("zag-coding-agent");
+const redact_mod = coding.redact;
+const observer_mod = coding.observer;
 const message = core.message;
 const loop = core.loop;
 
@@ -383,9 +384,6 @@ pub const HeadlessWriter = struct {
         try self.out.writeAll("\n");
     }
 };
-
-// Pull in doctor.Report for `writeDoctorReport` without adding a runtime dep loop.
-const coding = @import("zag-coding-agent");
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 

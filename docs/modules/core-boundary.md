@@ -5,7 +5,7 @@
 | Decision | [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current code | `packages/zag-agent-core/src/` plus product facade in `packages/zag-coding-agent/src/agent.zig` |
 | Target | Thin loop kernel with explicit required ports; product policy/state in coding-agent |
-| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Remaining ownership moves pending. |
+| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001). Remaining ownership moves pending. |
 | Reference | Pi low-level `agent-loop.ts` / `agent.ts` / `types.ts`, semantics only |
 
 ## Purpose
@@ -197,7 +197,7 @@ core-seams-001     required ports + canonical LoopEvent; current behavior via ad
 core-session-ownership-001   ✓ done — durable session store moved to coding-agent; Transcript stays Core
         │
         ▼
-core-observation-ownership-001
+core-observation-ownership-001   ✓ done — Trace/redaction/Observer moved to coding-agent; Core emits LoopEvent facts only
         │
         ▼
 core-policy-ownership-001
@@ -231,7 +231,29 @@ Additional boundary fixtures must prove:
 2. explicit deny implementations prevent handler execution in the fixed order;
 3. explicit permissive low-level composition is visible in source and never selected by product defaults;
 4. one loop fact reaches durable Trace and best-effort verbose adapters without duplicate execution;
-5. no Core import or public root exposes product persistence/prompt/CLI implementations after closeout.
+5. no Core import or public root exposes product persistence/prompt/CLI/observation implementations after closeout.
+
+## Trace vocabulary source map (core-observation-ownership-001)
+
+The twelve durable Trace kinds each source exactly once from a Core `LoopEvent` fact or the coding-agent facade — never both.
+`run_start` and `run_end` are **facade-only**; they are never added to Core `LoopEvent`.
+
+| Trace kind | Source | Owner |
+|---|---|---|
+| `run_start` | `Agent.beginRun` (facade preflight + reserve) | coding-agent |
+| `run_end` | `Agent.commitTerminal` / `failRun` (facade) | coding-agent |
+| `turn` | `LoopEvent.turn_start` | Core |
+| `assistant` | `LoopEvent.assistant_message` | Core |
+| `usage` | `LoopEvent.usage` | Core |
+| `tool_call` | `LoopEvent.tool_start` | Core |
+| `tool_result` | `LoopEvent.tool_end` | Core |
+| `permission` | `LoopEvent.policy_decision` | Core |
+| `jail_deny` | `LoopEvent.jail_decision` | Core |
+| `shell_deny` | `LoopEvent.shell_decision` | Core |
+| `provider_retry` | `LoopEvent.provider_retry` | Core |
+| `compaction` | `LoopEvent.context_compaction` | Core |
+
+Fan-out order is preserved by the `RunBridge` event-sink adapter in `zag-coding-agent`: turn → Trace only; assistant → Observer/internal verbose → Trace; usage → Trace → Observer/ledger/verbose; tool start/end → Observer → Trace; policy → Observer → Trace; jail/shell/retry → Trace then **unconditional generic warning**; compaction → session note → Trace. Trace failure maps to `SinkFailed` (`TraceFailed`) and short-circuits subsequent warnings. `run_start` precedes the loop; session save precedes the success terminal. Verbose redaction OOM is drop-only (never raw fallback).
 
 ## Non-goals
 

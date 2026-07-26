@@ -32,14 +32,14 @@ const default_system =
 const HeadlessObserver = struct {
     writer: *hw.HeadlessWriter,
 
-    fn asObserver(self: *HeadlessObserver) core.observer.Observer {
+    fn asObserver(self: *HeadlessObserver) coding.observer.Observer {
         return .{
             .ptr = self,
             .on_event = onEvent,
         };
     }
 
-    fn onEvent(ptr: ?*anyopaque, event: core.observer.Event) void {
+    fn onEvent(ptr: ?*anyopaque, event: coding.observer.Event) void {
         const self: *HeadlessObserver = @ptrCast(@alignCast(ptr.?));
         self.writer.dispatchEvent(event) catch |err| {
             self.writer.setHalted(if (err == error.OutOfMemory)
@@ -651,7 +651,7 @@ fn headlessErrorExit(
     gpa: std.mem.Allocator,
     io: Io,
     mode: hw.HeadlessMode,
-    redactor: ?*const core.redact.Redactor,
+    redactor: ?*const coding.redact.Redactor,
     err: hw.HeadlessError,
 ) noreturn {
     var stdout_buf: [4096]u8 = undefined;

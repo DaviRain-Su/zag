@@ -9,7 +9,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const core = @import("zag-agent-core");
 const tool = core.tool;
-const trace = core.trace;
+const trace = @import("../trace.zig");
 const workspace = core.workspace;
 
 pub const search_replace_def: tool.Definition = .{

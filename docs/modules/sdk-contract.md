@@ -86,7 +86,7 @@ retried. Loop-level retries apply only to `RateLimited`, `ServerError`, and
 
 ### Current supported baseline
 
-`Observer.Event` is emitted by the loop:
+`Observer.Event` is emitted by the coding-agent fan-out adapter (the loop emits `LoopEvent` facts via `LoopEventSink`; `Observer.Event` is the product projection):
 
 ```zig
 pub const Event = union(enum) {
@@ -98,7 +98,7 @@ pub const Event = union(enum) {
 };
 ```
 
-Source: [`packages/zag-agent-core/src/observer.zig:10-25`](../../packages/zag-agent-core/src/observer.zig).
+Source: [`packages/zag-coding-agent/src/observer.zig:10-25`](../../packages/zag-coding-agent/src/observer.zig) (moved from Core by core-observation-ownership-001).
 
 When an external observer is supplied to `Agent.Options.observer`, it is
 invoked **before** the Agent's internal usage/verbose handler. A `null`
@@ -113,14 +113,19 @@ permission, jail_deny, shell_deny, tool_result,
 provider_retry, compaction, run_end
 ```
 
-Source: [`packages/zag-agent-core/src/trace.zig:67-75`](../../packages/zag-agent-core/src/trace.zig).
+Source: [`packages/zag-coding-agent/src/trace.zig:67-75`](../../packages/zag-coding-agent/src/trace.zig).
 
-### D-011 target (core-seams-001 done)
+### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001 done)
 
-Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace and verbose logging are coding-agent
+Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace, redaction, and verbose logging are coding-agent
 adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The later
 `harness-events-001` public callback is a coding-agent projection and does not add Core `lifecycle.zig`. Existing
 Observer behavior is preserved via the `RunBridge` event-sink adapter in `zag-coding-agent`.
+
+`core-observation-ownership-001` moved `trace.zig`, `redact.zig`, and `observer.zig` from `zag-agent-core` to
+`zag-coding-agent` (whole-file `git mv`, no Core shim/duplicate). Core's only event port is `LoopEventSink`;
+the loop emits `LoopEvent` source facts and never writes Trace/Observer/logs directly. The CLI resolves
+`coding.observer`/`coding.redact`/`coding.trace` through the public `zag-coding-agent` root; message/loop stay Core.
 
 `loop.run` now takes five explicit required seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`,
 `LoopEventSink` — as borrowed dependencies. Missing is never implicitly allow/yolo/identity/discard; a
@@ -186,8 +191,8 @@ Current source: [`packages/zag-coding-agent/src/session_store.zig:37-46`](../../
 
 ## 7. Compatibility
 
-- Trace schema version: `trace.current_schema_version = 1`
-  ([`packages/zag-agent-core/src/trace.zig:35`](../../packages/zag-agent-core/src/trace.zig)).
+- Trace schema version: `coding.trace.current_schema_version = 1`
+  ([`packages/zag-coding-agent/src/trace.zig:35`](../../packages/zag-coding-agent/src/trace.zig)). D-011 moved this durable product surface from `zag-agent-core` to `zag-coding-agent`; `core-observation-ownership-001` completed the move; Core retains only `LoopEventSink`.
 - Session schema version: `session_store.current_schema_version = 1`
   ([`packages/zag-coding-agent/src/session_store.zig:49`](../../packages/zag-coding-agent/src/session_store.zig)).
 - Within a major schema version, only optional fields may be added. Strict

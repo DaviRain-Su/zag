@@ -46,7 +46,7 @@ Deny/expected Tool failure soft-fail；host registration、session、trace 等�
 | H4 Context/Session | [context](../../docs/modules/context-compaction.md) · [session](../../docs/modules/session-store.md) | session D-006 L2；context final-view accounting h-context-001 L2 |
 | H5 Safety | [workspace-sandbox](../../docs/modules/workspace-sandbox.md) | L2 trusted-host boundary：file containment + redaction + doctor + Agent policy/containment composition 已通过；shell/OS sandbox 是单独边界 |
 | H6 Provider | [zag-ai-provider](../../docs/modules/zag-ai-provider.md) | L2：final audit confirmed dual-wire/retry/usage/strict completion + curl enforce/std fail-closed capability truth + scrubbed diagnostics |
-| H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle + h-redact-001 redaction before serialize；dashboard still open |
+| H7 Trace/Quality | [trace](../../docs/modules/trace-observability.md) · [evals](../../docs/quality/evals.md) | h-trace-001 lifecycle + h-redact-001 redaction before serialize；implementation moved to coding-agent (core-observation-ownership-001)；dashboard still open |
 
 Schema presence or existing happy-path tests do not mark H3/H4 closed.
 

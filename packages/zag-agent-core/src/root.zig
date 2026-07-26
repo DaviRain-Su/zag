@@ -10,15 +10,12 @@ pub const tool = @import("tool.zig");
 pub const tool_args = @import("tool_args.zig");
 pub const transcript = @import("transcript.zig");
 pub const provider = @import("provider.zig");
-pub const observer = @import("observer.zig");
 pub const permissions = @import("permissions.zig");
 pub const context = @import("context.zig");
 pub const shell_policy = @import("shell_policy.zig");
 pub const workspace = @import("workspace.zig");
 pub const tool_error = @import("tool_error.zig");
 pub const cancel = @import("cancel.zig");
-pub const redact = @import("redact.zig");
-pub const trace = @import("trace.zig");
 
 // D-011 thin kernel seams (required ports + canonical event sink).
 pub const tool_policy = @import("tool_policy.zig");

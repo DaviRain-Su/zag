@@ -25,13 +25,13 @@ pub const tool = core.tool;
 pub const transcript = core.transcript;
 pub const provider = coding.wire_provider; // product: WireProvider + re-export Provider port
 pub const provider_port = core.provider; // pure port only
-pub const observer = core.observer;
+pub const observer = coding.observer;
 pub const permissions = core.permissions;
 pub const context = core.context;
 pub const session_store = coding.session_store;
 pub const shell_policy = core.shell_policy;
 pub const workspace = core.workspace;
-pub const trace = core.trace;
+pub const trace = coding.trace;
 pub const loop = core.loop;
 
 // --- Coding product ---

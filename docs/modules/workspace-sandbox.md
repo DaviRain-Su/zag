@@ -65,7 +65,7 @@ A denylist reduces accidents; it is not an adversarial sandbox.
 
 | Item | Content |
 |------|---------|
-| Code | `packages/zag-agent-core/src/redact.zig`; wired via Trace / Session-owned redactor / observer / Agent / CLI |
+| Code | `packages/zag-coding-agent/src/redact.zig` (moved from Core by core-observation-ownership-001); wired via Trace / Session-owned redactor / observer / Agent / CLI |
 | Marker | deterministic `[REDACTED]` |
 | Exact secrets | configured values (CLI wires resolved provider API key without logging it); min length guard; owned copies; `clone` for Session |
 | Patterns | `sk-…`, `sk-ant-…`, `xai-…`, GitHub PATs, AWS `AKIA`+16 `[A-Z0-9]` (reject overlong), `Bearer …`; left token boundary |

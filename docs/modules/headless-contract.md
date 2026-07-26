@@ -255,16 +255,18 @@ The matrix applies **only in headless mode** (`--json` or `--json-stream`). Defa
 
 ## Mapping to internal types
 
-The public schema is intentionally independent from internal Observer/Trace types:
+The public schema is intentionally independent from internal Observer/Trace types. The CLI maps
+`coding.observer.Event` (moved to `zag-coding-agent` by core-observation-ownership-001) onto the public
+contract and never serializes the internal Zig union directly:
 
 | Public event | Internal source | Notes |
 |--------------|-----------------|-------|
 | `run_start` | CLI run setup / trace run_start | No borrowed slices or paths. |
-| `assistant_delta` | Observer `assistant_text` or non-streaming final text | Delta since previous event. |
-| `tool_call` | Observer `tool_call` | `id`, `name`, `arguments` only. |
-| `tool_result` | Observer `tool_result` | `name`, redacted `body` only. |
-| `permission` | Observer `permission` | Tool name + decision. |
-| `usage` | Observer `usage` | Token counts. |
+| `assistant_delta` | `coding.observer.Event.assistant_text` or non-streaming final text | Delta since previous event. |
+| `tool_call` | `coding.observer.Event.tool_call` | `id`, `name`, `arguments` only. |
+| `tool_result` | `coding.observer.Event.tool_result` | `name`, redacted `body` only. |
+| `permission` | `coding.observer.Event.permission` | Tool name + decision. |
+| `usage` | `coding.observer.Event.usage` | Token counts. |
 | `run_end` | `Agent.completeWithSession` `Result` | Exactly one per run. |
 | `error` | CLI harness error mapping | Exactly one terminal per failed run. |
 

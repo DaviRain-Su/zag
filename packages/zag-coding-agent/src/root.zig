@@ -13,15 +13,17 @@ pub const message = core.message;
 pub const tool = core.tool;
 pub const transcript = core.transcript;
 pub const provider = core.provider;
-pub const observer = core.observer;
 pub const permissions = core.permissions;
 pub const context = core.context;
 pub const session_store = @import("session_store.zig");
 pub const shell_policy = core.shell_policy;
 pub const workspace = core.workspace;
-pub const redact = core.redact;
-pub const trace = core.trace;
 pub const loop = core.loop;
+
+// D-011 product-owned observation surface (moved from Core by core-observation-ownership-001).
+pub const redact = @import("redact.zig");
+pub const trace = @import("trace.zig");
+pub const observer = @import("observer.zig");
 
 // Product layer
 pub const agent = @import("agent.zig");

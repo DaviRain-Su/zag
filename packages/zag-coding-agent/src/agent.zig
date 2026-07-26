@@ -21,13 +21,13 @@ const tool = core.tool;
 const tool_args = core.tool_args;
 const transcript_mod = core.transcript;
 const provider_mod = core.provider;
-const observer_mod = core.observer;
+const observer_mod = @import("observer.zig");
 const permissions = core.permissions;
 const context_mod = core.context;
 const session_store = @import("session_store.zig");
 const shell_policy = core.shell_policy;
-const trace_mod = core.trace;
-const redact_mod = core.redact;
+const trace_mod = @import("trace.zig");
+const redact_mod = @import("redact.zig");
 const loop = core.loop;
 const cancel_mod = core.cancel;
 

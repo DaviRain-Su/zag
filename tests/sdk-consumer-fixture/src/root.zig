@@ -941,3 +941,103 @@ test "low-level core: discard sink and identity view are explicit, not defaults"
     try discard_sink.emit(.{ .turn_start = 1 });
     _ = identity_view;
 }
+
+// ── D-011 canonical product-owned observation ownership compile assertions ──
+//
+// Proves an external SDK consumer resolves the product-owned Trace/Redactor/
+// Observer surface (moved from `zag-agent-core` to `zag-coding-agent` by
+// core-observation-ownership-001) through the public `zag-coding-agent` module
+// root — not indirectly via Core. These are compile-time canonical-ownership
+// checks, not behavior tests.
+
+test "coding.trace canonical schema version resolves from external consumer" {
+    try std.testing.expectEqual(@as(u32, 1), coding.trace.current_schema_version);
+}
+
+test "coding.redact.Redactor canonical type resolves from external consumer" {
+    // The Redactor type is publicly reachable through the canonical product root.
+    const R = coding.redact.Redactor;
+    _ = R; // compile assertion only.
+}
+
+test "coding.observer.Observer/Event canonical types resolve from external consumer" {
+    const O = coding.observer.Observer;
+    const E = coding.observer.Event;
+    _ = O;
+    _ = E; // compile assertion only.
+}
+
+// ── D-011 borrowed source-event evidence: host honors the borrow contract ──
+//
+// An external host implements a file-local `LoopEventSink` that receives Core
+// `LoopEvent` facts. The loop payload slices (e.g. `.assistant_message`) are
+// **borrowed** — valid only during `emit`. This fixture proves a host that
+// copies a borrowed slice into owned bytes (using its own allocator) retains
+// the original content after the callback returns and the source mutable
+// buffer is modified. It uses the public `zag-agent-core` `LoopEventSink` and
+// `LoopEvent` imports only; no fake is leaked to the public API.
+
+const BorrowEvidenceSink = struct {
+    gpa: std.mem.Allocator,
+    owned_assistant: ?[]u8 = null,
+
+    fn deinit(self: *BorrowEvidenceSink) void {
+        if (self.owned_assistant) |o| self.gpa.free(o);
+        self.owned_assistant = null;
+    }
+
+    fn vtable(self: *BorrowEvidenceSink) core.loop.LoopEventSink {
+        return .{
+            .ptr = self,
+            .vtable = &borrow_evidence_vtable,
+        };
+    }
+};
+
+const borrow_evidence_vtable: core.loop_event.LoopEventSinkVTable = .{
+    .emit = borrowEvidenceEmit,
+};
+
+fn borrowEvidenceEmit(ptr: ?*anyopaque, event: core.loop_event.LoopEvent) core.loop_event.SinkError!void {
+    const self: *BorrowEvidenceSink = @ptrCast(@alignCast(ptr.?));
+    switch (event) {
+        .assistant_message => |text| {
+            // The slice is borrowed for the duration of this call only. Dupe
+            // into owned bytes using the host allocator so the copy survives.
+            const owned = self.gpa.dupe(u8, text) catch return error.OutOfMemory;
+            // Free any prior copy (one event per run for this fixture).
+            if (self.owned_assistant) |o| self.gpa.free(o);
+            self.owned_assistant = owned;
+        },
+        else => {},
+    }
+}
+
+test "borrowed LoopEvent assistant_message is owned-safe after source mutation" {
+    const gpa = std.testing.allocator;
+
+    // A real low-level loop turn uses a scratch arena; here the host owns a
+    // mutable buffer that stands in for the arena/loop-internal slice.
+    const original = "hello borrowed world";
+    const mut = try gpa.dupe(u8, original);
+    defer gpa.free(mut);
+
+    var sink_state: BorrowEvidenceSink = .{ .gpa = gpa };
+    defer sink_state.deinit();
+
+    const sink = sink_state.vtable();
+    // Emit a borrowed slice (the loop would pass a borrowed text slice).
+    try sink.emit(.{ .assistant_message = mut });
+
+    // After the callback returns, the host mutates the original mutable buffer.
+    // This simulates the turn arena being reused / the borrowed slice going away.
+    for (mut) |*c| c.* = 'X';
+
+    // The owned copy must still hold the original content (host honored the
+    // borrow contract by duping before returning).
+    try std.testing.expect(sink_state.owned_assistant != null);
+    try std.testing.expectEqualStrings(original, sink_state.owned_assistant.?);
+
+    // The mutated buffer no longer equals the original.
+    try std.testing.expect(!std.mem.eql(u8, mut, original));
+}

@@ -2,8 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Current code | `packages/zag-agent-core/src/{trace,observer}.zig`; run facade in coding-agent `agent.zig` |
-| D-011 target | source `LoopEventSink` contract in Core; Trace/redaction/logger/fan-out in coding-agent |
+| Current code | `packages/zag-coding-agent/src/{trace,redact,observer}.zig`; run facade in `packages/zag-coding-agent/src/agent.zig`; Core emits source facts via `packages/zag-agent-core/src/loop_event.zig` |
+| D-011 status | Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001); Core keeps only the canonical borrowed/fallible `LoopEventSink` and loop source facts. |
 | Current maturity | **L2** (lifecycle/schema/atomic persistence + redaction before serialize) |
 | Target | L2 (H) → L3 dashboard (C9) |
 | Reference | Hyper telemetry/dashboard; SECURITY audit |
@@ -104,9 +104,11 @@ Guard is re-checked at persist entry **and** immediately before `atomic.replace`
 
 ## Schema (L2)
 
-Exported: `trace.current_schema_version` (**1**).
+Exported: `coding.trace.current_schema_version` (**1**).
 
 Every `run_start` includes `schema_version`, Zag `version`, `permission`, `shell_policy`, optional `session`.
+
+The twelve Trace kinds are sourced exactly once each (see the source map in [core-boundary.md](./core-boundary.md#trace-vocabulary-source-map-core-observation-ownership-001)). `run_start` is emitted by `Agent.beginRun`; `run_end` by `Agent.commitTerminal`/`failRun`. The remaining ten kinds map from the canonical Core `LoopEvent` variants (`turn_start`, `assistant_message`, `usage`, `tool_start`, `tool_end`, `policy_decision`, `jail_decision`, `shell_decision`, `provider_retry`, `context_compaction`). No Core `LoopEvent` carries `run_start` or `run_end`.
 
 ### Compatibility
 
@@ -151,6 +153,8 @@ trace.Error = OutOfMemory | TraceIoFailed | InvalidPath | TraceSerializationFail
 Facade `ReplyError` includes `trace.Error`. Loop maps mid-run `TraceSerializationFailed` / I/O / path to `TraceFailed` (terminal `trace_error`); pure `OutOfMemory` stays `OutOfMemory`.
 
 ## Observer contract
+
+The Observer/Event types and the redacted verbose logger now live in `packages/zag-coding-agent/src/observer.zig` (moved from Core by core-observation-ownership-001). The CLI `headless_writer.zig` maps `coding.observer.Event` onto the public `headless-v1` contract and never serializes the internal union directly. Core emits source facts only through `LoopEventSink`; it has no Observer type.
 
 Callbacks must not own borrowed event slices after return unless they copy them.
 

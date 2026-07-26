@@ -33,7 +33,7 @@ const core = @import("zag-agent-core");
 const message = core.message;
 const transcript_mod = core.transcript;
 const workspace = core.workspace;
-const redact_mod = core.redact;
+const redact_mod = @import("redact.zig");
 
 pub const Error = error{
     OutOfMemory,

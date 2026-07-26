@@ -6,7 +6,7 @@
 //! line is **dropped** (never raw fallback).
 
 const std = @import("std");
-const message = @import("message.zig");
+const message = @import("zag-agent-core").message;
 const redact_mod = @import("redact.zig");
 
 pub const Event = union(enum) {

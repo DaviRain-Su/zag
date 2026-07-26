@@ -111,7 +111,7 @@ D-011 does not create another package. It changes owner within the existing mono
 | Loop/Transcript/Provider/Tool/Cancel/protocol history | Core | Core |
 | Required ToolPolicy/Jail/ShellPolicy/ContextView/LoopEventSink contracts | implicit/concrete Core coupling | Core contracts |
 | Session store | Core | coding-agent |
-| Trace/redaction/verbose logger | Core | coding-agent (CLI renders terminal/log output) |
+| Trace/redaction/verbose logger | Core | coding-agent (moved by core-observation-ownership-001; CLI renders terminal/log output) |
 | permission/workspace/shell implementations | Core | coding-agent |
 | context layers/compaction | Core | coding-agent |
 | run preflight/start/terminal | coding-agent | coding-agent |

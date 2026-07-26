@@ -1,7 +1,7 @@
 ---
 id: core-observation-ownership-001
 scope: coding-agent/observation-ownership
-status: ready
+status: in-progress
 priority: P0
 depends-on:
   - core-session-ownership-001

@@ -20,7 +20,7 @@ Zag has three event-like surfaces with different owners:
 | `headless-v1` | CLI | public JSON/NDJSON process output | output-only; not an SDK callback type |
 
 Current Loop observer events are `assistant_text`, `usage`, `tool_call`, `tool_result`, and `permission`
-(`packages/zag-agent-core/src/observer.zig`). The Loop emits message/Tool source facts, while the Agent facade owns
+(`packages/zag-coding-agent/src/observer.zig`, moved from Core by core-observation-ownership-001). The Loop emits message/Tool source facts via `LoopEventSink`, while the Agent facade owns
 run start, session/trace persistence, and terminal truth (`packages/zag-coding-agent/src/agent.zig`). The CLI separately
 owns public headless envelopes.
 
