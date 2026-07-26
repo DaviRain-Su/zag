@@ -10,7 +10,7 @@ const Io = std.Io;
 const core = @import("zag-agent-core");
 const tool = core.tool;
 const trace = @import("../trace.zig");
-const workspace = core.workspace;
+const workspace = @import("../workspace.zig");
 
 pub const search_replace_def: tool.Definition = .{
     .name = "search_replace",

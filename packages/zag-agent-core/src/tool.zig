@@ -40,7 +40,7 @@
 const std = @import("std");
 const Io = std.Io;
 const zt = @import("zag-types");
-const workspace = @import("workspace.zig");
+const tool_args = @import("tool_args.zig");
 
 pub const max_result_bytes: usize = 64 * 1024;
 /// Provider-facing tool name: 1..=max_tool_name_len, `[A-Za-z0-9_.-]`.
@@ -159,7 +159,7 @@ fn validateDefaultPath(default_path: []const u8) RegistrationError!void {
     if (std.mem.indexOfScalar(u8, default_path, 0) != null) return error.InvalidCapabilities;
     const trimmed = std.mem.trim(u8, default_path, " \t\r\n");
     if (trimmed.len == 0 or trimmed.len != default_path.len) return error.InvalidCapabilities;
-    workspace.checkToolPath(default_path) catch return error.InvalidCapabilities;
+    tool_args.checkToolPath(default_path) catch return error.InvalidCapabilities;
 }
 
 /// Validate capability fields (fail closed on contradictions / empty path claims).

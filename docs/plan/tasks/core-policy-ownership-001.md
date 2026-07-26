@@ -1,7 +1,7 @@
 ---
 id: core-policy-ownership-001
 scope: coding-agent/tool-policy-ownership
-status: ready
+status: in-progress
 priority: P0
 depends-on:
   - core-observation-ownership-001

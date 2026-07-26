@@ -2,7 +2,7 @@
 
 | Item | Content |
 |------|---------|
-| Code | coding-agent `runtime/edit_tools.zig` (`run_shell`) + core `shell_policy` |
+| Code | coding-agent `runtime/edit_tools.zig` (`run_shell`) + coding-agent `shell_policy.zig` (moved from Core by core-policy-ownership-001) |
 | Current maturity | **L2** — synchronous shell-v1 contract passed independent re-review, Oracle, and main std/curl; process-supervisor capabilities remain absent |
 | Target | L2 H synchronous correctness → L3 background/process supervisor |
 | Reference | Hyper background tasks; Codex sandbox shell; Zig 0.16 `std.process.run` |

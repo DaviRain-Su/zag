@@ -122,6 +122,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "zag-agent-core", .module = core_mod },
+            .{ .name = "zag-types", .module = types_mod },
             .{ .name = "zag-ai", .module = ai_mod },
         },
     });
@@ -229,6 +230,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-types", .module = types_mod },
                 .{ .name = "zag-ai", .module = ai_mod },
             },
         }),

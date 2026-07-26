@@ -32,7 +32,7 @@ const Io = std.Io;
 const core = @import("zag-agent-core");
 const message = core.message;
 const transcript_mod = core.transcript;
-const workspace = core.workspace;
+const workspace = @import("workspace.zig");
 const redact_mod = @import("redact.zig");
 
 pub const Error = error{

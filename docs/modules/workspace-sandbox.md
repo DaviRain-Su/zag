@@ -2,8 +2,8 @@
 
 | Item | Content |
 |------|---------|
-| Current code | `packages/zag-agent-core/src/{workspace,shell_policy}.zig`; coding-agent file/shell tools |
-| D-011 target | required `Jail`/`ShellPolicy` contracts in Core; concrete containment/policy/redaction in coding-agent |
+| Current code | `packages/zag-coding-agent/src/{workspace,shell_policy}.zig` (moved from Core by core-policy-ownership-001); coding-agent file/shell tools; Core `tool_args.zig` (pure lexical `checkToolPath`) |
+| D-011 target | required `Jail`/`ShellPolicy` ports + `deniedBody` renderers in Core; concrete containment/policy/redaction in coding-agent |
 | Current maturity | **L2** — symlink-aware file containment, redaction, doctor/readiness, and default Agent policy/containment composition passed independent/main Gate |
 | Target | L2 trusted-host containment (H) → L3 OS sandbox/process supervisor (C7) |
 | Reference | Hyper sandbox; Codex sandbox |

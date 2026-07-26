@@ -1,6 +1,11 @@
-//! zag-agent-core — Pi-agent-core analogue.
+//! zag-agent-core — thin loop kernel (D-011).
 //!
-//! Loop, session, permissions, context, pure Provider port.
+//! Generic single-agent loop, transcript, pure Provider port, mandatory Tool
+//! descriptor validation, one-time argument/path extraction, required
+//! ToolPolicy/Jail/ShellPolicy ports, fixed gate order, and canonical
+//! LoopEvent facts. Product policy (permissions/HITL/remember, workspace
+//! containment, shell protection), context layers, persistence, redaction,
+//! and concrete Tools live in `zag-coding-agent`.
 //! No CLI, no default coding toolset, no wire-protocol clients.
 
 const std = @import("std");
@@ -10,17 +15,14 @@ pub const tool = @import("tool.zig");
 pub const tool_args = @import("tool_args.zig");
 pub const transcript = @import("transcript.zig");
 pub const provider = @import("provider.zig");
-pub const permissions = @import("permissions.zig");
 pub const context = @import("context.zig");
-pub const shell_policy = @import("shell_policy.zig");
-pub const workspace = @import("workspace.zig");
 pub const tool_error = @import("tool_error.zig");
 pub const cancel = @import("cancel.zig");
 
 // D-011 thin kernel seams (required ports + canonical event sink).
 pub const tool_policy = @import("tool_policy.zig");
 pub const jail = @import("jail.zig");
-pub const shell_policy_port = @import("shell_policy_port.zig");
+pub const shell_policy = @import("shell_policy.zig");
 pub const context_view = @import("context_view.zig");
 pub const loop_event = @import("loop_event.zig");
 
@@ -45,7 +47,7 @@ pub const ToolPolicy = tool_policy.ToolPolicy;
 pub const Jail = jail.Jail;
 // Canonical seam port name is `ShellPolicy`; `ShellPolicyPort` is kept as an
 // alias for compatibility with already-submitted consumers.
-pub const ShellPolicy = shell_policy_port.ShellPolicy;
+pub const ShellPolicy = shell_policy.ShellPolicy;
 pub const ShellPolicyPort = ShellPolicy;
 pub const ContextView = context_view.ContextView;
 pub const LoopEventSink = loop_event.LoopEventSink;

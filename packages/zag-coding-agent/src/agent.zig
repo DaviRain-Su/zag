@@ -22,10 +22,11 @@ const tool_args = core.tool_args;
 const transcript_mod = core.transcript;
 const provider_mod = core.provider;
 const observer_mod = @import("observer.zig");
-const permissions = core.permissions;
+const permissions = @import("permissions.zig");
 const context_mod = core.context;
 const session_store = @import("session_store.zig");
-const shell_policy = core.shell_policy;
+const shell_policy = @import("shell_policy.zig");
+const workspace = @import("workspace.zig");
 const trace_mod = @import("trace.zig");
 const redact_mod = @import("redact.zig");
 const loop = core.loop;
@@ -34,7 +35,7 @@ const cancel_mod = core.cancel;
 // D-011 seam ports (adapted over current product behavior).
 const tool_policy_mod = core.tool_policy;
 const jail_mod = core.jail;
-const shell_policy_port = core.shell_policy_port;
+const shell_policy_mod = core.shell_policy;
 const context_view_mod = core.context_view;
 const loop_event_mod = core.loop_event;
 
@@ -390,6 +391,11 @@ const RunBridge = struct {
     gate: permissions.Gate,
     /// Borrowed trace pointer for this reply (null when tracing is off).
     trace: ?*trace_mod.Trace,
+    /// Owned resolved workspace root real path (absolute). Allocated in
+    /// `Agent.reply` with the same gpa used for `loop.run`; the slice address/
+    /// bytes cover the entire synchronous `loop.run` and are freed on reply
+    /// exit. Null when resolve failed (handlers/jail lazy-resolve or fail closed).
+    workspace_root_real: ?[]u8 = null,
 
     /// Build the `loop.Deps` borrowing this bridge's fields. The caller must
     /// keep this `RunBridge` alive and unmoved for the duration of `loop.run`.
@@ -403,10 +409,14 @@ const RunBridge = struct {
                 .allocator = a.gpa,
                 .io = a.io,
                 .cwd = Io.Dir.cwd(),
+                .workspace_root_real = self.workspace_root_real,
             },
             .tool_policy = .{ .ptr = self, .vtable = &bridge_policy_vtable },
-            .jail = .{ .ptr = null, .vtable = jail_mod.WorkspaceGuardAdapter.vtable() },
-            .shell_policy = shell_policy_port.ShellPolicy.fromMode(a.options.shell_policy),
+            .jail = .{ .ptr = null, .vtable = &workspace_guard_jail_vtable },
+            .shell_policy = if (a.options.shell_policy == .off)
+                shell_policy_mod.ShellPolicy.allowAllForTrustedHost()
+            else
+                .{ .ptr = null, .vtable = &protect_shell_vtable },
             .context_view = .{ .ptr = self, .vtable = &bridge_context_vtable },
             .event_sink = .{ .ptr = self, .vtable = &bridge_sink_vtable },
             .options = .{
@@ -424,6 +434,7 @@ const RunBridge = struct {
 
 const bridge_policy_vtable: tool_policy_mod.ToolPolicyVTable = .{
     .check = bridgePolicyCheck,
+    .deniedBody = bridgePolicyDeniedBody,
 };
 
 fn bridgePolicyCheck(
@@ -442,6 +453,109 @@ fn bridgePolicyCheck(
         .remembered = o.remembered,
         .plan_blocked = o.plan_blocked,
     };
+}
+
+/// Product deny body renderer: calls the moved `permissions.deniedMessage` /
+/// `permissions.deniedMessageWithReason` so body bytes stay identical to the
+/// baseline. Called only after a deny decision; returns an owned body.
+fn bridgePolicyDeniedBody(
+    ptr: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    descriptor: tool.ToolDescriptor,
+    outcome: tool_policy_mod.Outcome,
+) error{OutOfMemory}![]u8 {
+    _ = ptr;
+    if (outcome.plan_blocked)
+        return permissions.deniedMessageWithReason(allocator, descriptor.definition.name, .plan_mode)
+    else
+        return permissions.deniedMessage(allocator, descriptor.definition.name);
+}
+
+// ── Jail adapter over Coding `workspace.Guard` containment ────────────────────
+//
+// The product jail adapter wraps the moved `workspace.Guard` containment logic.
+// It lives in `zag-coding-agent` (moved from Core by core-policy-ownership-001);
+// behavior is byte-identical to the prior inline loop gate
+// (`guardCheckOwned` + `workspace.deniedMessage`).
+
+const workspace_guard_jail_vtable: jail_mod.JailVTable = .{
+    .check = workspaceGuardJailCheck,
+};
+
+fn workspaceGuardJailCheck(
+    _: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    workspace_root_real: ?[]const u8,
+    tool_name: []const u8,
+    path: ?[]const u8,
+) jail_mod.JailError!jail_mod.Check {
+    _ = tool_name;
+    const p = path orelse return .{ .verdict = .allow };
+    if (try guardCheckOwned(allocator, io, cwd, workspace_root_real, p)) |deny_body| {
+        return .{ .verdict = .deny, .deny_body = deny_body };
+    }
+    return .{ .verdict = .allow };
+}
+
+/// Jail check on an already-extracted path (lexical + real containment).
+/// Returns an owned deny message, or null if path is OK for the handler.
+/// Ordinary `NotFound` is allowed through — handlers report ToolFailed, not
+/// jail_deny. Behavior matches the prior inline `guardCheckOwned`.
+fn guardCheckOwned(
+    allocator: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    workspace_root_real: ?[]const u8,
+    path: []const u8,
+) jail_mod.JailError!?[]u8 {
+    var guard = workspace.guardFrom(allocator, io, cwd, workspace_root_real) catch {
+        return @as(?[]u8, try workspace.deniedMessage(allocator));
+    };
+    defer guard.deinit(allocator);
+
+    guard.checkExisting(io, cwd, path) catch |err| switch (err) {
+        error.NotFound => {
+            guard.checkCreate(allocator, io, cwd, path) catch |cerr| switch (cerr) {
+                error.NotFound => {},
+                error.OutOfMemory => return error.OutOfMemory,
+                error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => {
+                    return @as(?[]u8, try workspace.deniedMessage(allocator));
+                },
+            };
+            return null;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+        error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => {
+            return @as(?[]u8, try workspace.deniedMessage(allocator));
+        },
+    };
+    return null;
+}
+
+// ── ShellPolicy adapter over Coding `shell_policy` denylist ───────────────────
+
+const protect_shell_vtable: shell_policy_mod.ShellPolicyVTable = .{
+    .check = protectShellCheck,
+    .deniedBody = protectShellDeniedBody,
+};
+
+fn protectShellCheck(_: ?*anyopaque, command: []const u8) shell_policy_mod.Decision {
+    return switch (shell_policy.check(.protect, command)) {
+        .allow => .allow,
+        .deny => .deny,
+    };
+}
+
+/// Product shell deny body: calls the moved `shell_policy.deniedMessage` so
+/// body bytes stay identical to the baseline.
+fn protectShellDeniedBody(
+    _: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    command: []const u8,
+) error{OutOfMemory}![]u8 {
+    return shell_policy.deniedMessage(allocator, command);
 }
 
 // ── ContextView adapter over `context.viewForModel` + session layers ──────────
@@ -909,12 +1023,21 @@ pub const Agent = struct {
         // D-011: build the local RunBridge owning the five seam pointers for
         // this synchronous run. Its address is stable for the whole loop.run
         // and is never copied/moved/returned. The seams borrow its fields.
+        //
+        // The workspace root is resolved once here (product facade), BEFORE any
+        // seam pointer is formed, using the same gpa/io/cwd that `loop.run` will
+        // use. The owned slice is stored on the bridge and freed on reply exit;
+        // its address/bytes cover the entire synchronous `loop.run`. This matches
+        // the prior Core loop behavior (resolveCwdReal catch null) but moves
+        // ownership to the product facade where it belongs (D-011).
         var bridge: RunBridge = .{
             .agent = self,
             .session = session,
             .gate = self.resolveGate(),
             .trace = if (self.trace) |*tr| tr else null,
+            .workspace_root_real = workspace.resolveCwdReal(self.gpa, self.io, Io.Dir.cwd()) catch null,
         };
+        defer if (bridge.workspace_root_real) |r| self.gpa.free(r);
 
         const result = loop.run(bridge.deps(), &session.transcript) catch |err| {
             return self.failRun(0, stopReasonForRunError(err), err);
@@ -5537,4 +5660,133 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
         "provider-multi-3",
         .{ .code = .cancelled },
     );
+}
+
+// ── core-policy-ownership-001 regression tests ──────────────────────────────
+
+test "core-policy-ownership-001: product deny body bytes match baseline fixture" {
+    // The product ToolPolicy adapter renders deny bodies via the moved
+    // permissions.deniedMessage/deniedMessageWithReason. These must produce
+    // the exact baseline bytes: "error: code=permission_denied message=...".
+    const gpa = std.testing.allocator;
+
+    // User deny body.
+    const user_body = try permissions.deniedMessage(gpa, "write_file");
+    defer gpa.free(user_body);
+    try std.testing.expect(tool_error.hasCode(user_body, .permission_denied));
+    try std.testing.expect(std.mem.indexOf(u8, user_body, "write_file") != null);
+    try std.testing.expect(std.mem.indexOf(u8, user_body, "user rejected") != null);
+    try std.testing.expect(std.mem.indexOf(u8, user_body, "Do not retry") != null);
+
+    // Plan-mode deny body.
+    const plan_body = try permissions.deniedMessageWithReason(gpa, "run_shell", .plan_mode);
+    defer gpa.free(plan_body);
+    try std.testing.expect(tool_error.hasCode(plan_body, .permission_denied));
+    try std.testing.expect(std.mem.indexOf(u8, plan_body, "run_shell") != null);
+    try std.testing.expect(std.mem.indexOf(u8, plan_body, "plan mode") != null);
+
+    // Shell deny body.
+    const shell_body = try shell_policy.deniedMessage(gpa, "rm -rf /");
+    defer gpa.free(shell_body);
+    try std.testing.expectEqualStrings(
+        "error: code=shell_deny message=shell command blocked by policy; use a safer command or ask the user to adjust policy",
+        shell_body,
+    );
+
+    // Jail deny body.
+    const jail_body = try workspace.deniedMessage(gpa);
+    defer gpa.free(jail_body);
+    try std.testing.expectEqualStrings(
+        "error: code=jail_deny message=" ++ workspace.jail_deny_message,
+        jail_body,
+    );
+}
+
+test "core-policy-ownership-001: product yolo still jail-denies escaping symlink" {
+    // Yolo bypasses confirmation only; it must NOT bypass jail or shell policy.
+    // The existing h-integration test already proves this with full Agent.reply;
+    // here we verify the guard directly under yolo.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.txt", .data = "OUTSIDE\n" });
+
+    var ws = try parent.dir.openDir(io, "ws", .{ .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "../outside/secret.txt", "escape_file", .{});
+
+    // Yolo gate allows everything; Guard must still deny.
+    const gate = permissions.Gate.yolo();
+    const desc = permissions.testDescriptor("read_file", .read);
+    const outcome = gate.check(desc, "{}", "escape_file");
+    try std.testing.expect(outcome.decision == .allow); // yolo allows
+
+    var guard = try workspace.guardFrom(gpa, io, ws, null);
+    defer guard.deinit(gpa);
+    try std.testing.expectError(
+        error.OutsideWorkspace,
+        guard.checkExisting(io, ws, "escape_file"),
+    );
+
+    // Outside file is intact.
+    const outside = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+    defer gpa.free(outside);
+    try std.testing.expectEqualStrings("OUTSIDE\n", outside);
+}
+
+test "core-policy-ownership-001: remember alias still re-enters Guard" {
+    // A remembered approval for one path must not bypass the Guard for an alias
+    // that resolves outside the workspace. The Guard is a separate gate.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var parent = std.testing.tmpDir(.{});
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/keep.txt", .data = "outside-original\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{ .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "../outside/keep.txt", "escape_file", .{});
+
+    var store = permissions.Remember.init(gpa, true);
+    defer store.deinit();
+    var allow_count: u32 = 0;
+    const Ctx = struct {
+        fn ask(ptr: ?*anyopaque, _: tool.ToolDescriptor, _: []const u8) permissions.Decision {
+            const c: *u32 = @ptrCast(@alignCast(ptr.?));
+            c.* += 1;
+            return .allow;
+        }
+    };
+    var gate = permissions.Gate.ask(Ctx.ask, &allow_count);
+    gate.remember = &store;
+    const descriptor = permissions.testDescriptor("write_file", .write);
+    var guard = try workspace.guardFrom(gpa, io, ws, null);
+    defer guard.deinit(gpa);
+
+    // First call: allowed but not remembered.
+    const approved = gate.check(descriptor, "{}", "escape_file");
+    try std.testing.expect(approved.decision == .allow and !approved.remembered);
+    // Guard still denies even though policy allowed.
+    try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "escape_file"));
+
+    // Second call: remembered (policy allows), but Guard still denies.
+    const remembered = gate.check(descriptor, "{}", "escape_file");
+    try std.testing.expect(remembered.decision == .allow and remembered.remembered);
+    try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "escape_file"));
+
+    // Lexical alias re-prompts at policy AND still fails Guard.
+    const alias = gate.check(descriptor, "{}", "./escape_file");
+    try std.testing.expect(alias.decision == .allow and !alias.remembered);
+    try std.testing.expectEqual(@as(u32, 2), allow_count);
+    try std.testing.expectError(error.OutsideWorkspace, guard.checkCreate(gpa, io, ws, "./escape_file"));
 }

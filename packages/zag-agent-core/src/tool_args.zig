@@ -1,9 +1,12 @@
-//! Neutral kernel module for descriptor-driven argument extraction.
+//! Neutral kernel module for descriptor-driven argument extraction and
+//! pure lexical path validation.
 //!
-//! Single source for path/command extraction so `tool.zig` (registration
-//! validation), `workspace.zig` (jail), and the loop policy/jail seams share
-//! one parser and cannot drift. This module imports only `zag-types` so it
-//! forms no cycle with `tool.zig` or `workspace.zig`.
+//! Single source for path/command extraction and lexical jail checks so
+//! `tool.zig` (registration validation), the coding-agent `workspace.zig`
+//! (containment), and the loop policy/jail seams share one parser and cannot
+//! drift. This module imports only `zag-types` and `builtin` so it forms no
+//! cycle with `tool.zig` or the product `workspace.zig`. It performs **no**
+//! filesystem IO (no `Io.Dir`/`Io.File`/realpath/symlink).
 //!
 //! Extraction semantics (D-007 / tool-runtime.md):
 //! - `workspace.none` → `null` (no path claim).
@@ -14,8 +17,14 @@
 //!   non-string/malformed → `InvalidArguments`.
 //! - shell `command_argument` → required non-empty string `command` field;
 //!   missing/empty/non-string/malformed → `InvalidArguments`.
+//!
+//! Lexical path validation (`checkToolPath`) is a pure string-level check:
+//! it rejects empty, NUL-containing, absolute, drive/UNC, and lexical `..`
+//! escape paths. It is **not** proof of containment — real filesystem
+//! containment is product-owned (`zag-coding-agent.workspace.Guard`).
 
 const std = @import("std");
+const builtin = @import("builtin");
 const zt = @import("zag-types");
 
 pub const ExtractError = error{
@@ -83,6 +92,65 @@ fn optionalStringArgumentsOrDefault(
     if (val != .string) return error.InvalidArguments;
     if (val.string.len == 0) return try allocator.dupe(u8, default_path);
     return try allocator.dupe(u8, val.string);
+}
+
+// ── lexical path validation (pure, no IO) ──────────────────────────────────
+
+/// Lexical path-jail error (string-level only, no filesystem IO).
+pub const LexicalError = error{
+    OutsideWorkspace,
+    InvalidPath,
+};
+
+fn isPathSep(c: u8) bool {
+    if (builtin.os.tag == .windows) return c == '/' or c == '\\';
+    return c == '/';
+}
+
+fn pathSepChars() []const u8 {
+    return if (builtin.os.tag == .windows) "/\\" else "/";
+}
+
+/// Validate a tool path lexically against the workspace jail (no IO).
+/// Rejects empty, NUL-containing, absolute, drive/UNC, and lexical `..`
+/// escape paths. This is a preliminary input check, **not** proof of
+/// containment — real filesystem containment is product-owned.
+pub fn checkToolPath(path: []const u8) LexicalError!void {
+    if (path.len == 0) return error.InvalidPath;
+    if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
+
+    // Absolute paths leave the relative workspace model.
+    if (std.fs.path.isAbsolute(path)) return error.OutsideWorkspace;
+
+    // Windows drive / UNC-ish prefixes even if not absolute on this host.
+    if (path.len >= 2 and path[1] == ':') return error.OutsideWorkspace;
+    if (std.mem.startsWith(u8, path, "\\\\") or std.mem.startsWith(u8, path, "//"))
+        return error.OutsideWorkspace;
+
+    var depth: i32 = 0;
+    var it = std.mem.tokenizeAny(u8, path, pathSepChars());
+    while (it.next()) |part| {
+        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
+        if (std.mem.eql(u8, part, "..")) {
+            depth -= 1;
+            if (depth < 0) return error.OutsideWorkspace;
+            continue;
+        }
+        depth += 1;
+    }
+}
+
+test "checkToolPath allows relative paths" {
+    try checkToolPath(".");
+    try checkToolPath("src/main.zig");
+    try checkToolPath("a/b/../c");
+}
+
+test "checkToolPath rejects absolute and escape" {
+    try std.testing.expectError(error.OutsideWorkspace, checkToolPath("/etc/passwd"));
+    try std.testing.expectError(error.OutsideWorkspace, checkToolPath("../secret"));
+    try std.testing.expectError(error.OutsideWorkspace, checkToolPath("a/../../b"));
+    try std.testing.expectError(error.InvalidPath, checkToolPath(""));
 }
 
 test "pathFromDescriptor none returns null" {

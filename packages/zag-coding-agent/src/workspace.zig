@@ -24,7 +24,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const zt = @import("zag-types");
-const tool_args = @import("tool_args.zig");
+const core = @import("zag-agent-core");
+const tool_args = core.tool_args;
 
 /// Lexical / containment denial (maps to soft `code=jail_deny`).
 pub const Error = error{
@@ -263,34 +264,16 @@ pub fn denyBody(
 
 /// Stable path-free soft error string for the model (caller owns with allocator).
 pub fn deniedMessage(allocator: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
-    const tool_error = @import("tool_error.zig");
+    const tool_error = core.tool_error;
     return tool_error.format(allocator, .jail_deny, jail_deny_message);
 }
 
 /// Validate a tool path against the workspace jail (string-level, no IO).
+/// Delegates to the single source in Core `tool_args.checkToolPath` so the
+/// kernel and product cannot drift. This is a preliminary input check, not
+/// proof of containment — real filesystem containment is handled by `Guard`.
 pub fn checkToolPath(path: []const u8) Error!void {
-    if (path.len == 0) return error.InvalidPath;
-    if (std.mem.indexOfScalar(u8, path, 0) != null) return error.InvalidPath;
-
-    // Absolute paths leave the relative workspace model.
-    if (std.fs.path.isAbsolute(path)) return error.OutsideWorkspace;
-
-    // Windows drive / UNC-ish prefixes even if not absolute on this host.
-    if (path.len >= 2 and path[1] == ':') return error.OutsideWorkspace;
-    if (std.mem.startsWith(u8, path, "\\\\") or std.mem.startsWith(u8, path, "//"))
-        return error.OutsideWorkspace;
-
-    var depth: i32 = 0;
-    var it = std.mem.tokenizeAny(u8, path, pathSepChars());
-    while (it.next()) |part| {
-        if (part.len == 0 or std.mem.eql(u8, part, ".")) continue;
-        if (std.mem.eql(u8, part, "..")) {
-            depth -= 1;
-            if (depth < 0) return error.OutsideWorkspace;
-            continue;
-        }
-        depth += 1;
-    }
+    return tool_args.checkToolPath(path);
 }
 
 /// Component-boundary containment: `/ws` does not contain `/ws2`.

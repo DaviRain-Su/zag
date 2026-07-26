@@ -9,7 +9,7 @@ const builtin = @import("builtin");
 const Io = std.Io;
 const core = @import("zag-agent-core");
 const tool = core.tool;
-const workspace = core.workspace;
+const workspace = @import("../workspace.zig");
 
 pub const list_dir_def: tool.Definition = .{
     .name = "list_dir",

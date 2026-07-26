@@ -38,19 +38,15 @@ const context_mod = @import("context.zig");
 // D-011 required seams.
 const tool_policy_mod = @import("tool_policy.zig");
 const jail_mod = @import("jail.zig");
-const shell_policy_port = @import("shell_policy_port.zig");
+const shell_policy_mod = @import("shell_policy.zig");
 const context_view_mod = @import("context_view.zig");
 const loop_event_mod = @import("loop_event.zig");
-
-// Soft-fail formatting helpers (stable shape, not product policy implementations).
-const permissions = @import("permissions.zig");
-const shell_policy = @import("shell_policy.zig");
 
 pub const default_max_turns: u32 = 20;
 
 pub const ToolPolicy = tool_policy_mod.ToolPolicy;
 pub const Jail = jail_mod.Jail;
-pub const ShellPolicy = shell_policy_port.ShellPolicy;
+pub const ShellPolicy = shell_policy_mod.ShellPolicy;
 pub const ContextView = context_view_mod.ContextView;
 pub const LoopEventSink = loop_event_mod.LoopEventSink;
 pub const LoopEvent = loop_event_mod.LoopEvent;
@@ -161,31 +157,12 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
     // Fail closed before the first provider call on malformed toolsets.
     tool.validateTools(deps.gpa, deps.toolset.tools) catch return error.InvalidToolset;
 
-    // Resolve workspace root once per run and thread into file-tool handlers.
-    // Failure is not a hard run error: path tools fail closed via Guard.
-    const workspace = @import("workspace.zig");
-    var root_owned: ?[]u8 = null;
-    defer if (root_owned) |r| deps.gpa.free(r);
-    if (deps.tool_ctx.workspace_root_real == null) {
-        root_owned = workspace.resolveCwdReal(deps.gpa, deps.tool_ctx.io, deps.tool_ctx.cwd) catch null;
-    }
-    var tool_ctx = deps.tool_ctx;
-    if (root_owned) |r| {
-        tool_ctx.workspace_root_real = r;
-    }
-    // Shadow deps with the threaded context for the rest of the run.
-    const deps_run: Deps = .{
-        .gpa = deps.gpa,
-        .provider = deps.provider,
-        .toolset = deps.toolset,
-        .tool_ctx = tool_ctx,
-        .tool_policy = deps.tool_policy,
-        .jail = deps.jail,
-        .shell_policy = deps.shell_policy,
-        .context_view = deps.context_view,
-        .event_sink = deps.event_sink,
-        .options = deps.options,
-    };
+    // The workspace root is resolved by the product facade (Agent.reply) and
+    // threaded as a borrowed `tool_ctx.workspace_root_real` slice whose address/
+    // bytes cover the entire synchronous `loop.run`. Core does not resolve the
+    // workspace root itself — that is product-owned behavior. When null, file-tool
+    // handlers / product jail adapters lazy-resolve from `cwd` (fail closed on error).
+    const deps_run = deps;
 
     var turns: u32 = 0;
     var last_text: []const u8 = "";
@@ -376,12 +353,13 @@ fn executeOneTool(
     }) catch |err| return mapSinkEmit(err);
 
     if (!allowed) {
-        const denied = if (outcome.plan_blocked)
-            permissions.deniedMessageWithReason(deps.tool_ctx.allocator, call.name, .plan_mode) catch
-                return error.OutOfMemory
-        else
-            permissions.deniedMessage(deps.tool_ctx.allocator, call.name) catch
-                return error.OutOfMemory;
+        // ToolPolicy.deniedBody: fallible body renderer called only after deny.
+        // Uses the caller's allocator; the loop frees the owned slice immediately.
+        const denied = deps.tool_policy.deniedBody(
+            deps.tool_ctx.allocator,
+            desc,
+            outcome,
+        ) catch return error.OutOfMemory;
         defer deps.tool_ctx.allocator.free(denied);
         try finishTool(deps, transcript, call, denied);
         return;
@@ -432,8 +410,11 @@ fn executeOneTool(
         if (deps.shell_policy.check(command) == .deny) {
             // shell_decision: Trace, then generic warning.
             deps.event_sink.emit(.{ .shell_decision = command }) catch |err| return mapSinkEmit(err);
-            const deny_body = shell_policy.deniedMessage(deps.tool_ctx.allocator, command) catch
-                return error.OutOfMemory;
+            // ShellPolicy.deniedBody: fallible body renderer called only after deny.
+            const deny_body = deps.shell_policy.deniedBody(
+                deps.tool_ctx.allocator,
+                command,
+            ) catch return error.OutOfMemory;
             defer deps.tool_ctx.allocator.free(deny_body);
             try finishTool(deps, transcript, call, deny_body);
             return;
@@ -675,6 +656,44 @@ fn defaultDeps(
     };
 }
 
+// File-local fake jail for loop tests: denies any non-null path with a generic
+// `jail_deny` body (simulates Guard rejecting an absolute/escaping path). Not
+// exported publicly; real Guard composition evidence lives in Coding tests.
+const fake_jail_vtable: jail_mod.JailVTable = .{
+    .check = fakeJailCheck,
+};
+fn fakeJailCheck(
+    _: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    _: std.Io,
+    _: std.Io.Dir,
+    _: ?[]const u8,
+    _: []const u8,
+    path: ?[]const u8,
+) jail_mod.JailError!jail_mod.Check {
+    if (path == null) return .{ .verdict = .allow };
+    return .{ .verdict = .deny, .deny_body = try jail_mod.genericDeniedBody(allocator) };
+}
+
+// File-local fake shell policy for loop tests: denies commands containing
+// known-dangerous substrings (simulates product `protect` denylist). Not
+// exported publicly; real shell policy evidence lives in Coding tests.
+const deny_dangerous_shell_vtable: shell_policy_mod.ShellPolicyVTable = .{
+    .check = denyDangerousCheck,
+    .deniedBody = denyDangerousDeniedBody,
+};
+fn denyDangerousCheck(_: ?*anyopaque, command: []const u8) shell_policy_mod.Decision {
+    if (std.mem.indexOf(u8, command, "rm -rf /") != null) return .deny;
+    return .allow;
+}
+fn denyDangerousDeniedBody(
+    _: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    command: []const u8,
+) error{OutOfMemory}![]u8 {
+    return shell_policy_mod.genericDeniedBody(allocator, command);
+}
+
 test "loop stops when model returns text only" {
     const gpa = std.testing.allocator;
 
@@ -837,7 +856,7 @@ test "jail deny absolute path without writing" {
 
     var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
     deps.tool_policy = ToolPolicy.allowAllForTrustedHost();
-    deps.jail = .{ .ptr = null, .vtable = jail_mod.WorkspaceGuardAdapter.vtable() };
+    deps.jail = .{ .ptr = null, .vtable = &fake_jail_vtable };
 
     const result = try run(deps, &transcript);
 
@@ -914,7 +933,7 @@ test "loop pre-handler jail deny for long absolute path is bounded and does not 
 
     var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
     deps.tool_policy = ToolPolicy.allowAllForTrustedHost();
-    deps.jail = .{ .ptr = null, .vtable = jail_mod.WorkspaceGuardAdapter.vtable() };
+    deps.jail = .{ .ptr = null, .vtable = &fake_jail_vtable };
 
     _ = try run(deps, &transcript);
 
@@ -1186,7 +1205,7 @@ test "seam composition: jail deny after policy allow, before handler" {
 
     var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
     deps.tool_policy = ToolPolicy.allowAllForTrustedHost();
-    deps.jail = .{ .ptr = null, .vtable = jail_mod.WorkspaceGuardAdapter.vtable() };
+    deps.jail = .{ .ptr = null, .vtable = &fake_jail_vtable };
 
     _ = try run(deps, &transcript);
     try std.testing.expect(!state.ran);
@@ -1248,7 +1267,7 @@ test "seam composition: shell deny after policy allow, before handler" {
 
     var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
     deps.tool_policy = ToolPolicy.allowAllForTrustedHost();
-    deps.shell_policy = ShellPolicy.fromMode(shell_policy.Mode.protect);
+    deps.shell_policy = .{ .ptr = null, .vtable = &deny_dangerous_shell_vtable };
 
     _ = try run(deps, &transcript);
     try std.testing.expect(!state.ran);
@@ -1597,4 +1616,181 @@ test "tools execute serially in call order (seam composition)" {
     // Three tool calls executed serially → three tool_start and three tool_end events.
     try std.testing.expectEqual(@as(u32, 3), sink.tool_starts);
     try std.testing.expectEqual(@as(u32, 3), sink.tool_ends);
+}
+
+// ── core-policy-ownership-001 regression tests ──────────────────────────────
+//
+// These tests prove the deniedBody port renderer contract: policy/shell
+// `check` is nonfallible; the `deniedBody` renderer is called only after a
+// deny decision; it may fail with OutOfMemory; when it does, policy_decision
+// (or shell_decision) has already been emitted and the run returns
+// RunError.OutOfMemory with no tool result appended.
+
+/// File-local ToolPolicy vtable whose deniedBody always fails with OutOfMemory.
+const oom_policy_vtable: tool_policy_mod.ToolPolicyVTable = .{
+    .check = oomPolicyCheck,
+    .deniedBody = oomPolicyDeniedBody,
+};
+fn oomPolicyCheck(_: ?*anyopaque, _: zt.ToolDescriptor, _: []const u8, _: ?[]const u8) tool_policy_mod.Outcome {
+    return .{ .decision = .deny };
+}
+fn oomPolicyDeniedBody(
+    _: ?*anyopaque,
+    _: std.mem.Allocator,
+    _: zt.ToolDescriptor,
+    _: tool_policy_mod.Outcome,
+) error{OutOfMemory}![]u8 {
+    return error.OutOfMemory;
+}
+
+test "core-policy-ownership-001: policy deny body OOM — policy_decision emitted, renderer called, run returns OutOfMemory, no tool result" {
+    const gpa = std.testing.allocator;
+
+    const State = struct { ran: bool = false };
+    const Stub = struct {
+        fn handle(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.ran = true;
+            return error.ToolFailed;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = writeDesc("write_file"),
+        .instance = &state,
+        .handler = Stub.handle,
+    }};
+
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const tc = try arena.alloc(message.ToolCall, 1);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "c1"),
+                .name = try arena.dupe(u8, "write_file"),
+                .arguments = try arena.dupe(u8, "{\"path\":\"x\",\"content\":\"y\"}"),
+            };
+            return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("write something");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
+    deps.tool_policy = .{ .ptr = null, .vtable = &oom_policy_vtable };
+
+    // The run must fail with OutOfMemory (deniedBody OOM).
+    const result_err = run(deps, &transcript);
+    try std.testing.expectError(error.OutOfMemory, result_err);
+
+    // Handler never executed (deny path).
+    try std.testing.expect(!state.ran);
+
+    // policy_decision event was emitted BEFORE the renderer OOM.
+    try std.testing.expect(sink.policy_decisions >= 1);
+
+    // No tool_end event (no tool result appended on OOM).
+    try std.testing.expectEqual(@as(u32, 0), sink.tool_ends);
+
+    // No tool result in the transcript.
+    for (transcript.items()) |m| {
+        if (m.role == .tool) return error.TestUnexpectedResult;
+    }
+}
+
+/// File-local ShellPolicy vtable whose deniedBody always fails with OutOfMemory.
+const oom_shell_vtable: shell_policy_mod.ShellPolicyVTable = .{
+    .check = oomShellCheck,
+    .deniedBody = oomShellDeniedBody,
+};
+fn oomShellCheck(_: ?*anyopaque, command: []const u8) shell_policy_mod.Decision {
+    if (std.mem.indexOf(u8, command, "rm -rf /") != null) return .deny;
+    return .allow;
+}
+fn oomShellDeniedBody(
+    _: ?*anyopaque,
+    _: std.mem.Allocator,
+    _: []const u8,
+) error{OutOfMemory}![]u8 {
+    return error.OutOfMemory;
+}
+
+test "core-policy-ownership-001: shell deny body OOM — shell_decision emitted before renderer OOM, run returns OutOfMemory" {
+    const gpa = std.testing.allocator;
+
+    const State = struct { ran: bool = false };
+    const Stub = struct {
+        fn handle(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.ran = true;
+            return error.ToolFailed;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = shellDesc("run_shell"),
+        .instance = &state,
+        .handler = Stub.handle,
+    }};
+
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const tc = try arena.alloc(message.ToolCall, 1);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "c1"),
+                .name = try arena.dupe(u8, "run_shell"),
+                .arguments = try arena.dupe(u8, "{\"command\":\"rm -rf /\"}"),
+            };
+            return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("rm root");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &tools }, sink.sink());
+    deps.tool_policy = ToolPolicy.allowAllForTrustedHost();
+    deps.shell_policy = .{ .ptr = null, .vtable = &oom_shell_vtable };
+
+    // The run must fail with OutOfMemory (shell deniedBody OOM).
+    const result_err = run(deps, &transcript);
+    try std.testing.expectError(error.OutOfMemory, result_err);
+
+    // Handler never executed.
+    try std.testing.expect(!state.ran);
+
+    // shell_decision event was emitted BEFORE the renderer OOM.
+    try std.testing.expect(sink.shell_decisions >= 1);
+
+    // No tool_end event.
+    try std.testing.expectEqual(@as(u32, 0), sink.tool_ends);
+
+    // No tool result in the transcript.
+    for (transcript.items()) |m| {
+        if (m.role == .tool) return error.TestUnexpectedResult;
+    }
 }

@@ -19,7 +19,8 @@
 const std = @import("std");
 const Io = std.Io;
 const zt = @import("zag-types");
-const message = @import("message.zig");
+const core = @import("zag-agent-core");
+const message = core.message;
 
 /// Max distinct write paths remembered per agent session (Tiger-style bound).
 pub const max_remembered_paths: usize = 64;
@@ -278,7 +279,7 @@ pub fn deniedMessageWithReason(
     tool_name: []const u8,
     reason: enum { user, plan_mode },
 ) std.mem.Allocator.Error![]u8 {
-    const tool_error = @import("tool_error.zig");
+    const tool_error = core.tool_error;
     const detail: []const u8 = switch (reason) {
         .user => "The user rejected this operation. Do not retry the same call; explain what you wanted to do and wait for guidance.",
         .plan_mode => "Session is in plan mode: only read tools and writing plan.md / .zag/plan.md are allowed. Switch to agent mode for general edits or shell.",
@@ -422,7 +423,7 @@ test "remembered write approval still re-enters Guard and jail-denied alias stay
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
-    const workspace = @import("workspace.zig");
+    const workspace = @import("workspace.zig"); // Coding-local (moved from Core)
 
     var parent = std.testing.tmpDir(.{});
     defer parent.cleanup();

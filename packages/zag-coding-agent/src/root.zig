@@ -2,6 +2,12 @@
 //!
 //! Default coding toolset, Agent/Session facade, AGENTS.md project load,
 //! WireAdapter → Provider bridge. Depends on zag-agent-core + zag-ai.
+//!
+//! Product-owned policy modules (moved from Core by core-policy-ownership-001):
+//! `permissions.zig` (HITL Gate/remember/prompt), `shell_policy.zig` (concrete
+//! denylist + fromMode adapter), and `workspace.zig` (Guard/Root/realpath/
+//! symlink containment). Core retains only the required ports and pure
+//! lexical validation.
 
 const std = @import("std");
 const core = @import("zag-agent-core");
@@ -11,19 +17,24 @@ pub const agent_core = core;
 // Re-export core surface for convenience
 pub const message = core.message;
 pub const tool = core.tool;
+pub const tool_args = core.tool_args;
 pub const transcript = core.transcript;
 pub const provider = core.provider;
-pub const permissions = core.permissions;
 pub const context = core.context;
-pub const session_store = @import("session_store.zig");
-pub const shell_policy = core.shell_policy;
-pub const workspace = core.workspace;
 pub const loop = core.loop;
+
+// D-011 product-owned persistence surface (moved from Core by core-session-ownership-001).
+pub const session_store = @import("session_store.zig");
 
 // D-011 product-owned observation surface (moved from Core by core-observation-ownership-001).
 pub const redact = @import("redact.zig");
 pub const trace = @import("trace.zig");
 pub const observer = @import("observer.zig");
+
+// D-011 product-owned policy surface (moved from Core by core-policy-ownership-001).
+pub const permissions = @import("permissions.zig");
+pub const shell_policy = @import("shell_policy.zig");
+pub const workspace = @import("workspace.zig");
 
 // Product layer
 pub const agent = @import("agent.zig");

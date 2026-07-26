@@ -60,10 +60,10 @@ pub fn run(init: std.process.Init) !void {
     var prompt_parts: std.ArrayList([]const u8) = .empty;
     var verbose = false;
     var show_help = false;
-    var permission_mode: core.permissions.Mode = .ask;
-    var session_kind: core.permissions.SessionKind = .agent;
+    var permission_mode: coding.permissions.Mode = .ask;
+    var session_kind: coding.permissions.SessionKind = .agent;
     var remember_writes = true;
-    var shell_policy: core.shell_policy.Mode = .protect;
+    var shell_policy: coding.shell_policy.Mode = .protect;
     var session_path: ?[]const u8 = null;
     var continue_session = false;
     var no_project = false;
@@ -97,7 +97,7 @@ pub fn run(init: std.process.Init) !void {
                 std.log.err("{s} requires ask|yolo", .{a});
                 std.process.exit(2);
             }
-            permission_mode = core.permissions.Mode.parse(args[i]) orelse {
+            permission_mode = coding.permissions.Mode.parse(args[i]) orelse {
                 std.log.err("{s}", .{invalidPermissionModeMessage()});
                 std.process.exit(2);
             };
@@ -107,7 +107,7 @@ pub fn run(init: std.process.Init) !void {
                 std.log.err("--shell-policy requires protect|off", .{});
                 std.process.exit(2);
             }
-            shell_policy = core.shell_policy.Mode.parse(args[i]) orelse {
+            shell_policy = coding.shell_policy.Mode.parse(args[i]) orelse {
                 std.log.err("{s}", .{invalidShellPolicyMessage()});
                 std.process.exit(2);
             };
@@ -384,8 +384,8 @@ pub fn selectOpenMode(continue_session: bool) coding.OpenMode {
 
 /// Build doctor options from already-parsed flags (wired into `run`; report only).
 pub fn doctorOptionsFromFlags(
-    permission: core.permissions.Mode,
-    shell_policy: core.shell_policy.Mode,
+    permission: coding.permissions.Mode,
+    shell_policy: coding.shell_policy.Mode,
     no_project: bool,
 ) coding.doctor.Options {
     return .{
@@ -414,13 +414,13 @@ test "CLI selectOpenMode: -s is create_new, -c is resume_existing" {
 
 test "doctorOptionsFromFlags reports explicit selections without side effects" {
     const def = doctorOptionsFromFlags(.ask, .protect, false);
-    try std.testing.expectEqual(core.permissions.Mode.ask, def.permission);
-    try std.testing.expectEqual(core.shell_policy.Mode.protect, def.shell_policy);
+    try std.testing.expectEqual(coding.permissions.Mode.ask, def.permission);
+    try std.testing.expectEqual(coding.shell_policy.Mode.protect, def.shell_policy);
     try std.testing.expect(def.load_project_instructions);
 
     const expl = doctorOptionsFromFlags(.yolo, .off, true);
-    try std.testing.expectEqual(core.permissions.Mode.yolo, expl.permission);
-    try std.testing.expectEqual(core.shell_policy.Mode.off, expl.shell_policy);
+    try std.testing.expectEqual(coding.permissions.Mode.yolo, expl.permission);
+    try std.testing.expectEqual(coding.shell_policy.Mode.off, expl.shell_policy);
     try std.testing.expect(!expl.load_project_instructions);
 }
 
@@ -542,7 +542,7 @@ test "REPL input exposes StreamTooLong beyond the 4096-byte reader capacity" {
 fn runRepl(
     agent: *coding.Agent,
     io: Io,
-    mode: core.permissions.Mode,
+    mode: coding.permissions.Mode,
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,

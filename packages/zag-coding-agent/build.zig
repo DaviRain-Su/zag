@@ -17,6 +17,12 @@ pub fn build(b: *std.Build) void {
     });
     const core_mod = core_dep.module("zag-agent-core");
 
+    const types_dep = b.dependency("zag_types", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const types_mod = types_dep.module("zag-types");
+
     const ai_dep = b.dependency("zag_ai", .{
         .target = target,
         .optimize = optimize,
@@ -29,6 +35,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .imports = &.{
             .{ .name = "zag-agent-core", .module = core_mod },
+            .{ .name = "zag-types", .module = types_mod },
             .{ .name = "zag-ai", .module = ai_mod },
         },
     });
@@ -40,6 +47,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-types", .module = types_mod },
                 .{ .name = "zag-ai", .module = ai_mod },
             },
         }),

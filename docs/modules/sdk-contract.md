@@ -115,7 +115,7 @@ provider_retry, compaction, run_end
 
 Source: [`packages/zag-coding-agent/src/trace.zig:67-75`](../../packages/zag-coding-agent/src/trace.zig).
 
-### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001 done)
+### D-011 status (core-seams-001, core-session-ownership-001, core-observation-ownership-001, core-policy-ownership-001 done)
 
 Core exposes one borrowed/fallible source `LoopEventSink`; durable Trace, redaction, and verbose logging are coding-agent
 adapters with different failure policies. Run preflight/start/terminal remain facade-owned. The later
@@ -126,6 +126,16 @@ Observer behavior is preserved via the `RunBridge` event-sink adapter in `zag-co
 `zag-coding-agent` (whole-file `git mv`, no Core shim/duplicate). Core's only event port is `LoopEventSink`;
 the loop emits `LoopEvent` source facts and never writes Trace/Observer/logs directly. The CLI resolves
 `coding.observer`/`coding.redact`/`coding.trace` through the public `zag-coding-agent` root; message/loop stay Core.
+
+`core-policy-ownership-001` moved `permissions.zig` (HITL Gate/remember/prompt), `shell_policy.zig` (concrete
+denylist + `fromMode` adapter), and `workspace.zig` (Guard/Root/realpath/symlink containment) from `zag-agent-core` to
+`zag-coding-agent` (whole-file `git mv`, no Core shim/duplicate). Core retains only the required `ToolPolicy`/`Jail`/
+`ShellPolicy` ports with `deniedBody` renderers (generic `tool_error.format` for low-level test vtables), the pure
+lexical `tool_args.checkToolPath`, one-time argument/path extraction, and the fixed gate order. Product deny bodies are
+rendered by Coding adapters calling the moved `permissions.deniedMessage`/`shell_policy.deniedMessage`/
+`workspace.deniedMessage`, preserving product body bytes byte-for-byte. The CLI resolves `coding.permissions`/
+`coding.shell_policy`/`coding.workspace` through the public `zag-coding-agent` root; the loop resolves no workspace
+root itself (the product facade `Agent.reply` resolves `resolveCwdReal` before forming seam pointers).
 
 `loop.run` now takes five explicit required seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`,
 `LoopEventSink` — as borrowed dependencies. Missing is never implicitly allow/yolo/identity/discard; a

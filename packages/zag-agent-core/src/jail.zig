@@ -9,11 +9,15 @@
 //!
 //! The same single-extracted path is passed to policy and jail (descriptor
 //! driven, extracted once by `tool_args.pathFromDescriptor`).
+//!
+//! The concrete `WorkspaceGuardAdapter` / `guardCheck` and all filesystem
+//! containment logic (Guard, Root, realpath, symlink checks) live in
+//! `zag-coding-agent` (moved from Core by core-policy-ownership-001). Core
+//! retains only the port, the explicit `allowAllForTrustedHost` helper, and
+//! a generic deny body renderer for low-level test vtables.
 
 const std = @import("std");
 const Io = std.Io;
-const zt = @import("zag-types");
-const workspace = @import("workspace.zig");
 const tool_error = @import("tool_error.zig");
 
 pub const JailError = error{
@@ -76,6 +80,15 @@ pub const Jail = struct {
     }
 };
 
+const jail_deny_message = "path outside workspace jail. Use relative paths under the working directory; absolute paths, '..' escapes, and symlink/alias escapes are denied.";
+
+/// Generic Core deny body renderer (used by explicit low-level test vtables).
+/// Product adapters in `zag-coding-agent` call the moved `workspace.deniedMessage`
+/// so product body bytes stay identical.
+pub fn genericDeniedBody(allocator: std.mem.Allocator) error{OutOfMemory}![]u8 {
+    return tool_error.format(allocator, .jail_deny, jail_deny_message);
+}
+
 const allow_all_vtable: JailVTable = .{
     .check = allowAllCheck,
 };
@@ -91,71 +104,23 @@ fn allowAllCheck(
     return .{ .verdict = .allow };
 }
 
-/// Adapter over the existing `workspace.Guard` containment logic. This is the
-/// product path implementation that `zag-coding-agent` installs. It lives in
-/// Core during the seam migration (D-011 step 1) and moves to coding-agent in
-/// a later ownership task; behavior is byte-identical to the prior inline loop
-/// gate (`pathJailCheckOwned` + `emitJailDeny`).
-pub const WorkspaceGuardAdapter = struct {
-    pub fn vtable() *const JailVTable {
-        return &guard_vtable;
-    }
-
-    fn check(
-        _: ?*anyopaque,
-        allocator: std.mem.Allocator,
-        io: Io,
-        cwd: Io.Dir,
-        workspace_root_real: ?[]const u8,
-        tool_name: []const u8,
-        path: ?[]const u8,
-    ) JailError!Check {
-        const p = path orelse return .{ .verdict = .allow };
-        if (try guardCheckOwned(allocator, io, cwd, workspace_root_real, tool_name, p)) |deny_body| {
-            return .{ .verdict = .deny, .deny_body = deny_body };
-        }
-        return .{ .verdict = .allow };
-    }
+/// Explicitly-named deny-all jail for low-level tests. Renders a generic
+/// `jail_deny` body. Not exported publicly; file-local only.
+const deny_all_vtable: JailVTable = .{
+    .check = denyAllCheck,
 };
-
-const guard_vtable: JailVTable = .{
-    .check = WorkspaceGuardAdapter.check,
-};
-
-/// Jail check on an already-extracted path (lexical + real containment).
-/// Returns an owned deny message, or null if path is OK for the handler.
-/// Ordinary `NotFound` is allowed through — handlers report ToolFailed, not
-/// jail_deny. Behavior matches the prior inline `pathJailCheckOwned`.
-fn guardCheckOwned(
+fn denyAllCheck(
+    _: ?*anyopaque,
     allocator: std.mem.Allocator,
-    io: Io,
-    cwd: Io.Dir,
-    workspace_root_real: ?[]const u8,
+    _: Io,
+    _: Io.Dir,
+    _: ?[]const u8,
     _: []const u8,
-    path: []const u8,
-) JailError!?[]u8 {
-    var guard = workspace.guardFrom(allocator, io, cwd, workspace_root_real) catch {
-        return @as(?[]u8, try workspace.deniedMessage(allocator));
-    };
-    defer guard.deinit(allocator);
-
-    guard.checkExisting(io, cwd, path) catch |err| switch (err) {
-        error.NotFound => {
-            guard.checkCreate(allocator, io, cwd, path) catch |cerr| switch (cerr) {
-                error.NotFound => {},
-                error.OutOfMemory => return error.OutOfMemory,
-                error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => {
-                    return @as(?[]u8, try workspace.deniedMessage(allocator));
-                },
-            };
-            return null;
-        },
-        error.OutOfMemory => return error.OutOfMemory,
-        error.OutsideWorkspace, error.InvalidPath, error.ResolveFailed => {
-            return @as(?[]u8, try workspace.deniedMessage(allocator));
-        },
-    };
-    return null;
+    path: ?[]const u8,
+) JailError!Check {
+    // Non-file tools (path == null) are explicitly allowed (N/A).
+    if (path == null) return .{ .verdict = .allow };
+    return .{ .verdict = .deny, .deny_body = try genericDeniedBody(allocator) };
 }
 
 test "allowAllForTrustedHost permits any path" {
@@ -164,4 +129,28 @@ test "allowAllForTrustedHost permits any path" {
     const r = try jail.check(gpa, std.testing.io, std.Io.Dir.cwd(), null, "x", "/etc/passwd");
     try std.testing.expect(r.verdict == .allow);
     try std.testing.expect(r.deny_body == null);
+}
+
+test "denyAll denies file paths and allows non-file tools" {
+    const gpa = std.testing.allocator;
+    const jail: Jail = .{ .ptr = null, .vtable = &deny_all_vtable };
+    // Non-file tool (path == null) → allow (explicit N/A).
+    const r1 = try jail.check(gpa, std.testing.io, std.Io.Dir.cwd(), null, "x", null);
+    try std.testing.expect(r1.verdict == .allow);
+    // File tool → deny with generic body.
+    const r2 = try jail.check(gpa, std.testing.io, std.Io.Dir.cwd(), null, "x", "/etc/passwd");
+    try std.testing.expect(r2.verdict == .deny);
+    try std.testing.expect(r2.deny_body != null);
+    defer gpa.free(r2.deny_body.?);
+    try std.testing.expect(tool_error.hasCode(r2.deny_body.?, .jail_deny));
+}
+
+test "generic deny body is generic bounded and path-free" {
+    const gpa = std.testing.allocator;
+    const sentinel = "ULTRA_LONG_PATH_SENTINEL_6fe0";
+    const body = try genericDeniedBody(gpa);
+    defer gpa.free(body);
+    try std.testing.expectEqualStrings("error: code=jail_deny message=" ++ jail_deny_message, body);
+    try std.testing.expect(body.len < 512);
+    try std.testing.expect(std.mem.indexOf(u8, body, sentinel) == null);
 }

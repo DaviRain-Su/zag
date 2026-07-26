@@ -13,6 +13,9 @@
 const std = @import("std");
 const Io = std.Io;
 const core = @import("zag-agent-core");
+const permissions = @import("permissions.zig");
+const shell_policy = @import("shell_policy.zig");
+const workspace = @import("workspace.zig");
 const project = @import("project.zig");
 
 /// Stack buffer size that holds the maximum fixed report (worst-case enum labels).
@@ -80,8 +83,8 @@ pub const RealContainment = enum {
 
 /// Inputs selected by CLI flags (or host). Doctor reports them; it does not change them.
 pub const Options = struct {
-    permission: core.permissions.Mode = .ask,
-    shell_policy: core.shell_policy.Mode = .protect,
+    permission: permissions.Mode = .ask,
+    shell_policy: shell_policy.Mode = .protect,
     /// When false (`--no-project`), project instructions report `disabled`.
     load_project_instructions: bool = true,
 };
@@ -90,8 +93,8 @@ pub const Options = struct {
 pub const Report = struct {
     project_instructions: ProjectInstructionStatus,
     test_entry: TestEntry,
-    permission: core.permissions.Mode,
-    shell_policy: core.shell_policy.Mode,
+    permission: permissions.Mode,
+    shell_policy: shell_policy.Mode,
     real_file_containment: RealContainment,
 };
 
@@ -139,14 +142,14 @@ const RootResolver = *const fn (
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
-) core.workspace.ContainError!core.workspace.Root;
+) workspace.ContainError!workspace.Root;
 
 fn productionRootResolver(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
-) core.workspace.ContainError!core.workspace.Root {
-    return core.workspace.Root.obtain(gpa, io, cwd, null);
+) workspace.ContainError!workspace.Root {
+    return workspace.Root.obtain(gpa, io, cwd, null);
 }
 
 /// Single catch/deinit mapping body used by production and tests.
@@ -243,8 +246,8 @@ test "doctor defaults: ask/protect + present project in tmp with AGENTS.md" {
     const report = collect(gpa, io, tmp.dir, .{});
     try std.testing.expectEqual(ProjectInstructionStatus.enabled_present, report.project_instructions);
     try std.testing.expectEqual(TestEntry.none, report.test_entry);
-    try std.testing.expectEqual(core.permissions.Mode.ask, report.permission);
-    try std.testing.expectEqual(core.shell_policy.Mode.protect, report.shell_policy);
+    try std.testing.expectEqual(permissions.Mode.ask, report.permission);
+    try std.testing.expectEqual(shell_policy.Mode.protect, report.shell_policy);
     try std.testing.expectEqual(RealContainment.ready, report.real_file_containment);
 
     var buf: [report_buf_len]u8 = undefined;
@@ -349,8 +352,8 @@ test "doctor explicit yolo/off selections reported without mutation semantics" {
         .shell_policy = .off,
         .load_project_instructions = false,
     });
-    try std.testing.expectEqual(core.permissions.Mode.yolo, report.permission);
-    try std.testing.expectEqual(core.shell_policy.Mode.off, report.shell_policy);
+    try std.testing.expectEqual(permissions.Mode.yolo, report.permission);
+    try std.testing.expectEqual(shell_policy.Mode.off, report.shell_policy);
     try std.testing.expectEqual(ProjectInstructionStatus.disabled, report.project_instructions);
 
     var buf: [report_buf_len]u8 = undefined;
@@ -367,7 +370,7 @@ fn testResolveFailed(
     _: std.mem.Allocator,
     _: Io,
     _: Io.Dir,
-) core.workspace.ContainError!core.workspace.Root {
+) workspace.ContainError!workspace.Root {
     return error.ResolveFailed;
 }
 
@@ -375,7 +378,7 @@ fn testResolveOutOfMemory(
     _: std.mem.Allocator,
     _: Io,
     _: Io.Dir,
-) core.workspace.ContainError!core.workspace.Root {
+) workspace.ContainError!workspace.Root {
     return error.OutOfMemory;
 }
 

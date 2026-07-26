@@ -82,9 +82,9 @@ L2 领域服务      openai-zig          HTTP SDK ✅
                  zag-workspace       future only if a second owner appears; D-011 first moves implementation to coding-agent
                  zag-sandbox         OS 沙箱（C7 新包）
                  future extension/memory packages（仅真实 ownership pressure 时创建）
-L3 产品 harness  zag-coding-agent ✅  Agent/Session · policy/context · persistence/observation · model wiring · runtime tools
+L3 产品 harness  zag-coding-agent ✅  Agent/Session · policy/permissions/HITL/remember · workspace containment · shell protect · context · persistence/observation · model wiring · runtime tools (depends on zag-agent-core + zag-ai + zag-types)
 L4 内核 ★low-level composition
-                 zag-agent-core ✅    loop · Transcript · Provider/Tool/Cancel ports · protocol history · required seams（**仅依赖 zag-types**）
+                 zag-agent-core ✅    loop · Transcript · Provider/Tool/Cancel ports · protocol history · required ToolPolicy/Jail/ShellPolicy ports + deniedBody renderers · pure lexical tool_args（**仅依赖 zag-types**）
                  SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel contract 已闭合；external consumer fixture 7/7
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
                  zag-tui / zag-acp   （C9）

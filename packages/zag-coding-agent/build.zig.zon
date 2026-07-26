@@ -10,6 +10,9 @@
         .zag_ai = .{
             .path = "../zag-ai",
         },
+        .zag_types = .{
+            .path = "../zag-types",
+        },
     },
     .paths = .{
         "build.zig",
