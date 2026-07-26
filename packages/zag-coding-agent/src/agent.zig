@@ -1023,8 +1023,11 @@ pub const Agent = struct {
     /// itself fails, return the **trace** error (or OOM), not the primary.
     /// When commit succeeds, return `primary`.
     ///
-    /// `turns_hint` is merged with `Trace.last_emitted_turn` so mid-run failures
-    /// report progress when turn events were emitted.
+    /// `turns_hint` is the facade-owned progress (typically `RunBridge.current_turn`
+    /// after loop source facts, or `Result.turns` after a normal Result). When
+    /// Trace is active it is merged with `Trace.last_emitted_turn` so mid-run
+    /// failures report progress even if the hint lags; without Trace the hint
+    /// alone must be truthful for public lifecycle terminals.
     fn failRun(
         self: *Agent,
         turns_hint: u32,
@@ -1131,10 +1134,21 @@ pub const Agent = struct {
         defer self.cancel.clear();
         // Clear borrowed trace redactor on every exit (success, failRun, persist fault).
         defer self.clearTraceRedactor();
-        // Never inherit an open public lifecycle from a prior reply. This defer
-        // is cleanup only; it never fabricates a missing terminal.
-        self.lifecycle_run_open = false;
-        defer self.lifecycle_run_open = false;
+        // Public lifecycle open-flag hygiene:
+        // - A prior reply must not leave the flag open (missing terminal). Debug
+        //   asserts; release still clears so the next reply can start clean.
+        // - On exit, if the flag is still open, Debug asserts (forgotten
+        //   terminal path). Never fabricate a public terminal here — cleanup only.
+        if (self.lifecycle_run_open) {
+            std.debug.assert(false);
+            self.lifecycle_run_open = false;
+        }
+        defer {
+            if (self.lifecycle_run_open) {
+                std.debug.assert(false);
+                self.lifecycle_run_open = false;
+            }
+        }
         try self.beginRun(session);
         self.startLifecycle(session.path != null);
         session.zag_version = self.options.version;
@@ -1162,8 +1176,11 @@ pub const Agent = struct {
         };
         defer if (bridge.workspace_root_real) |r| self.gpa.free(r);
 
+        // On loop error, public turns come from the facade-owned bridge turn
+        // counter (updated on Core `turn_start`). failRun still maxes with
+        // Trace.last_emitted_turn when Trace is present.
         const result = loop.run(bridge.deps(), &session.transcript) catch |err| {
-            return self.failRun(0, stopReasonForRunError(err), err);
+            return self.failRun(bridge.current_turn, stopReasonForRunError(err), err);
         };
 
         // Save before committing a successful terminal so save failure cannot leave ok=true.
@@ -1210,7 +1227,10 @@ pub const Agent = struct {
         });
         defer session.deinit();
 
-        // `reply` owns the single terminal (including flush / failure paths).
+        // `reply` owns the single public lifecycle terminal (including flush /
+        // failure paths). The OwnedResult text copy below is a caller-side
+        // presentation allocation after that terminal; it may OOM without
+        // rewriting or fabricating a second lifecycle terminal.
         const result = try self.reply(&session, user_prompt);
         const owned = self.gpa.dupe(u8, result.final_text) catch return error.OutOfMemory;
         return .{
@@ -6077,6 +6097,29 @@ const LifecycleRecorder = struct {
         }
         return null;
     }
+
+    fn countKind(self: *const LifecycleRecorder, kind: LifecycleKind) u32 {
+        var n: u32 = 0;
+        for (self.events.items) |e| {
+            if (e.kind == kind) n += 1;
+        }
+        return n;
+    }
+
+    /// Find the first tool_end with the given id (owned copy).
+    fn toolEndById(self: *const LifecycleRecorder, id: []const u8) ?OwnedLifecycleEvent {
+        for (self.events.items) |e| {
+            if (e.kind == .tool_end and e.id != null and std.mem.eql(u8, e.id.?, id)) return e;
+        }
+        return null;
+    }
+
+    fn toolStartById(self: *const LifecycleRecorder, id: []const u8) ?OwnedLifecycleEvent {
+        for (self.events.items) |e| {
+            if (e.kind == .tool_start and e.id != null and std.mem.eql(u8, e.id.?, id)) return e;
+        }
+        return null;
+    }
 };
 
 fn expectKindSequence(rec: *const LifecycleRecorder, expected: []const LifecycleKind) !void {
@@ -6684,7 +6727,11 @@ test "harness-events: invalid_toolset + invalid_context post-start terminals" {
     }
 }
 
-test "harness-events: Trace terminal failure maps OOM→out_of_memory and IO→trace_error" {
+// F-2: Trace terminal commit I/O failure → public stop_reason=trace_error.
+// OutOfMemory mapping for post-start terminals is covered by the noteCompaction
+// OOM fixture below (and by stopReasonForTraceError); this test does not inject
+// a Trace-terminal OOM fault (no reliable existing hook for terminal-only OOM).
+test "harness-events: Trace terminal replace failure maps IO→trace_error" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -6879,4 +6926,423 @@ test "harness-events: no lifecycle without observer; no duplicate terminal on tw
         // Trace buffer is per-reply (beginReply resets); latest has one terminal.
         try expectRunEnd(&(agent.trace.?), true, "completed");
     }
+}
+
+// F-1: no-Trace multi-turn provider failure — public turns must match source turn.
+test "harness-events: no-Trace second-turn provider failure reports source turns" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    // Turn 1: complete tool batch (noop). Turn 2: provider hard-fail.
+    // Without Trace, failRun must use RunBridge.current_turn (not 0).
+    const Noop = struct {
+        fn h(ctx: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return ctx.allocator.dupe(u8, "noop-ok") catch return error.OutOfMemory;
+        }
+    };
+    const tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{
+                .name = "noop",
+                .description = "",
+                .parameters_json = "{\"type\":\"object\"}",
+            },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .instance = null,
+        .handler = Noop.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "t1"),
+                    .name = try arena.dupe(u8, "noop"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{
+                    .content = try arena.dupe(u8, "first-turn"),
+                    .tool_calls = tc,
+                    .finish_reason = "tool_calls",
+                };
+            }
+            // Second provider call fails after turn_start=2 has been emitted.
+            return error.AuthenticationFailed;
+        }
+    };
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+        .lifecycle = rec.observer(),
+        // Explicitly no Trace (default null) — the F-1 regression surface.
+        .trace_path = null,
+    });
+    defer agent.deinit();
+    try std.testing.expect(agent.trace == null);
+    agent.test_tools = &tools;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try std.testing.expectError(error.ProviderFailed, agent.reply(&session, "go"));
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+
+    // Sequence: start → assistant(t1 tools) → tool_start/end → terminal (no second assistant).
+    try expectKindSequence(&rec, &.{
+        .run_start,
+        .assistant_message,
+        .tool_start,
+        .tool_end,
+        .run_terminal,
+    });
+    try std.testing.expect(rec.events.items[1].has_tools);
+    try std.testing.expectEqualStrings("first-turn", rec.events.items[1].text.?);
+    try std.testing.expectEqual(@as(u32, 1), rec.events.items[1].turn);
+    try std.testing.expectEqualStrings("t1", rec.events.items[2].id.?);
+    try std.testing.expectEqualStrings("t1", rec.events.items[3].id.?);
+    try std.testing.expectEqualStrings("noop-ok", rec.events.items[3].body.?);
+
+    const term = rec.firstTerminal().?;
+    try std.testing.expect(!term.ok);
+    try std.testing.expectEqual(loop.StopReason.provider_error, term.stop_reason);
+    // Source truth: turn 2 started before provider fail (bridge.current_turn=2).
+    try std.testing.expectEqual(@as(u32, 2), term.turns);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+    try std.testing.expect(!agent.lifecycle_run_open);
+}
+
+// F-3a: hard failure after tool_start must not fabricate tool_end.
+test "harness-events: hard mid-tool OOM has tool_start without tool_end" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    const Boom = struct {
+        fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            // Hard failure after Core already emitted tool_start; no soft body.
+            return error.OutOfMemory;
+        }
+    };
+    const tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{
+                .name = "boom",
+                .description = "",
+                .parameters_json = "{\"type\":\"object\"}",
+            },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .instance = null,
+        .handler = Boom.h,
+    }};
+
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const tc = try arena.alloc(message.ToolCall, 1);
+            tc[0] = .{
+                .id = try arena.dupe(u8, "boom-1"),
+                .name = try arena.dupe(u8, "boom"),
+                .arguments = try arena.dupe(u8, "{}"),
+            };
+            return .{
+                .content = try arena.dupe(u8, "calling-boom"),
+                .tool_calls = tc,
+                .finish_reason = "tool_calls",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .lifecycle = rec.observer(),
+        .trace_path = null,
+    });
+    defer agent.deinit();
+    agent.test_tools = &tools;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try std.testing.expectError(error.OutOfMemory, agent.reply(&session, "boom"));
+    try expectKindSequence(&rec, &.{
+        .run_start,
+        .assistant_message,
+        .tool_start,
+        .run_terminal,
+    });
+    try std.testing.expectEqual(@as(u32, 1), rec.countKind(.tool_start));
+    try std.testing.expectEqual(@as(u32, 0), rec.countKind(.tool_end));
+    try std.testing.expectEqualStrings("boom-1", rec.events.items[2].id.?);
+    try std.testing.expectEqualStrings("boom", rec.events.items[2].name.?);
+    const term = rec.firstTerminal().?;
+    try std.testing.expect(!term.ok);
+    try std.testing.expectEqual(loop.StopReason.out_of_memory, term.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), term.turns);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+}
+
+// F-3b: soft-result correlation matrix (unknown/invalid/jail/shell/handler) via one
+// multi-tool turn + lifecycle recorder — reuses default product gates where possible.
+test "harness-events: soft-result correlation unknown invalid jail shell handler" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    const HandlerFail = struct {
+        fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            return error.ToolFailed;
+        }
+    };
+    // Only the intentional handler-fail tool is registered; "unknown_x" is absent.
+    // read_file is the product built-in for jail; run_shell is the product built-in
+    // for shell deny under default protect. We use a tiny custom set so path/jail
+    // and shell tools exist alongside the handler-fail tool.
+    const tools = [_]tool.Tool{
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "read_file",
+                    .description = "jail target",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .{ .path_field = "path" },
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .instance = null,
+            .handler = struct {
+                fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                    return error.ToolFailed; // must not run (jail denies first)
+                }
+            }.h,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "run_shell",
+                    .description = "shell target",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .execute,
+                    .workspace = .none,
+                    .cancellation = .none,
+                    .shell = .command_argument,
+                },
+            },
+            .instance = null,
+            .handler = struct {
+                fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                    return error.ToolFailed; // must not run (shell denies first)
+                }
+            }.h,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "fail_tool",
+                    .description = "handler soft-fail",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .none,
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .instance = null,
+            .handler = HandlerFail.h,
+        },
+        .{
+            .descriptor = .{
+                .definition = .{
+                    .name = "path_tool",
+                    .description = "invalid-args target",
+                    .parameters_json = "{\"type\":\"object\"}",
+                },
+                .capabilities = .{
+                    .risk = .read,
+                    .workspace = .{ .path_field = "path" },
+                    .cancellation = .none,
+                    .shell = .none,
+                },
+            },
+            .instance = null,
+            .handler = struct {
+                fn h(_: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                    return error.ToolFailed;
+                }
+            }.h,
+        },
+    };
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 5);
+                // unknown tool (not in toolset)
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "soft-unknown"),
+                    .name = try arena.dupe(u8, "unknown_x"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                // invalid arguments (path_field tool, missing path)
+                tc[1] = .{
+                    .id = try arena.dupe(u8, "soft-invalid"),
+                    .name = try arena.dupe(u8, "path_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                // jail deny (absolute path outside workspace)
+                tc[2] = .{
+                    .id = try arena.dupe(u8, "soft-jail"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"/tmp/outside-jail\"}"),
+                };
+                // shell deny under default protect
+                tc[3] = .{
+                    .id = try arena.dupe(u8, "soft-shell"),
+                    .name = try arena.dupe(u8, "run_shell"),
+                    .arguments = try arena.dupe(u8, "{\"command\":\"rm -rf /\"}"),
+                };
+                // handler soft-fail
+                tc[4] = .{
+                    .id = try arena.dupe(u8, "soft-handler"),
+                    .name = try arena.dupe(u8, "fail_tool"),
+                    .arguments = try arena.dupe(u8, "{}"),
+                };
+                return .{
+                    .content = try arena.dupe(u8, "soft-batch"),
+                    .tool_calls = tc,
+                    .finish_reason = "tool_calls",
+                };
+            }
+            return .{
+                .content = try arena.dupe(u8, "soft-done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        // yolo for permission; jail + shell protect still apply (product defaults).
+        .permission_mode = .yolo,
+        .shell_policy = .protect,
+        .verbose = false,
+        .lifecycle = rec.observer(),
+        .trace_path = null,
+    });
+    defer agent.deinit();
+    agent.test_tools = &tools;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "soft matrix");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+
+    // 5 soft tools: each has start→end at program-order indices 0..4.
+    try std.testing.expectEqual(@as(u32, 5), rec.countKind(.tool_start));
+    try std.testing.expectEqual(@as(u32, 5), rec.countKind(.tool_end));
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expect(!rec.after_terminal);
+
+    const pairs = [_]struct {
+        id: []const u8,
+        name: []const u8,
+        index: u32,
+        code: core.tool_error.Code,
+    }{
+        .{ .id = "soft-unknown", .name = "unknown_x", .index = 0, .code = .unknown_tool },
+        .{ .id = "soft-invalid", .name = "path_tool", .index = 1, .code = .invalid_arguments },
+        .{ .id = "soft-jail", .name = "read_file", .index = 2, .code = .jail_deny },
+        .{ .id = "soft-shell", .name = "run_shell", .index = 3, .code = .shell_deny },
+        .{ .id = "soft-handler", .name = "fail_tool", .index = 4, .code = .tool_failed },
+    };
+    for (pairs) |p| {
+        const start = rec.toolStartById(p.id) orelse return error.TestUnexpectedResult;
+        const end = rec.toolEndById(p.id) orelse return error.TestUnexpectedResult;
+        try std.testing.expectEqual(p.index, start.call_index);
+        try std.testing.expectEqual(p.index, end.call_index);
+        try std.testing.expectEqualStrings(p.name, start.name.?);
+        try std.testing.expectEqualStrings(p.name, end.name.?);
+        try std.testing.expectEqualStrings(p.id, end.id.?);
+        try std.testing.expect(core.tool_error.hasCode(end.body.?, p.code));
+    }
+
+    const term = rec.firstTerminal().?;
+    try std.testing.expect(term.ok);
+    try std.testing.expectEqual(loop.StopReason.completed, term.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), term.turns);
 }

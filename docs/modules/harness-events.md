@@ -97,6 +97,15 @@ Required invariants:
 - Raw model text, Tool arguments, and Tool bodies are visible only to trusted E0 consumers.
 - Future E2/E3/RPC mappings require separate redaction/capability/wire contracts.
 
+### Public terminal vs `OwnedResult` presentation
+
+The public lifecycle `run_terminal` describes **`Agent.reply` run truth** only: it is emitted exactly once for
+every started run after session/Trace outcome precedence is known. Higher-level helpers such as
+`Agent.completeWithSession` may then allocate an owned presentation copy of `Result.final_text` into
+`OwnedResult`. That post-terminal allocation is caller-side presentation only: it may return
+`error.OutOfMemory` after a successful lifecycle terminal has already been emitted, and it never
+rewrites, retracts, or fabricates a second public lifecycle terminal.
+
 ## Source-backed scope
 
 The first product adapter does not emit `message_delta` or `tool_update`:

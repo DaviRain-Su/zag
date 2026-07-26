@@ -123,6 +123,11 @@ adapters with different failure policies. Run preflight/start/terminal remain fa
 `packages/zag-coding-agent/src/lifecycle.zig`) and does not add Core `lifecycle.zig`. Existing
 Observer behavior is preserved via the `RunBridge` event-sink adapter in `zag-coding-agent`.
 
+Public lifecycle `run_terminal` is the `Agent.reply` run terminal only. `Agent.completeWithSession` /
+`OwnedResult` may allocate an owned copy of the result text **after** that terminal; a subsequent
+presentation OOM does not rewrite or fabricate a second lifecycle terminal (see
+[harness-events](./harness-events.md#public-terminal-vs-ownedresult-presentation)).
+
 `core-observation-ownership-001` moved `trace.zig`, `redact.zig`, and `observer.zig` from `zag-agent-core` to
 `zag-coding-agent` (whole-file `git mv`, no Core shim/duplicate). Core's only event port is `LoopEventSink`;
 the loop emits `LoopEvent` source facts and never writes Trace/Observer/logs directly. The CLI resolves
