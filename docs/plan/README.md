@@ -19,7 +19,7 @@ docs/plan/
 | Zig SDK | **done/L2** at `ebdd7ab` — external consumer 7/7 |
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; [D-009](../decisions/active/D-009-pi-semantics-not-parity-fork.md) + [D-010](../decisions/active/D-010-extension-tiers-and-process-protocol.md) + 11-dimension feature map |
-| Next design task | `harness-events-001` analysis/task contract; not ready for implementation |
+| Next code task | `harness-events-001` ready after independent design PASS |
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -49,7 +49,7 @@ completed foundation
                      tui-minimal-001
 ```
 
-`pi-alignment-001` and `cli-sigint-001` are complete. No code task is currently ready; `harness-events-001` remains a roadmap placeholder until its analysis and task contract land.
+`pi-alignment-001` and `cli-sigint-001` are complete. `harness-events-001` is the only ready code task after its source-backed lifecycle contract received an independent design PASS.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -59,7 +59,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
-| [harness-events-001](./tasks/harness-events-001.md) | P1 | pending design review | Source-backed Zig SDK lifecycle vocabulary |
+| [harness-events-001](./tasks/harness-events-001.md) | P1 | ready | Source-backed Zig SDK lifecycle vocabulary |
 
 ### Completed foundation
 
