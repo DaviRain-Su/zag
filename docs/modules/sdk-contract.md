@@ -50,12 +50,16 @@ All rules below are caller-borrowed unless explicitly stated otherwise.
 | `Provider` (`ptr` + `vtable`) | caller | Must outlive the `Agent` and every `loop.run` call. Provider receives a scratch arena per `chat`; returned `AssistantTurn` contents belong to that arena. Source: [`packages/zag-agent-core/src/provider.zig:30-45`](../../packages/zag-agent-core/src/provider.zig). |
 | `Observer` event slices | callback | Slices inside `Observer.Event` are valid only for the duration of the callback. Copy if needed. |
 | `LifecycleObserver` event slices | callback | Slices inside `LifecycleEvent` are synchronous and valid only during `Agent.Options.lifecycle` callback execution. Copy before retaining them. |
-| `Session` | caller | Must outlive every `Agent.reply(&session, ...)` call. Holds transcript arena and writer lock. |
+| `Session` | caller | Must outlive every `Agent.reply(&session, ...)` call. Holds transcript arena/writer lease and, under `harness-steering-001`, conversation-scoped preallocated control queues. Its address stays stable during reply/enqueue. |
 | `Agent` | caller | `deinit` releases resources only; it never invents a successful `run_end`. |
 | `Trace.path` | caller | `Trace` stores the pointer/bytes; the path slice must outlive the `Trace`. |
 | `CancelFlag` | caller/host | Must outlive the entire run; provider borrows `*CancelFlag` in-flight. |
 | `Redactor` | `Agent`/`Session` | `clone` produces an independent copy. No cryptographic zeroization is promised. |
 | `RequestControl.deadline_mono_ns` | value | Immutable after construction; compares only process-local monotonic time. |
+
+The steering target makes only `Session.enqueueSteering` / `enqueueFollowUp` queue operations thread-safe. `Agent.reply`
+and all other Session operations remain single-flight. Queue calls are not signal-safe, and clear/deinit require no
+concurrent reply or enqueue.
 
 ## 3. Error contract
 
@@ -127,6 +131,10 @@ The source-backed emit set is `run_start`, complete `assistant_message`, correla
 one `run_terminal` for every started run. A pending accepted call cancelled between Tools may be end-only; a hard
 failure after `tool_start` but before a result may omit `tool_end`. No `message_delta` or `tool_update` is fabricated.
 
+`harness-steering-001` extends this product union with borrowed source-backed
+`control_applied { kind, next_turn, text }` after Transcript append + queue commit. It is not an enqueue receipt and is
+not serialized to Trace/headless.
+
 Public lifecycle `run_terminal` is the `Agent.reply` run terminal only. `Agent.completeWithSession` / `OwnedResult` may
 allocate an owned presentation copy after that terminal; a subsequent presentation OOM does not rewrite or fabricate a
 second terminal. See [harness-events](./harness-events.md#public-terminal-vs-ownedresult-presentation).
@@ -153,10 +161,11 @@ rendered by Coding adapters calling the moved `permissions.deniedMessage`/`shell
 `coding.shell_policy`/`coding.workspace` through the public `zag-coding-agent` root; the loop resolves no workspace
 root itself (the product facade `Agent.reply` resolves `resolveCwdReal` before forming seam pointers).
 
-`loop.run` now takes five explicit required seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`,
-`LoopEventSink` — as borrowed dependencies. Missing is never implicitly allow/yolo/identity/discard; a
-low-level host selects permissive helpers (`allowAllForTrustedHost`, `identity`, `discard`) explicitly.
-`zag-coding-agent.Agent` always installs product defaults equivalent to `ask + workspace jail + shell protect`.
+`loop.run` takes five closed D-011 seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`, `LoopEventSink` — as
+borrowed dependencies. `harness-steering-001` targets a sixth explicit composition field, `ControlInput`; low-level
+no-control hosts select `.none()` explicitly while product `Agent.reply` binds the exact Session queue. Missing is never
+implicitly allow/yolo/identity/discard/no-control. `zag-coding-agent.Agent` still installs product defaults equivalent
+to `ask + workspace jail + shell protect`.
 
 `core-context-ownership-001` split the former Core `context.zig`: protocol-history validation
 (`validateBodyHistory`, `alignToLegalStart`, `unitEnd`, `validateViewBody`) stays in Core
@@ -208,6 +217,27 @@ If an accepted multi-tool turn is cancelled between tools, the remaining tool
 results are backfilled with `code=cancelled`, keeping the transcript resume-safe.
 Source: [`packages/zag-agent-core/src/loop.zig:280-290`](../../packages/zag-agent-core/src/loop.zig).
 
+### 5.1 Bounded steering/follow-up target (`harness-steering-001`, in-progress)
+
+```zig
+try session.enqueueSteering("correct the approach");
+try session.enqueueFollowUp("then add a regression test");
+```
+
+Each kind has four preallocated 4096-byte FIFO slots. Enqueue copies valid non-empty UTF-8 and returns
+`QueueFull | MessageTooLong | EmptyMessage | InvalidUtf8` without partial mutation or truncation. Enqueue performs no
+allocation and may run from one foreign thread while one reply consumes; the rest of Session/Agent remains
+single-flight and queue calls are not signal-safe.
+
+Core applies steering only before a provider turn, before a not-yet-started Tool, or at would-complete; follow-up applies
+only at would-complete. v1 is one-at-a-time, steering precedes follow-up, and neither extends `max_turns`. Mid-batch
+steering closes remaining accepted calls with end-only `code=steered` (not `cancelled`) before the user row is appended.
+Provider/Tool mid-flight preemption is not claimed.
+
+Unapplied entries survive every terminal and remain associated with that Session until apply, explicit idle clear, or
+deinit. Pending slots are not persisted; applied rows use normal redacted session save. One reply still has one
+lifecycle/Trace run and one terminal. Binding details: [harness-steering](./harness-steering.md).
+
 ## 6. Session persistence
 
 `Session.start` semantics:
@@ -234,7 +264,8 @@ Current source: [`packages/zag-coding-agent/src/session_store.zig:37-46`](../../
 - Trace schema version: `coding.trace.current_schema_version = 1`
   ([`packages/zag-coding-agent/src/trace.zig:35`](../../packages/zag-coding-agent/src/trace.zig)). D-011 moved this durable product surface from `zag-agent-core` to `zag-coding-agent`; `core-observation-ownership-001` completed the move; Core retains only `LoopEventSink`.
 - Session schema version: `session_store.current_schema_version = 1`
-  ([`packages/zag-coding-agent/src/session_store.zig:49`](../../packages/zag-coding-agent/src/session_store.zig)).
+  ([`packages/zag-coding-agent/src/session_store.zig:49`](../../packages/zag-coding-agent/src/session_store.zig)). Pending control slots are deliberately process-only and do not change this schema.
+- `harness-steering-001` adds no Trace/headless kind or version; only trusted in-process lifecycle gains `control_applied`.
 - Within a major schema version, only optional fields may be added. Strict
   readers fail on unknown versions.
 - Destructive renames require a new schema version plus migration or explicit
@@ -254,7 +285,9 @@ The following are explicitly **not** covered by this contract:
 | Semver publication | Requires second consumer + release channel. |
 | Process protocols | Output-only `headless-v1` is closed by `headless-001`; future bidirectional `rpc-v1` is a separate Gate. Neither is part of this in-process SDK contract. |
 | OS sandbox | Process-supervisor work (C7). |
-| Mid-flight Tool/shell preemption | `.cooperative` is metadata only; real preemption is post-H process work. |
+| Mid-flight Provider/Tool/shell preemption | Steering waits for a safe boundary; `.cooperative` is metadata only for Tools. |
+| Durable pending control queue | Pending steering/follow-up is process memory; only applied transcript rows persist. |
+| Concurrent replies / Agent re-entry | Only queue enqueue/pending methods are cross-thread; reply remains single-flight. |
 
 ## 9. Related
 
@@ -262,4 +295,5 @@ The following are explicitly **not** covered by this contract:
 - [architecture.md](../architecture.md)
 - [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md)
 - [D-007](../decisions/active/D-007-tool-runtime-descriptor.md)
+- [Harness steering](./harness-steering.md)
 - Consumer fixture: [`tests/sdk-consumer-fixture/`](../../tests/sdk-consumer-fixture/)

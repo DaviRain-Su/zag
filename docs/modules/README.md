@@ -21,6 +21,7 @@
 | [trace-observability.md](./trace-observability.md) | H7 | `packages/zag-coding-agent/src/{trace,redact,observer}.zig`；Core emits source facts via `LoopEventSink` | implementation moved to coding-agent by core-observation-ownership-001 |
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | `packages/zag-cli/src/cli.zig` + core cancel flag | 保持 signal UX 在产品层 |
 | [harness-events.md](./harness-events.md) | M1 events ✅ | coding-agent SDK adapter over Core Loop facts + facade run facts; closed at `aecf402` | no Core `lifecycle.zig`; steering/fork remain separate |
+| [harness-steering.md](./harness-steering.md) | M1 in-progress | Session-owned bounded queues + explicit Core `ControlInput` target | no provider/Tool preemption; Trace/headless schemas unchanged |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1/E2/E3 runtime hosts unimplemented | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
@@ -69,6 +70,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [headless-contract.md](./headless-contract.md) | Headless Gate **L2** | Public JSON/NDJSON process contract + exit matrix; closed at `a1a1e0f` |
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | REPL/one-shot input ownership and Ctrl+C lifecycle |
 | [harness-events.md](./harness-events.md) | M1 events ✅ | product SDK lifecycle adapter closed at `aecf402`; no Core lifecycle channel |
+| [harness-steering.md](./harness-steering.md) | M1 in-progress | Session control queues + protocol-safe Core insertion seam |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |

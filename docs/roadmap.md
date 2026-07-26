@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **18/18** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **next** | lifecycle events ✅; steering/follow-up and session fork next, then Skills/Prompt Templates、edit、minimal TUI |
+| Pi-inspired daily Harness | **next / in progress** | lifecycle events ✅; `harness-steering-001` active, session fork planned, then Skills/Prompt Templates、edit、minimal TUI |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -72,7 +72,7 @@ M0.5 — thin Core responsibility migration
 M1 — product Harness controls
   harness-events-001 ✅ aecf402
         │
-        ├────► harness-steering-001 (planned)
+        ├────► harness-steering-001 (in-progress)
         └────► session-fork-001 (planned)
                        │
                        ▼
@@ -108,13 +108,13 @@ package.
 
 ### M1 — Product Harness controls
 
-The lifecycle prerequisite is closed. Steering and session fork remain planned and require docs-first task files before
-implementation.
+The lifecycle prerequisite is closed. `harness-steering-001` is in progress under a docs-first binding contract;
+session fork remains planned and still requires its own task file before implementation.
 
 | Task | Status | Objective | Gate |
 |------|--------|-----------|------|
 | [harness-events-001](./plan/tasks/harness-events-001.md) | **done @ `aecf402`** | coding-agent SDK lifecycle projection from Core source facts + facade run facts | ordering + one terminal + separate SDK/Trace/headless types; no Core lifecycle channel or internal-union serialization |
-| `harness-steering-001` | planned | bounded steering/follow-up queues | deterministic insertion, ownership, cancel, transcript/session/trace evidence |
+| [harness-steering-001](./plan/tasks/harness-steering-001.md) | **in-progress** | Session-owned bounded steering/follow-up + thin Core insertion seam | deterministic insertion, thread/ownership/retention, `code=steered`, transcript/session/Trace/lifecycle evidence |
 | `session-fork-001` | planned | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
 
 This milestone aligns the smallest valuable Pi Harness semantics. It does **not** add subagents, Graph, provider hooks, or a new wire-compatible RPC protocol.

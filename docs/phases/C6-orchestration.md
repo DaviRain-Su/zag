@@ -3,9 +3,9 @@
 | 项 | 内容 |
 |----|------|
 | 前置 | Phase H lifecycle/session + SDK/headless event contracts ✅；executable agents 另依赖 process supervisor |
-| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` planned |
+| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` in-progress |
 | 失败模式 | 运行中的 Agent 无法接收纠偏；结束时无法排入 follow-up；复杂编排反客为主 |
-| 模块 | [loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
+| 模块 | [harness-steering](../modules/harness-steering.md)、[loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
 
 ## 目标
 
@@ -14,9 +14,9 @@
 ## 近期范围
 
 1. message/Tool/run 生命周期事件与 ordering 已由 `harness-events-001` 闭合；
-2. bounded steering queue：在明确的 turn/Tool boundary 注入纠偏；
-3. bounded follow-up queue：Agent 将结束时追加工作；
-4. queue ownership、cancel、session/trace projection 和 overflow behavior 显式；
+2. bounded steering queue：Session 每类 4×4096-byte 预分配槽，在明确的 turn/Tool boundary 注入纠偏；
+3. bounded follow-up queue：would-complete 时 one-at-a-time 追加工作，仍在同一 run/terminal；
+4. Core 只持显式 `ControlInput.peek/commit`；queue ownership、retention、cancel、session/trace projection 和 overflow behavior 由 [binding contract](../modules/harness-steering.md) 钉死；
 5. 单 Agent Loop 仍是默认和完整路径。
 
 ## Deferred
@@ -33,18 +33,19 @@
 ## Invariants
 
 - steering/follow-up 不绕过 permission、workspace、context validation；
-- queue 有明确容量和 deterministic overflow result；
-- message ownership 跨 run/arena 边界安全；
-- cancel 后不执行未接受的 queued work；
-- transcript/session/trace 对实际注入内容一致；
+- queue 归 Session，容量固定且 overflow 不覆盖/丢弃；Agent 不缓存跨 Session control；
+- message ownership 跨线程/run/arena 边界安全；enqueue 路径不与 reply 共享 allocator；
+- cancel/error/max-turn 后不执行也不自动清空未接受 work；仅 apply、显式 clear、deinit 移除；
+- transcript/session/Trace/lifecycle 对实际注入结果一致，Trace/headless v1 不加 control kind；
 - UI/headless 只消费事件，不实现 queue business logic。
 
 ## 验收
 
-- [ ] deterministic fixture pin 住每个 insertion point；
-- [ ] full/all 与 one-at-a-time（若都提供）顺序明确；
-- [ ] queue overflow/cancel/OOM 不丢失终态；
-- [ ] plain/headless/SDK 观察到一致语义。
+- [ ] deterministic fixture pin 住 pre-turn、between-Tool、would-complete insertion points；
+- [ ] v1 one-at-a-time FIFO、steering-before-follow-up、`code=steered` 与 max-turn retention 顺序明确；
+- [ ] queue overflow/cancel/OOM/sink failure 不静默丢消息或终态；
+- [ ] Session A/B 隔离与跨线程 enqueue 通过真实 barrier fixture；
+- [ ] plain/headless/SDK 观察到兼容语义，且每个 started run 仍恰有一个 terminal。
 
 ## 对标
 

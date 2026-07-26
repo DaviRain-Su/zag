@@ -21,7 +21,7 @@ docs/plan/
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
 | Core responsibility correction | **done** through `aecf402` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); ownership migration plus the product lifecycle adapter are closed without changing existing L2 rows |
 | Product SDK lifecycle | **done** at `aecf402` — coding-agent `LifecycleObserver` over Core source facts plus facade run facts; no Core lifecycle channel |
-| Next code tasks | `harness-steering-001` / `session-fork-001` are planned; task files are not yet authored |
+| Next code tasks | `harness-steering-001` **in-progress** — Session-owned bounded queues + explicit Core control seam; `session-fork-001` remains planned without a task file |
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -58,7 +58,7 @@ completed foundation
                   │
                   ▼
         harness-events-001 (M1 product adapter, done) ✅
-           ├────► harness-steering-001 (planned)
+           ├────► harness-steering-001 (in-progress)
            └────► session-fork-001 (planned)
                            │
                            ▼
@@ -69,7 +69,7 @@ completed foundation
                      tui-minimal-001
 ```
 
-`pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, and `harness-events-001` are complete. Source review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. The next product nodes are `harness-steering-001` and `session-fork-001`, but neither is ready or in progress until its docs-first task file exists. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
+`pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, and `harness-events-001` are complete. Source review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. `harness-steering-001` is now the active docs-first/code node with Session-owned bounded queues and a thin Core insertion seam. `session-fork-001` remains planned without a task file. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -79,7 +79,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| `harness-steering-001` | planned | Bounded steering/follow-up; task file not yet authored |
+| [harness-steering-001](./tasks/harness-steering-001.md) | in-progress | Session-owned bounded steering/follow-up + explicit Core `ControlInput` |
 | `session-fork-001` | planned | Safe durable session fork; task file not yet authored |
 
 ### Completed foundation

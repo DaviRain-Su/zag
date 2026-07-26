@@ -56,6 +56,18 @@ source-backed vocabulary is:
 `run_start` and `run_terminal` are not variants of Core `LoopEvent`. The SDK adapter exposes them in one product
 callback union because coding-agent witnesses both facade and loop facts.
 
+### Steering extension target (`harness-steering-001`, in-progress)
+
+The steering task adds one source-backed product variant without changing run ownership:
+
+| Event | Owner | Required payload | Source fact |
+|---|---|---|---|
+| `control_applied` | Core append/commit fact mapped by coding-agent | kind (`steering` / `follow_up`), intended next turn, borrowed text | one queued item was copied into Transcript and committed |
+
+`control_applied` records accepted application, not enqueue and not guaranteed model completion. It may be followed by
+cancellation or another hard terminal before the intended next assistant message. The event is trusted E0-only and is
+not serialized into Trace v1 or `headless-v1`.
+
 ### Source-truth: start vs end-only
 
 A Tool call that **enters serial execution** emits `tool_start` then `tool_end` (ordinary, soft-result, deny, jail,
@@ -63,6 +75,10 @@ shell, handler-failure, invalid-arguments, unknown-tool paths). A **pending acce
 **between tools** never enters serial execution: it emits `tool_end` only with a `cancelled` body — **no fabricated
 `tool_start`**. The call index is still derived from program order (the index the call would have occupied), so
 consumers can correlate by turn + call index + id without a synthetic start.
+
+A pending accepted Tool call skipped because steering interrupts the remaining batch follows the same end-only shape but
+uses truthful `code=steered`, not `cancelled`. The run continues after one steering user row; correlation still advances
+in program order and no synthetic `tool_start` is emitted.
 
 A hard failure (OOM / sink failure) that occurs **after** `tool_start` but **before** any result exists does **not**
 fabricate a `tool_end`: the run terminates with a truthful `run_terminal` (out_of_memory / trace_error) and the
@@ -76,10 +92,12 @@ For every public `run_start`:
 ```text
 run_start
   → zero or more complete assistant_message
-  → zero or more source-backed Tool facts:
-      entered call          tool_start → tool_end
-      pending cancellation              tool_end only
-      hard mid-call failure tool_start only
+  → zero or more source-backed Tool/control facts:
+      entered call              tool_start → tool_end
+      pending cancellation                  tool_end(code=cancelled) only
+      pending steering                      tool_end(code=steered) only
+      applied control                       control_applied
+      hard mid-call failure     tool_start only
   → exactly one run_terminal
 ```
 
@@ -88,17 +106,18 @@ Required invariants:
 1. A preflight failure before `run_start` produces no started-run terminal.
 2. `assistant_message` is emitted only after a complete validated assistant turn is appended.
 3. Every `tool_start` that is **not** interrupted by a hard failure has one matching `tool_end` with identical turn, call index, and call id.
-4. Pending accepted calls backfilled with `code=cancelled` between tools receive truthful `tool_end` **only** (no fabricated `tool_start`); their call index is derived from program order.
-5. A hard failure (OOM / sink failure) after `tool_start` and before a result does not fabricate `tool_end`; the run ends with a truthful `run_terminal`.
-6. `run_terminal` is final and emitted exactly once by coding-agent after session/Trace outcome precedence is known.
-7. Trace failure cannot preserve an earlier successful lifecycle claim.
-8. Callback order is synchronous program order; no queue/reordering is introduced.
+4. Pending accepted calls interrupted by cancel/steering receive truthful end-only `code=cancelled`/`code=steered` respectively, with no fabricated `tool_start`; call index remains program order.
+5. `control_applied` follows successful Transcript append + queue commit and carries transcript-owned borrowed bytes; it does not promise the next provider turn completes.
+6. A hard failure (OOM / sink failure) after `tool_start` and before a result does not fabricate `tool_end`; the run ends with a truthful `run_terminal`.
+7. `run_terminal` is final and emitted exactly once by coding-agent after session/Trace outcome precedence is known.
+8. Trace failure cannot preserve an earlier successful lifecycle claim.
+9. Callback order is synchronous program order; no asynchronous delivery/reordering is introduced.
 
 ## Ownership and callback behavior
 
 - Payload slices are borrowed and valid only during the callback. Consumers copy retained data.
 - The callback is synchronous and observation-only; it cannot replace execution truth.
-- Re-entering the same `Agent` from its callback is unsupported.
+- Re-entering `Agent.reply`, clearing/deinitializing the Session, or otherwise nesting the same Agent from its callback is unsupported. The steering task may allow queue-only enqueue for the same stable Session; application waits for the next eligible boundary.
 - Raw model text, Tool arguments, and Tool bodies are visible only to trusted E0 consumers.
 - Future E2/E3/RPC mappings require separate redaction/capability/wire contracts.
 
@@ -126,7 +145,9 @@ A later source-owning task may add real streaming/progress with explicit ownersh
 ### Trace v1
 
 Trace remains the durable audit contract and coding-agent terminal owner. The lifecycle adapter does not change Trace
-schema, persistence, redaction, terminal reserve, or failure precedence.
+schema, persistence, redaction, terminal reserve, or failure precedence. `harness-steering-001` keeps the Trace v1
+twelve-kind schema: resulting turns and `tool_result(code=steered)` are durable, while trusted lifecycle/Session carry
+the applied control text.
 
 ### `headless-v1`
 
@@ -156,7 +177,7 @@ a deliberate projection, not an alias or serialized representation of that inter
   pending cancellation;
 - external SDK consumer copies borrowed bytes and retains them after callback return;
 - existing Core `LoopEventSink`, Trace v1, session v1, `headless-v1`, std/curl, and CLI SIGINT Gates remain green;
-- no `packages/zag-agent-core/src/lifecycle.zig`, fake delta/update, steering, RPC, TUI, or extension claim.
+- no `packages/zag-agent-core/src/lifecycle.zig`, fake delta/update, Core-owned product queue, provider/Tool preemption, RPC, TUI, or extension claim.
 
 ## Delivery status
 
@@ -176,8 +197,8 @@ core-boundary-001
 
 The historical `task/harness-events-001` branch remains ineligible because it implements the superseded Core lifecycle
 boundary. Its replacement `task/harness-events-001-v2` was fast-forwarded and supplies the product adapter over Core
-source facts and facade run facts. `harness-steering-001` and `session-fork-001` remain planned follow-ups whose task
-files must be authored docs-first before implementation.
+source facts and facade run facts. `harness-steering-001` is now **in-progress** under the separate
+[steering contract](./harness-steering.md); `session-fork-001` remains planned without a task file.
 
 ## Related
 
