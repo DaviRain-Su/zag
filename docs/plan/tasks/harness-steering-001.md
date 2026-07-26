@@ -87,8 +87,9 @@ out of scope.
 6. **One-at-a-time insertion:** at most one control item feeds one provider turn. Pre-turn steering, between-Tool
    steering, and would-complete steering/follow-up are the only v1 insertion points. One atomic would-complete peek gives
    steering priority over follow-up.
-7. **No mid-flight preemption:** steering does not cancel Provider.chat or an entered Tool handler. Cancellation is
-   rechecked before **every** apply boundary, including would-complete; when observed it wins and consumes no item.
+7. **No mid-flight preemption:** steering does not cancel Provider.chat or an entered Tool handler. Pre-turn/Tool paths
+   keep cancel-before-peek. Would-complete atomically peeks first, returns existing `completed` when empty, and only when
+   an item is observed rechecks cancel before apply; observed cancel wins and consumes no item.
 8. **Protocol legality:** before mid-batch steering inserts a user row, every remaining accepted/not-started Tool gets
    one end-only result with the original id/name and stable body
    `error: code=steered message=steering selected; pending tool did not execute.`; no synthetic `tool_start`. Real
@@ -120,8 +121,9 @@ out of scope.
    turn. The projected view remains protocol legal.
 4. One atomic would-complete peek gives steering priority over follow-up under concurrent enqueue; follow-up alone
    continues the same run. Both retain per-kind FIFO order.
-5. Cancel observed before pre-turn, between-Tool, or would-complete apply emits no control event and leaves queue state
-   uncommitted.
+5. Cancel observed before pre-turn/between-Tool selection or after a non-null would-complete peek emits no control
+   event and leaves queue state uncommitted. Empty would-complete/no-control returns the existing `completed` result
+   without a new post-provider cancel classification.
 6. Ordinary append OOM does not commit. Mid-batch preparation OOM occurs before any `steered` result; injected hard
    failure during backfill has the documented partial-evidence/hidden-prepared-row behavior. Source-sink failure after
    commit returns the existing visible sink/trace error mapping without requeue.

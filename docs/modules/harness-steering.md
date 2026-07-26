@@ -24,7 +24,7 @@ zag-coding-agent Session
   · owns message bytes, capacity, mutex, retention, clear/deinit
   · does not persist pending queue slots
           │
-          │ borrowed ControlInput (peek → append → commit)
+          │ borrowed ControlInput (atomic boundary peek → append or prepared backfill → commit)
           ▼
 zag-agent-core loop
   · polls only at documented safe boundaries
@@ -133,8 +133,11 @@ replies.
 
 ## Application state machine
 
-The loop checks cancellation before each control boundary. Cancellation observed before application wins and leaves all
-unapplied queue entries pending. Steering never cancels an in-flight Provider request or a running Tool handler.
+The loop checks cancellation immediately before applying every observed control item. Pre-turn and between-Tool paths
+retain their existing cancel-before-peek checks. At would-complete, Core first performs a non-destructive atomic peek;
+if it observes an item, it rechecks cancel before append/commit. An empty queue returns the existing `completed` result
+without adding a new late-cancel check. Cancellation observed before application wins and leaves every item pending.
+Steering never cancels an in-flight Provider request or a running Tool handler.
 
 ```text
 outer loop while another provider turn is available
@@ -148,14 +151,14 @@ outer loop while another provider turn is available
   turn_start → ContextView → Provider.chat → append complete assistant
 
   assistant has no Tool calls (would complete)
-    cancel? → cancelled; no peek/commit
+    item = peek(.would_complete)  // non-destructive, atomic steering priority
+    if item == null:
+      return completed            // preserve empty/no-control behavior
+    cancel? → cancelled; item remains pending
     if another provider turn is available:
-      peek(.would_complete) atomically chooses steering, else follow-up
       append one user → commit → control_applied → continue outer loop
-    else if peek(.would_complete) observes a pending item:
-      return max_turns without consuming it
     else:
-      return completed
+      return max_turns without consuming item
 
   assistant has accepted Tool calls
     before each not-yet-started Tool:
@@ -233,11 +236,13 @@ peek(.between_tools)
   → LoopEvent.control_applied
 ```
 
-Preparation OOM occurs before any `steered` side effect and leaves the queue pending. A hard body/sink/transcript failure
-while backfilling may leave the same partial hard-failure evidence as existing cancellation; the run fails visibly, the
-prepared user row is not exposed, and the uncommitted steering remains queued. Because final prepared-user append is
-infallible after every backfill succeeds, the transcript cannot contain a fully `steered` batch solely followed by an
-append OOM and no user row.
+Preparation OOM occurs before any `steered` side effect and leaves the queue pending. `PreparedUser` is a single-use
+internal value, not a mutable Transcript slot: abandoning one exposes no message; its arena bytes live until Session
+deinit, and a later attempt prepares an independent value rather than overwriting/reusing it. A hard
+body/sink/transcript failure while backfilling may leave the same partial hard-failure evidence as existing
+cancellation; the run fails visibly, the prepared user row is not exposed, and the uncommitted steering remains queued.
+Because final prepared-user append is infallible after every backfill succeeds, the transcript cannot contain a fully
+`steered` batch solely followed by an append OOM and no user row.
 
 If the fallible `control_applied` sink fails after append+commit, the run fails visibly; the authoritative in-memory
 transcript already contains the applied message and it is not queued twice.

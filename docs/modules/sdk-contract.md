@@ -231,8 +231,9 @@ is preserved. Enqueue performs no allocation and may run from one foreign thread
 counts use the same mutex, while clear/deinit remain externally synchronized idle operations.
 
 Core applies steering only before a provider turn, before a not-yet-started Tool, or at would-complete; follow-up applies
-only at would-complete. Every boundary rechecks cancel. v1 is one-at-a-time; one atomic would-complete selection gives
-steering priority over follow-up, and neither extends `max_turns`. Mid-batch steering pre-copies/reserves its future user
+only at would-complete. Pre-turn/Tool boundaries check cancel before selection; would-complete atomically selects first,
+returns existing `completed` when empty, and rechecks cancel before applying a non-null item. v1 is one-at-a-time; this
+single selection gives steering priority over follow-up, and neither extends `max_turns`. Mid-batch steering pre-copies/reserves its future user
 row before closing remaining accepted calls with the exact end-only body
 `error: code=steered message=steering selected; pending tool did not execute.` Provider/Tool mid-flight preemption is
 not claimed.
