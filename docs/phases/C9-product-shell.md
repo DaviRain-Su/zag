@@ -35,7 +35,7 @@ Contract: [headless](../modules/headless-contract.md).
 
 ## Scheduled minimal TUI
 
-Only after `harness-events-001` and `harness-steering-001`:
+Only after `harness-events-001` and `harness-steering-001` (both now closed; a TUI still requires its own task and Gate):
 
 1. streaming assistant text;
 2. multiline input/history;

@@ -12,7 +12,7 @@
 
 Transcript is authoritative conversation state in memory. A configured session file is its recoverable persisted representation. Context view/compaction never silently mutates transcript history.
 
-The Session owner holds transcript memory, path, metadata, the active-writer lease, and (under `harness-steering-001`) conversation-scoped transient control queues for its lifetime.
+The Session owner holds transcript memory, path, metadata, the active-writer lease, and conversation-scoped transient control queues for its lifetime. The bounded control surface closed in `harness-steering-001` at `a5ff2b7`.
 
 ## Invariants
 
@@ -41,7 +41,7 @@ JSONL header plus message lines:
 
 Header-less legacy files load as v1. `schema_version != 1` returns `UnsupportedSchema`; it must not seed a new session on that path.
 
-### Interactive-control state (`harness-steering-001` target)
+### Interactive-control state (`harness-steering-001`, closed at `a5ff2b7`)
 
 A Session also owns two bounded process-memory queues for steering/follow-up. `Session.start` preallocates their fixed
 32 KiB text backing **before** create/resume I/O or writer-lease acquisition; OOM cannot create a file or retain a lease,

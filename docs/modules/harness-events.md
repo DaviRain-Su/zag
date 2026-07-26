@@ -56,9 +56,9 @@ source-backed vocabulary is:
 `run_start` and `run_terminal` are not variants of Core `LoopEvent`. The SDK adapter exposes them in one product
 callback union because coding-agent witnesses both facade and loop facts.
 
-### Steering extension target (`harness-steering-001`, in-progress)
+### Steering extension (`harness-steering-001`, closed at `a5ff2b7`)
 
-The steering task adds one source-backed product variant without changing run ownership:
+The steering task added one source-backed product variant without changing run ownership:
 
 | Event | Owner | Required payload | Source fact |
 |---|---|---|---|
@@ -118,7 +118,7 @@ Required invariants:
 
 - Payload slices are borrowed and valid only during the callback. Consumers copy retained data.
 - The callback is synchronous and observation-only; it cannot replace execution truth.
-- Re-entering `Agent.reply`, clearing/deinitializing the Session, or otherwise nesting the same Agent from its callback is unsupported. The steering task may allow queue-only enqueue for the same stable Session; application waits for the next eligible boundary.
+- Re-entering `Agent.reply`, clearing/deinitializing the Session, or otherwise nesting the same Agent from its callback is unsupported. Queue-only enqueue/pending methods may be used for the same stable Session; application waits for the next eligible boundary.
 - Raw model text, Tool arguments, and Tool bodies are visible only to trusted E0 consumers.
 - Future E2/E3/RPC mappings require separate redaction/capability/wire contracts.
 
@@ -146,7 +146,7 @@ A later source-owning task may add real streaming/progress with explicit ownersh
 ### Trace v1
 
 Trace remains the durable audit contract and coding-agent terminal owner. The lifecycle adapter does not change Trace
-schema, persistence, redaction, terminal reserve, or failure precedence. `harness-steering-001` keeps the Trace v1
+schema, persistence, redaction, terminal reserve, or failure precedence. The closed `harness-steering-001` surface keeps the Trace v1
 twelve-kind schema: resulting turns and `tool_result(code=steered)` are durable, while trusted lifecycle/Session carry
 the applied control text.
 
@@ -198,8 +198,10 @@ core-boundary-001
 
 The historical `task/harness-events-001` branch remains ineligible because it implements the superseded Core lifecycle
 boundary. Its replacement `task/harness-events-001-v2` was fast-forwarded and supplies the product adapter over Core
-source facts and facade run facts. `harness-steering-001` is now **in-progress** under the separate
-[steering contract](./harness-steering.md); `session-fork-001` remains planned without a task file.
+source facts and facade run facts. The separate [steering contract](./harness-steering.md) closed at `a5ff2b7`; its
+merged-main Gate passed std **567/567**, curl **566/566**, Core **89/89**, Coding **298/298**, and SDK **20/20** while
+preserving the historical lifecycle Gate above and every maturity row. `session-fork-001` remains planned without a
+task file.
 
 ## Related
 

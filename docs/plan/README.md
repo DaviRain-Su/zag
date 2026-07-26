@@ -16,12 +16,17 @@ docs/plan/
 | Area | Status |
 |------|--------|
 | Phase H | **done/L2** — single-user trusted-host; fresh 11-sentence audit PASS; panel SHIP |
-| Zig SDK | **done/L2** at `ebdd7ab` — Gate fixture 7/7; current external consumer **18/18** |
+| Zig SDK | **done/L2** at `ebdd7ab` — Gate fixture 7/7; current external consumer **20/20** |
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
 | Core responsibility correction | **done** through `aecf402` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); ownership migration plus the product lifecycle adapter are closed without changing existing L2 rows |
 | Product SDK lifecycle | **done** at `aecf402` — coding-agent `LifecycleObserver` over Core source facts plus facade run facts; no Core lifecycle channel |
-| Next code tasks | `harness-steering-001` **in-progress** — Session-owned bounded queues + explicit Core control seam; `session-fork-001` remains planned without a task file |
+| Bounded steering/follow-up | **done** at `a5ff2b7` — Session-owned queues + explicit Core `ControlInput`; SDK/Loop enrichment with no maturity change |
+| Next code task | `session-fork-001` remains planned without a task file |
+
+The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
+Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
+**71/100**. It enriches existing L2 surfaces without adding or raising a maturity row.
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -58,7 +63,7 @@ completed foundation
                   │
                   ▼
         harness-events-001 (M1 product adapter, done) ✅
-           ├────► harness-steering-001 (in-progress)
+           ├────► harness-steering-001 (done @ a5ff2b7) ✅
            └────► session-fork-001 (planned)
                            │
                            ▼
@@ -69,7 +74,12 @@ completed foundation
                      tui-minimal-001
 ```
 
-`pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, and `harness-events-001` are complete. Source review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. `harness-steering-001` is now the active docs-first/code node with Session-owned bounded queues and a thin Core insertion seam. `session-fork-001` remains planned without a task file. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
+`pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`, and
+`harness-steering-001` are complete. Source review rejected the earlier lifecycle design because it would add a third
+Core event channel while leaving product policy/state in the kernel; the replacement coding-agent adapter closed at
+`aecf402`. Bounded steering/follow-up then closed at `a5ff2b7` with Session-owned queues and a thin Core insertion seam.
+`session-fork-001` is the next planned node and still has no task file. Task priorities express safety impact; the
+dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -79,13 +89,13 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| [harness-steering-001](./tasks/harness-steering-001.md) | in-progress | Session-owned bounded steering/follow-up + explicit Core `ControlInput` |
 | `session-fork-001` | planned | Safe durable session fork; task file not yet authored |
 
 ### Completed foundation
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [harness-steering-001](./tasks/harness-steering-001.md) | P1 | done | Session-owned bounded steering/follow-up + explicit Core `ControlInput`; closed at `a5ff2b7` |
 | [harness-events-001](./tasks/harness-events-001.md) | P1 | done | Coding-agent SDK lifecycle adapter; closed at `aecf402` |
 | [core-context-ownership-001](./tasks/core-context-ownership-001.md) | P1 | done | Protocol history/Core vs context projection/product split |
 | [core-policy-ownership-001](./tasks/core-policy-ownership-001.md) | P0 | done | Permission/workspace/shell implementation ownership → coding-agent |

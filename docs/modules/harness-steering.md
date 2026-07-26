@@ -1,16 +1,17 @@
 ---
-status: in-progress
+status: done
 scope: in-process bounded steering and follow-up
 prerequisite: harness-events-001
 task: harness-steering-001
+closed-at: a5ff2b7
 ---
 
 # Harness steering and follow-up
 
-This module is the binding contract for `harness-steering-001`. It adds the smallest useful interactive-control
-semantics after the lifecycle adapter: a host may queue a steering message for the next safe model/Tool boundary or a
-follow-up message for the next would-complete boundary. The implementation is Zig-native and synchronous; it does not
-copy Pi's Agent object or introduce a background runtime.
+This module records the closed binding contract for `harness-steering-001`, delivered at `a5ff2b7`. It adds the
+smallest useful interactive-control semantics after the lifecycle adapter: a host may queue a steering message for the
+next safe model/Tool boundary or a follow-up message for the next would-complete boundary. The implementation is
+Zig-native and synchronous; it does not copy Pi's Agent object or introduce a background runtime.
 
 ## Boundary
 
@@ -327,6 +328,18 @@ messages extend the loop. Turns and usage accumulate normally; `final_text` is t
 11. Existing ask + workspace jail + shell protect Gates still govern any Tool calls caused by injected messages.
 12. Core/coding/SDK fixtures and root std/curl suites pass; no Core queue, mutex, persistence, or lifecycle terminal is
     introduced.
+
+## Delivery status
+
+`harness-steering-001` is **done** at `a5ff2b7`. Independent final review passed after the executable OOM, idle-move,
+Trace compatibility, safety-default, and low-level composition fixtures were closed. The ff-only merged-main Gate
+passed root std **40/40 steps, 567/567 tests**, root curl **42/42 steps, 566/566 tests**, Core **89/89**, Coding
+**298/298**, external SDK fixture **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
+awareness **71/100**.
+
+This closeout enriches the existing SDK/Loop surface without changing any maturity row. Phase H, Zig SDK-ready,
+Headless/Process, Loop, Session, Trace, and Zig source composition remain **L2**. Trace v1, session v1, and
+`headless-v1` retain their existing versions and contracts.
 
 ## Non-goals
 

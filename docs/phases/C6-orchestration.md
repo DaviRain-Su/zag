@@ -3,13 +3,14 @@
 | 项 | 内容 |
 |----|------|
 | 前置 | Phase H lifecycle/session + SDK/headless event contracts ✅；executable agents 另依赖 process supervisor |
-| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` in-progress |
-| 失败模式 | 运行中的 Agent 无法接收纠偏；结束时无法排入 follow-up；复杂编排反客为主 |
+| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` ✅ at `a5ff2b7`; `session-fork-001` planned |
+| 状态边界 | bounded steering/follow-up 已闭合；复杂编排仍不得反客为主或暗示 Graph/subagents 已实现 |
 | 模块 | [harness-steering](../modules/harness-steering.md)、[loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
 
 ## 目标
 
-先实现 Pi Harness 的最小 interactive-control 语义：有界 steering 与 follow-up。Oracle、subagents、Graph 不是当前产品承诺。
+Pi Harness 的最小 interactive-control 语义——有界 steering 与 follow-up——已由 `harness-steering-001`
+在 `a5ff2b7` 闭合。Oracle、subagents、Graph 不是当前产品承诺。
 
 ## 近期范围
 
@@ -41,11 +42,15 @@
 
 ## 验收
 
-- [ ] deterministic fixture pin 住 pre-turn、between-Tool、would-complete insertion points；
-- [ ] v1 one-at-a-time FIFO、steering-before-follow-up、`code=steered` 与 max-turn retention 顺序明确；
-- [ ] queue overflow/cancel/OOM/sink failure 不静默丢消息或终态；
-- [ ] Session A/B 隔离与跨线程 enqueue 通过真实 barrier fixture；
-- [ ] plain/headless/SDK 观察到兼容语义，且每个 started run 仍恰有一个 terminal。
+- [x] deterministic fixture pin 住 pre-turn、between-Tool、would-complete insertion points；
+- [x] v1 one-at-a-time FIFO、steering-before-follow-up、`code=steered` 与 max-turn retention 顺序明确；
+- [x] queue overflow/cancel/OOM/sink failure 不静默丢消息或终态；
+- [x] Session A/B 隔离与跨线程 enqueue 通过真实 barrier fixture；
+- [x] plain/headless/SDK 观察到兼容语义，且每个 started run 仍恰有一个 terminal。
+
+Merged-main Gate at `a5ff2b7`: std **567/567**, curl **566/566**, Core **89/89**, Coding **298/298**, SDK
+**20/20**. This closes only the bounded-control slice; C6 Graph/subagents remain deferred, and all existing L2 rows
+remain unchanged.
 
 ## 对标
 

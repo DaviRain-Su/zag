@@ -8,10 +8,10 @@
 |-------|--------|---------|
 | Teaching 0–3 | ✅ tutorial-complete | 教程可学习/演示；不等于 production claim |
 | Production Floor H | ✅ **L2** | single-user trusted-host；11/11 audit PASS；panel SHIP |
-| Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **18/18** |
+| Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **20/20** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **next / in progress** | lifecycle events ✅; `harness-steering-001` active, session fork planned, then Skills/Prompt Templates、edit、minimal TUI |
+| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; session fork planned, then Skills/Prompt Templates、edit、minimal TUI |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -34,7 +34,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
-| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，后续 steering/control 与 fork 分别过 Gate |
+| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合；fork 仍需独立 Gate |
 | JSON | ✅ `headless-v1` L2 |
 | RPC | 正式后置 `rpc-v1`，独立于 `headless-v1`，不追 Pi command/schema parity |
 | TUI/UI | minimal host TUI；E2/E3 host-rendered intents，stateful view/action 另过 Gate |
@@ -72,7 +72,7 @@ M0.5 — thin Core responsibility migration
 M1 — product Harness controls
   harness-events-001 ✅ aecf402
         │
-        ├────► harness-steering-001 (in-progress)
+        ├────► harness-steering-001 ✅ a5ff2b7
         └────► session-fork-001 (planned)
                        │
                        ▼
@@ -108,16 +108,18 @@ package.
 
 ### M1 — Product Harness controls
 
-The lifecycle prerequisite is closed. `harness-steering-001` is in progress under a docs-first binding contract;
-session fork remains planned and still requires its own task file before implementation.
+The lifecycle prerequisite and bounded interactive-control slice are closed. `harness-steering-001` passed its
+merged-main Gate at `a5ff2b7`; session fork remains planned and still requires its own task file before implementation.
 
 | Task | Status | Objective | Gate |
 |------|--------|-----------|------|
 | [harness-events-001](./plan/tasks/harness-events-001.md) | **done @ `aecf402`** | coding-agent SDK lifecycle projection from Core source facts + facade run facts | ordering + one terminal + separate SDK/Trace/headless types; no Core lifecycle channel or internal-union serialization |
-| [harness-steering-001](./plan/tasks/harness-steering-001.md) | **in-progress** | Session-owned bounded steering/follow-up + thin Core insertion seam | deterministic insertion, thread/ownership/retention, `code=steered`, transcript/session/Trace/lifecycle evidence |
+| [harness-steering-001](./plan/tasks/harness-steering-001.md) | **done @ `a5ff2b7`** | Session-owned bounded steering/follow-up + thin Core insertion seam | std 567/567; curl 566/566; Core 89/89; Coding 298/298; SDK 20/20; deterministic insertion, ownership/retention, `code=steered`, and compatible Trace/session/lifecycle evidence |
 | `session-fork-001` | planned | safe branch/fork behavior | parent unchanged; child durable/redacted; no lock/schema fallback |
 
-This milestone aligns the smallest valuable Pi Harness semantics. It does **not** add subagents, Graph, provider hooks, or a new wire-compatible RPC protocol.
+This milestone aligns the smallest valuable Pi Harness semantics. The steering closeout is SDK/Loop enrichment only:
+Phase H, SDK-ready, Headless/Process, Loop, Session, Trace, and Zig source composition remain **L2**. It does **not** add
+subagents, Graph, provider hooks, or a new wire-compatible RPC protocol.
 
 ### M2 — Selected daily UX
 

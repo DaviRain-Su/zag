@@ -10,6 +10,10 @@
 > `harness-events-001` at `aecf402`: `zag-agent-core` is the thin loop kernel, while product
 > policy/session/Trace/redaction/context/lifecycle-adapter ownership lives in `zag-coding-agent`. No semver publication
 > promise freezes the current source layout. See [core-boundary](./core-boundary.md).
+>
+> **Control enrichment:** `harness-steering-001` closed at `a5ff2b7` with Session-owned bounded queues, required Core
+> `ControlInput`, and lifecycle `control_applied`. The current external fixture is **20/20**. This does not reopen the
+> `ebdd7ab` SDK-ready Gate, change any schema version, or raise a maturity row.
 
 ## 1. What is covered
 
@@ -50,14 +54,14 @@ All rules below are caller-borrowed unless explicitly stated otherwise.
 | `Provider` (`ptr` + `vtable`) | caller | Must outlive the `Agent` and every `loop.run` call. Provider receives a scratch arena per `chat`; returned `AssistantTurn` contents belong to that arena. Source: [`packages/zag-agent-core/src/provider.zig:30-45`](../../packages/zag-agent-core/src/provider.zig). |
 | `Observer` event slices | callback | Slices inside `Observer.Event` are valid only for the duration of the callback. Copy if needed. |
 | `LifecycleObserver` event slices | callback | Slices inside `LifecycleEvent` are synchronous and valid only during `Agent.Options.lifecycle` callback execution. Copy before retaining them. |
-| `Session` | caller | Must outlive every `Agent.reply(&session, ...)` call. Holds transcript arena/writer lease and, under `harness-steering-001`, conversation-scoped preallocated control queues. Its address stays stable during reply/enqueue. |
+| `Session` | caller | Must outlive every `Agent.reply(&session, ...)` call. Holds transcript arena/writer lease and conversation-scoped preallocated control queues. Its address stays stable during reply/enqueue. |
 | `Agent` | caller | `deinit` releases resources only; it never invents a successful `run_end`. |
 | `Trace.path` | caller | `Trace` stores the pointer/bytes; the path slice must outlive the `Trace`. |
 | `CancelFlag` | caller/host | Must outlive the entire run; provider borrows `*CancelFlag` in-flight. |
 | `Redactor` | `Agent`/`Session` | `clone` produces an independent copy. No cryptographic zeroization is promised. |
 | `RequestControl.deadline_mono_ns` | value | Immutable after construction; compares only process-local monotonic time. |
 
-The steering target makes `Session.enqueueSteering` / `enqueueFollowUp` and pending-count reads mutex-protected. They
+The closed steering surface makes `Session.enqueueSteering` / `enqueueFollowUp` and pending-count reads mutex-protected. They
 may run on one foreign thread while one reply consumes. `Agent.reply` and all other Session operations remain
 single-flight. Queue calls are not signal-safe; clear/deinit are idle-only and require external synchronization against
 reply plus every queue call.
@@ -162,11 +166,11 @@ rendered by Coding adapters calling the moved `permissions.deniedMessage`/`shell
 `coding.shell_policy`/`coding.workspace` through the public `zag-coding-agent` root; the loop resolves no workspace
 root itself (the product facade `Agent.reply` resolves `resolveCwdReal` before forming seam pointers).
 
-`loop.run` takes five closed D-011 seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`, `LoopEventSink` — as
-borrowed dependencies. `harness-steering-001` targets a sixth explicit composition field, `ControlInput`; low-level
-no-control hosts select `.none()` explicitly while product `Agent.reply` binds the exact Session queue. Missing is never
-implicitly allow/yolo/identity/discard/no-control. `zag-coding-agent.Agent` still installs product defaults equivalent
-to `ask + workspace jail + shell protect`.
+`loop.run` takes five closed D-011 seams — `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`, `LoopEventSink` — plus
+the explicit `ControlInput` composition field closed by `harness-steering-001`. Low-level no-control hosts select
+`.none()` explicitly while product `Agent.reply` binds the exact Session queue. Missing is never implicitly
+allow/yolo/identity/discard/no-control. `zag-coding-agent.Agent` still installs product defaults equivalent to
+`ask + workspace jail + shell protect`.
 
 `core-context-ownership-001` split the former Core `context.zig`: protocol-history validation
 (`validateBodyHistory`, `alignToLegalStart`, `unitEnd`, `validateViewBody`) stays in Core
@@ -218,7 +222,7 @@ If an accepted multi-tool turn is cancelled between tools, the remaining tool
 results are backfilled with `code=cancelled`, keeping the transcript resume-safe.
 Source: [`packages/zag-agent-core/src/loop.zig:280-290`](../../packages/zag-agent-core/src/loop.zig).
 
-### 5.1 Bounded steering/follow-up target (`harness-steering-001`, in-progress)
+### 5.1 Bounded steering/follow-up (`harness-steering-001`, closed at `a5ff2b7`)
 
 ```zig
 try session.enqueueSteering("correct the approach");

@@ -118,7 +118,7 @@ The twelve Trace kinds are sourced exactly once each (see the source map in [cor
 
 Event kinds: `run_start` · `turn` · `assistant` · `usage` · `tool_call` · `permission` · `jail_deny` · `shell_deny` · `tool_result` · `provider_retry` · `compaction` · `run_end`.
 
-`harness-steering-001` deliberately adds no thirteenth Trace v1 kind. Applied control text is authoritative in the
+`harness-steering-001`, closed at `a5ff2b7`, deliberately added no thirteenth Trace v1 kind. Applied control text is authoritative in the
 Transcript/session and visible to trusted `LifecycleEvent.control_applied`. Trace records resulting turns and, for an
 interrupted Tool batch, ordinary `tool_result` bodies beginning with `code=steered`. This preserves schema version 1
 and terminal reserve/error precedence.

@@ -5,7 +5,7 @@
 | Decision | [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current code | `packages/zag-agent-core/src/` plus product facade in `packages/zag-coding-agent/src/agent.zig` |
 | Target | Thin loop kernel with explicit required ports; product policy/state in coding-agent |
-| Migration status | **Done through `harness-events-001` at `aecf402`.** Required seams and canonical `LoopEvent` remain in Core; durable session, Trace/redaction/Observer, concrete permission/workspace/shell policy, and product context/compaction ownership live in coding-agent. Protocol-history validation and the single authoritative `CompactionEvent`/`ContextView.View` definitions remain in Core. The product lifecycle adapter projects Core source facts plus facade facts without a Core lifecycle channel. Merged-main std **530/530** and curl **529/529** passed; no existing L2 row was raised or lowered. |
+| Migration status | **D-011 ownership migration done through `harness-events-001` at `aecf402`.** Required seams and canonical `LoopEvent` remain in Core; durable session, Trace/redaction/Observer, concrete permission/workspace/shell policy, and product context/compaction ownership live in coding-agent. Protocol-history validation and the single authoritative `CompactionEvent`/`ContextView.View` definitions remain in Core. The product lifecycle adapter projects Core source facts plus facade facts without a Core lifecycle channel. Follow-on `harness-steering-001` closed the generic `ControlInput` seam at `a5ff2b7`; merged-main std **567/567**, curl **566/566**, Core **89/89**, Coding **298/298**, and SDK **20/20** passed. No existing L2 row was raised or lowered. |
 | Reference | Pi low-level `agent-loop.ts` / `agent.ts` / `types.ts`, semantics only |
 
 ## Purpose
@@ -69,7 +69,7 @@ or the existing `ptr + vtable` pattern. The code task chooses exact names and er
 | `ShellPolicy` | descriptor shell metadata, validated command context | allow or `shell_deny`; typed host failure | No implicit allow. Non-shell Tools return explicit not-applicable. |
 | `ContextView` | allocator, authoritative transcript | provider message view plus optional borrowed compaction fact | No implicit empty/identity view; identity is an explicit implementation. |
 | `LoopEventSink` | one borrowed `LoopEvent` | success, `OutOfMemory`, or visible sink failure | No implicit discard; discard is an explicit implementation. |
-| `ControlInput` (`harness-steering-001` target) | safe boundary (`pre_turn`, `between_tools`, `would_complete`) | atomically selected borrowed `{kind,text}` + infallible matching commit after transcript append | No hidden default; low-level no-control composition selects explicit `none()`. Core owns no queue. |
+| `ControlInput` (`harness-steering-001`, closed at `a5ff2b7`) | safe boundary (`pre_turn`, `between_tools`, `would_complete`) | atomically selected borrowed `{kind,text}` + infallible matching commit after transcript append | No hidden default; low-level no-control composition selects explicit `none()`. Core owns no queue. |
 
 `ControlInput` is an explicit composition seam, not a safety-policy gate. Its concrete Session queue, mutex, fixed
 capacity, enqueue errors, retention, and clear/deinit behavior remain coding-agent-owned. Product `Agent.reply` binds
@@ -136,7 +136,7 @@ Core emits only facts it directly witnesses:
 - turn start/count;
 - complete validated assistant message (`{ text, has_tools }`) and provider usage;
 - Tool start and Tool end with turn/call-index/call-id correlation (`tool_end` carries a borrowed `id`);
-- applied steering/follow-up kind, intended next turn, and transcript-owned borrowed text (`harness-steering-001` target);
+- applied steering/follow-up kind, intended next turn, and transcript-owned borrowed text (`harness-steering-001`, closed at `a5ff2b7`);
 - policy, jail, and shell decisions;
 - provider retry;
 - context projection/compaction fact;
@@ -232,7 +232,7 @@ core-context-ownership-001   ✓ done — protocol-history validation stays in C
 harness-events-001   ✓ done @ aecf402 — product SDK lifecycle adapter; no Core lifecycle.zig
         │
         ▼
-harness-steering-001   in-progress — Session queues + generic Core ControlInput; no Core product queue
+harness-steering-001   ✓ done @ a5ff2b7 — Session queues + generic Core ControlInput; no Core product queue
 ```
 
 These migration tasks were serialized because they overlapped `loop.zig`, `agent.zig`, roots, the SDK fixture, and Product Spec docs.
@@ -265,7 +265,7 @@ Additional boundary fixtures must prove:
 ## Trace vocabulary source map (core-observation-ownership-001)
 
 The twelve durable Trace kinds each source exactly once from a Core `LoopEvent` fact or the coding-agent facade — never both.
-`run_start` and `run_end` are **facade-only**; they are never added to Core `LoopEvent`. The in-progress
+`run_start` and `run_end` are **facade-only**; they are never added to Core `LoopEvent`. The closed
 `control_applied` source fact has no thirteenth Trace v1 kind: resulting turns and `tool_result(code=steered)` remain
 trace-visible, while full control text is available through Session/transcript and trusted lifecycle only.
 
@@ -284,7 +284,7 @@ trace-visible, while full control text is available through Session/transcript a
 | `provider_retry` | `LoopEvent.provider_retry` | Core |
 | `compaction` | `LoopEvent.context_compaction` | Core |
 
-Fan-out order is preserved by the `RunBridge` event-sink adapter in `zag-coding-agent`: turn → Trace only; assistant → Observer/internal verbose → Trace; usage → Trace → Observer/ledger/verbose; tool start/end → Observer → Trace; applied control → trusted Lifecycle only (target); policy → Observer → Trace; jail/shell/retry → Trace then **unconditional generic warning**; compaction → session note → Trace. Trace failure maps to `SinkFailed` (`TraceFailed`) and short-circuits subsequent warnings. `run_start` precedes the loop; session save precedes the success terminal. Verbose redaction OOM is drop-only (never raw fallback).
+Fan-out order is preserved by the `RunBridge` event-sink adapter in `zag-coding-agent`: turn → Trace only; assistant → Observer/internal verbose → Trace; usage → Trace → Observer/ledger/verbose; tool start/end → Observer → Trace; applied control → trusted Lifecycle only; policy → Observer → Trace; jail/shell/retry → Trace then **unconditional generic warning**; compaction → session note → Trace. Trace failure maps to `SinkFailed` (`TraceFailed`) and short-circuits subsequent warnings. `run_start` precedes the loop; session save precedes the success terminal. Verbose redaction OOM is drop-only (never raw fallback).
 
 ## Non-goals
 

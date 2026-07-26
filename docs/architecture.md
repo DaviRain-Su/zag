@@ -3,7 +3,7 @@
 > 描述**当前代码**与**目标分层**。状态真理源见 [maturity.md](./maturity.md)，当前阻断见 [production-floor assessment](./plan/analysis/2026-07-24-production-floor-assessment.md)。
 > Teaching Phase 0–3 = 骨架已落地；Production Floor（Phase H）final audit 历史上找到两个 file-surface blocker；single-file edit integrity 与 read/search bounds 均已关闭，`h-integration-001` 在 `d22ce6e` 通过 fresh 11-sentence audit（11/11 PASS，panel SHIP），Phase H 达到 **L2（单用户、受控本机）**。
 > [D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md)：Pi 是 Harness 行为参考，旧 `pi-mono-zig` 是冻结 Zig 档案，Grok Build 仅提供依赖/quarantine 纪律；Zag 不做 parity fork 或 batteries-included 产品。
-> [D-011](./decisions/active/D-011-thin-agent-core-boundary.md)：`zag-agent-core` 收缩为 loop kernel；product policy/state/observation 由 `zag-coding-agent` 拥有。当前代码迁移按 docs/plan DAG 进行，既有 L2 行为不得回退。
+> [D-011](./decisions/active/D-011-thin-agent-core-boundary.md)：`zag-agent-core` 已收缩为 loop kernel；product policy/state/observation 由 `zag-coding-agent` 拥有。ownership migration 与 product lifecycle adapter 在 `aecf402` 闭合，follow-on bounded control seam 在 `a5ff2b7` 闭合；既有 L2 行为不得回退。
 
 ---
 
@@ -20,7 +20,7 @@
 ├──────────────────────────────────────────────────────────────┤
 │ L4 Kernel ★低层 Zig composition（zag-agent-core）              │
 │  Loop · Transcript · Provider/Tool/Cancel ports                │
-│  protocol history · required policy/context/event seams        │
+│  protocol history · required policy/context/event/control      │
 │  SDK-ready Gate 已闭合；不由“包已拆出”自动获得                  │
 │  L3 产品 Harness（zag-coding-agent）                             │
 │  Agent/Session · policy · context · persistence · observation   │
@@ -44,7 +44,7 @@
 | Level | Meaning | Current |
 |-------|---------|---------|
 | Low-level Zig composition | caller directly assembles Provider/Toolset/Observer/Transcript/loop | 已验证可行 |
-| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — public injection + external consumer fixture 7/7 + contract documented in [`modules/sdk-contract.md`](./modules/sdk-contract.md); merged-main Gate passed at `ebdd7ab` |
+| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — Gate fixture 7/7 at `ebdd7ab`; current external fixture 20/20 after lifecycle/control enrichment; contract in [`modules/sdk-contract.md`](./modules/sdk-contract.md) |
 | Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **已闭合** — `headless-v1` + exit matrix + process fixture; merged-main Gate passed at `a1a1e0f`; ACP/editor remains follow-on |
 
 Decisions: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) and [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md). Zag does not promise a stable C ABI or Zig dynamic plugin ABI.
@@ -201,7 +201,7 @@ src/main.zig → zag-cli → zag-coding-agent → zag-agent-core → zag-types
 | `zag-types` | Canonical messages、`ChatError`；目标 runtime `ToolCapabilities` | std | vendors / product IO |
 | `openai-zig` | HTTP / OpenAPI | std | 上层 agent 包 |
 | `zag-ai` | Model plane + WireAdapter | zag-types + openai-zig | agent / cli 包 |
-| `zag-agent-core` | Loop、Transcript、纯 Provider/Tool/Cancel ports、protocol history、required policy/context/event seams | **zag-types only** | durable session/Trace/redaction、concrete policy/workspace/shell/context、Client/Wire/UI |
+| `zag-agent-core` | Loop、Transcript、纯 Provider/Tool/Cancel ports、protocol history、required policy/context/event/control seams | **zag-types only** | durable session/Trace/redaction、concrete policy/workspace/shell/context、Client/Wire/UI |
 | `zag-coding-agent` | Agent/Session facade、policy/context/persistence/observation、WireProvider、默认/runtime Tools | core + zag-ai | openai-zig 细节、CLI/process-global state |
 | `zag-cli` | 产品壳（args/REPL/one-shot/headless、signals/stdin/terminal） | coding-agent + core + zag-ai | loop 业务 |
 | `src/main` | 进程入口 → `zag_cli.run` | zag-cli | 逻辑 |
@@ -209,7 +209,7 @@ src/main.zig → zag-cli → zag-coding-agent → zag-agent-core → zag-types
 
 **一句话：** Core 只见 Loop 所需 contracts；Wire 桥、product policy/state/observation 在 coding-agent；线协议在 zag-ai 之后。
 
-### D-011 target boundary
+### Thin-Core boundary after D-011 and bounded control
 
 ```text
 Session control queues ──► explicit ControlInput ──► Core safe insertion points
@@ -223,10 +223,10 @@ Core loop source facts ──► required LoopEventSink ──► coding-agent f
 ```
 
 Core retains Tool metadata validation and `ToolPolicy → Jail → ShellPolicy → execute` ordering. The five closed D-011
-seams are explicit; missing safety ports never mean allow. `harness-steering-001` adds a sixth explicit but non-safety
-`ControlInput` composition field: low-level hosts select `.none()`, while coding-agent owns all concrete Session queue
-state. The D-011 ownership migration is complete; follow-on capabilities must preserve the owner map in
-[`modules/core-boundary.md`](./modules/core-boundary.md).
+seams are explicit; missing safety ports never mean allow. `harness-steering-001`, closed at `a5ff2b7`, added a sixth
+explicit but non-safety `ControlInput` composition field: low-level hosts select `.none()`, while coding-agent owns all
+concrete Session queue state. The D-011 ownership migration and bounded-control follow-on are complete; later
+capabilities must preserve the owner map in [`modules/core-boundary.md`](./modules/core-boundary.md).
 
 规格映射见 [modules/README.md](./modules/README.md#代码映射表)。
 

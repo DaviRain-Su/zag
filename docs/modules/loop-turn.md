@@ -5,12 +5,12 @@
 | Code | `packages/zag-agent-core/src/loop.zig` |
 | Layer | Thin Agent Core Kernel; ownership contract [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current maturity | **L2** — core loop/goldens + truthful terminals + provider control + accepted multi-Tool between-call Agent composition passed independent/main Gate |
-| Target | L2 (H) → L3 steer/read-only parallelism (C6) |
+| Target | L2 remains; bounded steering v1 closed at `a5ff2b7`; descriptor-governed read-only parallelism remains L3 |
 | Reference | Pi agent loop; Nanocodex Turn |
 
 ## Purpose
 
-Run one generic agent loop: poll an explicit `ControlInput` only at protocol-safe boundaries, obtain a model view through `ContextView`, request one assistant turn, execute requested Tools through required policy/jail/shell ports, append results, emit source facts, and return a typed loop outcome. Product queues, persistence, and run terminals are facade responsibilities. The control seam is the in-progress `harness-steering-001` target; current closed behavior remains the no-control composition.
+Run one generic agent loop: poll an explicit `ControlInput` only at protocol-safe boundaries, obtain a model view through `ContextView`, request one assistant turn, execute requested Tools through required policy/jail/shell ports, append results, emit source facts, and return a typed loop outcome. Product queues, persistence, and run terminals are facade responsibilities. The control seam closed in `harness-steering-001` at `a5ff2b7`; explicit `ControlInput.none()` preserves low-level no-control behavior.
 
 ## Invariants
 
@@ -55,7 +55,7 @@ Malformed host registration is not an `unknown_tool` soft result; it fails befor
 ## Cancellation/deadline and control boundaries
 
 - Cooperative cancel flag checks run before provider turns, Tool calls, and queued-control application; an observed cancel wins without consuming a queued message.
-- `harness-steering-001` polls one Session-owned item at pre-turn, between-Tool, or would-complete boundaries only. It never interrupts `Provider.chat` or an entered Tool handler.
+- The closed `harness-steering-001` path polls one Session-owned item at pre-turn, between-Tool, or would-complete boundaries only. It never interrupts `Provider.chat` or an entered Tool handler.
 - Mid-batch steering first pre-copies/reserves the future user row, then closes every remaining accepted call with the stable end-only body `error: code=steered message=steering selected; pending tool did not execute.`, appends without allocation, and continues the same run.
 - One atomic would-complete peek gives steering priority over follow-up; null preserves the existing `completed` path, while a non-null item triggers a cancel recheck before apply.
 - Control is one-at-a-time and does not extend `max_turns`; without budget for an answering provider turn, the item remains pending and the run reports `max_turns`.
@@ -74,7 +74,7 @@ L2 executes a Tool-call batch serially in call order. Parallel read-only batches
 
 - The D-011 ownership migration is complete: `loop.run` routes through explicit `ToolPolicy`, `Jail`, `ShellPolicy`, `ContextView`, and fallible canonical `LoopEventSink`; session, observation, concrete policy, and product context ownership now live in `zag-coding-agent`. See [core-boundary](./core-boundary.md).
 - Mid-flight Tool-handler cancel (shell/process ownership and cleanup) remains explicit post-H work and is not an H L2 requirement.
-- High-level SDK lifecycle is **done** (`harness-events-001` at `aecf402`) as a product adapter in `zag-coding-agent`; Core still has no `lifecycle.zig`. `harness-steering-001` is **in-progress** and may add only a generic `ControlInput` seam plus a source-backed `control_applied` fact; concrete Session queues remain in coding-agent. Streaming deltas and Tool progress remain outside this surface.
+- High-level SDK lifecycle is **done** (`harness-events-001` at `aecf402`) as a product adapter in `zag-coding-agent`; Core still has no `lifecycle.zig`. `harness-steering-001` is **done** at `a5ff2b7`: Core owns only the generic `ControlInput` seam plus source-backed `control_applied`, while concrete Session queues remain in coding-agent. Streaming deltas and Tool progress remain outside this surface.
 
 ## L2 acceptance
 
@@ -100,9 +100,12 @@ H does not introduce a workflow DAG runtime. Graph, Memory, and Oracle hooks are
 
 ## L3
 
-- bounded steering/follow-up semantics (`harness-steering-001`, in-progress; no mid-flight provider/Tool preemption);
+Bounded steering/follow-up v1 is closed as an L2 SDK/Loop enrichment; it does not by itself raise the Loop row.
+Remaining L3 directions are:
+
 - descriptor-governed parallel read-only Tools;
-- subagent lifecycle correlation.
+- subagent lifecycle correlation;
+- stronger process-owned mid-flight Tool/shell preemption where justified.
 
 ## Non-goals for H
 

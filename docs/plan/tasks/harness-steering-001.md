@@ -1,7 +1,7 @@
 ---
 id: harness-steering-001
 scope: sdk/session-control + core-control-input
-status: in-progress
+status: done
 priority: P1
 depends-on:
   - harness-events-001
@@ -162,3 +162,20 @@ out of scope.
 - Core queue storage/mutex/policy/persistence or a separate Core lifecycle observer;
 - Agent-owned cross-Session control state;
 - Graph, Oracle, executable subagents, background jobs, or parallel Tool scheduling.
+
+# closeout
+
+- The docs-first contract landed in `d725e1b`, `3db5a16`, `ba41082`, and `afb75a9`. Core implementation landed in
+  `7f26950`; Session queues and lifecycle projection landed in `ba27e58`; executable review evidence landed in
+  `c31d8c8`; the precise mid-batch `prepareUser` OOM fixture closed the task at `a5ff2b7`.
+- Independent final code review passed after the OOM, move, Trace, safety, and low-level composition findings were fixed.
+  Main was advanced by ff-only merge; no remote push is part of this closeout.
+- Merged-main Gate passed: root std **40/40 steps, 567/567 tests**; root curl **42/42 steps, 566/566 tests**; Core
+  **89/89**; Coding **298/298**; external SDK fixture **20/20**; OpenAPI **287/287**; catalog **40**; docs
+  readability **91/100**; security awareness **71/100**.
+- The delivered surface is Session-owned bounded queues, required Core `ControlInput`, protocol-safe one-at-a-time
+  insertion, truthful `code=steered`, and borrowed lifecycle `control_applied`. Trace v1 remains twelve kinds; session
+  v1 and `headless-v1` remain unchanged.
+- Contract item 14 remains binding: this is SDK/Loop enrichment only. Phase H, Zig SDK-ready, Headless/Process, Loop,
+  Session, Trace, and Zig source composition remain **L2**; no new maturity row is added. Session fork, durable pending
+  queues, mid-flight preemption, RPC, TUI, Graph, Oracle, subagents, and parallel Tools remain excluded.
