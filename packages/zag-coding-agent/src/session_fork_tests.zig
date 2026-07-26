@@ -417,16 +417,23 @@ test "session-fork §8.10-13: post-compaction child reply, parent reply after fo
     try std.testing.expectEqual(loop.StopReason.completed, child_result.stop_reason);
     try std.testing.expectEqualStrings("compacted-context", child.layers().session);
 
-    // §8.11 parent continues after fork
+    // §8.11 parent continues after fork: snapshot child durable bytes **after**
+    // child reply/save and **before** parent reply; parent save must not touch
+    // the child file (exact byte-equal after parent reply).
+    const child_bytes_pre_parent_reply = try readFileOrEmpty(gpa, io, child_path);
+    defer gpa.free(child_bytes_pre_parent_reply);
+    try std.testing.expect(child_bytes_pre_parent_reply.len > 0);
+
     const parent_bytes_mid = try readFileOrEmpty(gpa, io, parent_path);
     defer gpa.free(parent_bytes_mid);
     try std.testing.expectEqualStrings(parent_bytes_pre, parent_bytes_mid);
     const parent_result = try agent.reply(&parent, "parent-continues");
     try std.testing.expectEqual(loop.StopReason.completed, parent_result.stop_reason);
-    // parent durable advanced via normal save; child file not mutated by parent reply
+
     const child_bytes_after_parent = try readFileOrEmpty(gpa, io, child_path);
     defer gpa.free(child_bytes_after_parent);
-    // re-read child after its own reply already advanced it — just ensure parent path ≠ child content change from parent
+    try std.testing.expectEqualStrings(child_bytes_pre_parent_reply, child_bytes_after_parent);
+
     const parent_bytes_post = try readFileOrEmpty(gpa, io, parent_path);
     defer gpa.free(parent_bytes_post);
     try std.testing.expect(parent_bytes_post.len >= parent_bytes_pre.len);
@@ -698,10 +705,9 @@ test "session-fork §8.17-23: InvalidPath, AlreadyExists, Busy, same-path, OOM, 
         try std.testing.expect(retry.path != null);
     }
 
-    // §8.23 null product redactor: typed fail-closed, no child jsonl
+    // §8.23 null product redactor (ephemeral test-constructed): typed fail-closed
     {
         const null_child = ".zag-test-session-fork-faults/null-r.jsonl";
-        // Test-constructed Session with null redactor (not product start path)
         var null_parent = try Session.start(gpa, io, .{
             .base_system = "sys",
             .load_project_instructions = false,
@@ -713,9 +719,51 @@ test "session-fork §8.17-23: InvalidPath, AlreadyExists, Busy, same-path, OOM, 
         }
         try std.testing.expectError(error.OutOfMemory, null_parent.fork(null_child));
         try std.testing.expect(!fileExists(io, null_child));
-        // parent still usable fields
         try std.testing.expectEqualStrings("sys", null_parent.base_system);
     }
+}
+
+test "session-fork §8.23 durable parent + null redactor: typed fail-closed, parent file equal" {
+    // Review follow-up: durable parent with stripped redactor must not panic,
+    // must not create child jsonl, and must leave parent durable bytes equal.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir = ".zag-test-session-fork-null-durable";
+    const parent_path = ".zag-test-session-fork-null-durable/parent.jsonl";
+    const child_path = ".zag-test-session-fork-null-durable/child.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir);
+    defer Io.Dir.cwd().deleteTree(io, dir) catch {};
+
+    var parent = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = parent_path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+        .secrets = &.{secret_key},
+    });
+    defer parent.deinit();
+    try parent.transcript.appendUser("durable-before-null");
+    try parent.save();
+
+    const parent_bytes = try readFileOrEmpty(gpa, io, parent_path);
+    defer gpa.free(parent_bytes);
+    try std.testing.expect(parent_bytes.len > 0);
+
+    // Strip redactor after durable create (corrupt / programming state).
+    if (parent.owned_redactor) |*r| {
+        r.deinit();
+        parent.owned_redactor = null;
+    }
+
+    try std.testing.expectError(error.OutOfMemory, parent.fork(child_path));
+    try std.testing.expect(!fileExists(io, child_path));
+
+    const parent_after = try readFileOrEmpty(gpa, io, parent_path);
+    defer gpa.free(parent_after);
+    try std.testing.expectEqualStrings(parent_bytes, parent_after);
+    try std.testing.expect(parent.writer != null);
+    try std.testing.expectEqualStrings(parent_path, parent.path.?);
 }
 
 // ── §8.24–29 lifecycle / Core / backends note / maturity / non-mechanism ─────
@@ -765,12 +813,16 @@ test "session-fork §8.24: child reply lifecycle session_configured + Trace conf
 
 test "session-fork §8.25: Core root/source has no fork export" {
     // Core public module surface has no fork API/state (D-011).
+    // Path-free: @hasDecl on the imported package only (no monorepo path scan).
     try std.testing.expect(@hasDecl(core, "message"));
     try std.testing.expect(@hasDecl(core, "transcript"));
+    try std.testing.expect(@hasDecl(core, "loop"));
     try std.testing.expect(!@hasDecl(core, "fork"));
+    try std.testing.expect(!@hasDecl(core, "Session"));
     try std.testing.expect(!@hasDecl(core, "SessionFork"));
     try std.testing.expect(!@hasDecl(core, "ForkError"));
     try std.testing.expect(!@hasDecl(core, "session_store"));
+    try std.testing.expect(!@hasDecl(core, "createNewWithRedactor"));
 }
 
 test "session-fork §8.29: live content_parts prove fork is not JSONL roundtrip deep-copy" {

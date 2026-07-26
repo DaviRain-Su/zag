@@ -124,6 +124,12 @@ pub const Writer = struct {
 /// lease acquisition) to fail with `IoFailed` once. Production has no enablement
 /// path (`builtin.is_test` only; same honesty as Writer `fail_before_replace`).
 /// Used by session-fork-001 §5.1 strategy A — must only fire inside create, never prep.
+///
+/// **Process-global one-shot:** this flag is module-static, not per-test-thread.
+/// It is safe only under the current **serial** test runner (one test at a time
+/// that arms → consumes → optionally clears). Parallel tests would race; do not
+/// introduce concurrent arming without replacing this with a scoped mechanism.
+/// Production builds compile the flag out / leave it as void — no enablement API.
 var test_fail_next_create_body: if (builtin.is_test) bool else void =
     if (builtin.is_test) false else {};
 
@@ -136,8 +142,9 @@ pub const testing = if (builtin.is_test) struct {
         writer.fail_next_redact = enabled;
     }
     /// Arm one-shot create-body fault for the next `createNewWithRedactor` /
-    /// `createNewUnredacted` call. Clears itself when consumed. Production-
-    /// impossible (this module is `builtin.is_test` only).
+    /// `createNewUnredacted` call. Clears itself when consumed.
+    /// Process-global; serial tests only (see `test_fail_next_create_body` doc).
+    /// Production-impossible (`builtin.is_test` only; empty struct otherwise).
     pub fn setFailNextCreateBody(enabled: bool) void {
         test_fail_next_create_body = enabled;
     }
