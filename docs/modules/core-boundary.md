@@ -5,7 +5,7 @@
 | Decision | [D-011](../decisions/active/D-011-thin-agent-core-boundary.md) |
 | Current code | `packages/zag-agent-core/src/` plus product facade in `packages/zag-coding-agent/src/agent.zig` |
 | Target | Thin loop kernel with explicit required ports; product policy/state in coding-agent |
-| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001). Concrete permission/HITL/remember, workspace containment, and shell protection moved to coding-agent (core-policy-ownership-001). Context-layer ownership moved to coding-agent: protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent` and `ContextView.View` are single authoritative definitions in Core `context_view.zig` (core-context-ownership-001). |
+| Migration status | Seams + canonical `LoopEvent` defined; current behavior via adapters (core-seams-001). Session store ownership moved to coding-agent (core-session-ownership-001). Trace/redaction/Observer ownership moved to coding-agent (core-observation-ownership-001). Concrete permission/HITL/remember, workspace containment, and shell protection moved to coding-agent (core-policy-ownership-001). Context-layer ownership moved to coding-agent: protocol-history validation stays in Core (`protocol_history.zig`); prompt layers/budget/fixed-point compaction/summary/lineage moved to coding-agent (`context.zig`); `CompactionEvent` and `ContextView.View` are single authoritative definitions in Core `context_view.zig` (core-context-ownership-001, closed at `6667c03`; merged-main std **513/513**, curl **512/512**). |
 | Reference | Pi low-level `agent-loop.ts` / `agent.ts` / `types.ts`, semantics only |
 
 ## Purpose
@@ -98,9 +98,9 @@ The former `context.zig` has been split (core-context-ownership-001):
 | Four prompt layers, token/character budget, fixed-point compaction, summary/lineage | Coding-agent | `context.zig` (`Options`, `Layers`, `viewForModel`, summary/lineage) |
 
 The loop independently validates the protocol-visible body of the projected view
-**after** the `ContextView` returns and **before** `Provider.chat`, regardless of
-how the product built the view. A hostile `ContextView` that returns a malformed
-bundle is rejected with `InvalidContext` and the provider is never called.
+**after** the `ContextView` returns and **before** accepting/emitting any compaction fact or calling
+`Provider.chat`, regardless of how the product built the view. A hostile `ContextView` that returns a malformed
+bundle is rejected with `InvalidContext`; no compaction fact reaches the sink and the provider is never called.
 
 `ContextView` returns a view borrowed from its supplied scratch allocator. Any compaction summary is borrowed for the
 callback only. The product Session must copy data it retains.

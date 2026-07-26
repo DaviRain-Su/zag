@@ -1,7 +1,7 @@
 ---
 id: harness-events-001
 scope: sdk/product-lifecycle-observation
-status: pending
+status: ready
 priority: P1
 depends-on:
   - core-context-ownership-001

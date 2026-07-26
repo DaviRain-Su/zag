@@ -19,8 +19,8 @@ docs/plan/
 | Zig SDK | **done/L2** at `ebdd7ab` — external consumer 7/7 |
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
-| Core responsibility correction | **context ownership in-progress** — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); protocol-history validation in Core, product layers/compaction in coding-agent; closeout pending merged-main Gate |
-| Next code task | `harness-events-001` remains re-queued behind the migration (product SDK lifecycle adapter over Core source facts) |
+| Core responsibility correction | **done** at `6667c03` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); protocol-history validation stays in Core while product layers/compaction live in coding-agent; merged-main std **513/513**, curl **512/512** |
+| Next code task | `harness-events-001` **ready** — product SDK lifecycle adapter over Core source facts and facade run facts |
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -53,7 +53,7 @@ completed foundation
     core-policy-ownership-001 (done) ✅
                   │
                   ▼
-   core-context-ownership-001 (in-progress)
+   core-context-ownership-001 (done) ✅
                   │
                   ▼
         harness-events-001 (M1 product adapter)
@@ -68,7 +68,7 @@ completed foundation
                      tui-minimal-001
 ```
 
-`pi-alignment-001`, `cli-sigint-001`, the D-011 docs node `core-boundary-001`, seam step `core-seams-001`, durable session move `core-session-ownership-001`, observation move `core-observation-ownership-001`, and concrete policy move `core-policy-ownership-001` are complete. Source review found that the earlier lifecycle design would add a third Core event channel while leaving product policy/state in the kernel. `core-context-ownership-001` is in-progress (implementation done, closeout pending merged-main Gate); `harness-events-001` returns only after the thin-Core migration; all code nodes are serialized. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
+`pi-alignment-001`, `cli-sigint-001`, the D-011 docs node `core-boundary-001`, seam step `core-seams-001`, durable session move `core-session-ownership-001`, observation move `core-observation-ownership-001`, concrete policy move `core-policy-ownership-001`, and context ownership move `core-context-ownership-001` are complete. Source review found that the earlier lifecycle design would add a third Core event channel while leaving product policy/state in the kernel. `harness-events-001` is now ready as the only next code node; it remains a coding-agent lifecycle adapter over Core source facts and facade run facts. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -78,13 +78,13 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
-| [core-context-ownership-001](./tasks/core-context-ownership-001.md) | P1 | in-progress | Protocol history/Core vs context projection/product split |
-| [harness-events-001](./tasks/harness-events-001.md) | P1 | pending | Coding-agent SDK lifecycle adapter after D-011 migration |
+| [harness-events-001](./tasks/harness-events-001.md) | P1 | ready | Coding-agent SDK lifecycle adapter after D-011 migration |
 
 ### Completed foundation
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [core-context-ownership-001](./tasks/core-context-ownership-001.md) | P1 | done | Protocol history/Core vs context projection/product split |
 | [core-policy-ownership-001](./tasks/core-policy-ownership-001.md) | P0 | done | Permission/workspace/shell implementation ownership → coding-agent |
 | [core-observation-ownership-001](./tasks/core-observation-ownership-001.md) | P0 | done | Trace/redaction/logging ownership → coding-agent |
 | [core-session-ownership-001](./tasks/core-session-ownership-001.md) | P1 | done | Durable session ownership → coding-agent |

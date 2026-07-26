@@ -148,9 +148,9 @@ low-level host selects permissive helpers (`allowAllForTrustedHost`, `identity`,
 `zag-coding-agent` (`context.zig`). `CompactionEvent` and `ContextView.View` are single authoritative
 definitions in Core `context_view.zig`; the coding-agent `context` module aliases these types and never
 redefines them. The loop independently validates the protocol-visible body of the projected view **after**
-the `ContextView` returns and **before** `Provider.chat`, regardless of how the product built the view —
-a hostile `ContextView` returning a malformed bundle is rejected with `InvalidContext` and the provider is
-never called. The CLI resolves `coding.context` (`Options`, `optionsFromBudget`) through the public
+the `ContextView` returns and **before** accepting/emitting a compaction fact or calling `Provider.chat`,
+regardless of how the product built the view — a hostile `ContextView` returning a malformed bundle is rejected
+with `InvalidContext`; no compaction fact reaches the sink and the provider is never called. The CLI resolves `coding.context` (`Options`, `optionsFromBudget`) through the public
 `zag-coding-agent` root; Core root no longer exports a product `context` module.
 
 ### 4.1 Event invariants
