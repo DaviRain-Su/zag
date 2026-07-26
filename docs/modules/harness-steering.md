@@ -146,7 +146,8 @@ outer loop while another provider turn is available
   pre-turn boundary
     cancel? → cancelled; no peek/commit
     unless the previous boundary already injected one item for this turn:
-      peek(.pre_turn) → append user → commit → control_applied
+      if peek(.pre_turn) returns an item: append user → commit → control_applied
+      else: continue this provider turn with no control
 
   turn_start → ContextView → Provider.chat → append complete assistant
 
@@ -299,7 +300,7 @@ messages extend the loop. Turns and usage accumulate normally; `final_text` is t
 | mid-batch prepare OOM | occurs before `steered`; no commit/event; item remains pending |
 | mid-batch backfill hard failure | partial hard-failure evidence may remain in memory; prepared user is hidden; item remains pending; truthful terminal |
 | source sink failure after commit | applied row stays in memory; item remains consumed; truthful terminal |
-| cancel observed at any apply boundary | no peek/commit; pending entries remain |
+| cancel observed before apply | no commit/apply; a non-destructive would-complete peek may already have occurred; pending entries remain |
 | max turns leaves no answer turn | no apply; `max_turns`; pending entries remain; host may inspect pending counts |
 | explicit clear/deinit | idle-only explicit host action discards pending process-memory items |
 | concurrent reply/clear/deinit | unsupported/data-race misuse; host must externally synchronize |
@@ -310,7 +311,8 @@ messages extend the loop. Turns and usage accumulate normally; `final_text` is t
 2. Session A's queue is never consumed by `reply` on Session B.
 3. Pre-turn steering is appended after the current reply's explicit user text and before turn 1.
 4. Steering queued during Provider execution applies only after the complete turn, at would-complete or before the next
-   not-yet-started Tool; it never aborts the in-flight request. Every apply boundary rechecks cancel first.
+   not-yet-started Tool; it never aborts the in-flight request. Pre-turn/Tool check cancel before peek; would-complete
+   performs a non-destructive peek and rechecks cancel before applying a non-null item.
 5. Mid-batch steering pre-copies/reserves the user row before any side effect, then produces normal start/end for
    executed calls and end-only stable `code=steered` bodies for all remaining calls; fully successful backfill cannot be
    stranded by a later append OOM.
