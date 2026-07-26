@@ -376,6 +376,41 @@ pub fn build(b: *std.Build) void {
     );
     headless_fixture_step.dependOn(&run_headless_process_tests.step);
 
+    // cli-sigint-001: process-level SIGINT lifecycle fixture (real direct `zag`
+    // binary, isolated cwd, synthetic env, deterministic slow mock provider).
+    // Exercises idle first-SIGINT clean exit 0 and active second-SIGINT hard
+    // exit 130. Uses a separate slow mock binary so its stall runs in its own
+    // process. Runs under both std and curl backends (the active case is an
+    // std-backend honest expectation; curl would actively cancel).
+    const sigint_slow_mock_exe = b.addExecutable(.{
+        .name = "sigint-slow-mock",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/sigint_slow_mock.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const sigint_fixture_opts = b.addOptions();
+    sigint_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
+    sigint_fixture_opts.addOptionPath("slow_mock_bin", sigint_slow_mock_exe.getEmittedBin());
+    sigint_fixture_opts.addOption(HttpBackend, "http_backend", http_backend);
+    const sigint_process_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/sigint_process_fixture.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "sigint_fixture_options", .module = sigint_fixture_opts.createModule() },
+            },
+        }),
+    });
+    const run_sigint_process_tests = b.addRunArtifact(sigint_process_tests);
+    const sigint_fixture_step = b.step(
+        "sigint-process-fixture",
+        "Process-level SIGINT lifecycle (idle exit 0 / active hard exit 130)",
+    );
+    sigint_fixture_step.dependOn(&run_sigint_process_tests.step);
+
     const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
@@ -387,6 +422,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_doctor_process_tests.step);
     test_step.dependOn(&run_headless_process_tests.step);
+    test_step.dependOn(&run_sigint_process_tests.step);
     test_step.dependOn(openai_coverage_step);
     test_step.dependOn(catalog_check_step);
     test_step.dependOn(docs_lint_step);

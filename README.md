@@ -63,6 +63,8 @@ zig build run -- --yolo -v --trace "list_dir ."
 # or: zig build run -- --yolo -v --trace -- "list_dir ."
 
 # 交互 REPL（默认 ask）：同一 Session 多轮，空白行或 Ctrl-D/EOF 退出
+# 空闲等待输入时按一次 Ctrl+C 干净退出（code 0）；活动回复中第一次 Ctrl+C 请求
+# 协作取消，再按一次在取消未落定前强退（code 130，可能跳过会话/trace 落盘）
 zig build run
 
 # 应被 jail 拒绝：

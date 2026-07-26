@@ -1,7 +1,7 @@
 ---
 id: cli-sigint-001
 scope: product/cli-interaction
-status: ready
+status: in-progress
 priority: P1
 depends-on: []
 ---

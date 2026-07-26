@@ -8,6 +8,7 @@ const ai = @import("zag-ai");
 const core = @import("zag-agent-core");
 const coding = @import("zag-coding-agent");
 const hw = @import("headless_writer.zig");
+const sigint = @import("sigint.zig");
 
 const default_system =
     \\You are Zag, a coding agent that can read and modify the working directory.
@@ -338,7 +339,17 @@ pub fn run(init: std.process.Init) !void {
         std.process.exit(1);
     };
     defer agent.deinit();
-    core.cancel.installSigInt(&agent.cancel);
+    // cli-sigint-001: CLI owns the SIGINT handler. It installs a self-pipe
+    // wakeup + cooperative cancel against `agent.cancel`, and restores the
+    // previous disposition on scope exit. The SDK alone never installs this.
+    var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
+        if (headless_mode) |mode| {
+            headlessErrorExit(gpa, io, mode, null, .{ .code = .out_of_memory, .message = "sigint guard init failed" });
+        }
+        std.log.err("sigint guard init failed", .{});
+        std.process.exit(1);
+    };
+    defer sigint_guard.deinit();
 
     // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
     const open_mode = selectOpenMode(continue_session);
@@ -359,7 +370,7 @@ pub fn run(init: std.process.Init) !void {
         return;
     }
 
-    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project);
+    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, &sigint_guard);
 }
 
 /// Pure open-mode decision for CLI flags.
@@ -533,6 +544,7 @@ fn runRepl(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
+    guard: *sigint.Guard,
 ) !void {
     try writeStdout(io, "zag (jail + policy + trace, permission=");
     try writeStdout(io, mode.name());
@@ -558,20 +570,33 @@ fn runRepl(
         try writeStdout(io, "project instructions: loaded\n");
     }
 
-    var stdin_buf: [4096]u8 = undefined;
-    var stdin_reader = Io.File.stdin().reader(io, &stdin_buf);
-    const reader = &stdin_reader.interface;
+    // cli-sigint-001: idle REPL reads are interruptible. We poll stdin and the
+    // sigint self-pipe with a bounded timeout so the first SIGINT wakes the
+    // blocking read and the direct process exits cleanly with code 0. The
+    // self-pipe + poll path is POSIX-only (macOS/Linux), which are the only
+    // platforms Zag targets; the guard is inert on others.
+    const stdin_fd = std.posix.STDIN_FILENO;
 
     while (true) {
         try writeStdout(io, "you> ");
-        const user_text = switch (try readReplInput(reader)) {
+
+        var line_buf: [4096]u8 = undefined;
+        const read_out = sigint.readInterruptibleLine(guard, stdin_fd, &line_buf, 250) catch |err| {
+            std.log.err("repl read failed: {s}", .{@errorName(err)});
+            std.process.exit(1);
+        };
+        const user_text: []const u8 = switch (read_out) {
+            .interrupted => {
+                try writeStdout(io, "\n");
+                break;
+            },
             .eof => {
                 try writeStdout(io, "\n");
                 break;
             },
-            .explicit_empty => break,
-            .text => |text| text,
+            .line => |l| std.mem.trim(u8, l, " \t\r"),
         };
+        if (user_text.len == 0) break;
 
         const result = agent.reply(&session, user_text) catch |err| {
             std.log.err("agent failed: {s}", .{@errorName(err)});
