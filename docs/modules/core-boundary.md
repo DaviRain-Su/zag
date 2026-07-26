@@ -69,11 +69,13 @@ or the existing `ptr + vtable` pattern. The code task chooses exact names and er
 | `ShellPolicy` | descriptor shell metadata, validated command context | allow or `shell_deny`; typed host failure | No implicit allow. Non-shell Tools return explicit not-applicable. |
 | `ContextView` | allocator, authoritative transcript | provider message view plus optional borrowed compaction fact | No implicit empty/identity view; identity is an explicit implementation. |
 | `LoopEventSink` | one borrowed `LoopEvent` | success, `OutOfMemory`, or visible sink failure | No implicit discard; discard is an explicit implementation. |
-| `ControlInput` (`harness-steering-001` target) | control kind | non-destructive borrowed queue head + infallible commit after transcript append | No hidden default; low-level no-control composition selects explicit `none()`. Core owns no queue. |
+| `ControlInput` (`harness-steering-001` target) | safe boundary (`pre_turn`, `between_tools`, `would_complete`) | atomically selected borrowed `{kind,text}` + infallible matching commit after transcript append | No hidden default; low-level no-control composition selects explicit `none()`. Core owns no queue. |
 
 `ControlInput` is an explicit composition seam, not a safety-policy gate. Its concrete Session queue, mutex, fixed
 capacity, enqueue errors, retention, and clear/deinit behavior remain coding-agent-owned. Product `Agent.reply` binds
-the seam to the exact Session argument for that run.
+the seam to the exact Session argument for that run. At a mid-batch steering boundary, Core must pre-copy the user text
+and reserve transcript message capacity before emitting any `code=steered` result, so a fully closed steered bundle
+cannot be stranded by a later append allocation failure.
 
 ### Fixed pre-execution order
 

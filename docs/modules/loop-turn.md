@@ -56,9 +56,9 @@ Malformed host registration is not an `unknown_tool` soft result; it fails befor
 
 - Cooperative cancel flag checks run before provider turns, Tool calls, and queued-control application; an observed cancel wins without consuming a queued message.
 - `harness-steering-001` polls one Session-owned item at pre-turn, between-Tool, or would-complete boundaries only. It never interrupts `Provider.chat` or an entered Tool handler.
-- Mid-batch steering first closes every remaining accepted call with end-only `code=steered`, then appends one steering user row and continues the same run. Would-complete steering precedes follow-up.
+- Mid-batch steering first pre-copies/reserves the future user row, then closes every remaining accepted call with the stable end-only body `error: code=steered message=steering selected; pending tool did not execute.`, appends without allocation, and continues the same run.
+- One atomic would-complete peek gives steering priority over follow-up; that boundary rechecks cancel before selection.
 - Control is one-at-a-time and does not extend `max_turns`; without budget for an answering provider turn, the item remains pending and the run reports `max_turns`.
-- Cooperative flag checks between provider turns and Tool calls.
 - **In-flight provider path** (h-provider-001): cancel flag + optional end-to-end `provider_timeout_ms` → `RequestControl`.
 - **curl** actively enforces deadline/cancel; **std** fails closed with `unsupported_control` when a deadline is configured (ordinary no-timeout std remains usable).
 - Loop is sole retry/backoff owner (overflow-safe ≤25ms slices); Timeout/Cancelled/UnsupportedControl are not retried.

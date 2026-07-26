@@ -64,9 +64,10 @@ The steering task adds one source-backed product variant without changing run ow
 |---|---|---|---|
 | `control_applied` | Core append/commit fact mapped by coding-agent | kind (`steering` / `follow_up`), intended next turn, borrowed text | one queued item was copied into Transcript and committed |
 
-`control_applied` records accepted application, not enqueue and not guaranteed model completion. It may be followed by
-cancellation or another hard terminal before the intended next assistant message. The event is trusted E0-only and is
-not serialized into Trace v1 or `headless-v1`.
+`control_applied` records accepted application, not enqueue and not guaranteed model completion. Its
+`next_turn = turns + 1` after Core proves another turn is available. It may be followed by cancellation or another hard
+terminal before the intended next assistant message. The event is trusted E0-only and is not serialized into Trace v1
+or `headless-v1`.
 
 ### Source-truth: start vs end-only
 
@@ -77,7 +78,7 @@ shell, handler-failure, invalid-arguments, unknown-tool paths). A **pending acce
 consumers can correlate by turn + call index + id without a synthetic start.
 
 A pending accepted Tool call skipped because steering interrupts the remaining batch follows the same end-only shape but
-uses truthful `code=steered`, not `cancelled`. The run continues after one steering user row; correlation still advances
+uses the stable body `error: code=steered message=steering selected; pending tool did not execute.`, not `cancelled`. The run continues after one steering user row; correlation still advances
 in program order and no synthetic `tool_start` is emitted.
 
 A hard failure (OOM / sink failure) that occurs **after** `tool_start` but **before** any result exists does **not**

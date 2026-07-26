@@ -16,7 +16,7 @@
 1. message/Tool/run 生命周期事件与 ordering 已由 `harness-events-001` 闭合；
 2. bounded steering queue：Session 每类 4×4096-byte 预分配槽，在明确的 turn/Tool boundary 注入纠偏；
 3. bounded follow-up queue：would-complete 时 one-at-a-time 追加工作，仍在同一 run/terminal；
-4. Core 只持显式 `ControlInput.peek/commit`；queue ownership、retention、cancel、session/trace projection 和 overflow behavior 由 [binding contract](../modules/harness-steering.md) 钉死；
+4. Core 只持显式 `ControlInput.peek(boundary)/commit`；would-complete 原子选择、mid-batch 预留、queue ownership、retention、cancel、session/trace projection 和 overflow behavior 由 [binding contract](../modules/harness-steering.md) 钉死；
 5. 单 Agent Loop 仍是默认和完整路径。
 
 ## Deferred

@@ -44,8 +44,9 @@ Header-less legacy files load as v1. `schema_version != 1` returns `UnsupportedS
 ### Interactive-control state (`harness-steering-001` target)
 
 A Session also owns two bounded process-memory queues for steering/follow-up. `Session.start` preallocates their fixed
-32 KiB text backing **before** any durable create/write; OOM fails start without leaving a newly created session file.
-Pending slots are intentionally absent from schema v1 and resume empty after process restart. Only successfully applied
+32 KiB text backing **before** create/resume I/O or writer-lease acquisition; OOM cannot create a file or retain a lease,
+and errdefer releases the queues on every later start failure. Pending slots are intentionally absent from schema v1 and
+resume empty after process restart. Only successfully applied
 control becomes an ordinary user message row and follows the existing redacted atomic save contract.
 
 Cancel/error/max-turn terminals do not clear pending slots. They remain associated with the same in-memory Session until

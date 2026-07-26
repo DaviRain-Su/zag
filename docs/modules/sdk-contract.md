@@ -57,9 +57,10 @@ All rules below are caller-borrowed unless explicitly stated otherwise.
 | `Redactor` | `Agent`/`Session` | `clone` produces an independent copy. No cryptographic zeroization is promised. |
 | `RequestControl.deadline_mono_ns` | value | Immutable after construction; compares only process-local monotonic time. |
 
-The steering target makes only `Session.enqueueSteering` / `enqueueFollowUp` queue operations thread-safe. `Agent.reply`
-and all other Session operations remain single-flight. Queue calls are not signal-safe, and clear/deinit require no
-concurrent reply or enqueue.
+The steering target makes `Session.enqueueSteering` / `enqueueFollowUp` and pending-count reads mutex-protected. They
+may run on one foreign thread while one reply consumes. `Agent.reply` and all other Session operations remain
+single-flight. Queue calls are not signal-safe; clear/deinit are idle-only and require external synchronization against
+reply plus every queue call.
 
 ## 3. Error contract
 
@@ -224,19 +225,22 @@ try session.enqueueSteering("correct the approach");
 try session.enqueueFollowUp("then add a regression test");
 ```
 
-Each kind has four preallocated 4096-byte FIFO slots. Enqueue copies valid non-empty UTF-8 and returns
-`QueueFull | MessageTooLong | EmptyMessage | InvalidUtf8` without partial mutation or truncation. Enqueue performs no
-allocation and may run from one foreign thread while one reply consumes; the rest of Session/Agent remains
-single-flight and queue calls are not signal-safe.
+Each kind has four preallocated 4096-byte FIFO slots. Enqueue copies valid non-zero-length UTF-8 and returns
+`QueueFull | MessageTooLong | EmptyMessage | InvalidUtf8` without partial mutation or truncation; non-empty whitespace
+is preserved. Enqueue performs no allocation and may run from one foreign thread while one reply consumes; pending
+counts use the same mutex, while clear/deinit remain externally synchronized idle operations.
 
 Core applies steering only before a provider turn, before a not-yet-started Tool, or at would-complete; follow-up applies
-only at would-complete. v1 is one-at-a-time, steering precedes follow-up, and neither extends `max_turns`. Mid-batch
-steering closes remaining accepted calls with end-only `code=steered` (not `cancelled`) before the user row is appended.
-Provider/Tool mid-flight preemption is not claimed.
+only at would-complete. Every boundary rechecks cancel. v1 is one-at-a-time; one atomic would-complete selection gives
+steering priority over follow-up, and neither extends `max_turns`. Mid-batch steering pre-copies/reserves its future user
+row before closing remaining accepted calls with the exact end-only body
+`error: code=steered message=steering selected; pending tool did not execute.` Provider/Tool mid-flight preemption is
+not claimed.
 
 Unapplied entries survive every terminal and remain associated with that Session until apply, explicit idle clear, or
-deinit. Pending slots are not persisted; applied rows use normal redacted session save. One reply still has one
-lifecycle/Trace run and one terminal. Binding details: [harness-steering](./harness-steering.md).
+deinit. Pending slots are not persisted; applied rows use normal redacted session save. If turn budget prevents apply,
+the run reports `max_turns` and hosts may inspect `steeringPending` / `followUpPending` before the next reply. One reply
+still has one lifecycle/Trace run and one terminal. Binding details: [harness-steering](./harness-steering.md).
 
 ## 6. Session persistence
 

@@ -61,8 +61,8 @@ pub const ControlError = error{
 
 pub fn enqueueSteering(self: *Session, text: []const u8) ControlError!void;
 pub fn enqueueFollowUp(self: *Session, text: []const u8) ControlError!void;
-pub fn steeringPending(self: *const Session) usize;
-pub fn followUpPending(self: *const Session) usize;
+pub fn steeringPending(self: *Session) usize;
+pub fn followUpPending(self: *Session) usize;
 pub fn clearControlQueues(self: *Session) void;
 ```
 
@@ -73,11 +73,12 @@ B.
 ### Queue storage
 
 Each Session preallocates four 4096-byte slots for steering and four for follow-up: **32 KiB total text backing**.
-Allocation happens in `Session.start` before any durable session create/write. A preallocation OOM fails start without
-creating a new session file. Enqueue performs no allocation and therefore has no enqueue-path `OutOfMemory`.
+Allocation happens in `Session.start` before create/resume I/O or writer-lease acquisition. A preallocation OOM therefore
+cannot create a file or retain a lease. Errdefer-owned queue storage is released on every later start failure (including
+resume/open/writer errors). Enqueue performs no allocation and therefore has no enqueue-path `OutOfMemory`.
 
 - Input is copied; caller bytes may be released after enqueue returns.
-- Empty input and invalid UTF-8 are rejected.
+- Zero-length input and invalid UTF-8 are rejected. Non-empty whitespace is accepted unchanged as ordinary user input; no trim/normalization occurs.
 - More than 4096 bytes returns `MessageTooLong`; no truncation occurs.
 - The fifth pending item of one kind returns `QueueFull`; FIFO state is unchanged.
 - Steering and follow-up have independent capacity and FIFO order.
@@ -85,14 +86,16 @@ creating a new session file. Enqueue performs no allocation and therefore has no
 
 ### Threading and movement
 
-Only queue methods are thread-safe. One thread may call `enqueueSteering` / `enqueueFollowUp` while another thread is
-inside one `Agent.reply` for the same Session. `Agent.reply` itself remains single-flight; concurrent replies using the
-same Agent or Session are unsupported. Queue methods are not async-signal-safe; SIGINT continues to touch only
-`CancelFlag`.
+`enqueueSteering`, `enqueueFollowUp`, `steeringPending`, and `followUpPending` use the same queue mutex and may run on
+one foreign thread while another thread is inside one `Agent.reply` for the same Session. `Agent.reply` itself remains
+single-flight; concurrent replies using the same Agent or Session are unsupported. Queue methods are not
+async-signal-safe; SIGINT continues to touch only `CancelFlag`.
 
 A Session may be moved while idle, but its address must remain stable while `reply` or any queue operation is in flight.
-`clearControlQueues` and `Session.deinit` require no concurrent reply/enqueue. Lifecycle callbacks may enqueue for the
-same Session, but may not re-enter `reply`, clear, deinit, or otherwise mutate the running Agent/Session.
+`clearControlQueues` and `Session.deinit` are idle-only: the host must externally synchronize them against reply and all
+enqueue/pending calls; violating this is unsupported and may be a data race. Lifecycle callbacks may enqueue/poll
+pending counts for the same Session, but may not re-enter `reply`, clear, deinit, or otherwise mutate the running
+Agent/Session.
 
 ## Core `ControlInput` seam
 
@@ -101,21 +104,28 @@ safety policy and owns no queue:
 
 ```zig
 pub const Kind = enum { steering, follow_up };
+pub const Boundary = enum { pre_turn, between_tools, would_complete };
+pub const Item = struct { kind: Kind, text: []const u8 };
 
 pub const ControlInput = struct {
     ptr: ?*anyopaque,
     vtable: *const VTable,
 
-    pub fn peek(self: ControlInput, kind: Kind) ?[]const u8;
+    pub fn peek(self: ControlInput, boundary: Boundary) ?Item;
     pub fn commit(self: ControlInput, kind: Kind) void;
     pub fn none() ControlInput;
 };
 ```
 
-`peek` is non-destructive. Its borrowed head slice remains immutable until the single loop consumer calls `commit`.
+`peek(boundary)` is non-destructive and chooses under one product-queue lock: pre-turn/between-Tools may select only
+steering; would-complete selects steering first, otherwise follow-up. This gives concurrent enqueue a single
+linearization point instead of two non-atomic per-kind peeks. The returned head slice remains immutable until the single
+loop consumer calls `commit`.
+
 Core first copies the bytes into the authoritative Transcript; only a successful append permits `commit`. This prevents
-append OOM from silently consuming a queued message. `commit` is infallible and removes exactly the item previously
-peeked for that kind.
+append OOM from silently consuming a queued message. `commit` is infallible and removes the current head of the returned
+kind. Core must call it only after a matching peek; wrong-kind/no-peek commit is a programming error and product Debug
+builds assert.
 
 Low-level composers must write `.control_input = .none()` when no control source exists. Product `Agent.reply` always
 installs an adapter bound to the exact `*Session` argument of that call; Agent must not cache a Session pointer across
@@ -131,26 +141,29 @@ outer loop while another provider turn is available
   cancel? → cancelled terminal path; queues unchanged
 
   pre-turn boundary
+    cancel? → cancelled; no peek/commit
     unless the previous boundary already injected one item for this turn:
-      peek one steering → append user → commit → control_applied
+      peek(.pre_turn) → append user → commit → control_applied
 
   turn_start → ContextView → Provider.chat → append complete assistant
 
   assistant has no Tool calls (would complete)
+    cancel? → cancelled; no peek/commit
     if another provider turn is available:
-      first steering, else follow-up
+      peek(.would_complete) atomically chooses steering, else follow-up
       append one user → commit → control_applied → continue outer loop
-    else if steering/follow-up remains:
+    else if peek(.would_complete) observes a pending item:
       return max_turns without consuming it
     else:
       return completed
 
   assistant has accepted Tool calls
-    before each not-yet-started Tool, if another provider turn is available:
+    before each not-yet-started Tool:
       cancel? → existing cancelled backfill + cancelled result
-      steering pending?
+      if another provider turn is available and peek(.between_tools) returns steering:
+        pre-copy steering bytes and reserve transcript capacity for all remaining Tool rows + one user row
         finish every remaining accepted call with end-only code=steered
-        append one steering user → commit → control_applied
+        append the prepared user row without allocation → commit → control_applied
         continue outer loop
       otherwise execute the Tool normally
 
@@ -159,8 +172,10 @@ outer loop while another provider turn is available
 ```
 
 A boundary that injects steering/follow-up suppresses the immediately following pre-turn poll. This is the v1
-one-at-a-time rule: one control message, then one provider turn. At a would-complete boundary, steering has priority over
-follow-up; remaining items keep FIFO order for later turns.
+one-at-a-time rule: one control message, then one provider turn. The single `peek(.would_complete)` call gives steering
+priority over follow-up at one lock linearization point; remaining items keep per-kind FIFO order for later turns.
+Every apply uses `next_turn = turns + 1` after proving `turns < max_turns`, so the value cannot overflow and is at most
+`max_turns`.
 
 ### Max-turn behavior
 
@@ -181,8 +196,11 @@ steering input                           user
 next model turn                         assistant ...
 ```
 
-`tool_error.Code.steered` is distinct from `cancelled`. A steering interruption continues the run; a cancellation ends
-it. Reusing `cancelled` would make machine-readable transcript/Trace evidence lie about the terminal condition.
+`tool_error.Code.steered` is distinct from `cancelled`. Its stable full body is
+`error: code=steered message=steering selected; pending tool did not execute.` A `steered` result means Core selected a
+queued steering item at that boundary and skipped the pending call; `control_applied` additionally means the user row
+was appended and the queue head committed. A steering interruption continues the run; a cancellation ends it. Reusing
+`cancelled` would make machine-readable transcript/Trace evidence lie about the terminal condition.
 
 End-only `steered` results carry the original call id/name and advance lifecycle call indexes exactly like end-only
 cancelled results. No synthetic `tool_start` is emitted. A hard failure after a real `tool_start` but before a result
@@ -190,18 +208,39 @@ still does not fabricate `tool_end`.
 
 ## Apply transaction and source fact
 
-One item is applied in this order:
+Pre-turn and would-complete application use:
 
 ```text
 peek borrowed queue head
   → Transcript.appendUser (owned Session arena copy)
   → commit queue head
-  → LoopEvent.control_applied { kind, next_turn, text=transcript-owned bytes }
+  → LoopEvent.control_applied { kind, next_turn=turns+1, text=transcript-owned bytes }
 ```
 
-If append returns OOM, no commit/event occurs and the message remains queued. If the fallible event sink fails after
-append+commit, the run fails visibly; the authoritative in-memory transcript already contains the applied message and
-it is not queued twice.
+If ordinary append returns OOM, no commit/event occurs and the message remains queued.
+
+Mid-batch steering must eliminate the later append-OOM hole before it writes any `steered` result:
+
+```text
+peek(.between_tools)
+  → Transcript.prepareUser(text, reserve_rows = remaining_tools + 1)
+      · copy text into transcript arena
+      · ensure message-list capacity for every Tool result plus the user row
+      · expose no user row yet
+  → finish remaining Tool rows with code=steered
+  → Transcript.appendPreparedUser without allocation
+  → commit steering head
+  → LoopEvent.control_applied
+```
+
+Preparation OOM occurs before any `steered` side effect and leaves the queue pending. A hard body/sink/transcript failure
+while backfilling may leave the same partial hard-failure evidence as existing cancellation; the run fails visibly, the
+prepared user row is not exposed, and the uncommitted steering remains queued. Because final prepared-user append is
+infallible after every backfill succeeds, the transcript cannot contain a fully `steered` batch solely followed by an
+append OOM and no user row.
+
+If the fallible `control_applied` sink fails after append+commit, the run fails visibly; the authoritative in-memory
+transcript already contains the applied message and it is not queued twice.
 
 Core `LoopEvent.control_applied` is an existing-channel source fact, not a product run terminal or third Core lifecycle
 observer. Coding-agent projects it to:
@@ -214,9 +253,10 @@ LifecycleEvent.control_applied: struct {
 }
 ```
 
-The payload is synchronous and borrowed. `next_turn` is the provider-turn number the control is intended to feed. The
-event may still be followed by cancellation or another hard terminal before an assistant message; it records
-application, not guaranteed model completion.
+The payload is synchronous and borrowed. At every insertion point `next_turn = turns + 1` after checking another turn
+is available. It is the provider-turn number the control is intended to feed, not proof that the turn starts. The event
+may still be followed by cancellation or another hard terminal before an assistant message; it records application,
+not guaranteed model completion.
 
 ## Terminal, retention, and persistence
 
@@ -247,15 +287,17 @@ messages extend the loop. Turns and usage accumulate normally; `final_text` is t
 
 | Failure | Required behavior |
 |---|---|
-| Session control preallocation OOM | `Session.start` fails before durable create/write |
+| Session control preallocation OOM | `Session.start` fails before create/resume I/O or writer lease; all prior allocations release |
 | invalid/empty/oversized enqueue | typed error; no queue mutation |
 | queue full | `QueueFull`; no overwrite/drop |
-| transcript append OOM | no commit/event; item remains pending; truthful OOM terminal |
+| ordinary transcript append OOM | no commit/event; item remains pending; truthful OOM terminal |
+| mid-batch prepare OOM | occurs before `steered`; no commit/event; item remains pending |
+| mid-batch backfill hard failure | partial hard-failure evidence may remain in memory; prepared user is hidden; item remains pending; truthful terminal |
 | source sink failure after commit | applied row stays in memory; item remains consumed; truthful terminal |
-| cancel observed before boundary | no apply; pending entries remain |
-| max turns leaves no answer turn | no apply; `max_turns`; pending entries remain |
-| explicit clear/deinit | pending process-memory items are discarded by explicit host action |
-| concurrent reply/clear/deinit | unsupported host misuse; no thread-safety claim |
+| cancel observed at any apply boundary | no peek/commit; pending entries remain |
+| max turns leaves no answer turn | no apply; `max_turns`; pending entries remain; host may inspect pending counts |
+| explicit clear/deinit | idle-only explicit host action discards pending process-memory items |
+| concurrent reply/clear/deinit | unsupported/data-race misuse; host must externally synchronize |
 
 ## Acceptance
 
@@ -263,13 +305,15 @@ messages extend the loop. Turns and usage accumulate normally; `final_text` is t
 2. Session A's queue is never consumed by `reply` on Session B.
 3. Pre-turn steering is appended after the current reply's explicit user text and before turn 1.
 4. Steering queued during Provider execution applies only after the complete turn, at would-complete or before the next
-   not-yet-started Tool; it never aborts the in-flight request.
-5. Mid-batch steering produces normal start/end for executed calls and end-only `code=steered` for all remaining calls,
-   then one user row and a new model turn.
+   not-yet-started Tool; it never aborts the in-flight request. Every apply boundary rechecks cancel first.
+5. Mid-batch steering pre-copies/reserves the user row before any side effect, then produces normal start/end for
+   executed calls and end-only stable `code=steered` bodies for all remaining calls; fully successful backfill cannot be
+   stranded by a later append OOM.
 6. Follow-up applies only at would-complete and stays in the same run with one terminal.
-7. One-at-a-time FIFO, steering-before-follow-up, max-turn retention, cancel retention, and explicit clear are fixture
-   pinned.
-8. Enqueue from another thread while one reply runs is race-free, allocation-free, bounded, and deterministic.
+7. One-at-a-time FIFO, atomic would-complete steering priority, `next_turn = turns + 1`, max-turn/cancel retention, and
+   explicit idle clear are fixture pinned.
+8. Enqueue/pending-count reads from another thread while one reply runs are race-free, allocation-free, bounded, and
+   deterministic; clear/deinit remain externally synchronized idle operations.
 9. Session save/resume contains applied redacted user rows but never pending queue slots.
 10. Lifecycle exposes borrowed source-backed `control_applied`; Trace v1, Observer, session v1, headless-v1, and CLI
     SIGINT schemas/behavior remain compatible.

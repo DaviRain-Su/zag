@@ -212,6 +212,8 @@ src/main.zig → zag-cli → zag-coding-agent → zag-agent-core → zag-types
 ### D-011 target boundary
 
 ```text
+Session control queues ──► explicit ControlInput ──► Core safe insertion points
+                                                    │
 Core loop source facts ──► required LoopEventSink ──► coding-agent fan-out
        │                                                ├─ durable Trace (fail closed)
        │                                                ├─ verbose Observer (best effort)
@@ -220,10 +222,11 @@ Core loop source facts ──► required LoopEventSink ──► coding-agent f
                                   └─ one run terminal
 ```
 
-Core retains Tool metadata validation and `ToolPolicy → Jail → ShellPolicy → execute` ordering. The five seams are
-explicit; missing safety ports never mean allow. Current concrete modules migrate serially under
-[`modules/core-boundary.md`](./modules/core-boundary.md); until their implementation tasks merge, the module table below
-records current paths and target owners separately.
+Core retains Tool metadata validation and `ToolPolicy → Jail → ShellPolicy → execute` ordering. The five closed D-011
+seams are explicit; missing safety ports never mean allow. `harness-steering-001` adds a sixth explicit but non-safety
+`ControlInput` composition field: low-level hosts select `.none()`, while coding-agent owns all concrete Session queue
+state. The D-011 ownership migration is complete; follow-on capabilities must preserve the owner map in
+[`modules/core-boundary.md`](./modules/core-boundary.md).
 
 规格映射见 [modules/README.md](./modules/README.md#代码映射表)。
 
