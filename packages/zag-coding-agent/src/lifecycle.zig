@@ -31,6 +31,12 @@ const loop = core.loop;
 /// stop categories; it projects the facade's truthful terminal category.
 pub const StopReason = loop.StopReason;
 
+/// Control kind projected from Core `control_input.Kind` (harness-steering-001).
+pub const ControlKind = enum {
+    steering,
+    follow_up,
+};
+
 /// One public lifecycle event. Payload slices are borrowed for the duration of
 /// the callback only.
 pub const LifecycleEvent = union(enum) {
@@ -60,13 +66,22 @@ pub const LifecycleEvent = union(enum) {
     /// Emitted when a Tool call has a final body (ordinary, soft-result, deny,
     /// jail, shell, handler failure, invalid arguments, unknown tool, or
     /// pending-cancel between tools). Pending-cancel calls emit `tool_end`
-    /// **only** (no preceding `tool_start`).
+    /// **only** (no preceding `tool_start`). End-only mid-batch steering uses
+    /// `code=steered` (distinct from `cancelled`).
     tool_end: struct {
         turn: u32,
         call_index: u32,
         id: []const u8,
         name: []const u8,
         body: []const u8,
+    },
+    /// One queued control item was appended to Transcript and committed.
+    /// Synchronous borrowed payload; lifecycle-only (no Trace/Observer/headless).
+    /// `next_turn` is the intended provider-turn number, not proof of completion.
+    control_applied: struct {
+        kind: ControlKind,
+        next_turn: u32,
+        text: []const u8,
     },
     /// Emitted exactly once as the final lifecycle callback after session/Trace
     /// outcome precedence is known. `ok` reflects the truthful final outcome.

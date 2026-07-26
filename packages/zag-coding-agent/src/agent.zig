@@ -30,8 +30,10 @@ const workspace = @import("workspace.zig");
 const trace_mod = @import("trace.zig");
 const redact_mod = @import("redact.zig");
 const lifecycle_mod = @import("lifecycle.zig");
+const control_queue_mod = @import("control_queue.zig");
 const loop = core.loop;
 const cancel_mod = core.cancel;
+const control_input_mod = core.control_input;
 
 // D-011 seam ports (adapted over current product behavior).
 const tool_policy_mod = core.tool_policy;
@@ -118,8 +120,14 @@ pub const StartError = loop.RunError || session_store.Error;
 /// Loop + session + explicit-trace errors. `TraceIoFailed` is distinct from session `IoFailed`.
 pub const ReplyError = loop.RunError || session_store.Error || trace_mod.Error;
 
-/// One conversation. Owns the transcript arena (heap-stable so Session is movable)
-/// and, when persisted, the active writer lease for that path.
+pub const control_queue_capacity = control_queue_mod.capacity;
+pub const control_message_max_bytes = control_queue_mod.message_max_bytes;
+pub const ControlError = control_queue_mod.ControlError;
+pub const ControlKind = control_queue_mod.Kind;
+
+/// One conversation. Owns the transcript arena (heap-stable so Session is movable
+/// while idle), Session-owned control queues, and when persisted the active writer
+/// lease for that path. Address must remain stable while reply or queue ops run.
 pub const Session = struct {
     gpa: std.mem.Allocator,
     io: Io,
@@ -141,6 +149,9 @@ pub const Session = struct {
     zag_version: []const u8 = "0.5.0",
     /// Session-owned redaction policy (cloned at start; survives Agent deinit).
     owned_redactor: ?redact_mod.Redactor = null,
+    /// harness-steering-001: Session-owned dual control queues (32 KiB backing).
+    /// Preallocated before create/resume I/O or writer lease; process-memory only.
+    control_queues: control_queue_mod.DualQueues,
     /// Test-only: next `noteCompaction` returns OOM without mutating gen/summary.
     fail_next_note_compaction: if (builtin.is_test) bool else void =
         if (builtin.is_test) false else {},
@@ -157,6 +168,11 @@ pub const Session = struct {
             gpa.destroy(arena_impl);
         }
         const arena = arena_impl.allocator();
+
+        // Control queues: preallocate BEFORE create/resume I/O or writer lease so
+        // preallocation OOM cannot create a file or retain a lease (harness-steering-001).
+        var control_queues = try control_queue_mod.DualQueues.init(gpa);
+        errdefer control_queues.deinit(gpa);
 
         var transcript = transcript_mod.Transcript.init(arena);
         var path_owned: ?[]u8 = null;
@@ -245,6 +261,9 @@ pub const Session = struct {
         // Move owned_redactor into Session (disable errdefer free).
         const moved_redactor = owned_redactor;
         owned_redactor = null;
+        // Move control queues (disable errdefer free).
+        const moved_queues = control_queues;
+        control_queues = undefined;
         return finishSession(
             gpa,
             io,
@@ -258,6 +277,7 @@ pub const Session = struct {
             compaction_gen,
             compaction_summary,
             moved_redactor,
+            moved_queues,
         );
     }
 
@@ -274,6 +294,7 @@ pub const Session = struct {
         compaction_gen: u32,
         compaction_summary: ?[]const u8,
         owned_redactor: ?redact_mod.Redactor,
+        control_queues: control_queue_mod.DualQueues,
     ) Session {
         return .{
             .gpa = gpa,
@@ -288,6 +309,7 @@ pub const Session = struct {
             .compaction_gen = compaction_gen,
             .compaction_summary = compaction_summary,
             .owned_redactor = owned_redactor,
+            .control_queues = control_queues,
         };
     }
 
@@ -344,12 +366,43 @@ pub const Session = struct {
     }
 
     pub fn deinit(self: *Session) void {
+        // Idle-only by contract (externally synchronized against reply/enqueue).
+        self.control_queues.deinit(self.gpa);
         if (self.writer) |*w| w.deinit();
         if (self.path) |p| self.gpa.free(p);
         if (self.owned_redactor) |*r| r.deinit();
         self.arena_impl.deinit();
         self.gpa.destroy(self.arena_impl);
         self.* = undefined;
+    }
+
+    /// Queue a steering message for the next safe model/Tool boundary.
+    /// Copies input; caller bytes may be released after return. No allocation.
+    pub fn enqueueSteering(self: *Session, text: []const u8) ControlError!void {
+        return self.control_queues.enqueueSteering(text);
+    }
+
+    /// Queue a follow-up message for the next would-complete boundary.
+    pub fn enqueueFollowUp(self: *Session, text: []const u8) ControlError!void {
+        return self.control_queues.enqueueFollowUp(text);
+    }
+
+    pub fn steeringPending(self: *Session) usize {
+        return self.control_queues.steeringPending();
+    }
+
+    pub fn followUpPending(self: *Session) usize {
+        return self.control_queues.followUpPending();
+    }
+
+    /// Idle-only: discard unapplied process-memory control items.
+    pub fn clearControlQueues(self: *Session) void {
+        self.control_queues.clear();
+    }
+
+    /// Borrowed ControlInput bound to this Session for one `loop.run`.
+    fn controlInput(self: *Session) control_input_mod.ControlInput {
+        return self.control_queues.asControlInput();
     }
 
     /// Active session redactor (owned); null only if construction failed (should not happen).
@@ -443,6 +496,8 @@ const RunBridge = struct {
                 .{ .ptr = null, .vtable = &protect_shell_vtable },
             .context_view = .{ .ptr = self, .vtable = &bridge_context_vtable },
             .event_sink = .{ .ptr = self, .vtable = &bridge_sink_vtable },
+            // Bound to the exact *Session of this reply; Agent does not cache Session.
+            .control_input = self.session.controlInput(),
             .options = .{
                 .max_turns = a.options.max_turns,
                 .chat_retries = a.options.chat_retries,
@@ -728,6 +783,18 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             if (bridge.trace) |tr| {
                 tr.emitCompactionEvent(ev) catch |err| return mapTraceToSink(err);
             }
+        },
+        .control_applied => |c| {
+            // Lifecycle-only projection (harness-steering-001). No Trace kind,
+            // no Observer event, no headless serialization.
+            a.emitLifecycle(.{ .control_applied = .{
+                .kind = switch (c.kind) {
+                    .steering => .steering,
+                    .follow_up => .follow_up,
+                },
+                .next_turn = c.next_turn,
+                .text = c.text,
+            } });
         },
     }
 }
@@ -2887,7 +2954,9 @@ test "h-context: noteCompaction OOM leaves gen and summary unchanged" {
     const io = std.testing.io;
 
     // Bound the session allocator so summary dupe can fail after start.
-    var storage: [32 * 1024]u8 = undefined;
+    // Budget must cover harness-steering-001 control queue preallocation
+    // (32 KiB text backing) plus arena/redactor overhead for Session.start.
+    var storage: [96 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&storage);
     const limited = fba.allocator();
 
@@ -3034,6 +3103,7 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
         .shell_policy = loop.ShellPolicy.allowAllForTrustedHost(),
         .context_view = .{ .ptr = &ctx_state, .vtable = &layered_context_vtable },
         .event_sink = .{ .ptr = &oom_sink, .vtable = &oom_sink_vtable },
+        .control_input = loop.ControlInput.none(),
         .options = .{
             .max_turns = 2,
         },
@@ -5951,6 +6021,7 @@ const LifecycleKind = enum {
     assistant_message,
     tool_start,
     tool_end,
+    control_applied,
     run_terminal,
 };
 
@@ -5965,6 +6036,8 @@ const OwnedLifecycleEvent = struct {
     name: ?[]u8 = null,
     arguments: ?[]u8 = null,
     body: ?[]u8 = null,
+    control_kind: ?lifecycle_mod.ControlKind = null,
+    next_turn: u32 = 0,
     turns: u32 = 0,
     ok: bool = false,
     stop_reason: loop.StopReason = .completed,
@@ -6075,6 +6148,15 @@ const LifecycleRecorder = struct {
                     .id = id,
                     .name = name,
                     .body = body,
+                };
+            },
+            .control_applied => |c| blk: {
+                const text = self.gpa.dupe(u8, c.text) catch return;
+                break :blk .{
+                    .kind = .control_applied,
+                    .control_kind = c.kind,
+                    .next_turn = c.next_turn,
+                    .text = text,
                 };
             },
             .run_terminal => |rt| .{
@@ -7345,4 +7427,460 @@ test "harness-events: soft-result correlation unknown invalid jail shell handler
     try std.testing.expect(term.ok);
     try std.testing.expectEqual(loop.StopReason.completed, term.stop_reason);
     try std.testing.expectEqual(@as(u32, 2), term.turns);
+}
+
+// ── harness-steering-001 product fixtures ───────────────────────────────────
+
+test "harness-steering: Session A queue not consumed by Session B" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+
+    var session_a = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session_a.deinit();
+    var session_b = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session_b.deinit();
+
+    try session_a.enqueueSteering("only-a");
+    try std.testing.expectEqual(@as(usize, 1), session_a.steeringPending());
+    try std.testing.expectEqual(@as(usize, 0), session_b.steeringPending());
+
+    // reply on B must not consume A's queue.
+    _ = try agent.reply(&session_b, "hi-b");
+    try std.testing.expectEqual(@as(usize, 1), session_a.steeringPending());
+    try std.testing.expectEqual(@as(usize, 0), session_b.steeringPending());
+
+    _ = try agent.reply(&session_a, "hi-a");
+    try std.testing.expectEqual(@as(usize, 0), session_a.steeringPending());
+}
+
+test "harness-steering: follow-up continues same run one terminal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try session.enqueueFollowUp("more-please");
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), result.turns);
+    try std.testing.expectEqual(@as(u32, 1), rec.terminal_count);
+    try std.testing.expectEqual(@as(u32, 1), rec.countKind(.control_applied));
+    try std.testing.expectEqual(@as(usize, 0), session.followUpPending());
+    // Ordering: run_start, control_applied (would-complete after turn1? actually
+    // follow-up only at would-complete after turn 1), so: start, assistant, control, assistant, terminal.
+    try expectKindSequence(&rec, &.{
+        .run_start,
+        .assistant_message,
+        .control_applied,
+        .assistant_message,
+        .run_terminal,
+    });
+    try std.testing.expectEqual(lifecycle_mod.ControlKind.follow_up, rec.events.items[2].control_kind.?);
+    try std.testing.expectEqual(@as(u32, 2), rec.events.items[2].next_turn);
+}
+
+test "harness-steering: pre-turn steering after explicit user before turn 1" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try session.enqueueSteering("steer-now");
+    const result = try agent.reply(&session, "explicit-user");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    // Pre-turn applies before turn 1; would-complete empty after text → completed in 1 turn.
+    try std.testing.expectEqual(@as(u32, 1), result.turns);
+    try std.testing.expectEqual(@as(u32, 1), rec.countKind(.control_applied));
+    try std.testing.expectEqual(@as(u32, 1), rec.events.items[1].next_turn);
+    // Transcript order: system, explicit user, steering user, assistant.
+    var saw_explicit = false;
+    var saw_steer = false;
+    for (session.transcript.items()) |m| {
+        if (m.role == .user and std.mem.eql(u8, m.content, "explicit-user")) saw_explicit = true;
+        if (m.role == .user and std.mem.eql(u8, m.content, "steer-now")) {
+            try std.testing.expect(saw_explicit);
+            saw_steer = true;
+        }
+    }
+    try std.testing.expect(saw_steer);
+}
+
+test "harness-steering: cancel retains unapplied; later reply consumes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try session.enqueueSteering("retained");
+    agent.cancel.request();
+    const cancelled = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.cancelled, cancelled.stop_reason);
+    try std.testing.expectEqual(@as(usize, 1), session.steeringPending());
+
+    // Next reply clears cancel via defer and applies retained steering.
+    const done = try agent.reply(&session, "again");
+    try std.testing.expectEqual(loop.StopReason.completed, done.stop_reason);
+    try std.testing.expectEqual(@as(usize, 0), session.steeringPending());
+}
+
+test "harness-steering: clearControlQueues idle drop" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try session.enqueueSteering("a");
+    try session.enqueueFollowUp("b");
+    try std.testing.expectEqual(@as(usize, 1), session.steeringPending());
+    try std.testing.expectEqual(@as(usize, 1), session.followUpPending());
+    session.clearControlQueues();
+    try std.testing.expectEqual(@as(usize, 0), session.steeringPending());
+    try std.testing.expectEqual(@as(usize, 0), session.followUpPending());
+}
+
+test "harness-steering: applied user saves; pending not serialized" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-steer-session";
+    const path = ".zag-test-steer-session/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var calls: u32 = 0;
+    var mock: MockChat = .{ .calls = &calls, .mode = .text };
+    var agent = try Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+
+        try session.enqueueSteering("applied-row");
+        try session.enqueueFollowUp("still-pending");
+        // max_turns=1 would retain follow-up at would-complete; use 1 turn then leave follow-up.
+        // With default max_turns, both would drain. Cap at 1 so follow-up stays pending.
+        agent.options.max_turns = 1;
+        const result = try agent.reply(&session, "explicit");
+        // Pre-turn applied steering; turn 1 text; would-complete peeks follow-up but no room.
+        try std.testing.expectEqual(loop.StopReason.max_turns, result.stop_reason);
+        try std.testing.expectEqual(@as(usize, 0), session.steeringPending());
+        try std.testing.expectEqual(@as(usize, 1), session.followUpPending());
+    }
+
+    const raw = try Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024));
+    defer gpa.free(raw);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "applied-row") != null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "still-pending") == null);
+    try std.testing.expect(std.mem.indexOf(u8, raw, "steeringPending") == null);
+
+    // Resume starts with empty queues; applied row present in transcript.
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    try std.testing.expectEqual(@as(usize, 0), resumed.steeringPending());
+    try std.testing.expectEqual(@as(usize, 0), resumed.followUpPending());
+    var found = false;
+    for (resumed.transcript.items()) |m| {
+        if (m.role == .user and std.mem.eql(u8, m.content, "applied-row")) found = true;
+    }
+    try std.testing.expect(found);
+}
+
+test "harness-steering: foreign-thread enqueue during reply is observed" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const Barrier = struct {
+        in_chat: std.atomic.Value(bool) = .init(false),
+        enqueued: std.atomic.Value(bool) = .init(false),
+
+        fn waitTrue(flag: *std.atomic.Value(bool)) void {
+            while (!flag.load(.acquire)) {
+                std.Thread.yield() catch {};
+            }
+        }
+    };
+
+    const Mock = struct {
+        barrier: *Barrier,
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                self.barrier.in_chat.store(true, .release);
+                Barrier.waitTrue(&self.barrier.enqueued);
+                return .{
+                    .content = try arena.dupe(u8, "first"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+            return .{
+                .content = try arena.dupe(u8, "after-follow"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var barrier: Barrier = .{};
+    var mock: Mock = .{ .barrier = &barrier };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var agent = try Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const Worker = struct {
+        session: *Session,
+        barrier: *Barrier,
+        fn run(self: *@This()) void {
+            Barrier.waitTrue(&self.barrier.in_chat);
+            self.session.enqueueFollowUp("from-thread") catch {};
+            _ = self.session.followUpPending();
+            self.barrier.enqueued.store(true, .release);
+        }
+    };
+    var worker: Worker = .{ .session = &session, .barrier = &barrier };
+    const thr = try std.Thread.spawn(.{}, Worker.run, .{&worker});
+    defer thr.join();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 2), result.turns);
+    try std.testing.expectEqual(@as(usize, 0), session.followUpPending());
+}
+
+test "harness-steering: Session start preallocation OOM before create file" {
+    const io = std.testing.io;
+    const dir_name = ".zag-test-steer-oom";
+    const path = ".zag-test-steer-oom/s.jsonl";
+    Io.Dir.cwd().createDirPath(io, dir_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    // Fail on first allocation of queue backing.
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
+    const err = Session.start(failing.allocator(), io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+    });
+    try std.testing.expectError(error.OutOfMemory, err);
+
+    // File must not exist (no create/lease).
+    const access = Io.Dir.cwd().access(io, path, .{});
+    try std.testing.expectError(error.FileNotFound, access);
+}
+
+test "harness-steering: mid-batch product path steered body + lifecycle" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    const State = struct { n: u32 = 0 };
+    const Stub = struct {
+        fn h(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.n += 1;
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{ .name = "read_file", .description = "", .parameters_json = "{\"type\":\"object\"}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .{ .path_field = "path" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .instance = &state,
+        .handler = Stub.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        session: *Session,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                // Enqueue during provider so pre-turn cannot consume; first between_tools
+                // still peeks before Tool 1 — so both tools would be steered. Push after
+                // first tool by using a delayed approach: enqueue only steering that
+                // appears after tool1 if we enqueue mid-handler... simpler: accept both
+                // steered if queued before tools, OR enqueue in tool handler after n=1.
+                const tc = try arena.alloc(message.ToolCall, 2);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "c1"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"a.txt\"}"),
+                };
+                tc[1] = .{
+                    .id = try arena.dupe(u8, "c2"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"b.txt\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    // Enqueue from tool handler after first execution to hit mid-batch before tool 2.
+    const EnqueueStub = struct {
+        fn h(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *struct { n: u32, session: *Session } = @ptrCast(@alignCast(instance.?));
+            s.n += 1;
+            if (s.n == 1) {
+                s.session.enqueueSteering("mid-product") catch {};
+            }
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var enq_state: struct { n: u32, session: *Session } = .{ .n = 0, .session = undefined };
+    const enq_tools = [_]tool.Tool{.{
+        .descriptor = tools[0].descriptor,
+        .instance = &enq_state,
+        .handler = EnqueueStub.h,
+    }};
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+    enq_state.session = &session;
+
+    var mock: Mock = .{ .session = &session };
+    const provider = provider_mod.Provider{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } };
+    var agent = try Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .toolset = &enq_tools,
+        .lifecycle = rec.observer(),
+    });
+    defer agent.deinit();
+
+    const result = try agent.reply(&session, "go");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expectEqual(@as(u32, 1), enq_state.n);
+    try std.testing.expectEqual(@as(u32, 1), rec.countKind(.control_applied));
+
+    const te2 = rec.toolEndById("c2").?;
+    try std.testing.expectEqualStrings(core.tool_error.steered_body, te2.body.?);
+    try std.testing.expect(rec.toolStartById("c2") == null);
+    try std.testing.expect(rec.toolStartById("c1") != null);
+    // Correlation: tool_end c2 has call_index 1.
+    try std.testing.expectEqual(@as(u32, 1), te2.call_index);
 }

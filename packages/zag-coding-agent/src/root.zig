@@ -52,6 +52,11 @@ pub const lifecycle = @import("lifecycle.zig");
 pub const LifecycleObserver = lifecycle.LifecycleObserver;
 pub const LifecycleEvent = lifecycle.LifecycleEvent;
 
+// harness-steering-001: Session-owned control queues + product ControlKind.
+pub const control_queue = @import("control_queue.zig");
+pub const ControlError = control_queue.ControlError;
+pub const ControlKind = lifecycle.ControlKind;
+
 /// WireAdapter → Provider bridge (not in core).
 pub const WireProvider = wire_provider.WireProvider;
 pub const Adapter = wire_provider.Adapter;

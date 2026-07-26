@@ -157,6 +157,7 @@ test "low-level zag-types + zag-agent-core composition" {
         .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
     }, &transcript);
 
     try std.testing.expectEqualStrings("done", result.final_text);
@@ -775,6 +776,7 @@ test "low-level core: explicit five-seam permissive composition" {
         .shell_policy = core.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
     }, &transcript);
 
     try std.testing.expectEqualStrings("done", result.final_text);
@@ -862,6 +864,7 @@ test "low-level core: explicit deny policy prevents handler execution" {
         .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
     }, &transcript);
 
     try std.testing.expect(!state.ran);
@@ -924,6 +927,7 @@ test "low-level core: unknown tool soft-fails before policy" {
         .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
     }, &transcript);
 
     var saw = false;
@@ -1050,7 +1054,7 @@ test "borrowed LoopEvent assistant_message is owned-safe after source mutation" 
 // Low-level Core sink fixtures above stay independent (no lifecycle pollution).
 
 const SdkLifecycleOwned = struct {
-    kind: enum { run_start, assistant_message, tool_start, tool_end, run_terminal },
+    kind: enum { run_start, assistant_message, tool_start, tool_end, control_applied, run_terminal },
     turn: u32 = 0,
     call_index: u32 = 0,
     text: ?[]u8 = null,
@@ -1060,6 +1064,7 @@ const SdkLifecycleOwned = struct {
     arguments: ?[]u8 = null,
     body: ?[]u8 = null,
     session_configured: bool = false,
+    next_turn: u32 = 0,
     turns: u32 = 0,
     ok: bool = false,
     stop_reason: coding.loop.StopReason = .completed,
@@ -1163,6 +1168,14 @@ const SdkLifecycleRecorder = struct {
                     .id = id,
                     .name = name,
                     .body = body,
+                };
+            },
+            .control_applied => |c| blk: {
+                const text = self.gpa.dupe(u8, c.text) catch return;
+                break :blk .{
+                    .kind = .control_applied,
+                    .next_turn = c.next_turn,
+                    .text = text,
                 };
             },
             .run_terminal => |rt| .{
@@ -1312,4 +1325,74 @@ test "coding.LifecycleObserver/LifecycleEvent public types resolve from external
     _ = O;
     _ = E;
     _ = L;
+}
+
+// ── harness-steering-001 external consumer surface ──────────────────────────
+
+test "harness-steering: ControlInput.none and steered code resolve from package roots" {
+    const none = core.loop.ControlInput.none();
+    try std.testing.expect(none.peek(.pre_turn) == null);
+    try std.testing.expect(none.peek(.would_complete) == null);
+    try std.testing.expect(core.tool_error.hasCode(core.tool_error.steered_body, .steered));
+    _ = coding.ControlError;
+    _ = coding.ControlKind;
+    _ = coding.control_queue.capacity;
+}
+
+test "harness-steering: Session enqueue copies caller bytes; low-level none composition" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var session = try coding.Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const buf = try gpa.dupe(u8, "external-steer");
+    try session.enqueueSteering(buf);
+    gpa.free(buf);
+    try std.testing.expectEqual(@as(usize, 1), session.steeringPending());
+
+    // Low-level loop composition with explicit none (no Session adapter).
+    const Mock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const core.message.Message,
+            _: []const core.tool.Definition,
+            _: core.provider.RequestControl,
+        ) core.provider.ChatError!core.message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock_state: u8 = 0;
+    const provider = core.provider.Provider{ .ptr = &mock_state, .vtable = &.{ .chat = Mock.chat } };
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = core.transcript.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+    const result = try core.loop.run(.{
+        .gpa = gpa,
+        .provider = provider,
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .tool_policy = core.loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = core.loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = core.loop.ContextView.identity(),
+        .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
+    }, &transcript);
+    try std.testing.expectEqual(core.loop.StopReason.completed, result.stop_reason);
+    // Session queue untouched by low-level none composition.
+    try std.testing.expectEqual(@as(usize, 1), session.steeringPending());
 }

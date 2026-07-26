@@ -174,6 +174,7 @@ test "golden deny-write leaves no file" {
         .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
     }, &transcript);
 
     try std.testing.expectEqualStrings("understood, not writing", result.final_text);
@@ -247,6 +248,7 @@ test "cancel then session save/load resumes" {
         .shell_policy = core.loop.ShellPolicy.allowAllForTrustedHost(),
         .context_view = core.loop.ContextView.identity(),
         .event_sink = core.loop.LoopEventSink.discard(),
+        .control_input = core.loop.ControlInput.none(),
         .options = .{
             .cancel = &cancel_flag,
         },
