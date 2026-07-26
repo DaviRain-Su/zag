@@ -12,7 +12,7 @@
 | Production Floor（Phase H） | ✅ **L2（单用户、受控本机）** |
 | Zig SDK-ready | ✅ **closed at `ebdd7ab`** |
 | Headless/process gate | ✅ **closed at `a1a1e0f`** |
-| Thin Core responsibility migration | docs-first in progress（D-011；L2 behavior unchanged） |
+| Thin Core responsibility migration | D-011 spec done；`core-seams-001` ready（L2 behavior unchanged） |
 | Capability C4–C9 | 未开始 |
 
 > Phase 3 教程演示了 jail / policy / trace，**不等于**生产就绪。权威矩阵：[docs/maturity.md](./docs/maturity.md)。

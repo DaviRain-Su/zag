@@ -1,7 +1,8 @@
 ---
 id: core-boundary-001
 scope: architecture/agent-core-boundary
-status: in-progress
+status: done
+evidence: `d89cdbc` docs commit; independent verify PASS with no blocking findings; ff-only local-main merge; merged-main default and curl full Gates passed; docs lint/readability 91/security 71/OpenAPI 287/catalog 40; no push
 priority: P0
 depends-on: []
 ---
@@ -47,6 +48,7 @@ maturity.
 - `docs/modules/harness-events.md`
 - `docs/modules/sdk-contract.md`
 - `docs/plan/README.md`
+- `docs/plan/backlog.md`
 - `docs/plan/analysis/2026-07-26-thin-core-boundary.md`
 - `docs/plan/analysis/2026-07-26-harness-events-contract.md`
 - `docs/plan/analysis/2026-07-26-pi-zig-alignment.md`
@@ -95,3 +97,16 @@ maturity.
 - deleting or merging the existing harness-events worktree;
 - pushing any local commits;
 - adding steering, session fork, TUI, RPC, extensions, Graph, or sandbox behavior.
+
+# closeout
+
+- Product Spec and migration DAG committed at `d89cdbc` (`docs: define thin agent core boundary`).
+- Independent docs-sprint verify: **pass**, no P1/blocking findings.
+- Local `main` fast-forwarded from `01e330a` to `d89cdbc`; no push.
+- Merged-main default `zig build test`: PASS.
+- Merged-main curl `zig build test -Dhttp_backend=curl`: PASS.
+- Docs lint: PASS; readability **91/100** (50 files); security **71/100** (50 files).
+- OpenAPI coverage: **287/287**; model catalog: **40**, up to date.
+- No `.zig` runtime code, L2 row, Trace/session/headless schema, or product default changed.
+- `core-seams-001` is the next ready task. The existing Core-lifecycle harness-events branch remains unmerged and
+  ineligible; no destructive cleanup or push was performed.
