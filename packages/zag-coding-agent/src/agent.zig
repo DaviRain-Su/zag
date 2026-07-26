@@ -7884,3 +7884,246 @@ test "harness-steering: mid-batch product path steered body + lifecycle" {
     // Correlation: tool_end c2 has call_index 1.
     try std.testing.expectEqual(@as(u32, 1), te2.call_index);
 }
+
+test "harness-steering: Session idle value-move preserves queue then deinit" {
+    // Idle Session may be value-moved; address must remain stable only while
+    // reply/enqueue are in flight (unsupported active move is not claimed).
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    try session.enqueueSteering("moved-steer");
+    try session.enqueueFollowUp("moved-follow");
+    try std.testing.expectEqual(@as(usize, 1), session.steeringPending());
+
+    var moved = session;
+    session = undefined;
+
+    try std.testing.expectEqual(@as(usize, 1), moved.steeringPending());
+    try std.testing.expectEqual(@as(usize, 1), moved.followUpPending());
+    const item = moved.control_queues.peek(.would_complete).?;
+    try std.testing.expectEqual(control_queue_mod.Kind.steering, item.kind);
+    try std.testing.expectEqualStrings("moved-steer", item.text);
+    moved.control_queues.commit(.steering);
+    try std.testing.expectEqual(@as(usize, 0), moved.steeringPending());
+    const follow = moved.control_queues.peek(.would_complete).?;
+    try std.testing.expectEqual(control_queue_mod.Kind.follow_up, follow.kind);
+    moved.control_queues.commit(.follow_up);
+    try std.testing.expectEqual(@as(usize, 0), moved.followUpPending());
+    moved.deinit();
+}
+
+test "harness-steering: Trace records steered tool_result; no control EventKind" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // EventKind remains the Trace v1 twelve-kind set (no control_applied kind).
+    try std.testing.expectEqual(@as(usize, 12), @typeInfo(trace_mod.EventKind).@"enum".fields.len);
+    inline for (@typeInfo(trace_mod.EventKind).@"enum".fields) |f| {
+        try std.testing.expect(!std.mem.eql(u8, f.name, "control_applied"));
+        try std.testing.expect(!std.mem.eql(u8, f.name, "control"));
+        try std.testing.expect(!std.mem.eql(u8, f.name, "steering"));
+    }
+
+    const EnqueueStub = struct {
+        fn h(ctx: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *struct { n: u32, session: *Session } = @ptrCast(@alignCast(instance.?));
+            s.n += 1;
+            if (s.n == 1) {
+                s.session.enqueueSteering("trace-mid-steer") catch {};
+            }
+            return ctx.allocator.dupe(u8, "ran") catch return error.OutOfMemory;
+        }
+    };
+    var enq_state: struct { n: u32, session: *Session } = .{ .n = 0, .session = undefined };
+    const enq_tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{ .name = "read_file", .description = "", .parameters_json = "{\"type\":\"object\"}" },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .{ .path_field = "path" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .instance = &enq_state,
+        .handler = EnqueueStub.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                const tc = try arena.alloc(message.ToolCall, 2);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "tr-c1"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"a.txt\"}"),
+                };
+                tc[1] = .{
+                    .id = try arena.dupe(u8, "tr-c2"),
+                    .name = try arena.dupe(u8, "read_file"),
+                    .arguments = try arena.dupe(u8, "{\"path\":\"b.txt\"}"),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "trace-done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+    enq_state.session = &session;
+
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .max_turns = 4,
+        .toolset = &enq_tools,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    const result = try agent.reply(&session, "go");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 2), tr.countKind("tool_result"));
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call")); // only executed c1
+    // Parsed Trace bytes carry steered body; no new control kind lines.
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "code=steered") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"control_applied\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"control\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"steering\"") == null);
+    try std.testing.expectEqual(@as(u32, 0), tr.countKind("control_applied"));
+}
+
+test "harness-steering: injected steering still hits ask-deny write gate" {
+    // Injected control is ordinary user input; model-requested write still passes
+    // product ToolPolicy (ask + deny gate) and never runs the handler.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const dir_name = ".zag-test-steer-ask-deny";
+    const target = ".zag-test-steer-ask-deny/must-not-write.txt";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    const State = struct { ran: bool = false };
+    const WriteStub = struct {
+        fn h(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+            const s: *State = @ptrCast(@alignCast(instance.?));
+            s.ran = true;
+            return error.ToolFailed;
+        }
+    };
+    var state: State = .{};
+    const tools = [_]tool.Tool{.{
+        .descriptor = .{
+            .definition = .{
+                .name = "write_file",
+                .description = "",
+                .parameters_json = "{\"type\":\"object\"}",
+            },
+            .capabilities = .{
+                .risk = .write,
+                .workspace = .{ .path_field = "path" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+        },
+        .instance = &state,
+        .handler = WriteStub.h,
+    }};
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            // After pre-turn steering, transcript must include injected user text.
+            if (self.calls == 1) {
+                var saw_steer = false;
+                for (messages) |m| {
+                    if (m.role == .user and std.mem.eql(u8, m.content, "please write")) saw_steer = true;
+                }
+                if (!saw_steer) return error.InvalidResponse;
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "steer-write-1"),
+                    .name = try arena.dupe(u8, "write_file"),
+                    .arguments = try arena.dupe(
+                        u8,
+                        "{\"path\":\".zag-test-steer-ask-deny/must-not-write.txt\",\"content\":\"NO\"}",
+                    ),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "denied-ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: Mock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .ask,
+        .permission_gate = permissions.Gate.denyAllDangerous(),
+        .verbose = false,
+        .max_turns = 4,
+        .toolset = &tools,
+        .shell_policy = .protect,
+    });
+    defer agent.deinit();
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try session.enqueueSteering("please write");
+    const result = try agent.reply(&session, "explicit");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    try std.testing.expect(!state.ran);
+    var denied = false;
+    for (session.transcript.items()) |m| {
+        if (m.role == .tool and tool_error.hasCode(m.content, .permission_denied)) denied = true;
+    }
+    try std.testing.expect(denied);
+    try expectPathAbsent(io, target);
+}
