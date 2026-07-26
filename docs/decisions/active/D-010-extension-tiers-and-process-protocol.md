@@ -1,43 +1,71 @@
 ---
 status: active
 id: D-010
-title: Extensions use static Zig composition, passive packages, and a versioned process protocol
+title: Extensions use static Zig, passive packages, process adapters, and a planned WASM component tier
 date: 2026-07-26
 ---
 
-# D-010 — Extension tiers and process protocol
+# D-010 — Extension tiers and bindings
 
 ## Decision
 
-Zag supports extensibility through three deliberately different tiers:
+Zag supports extensibility through four deliberately different tiers:
 
-| Tier | Mechanism | Trust / lifecycle |
-|------|-----------|-------------------|
-| E0 | **Trusted static Zig composition** through the existing SDK (`Toolset`, Provider, Observer, policy) | compiled with the host; same process; already covered by the SDK-ready Gate |
-| E1 | **Passive packages** (`SKILL.md`, later prompt metadata) | runtime discovery; data only; no executable privilege |
-| E2 | **Runtime executable extension** as a long-lived child process speaking versioned `zag-ext-v1` over stdio | language-neutral; process-owned; only after process-supervisor Gate |
-
-WASM/component extensions are a future research option only when an actual untrusted-extension use case justifies a runtime and host-capability surface.
+| Tier | Mechanism | Role |
+|------|-----------|------|
+| E0 | **Trusted static Zig composition** via existing SDK (`Toolset`, Provider, Observer, policy) | built-in/embedded extensions; same process; compile-time composition |
+| E1 | **Passive packages** (`SKILL.md`, later prompt metadata) | runtime discovery without code execution |
+| E2 | **Native process adapter** using a versioned stdio binding | compatibility with MCP/existing executables/system integrations; trusted local code after process supervision |
+| E3 | **WASM Component extension** using a versioned WIT binding | planned preferred format for portable installable third-party Zag extensions |
 
 Zag will not provide a `.so`/`.dylib` Zig plugin ABI or embed Lua/QuickJS/Bun merely to load extensions.
 
+E3 is a roadmap commitment, not a current implementation/maturity claim. Runtime selection and capability-host implementation remain gated tasks.
+
 ## Why
 
-Pi’s TypeScript extension experience depends on in-process runtime loading (`jiti`), JavaScript closures, npm dependencies, and arbitrary UI component factories. Copying that mechanism would reintroduce a script VM and host-memory mutation into a Zig product.
+Pi’s TypeScript extension experience depends on in-process runtime loading (`jiti`), JavaScript closures, npm dependencies, and arbitrary UI component factories. Copying that mechanism would reintroduce a script VM and host-memory mutation.
 
-A process protocol preserves the valuable semantics — tools, lifecycle hooks, commands, diagnostics, cancellation, and declarative interaction — while making language runtime, allocator ownership, crashes, and protocol compatibility explicit.
+The four tiers preserve Pi-like extensibility while matching each trust/use case:
+
+- E0 keeps maximum Zig type/ownership power for trusted embedders;
+- E1 makes common prompt workflows drop-in and safe;
+- E2 connects ecosystems that cannot or should not compile to WASM;
+- E3 gives Zag a portable, capability-mediated distribution target without freezing a native ABI。
+
+Process and WASM remain separate bindings. Not every MCP/server/OS integration can become WASM, and WASM should not inherit unrestricted OS access merely to imitate a process.
 
 ## Current coverage
 
-E0 is not future work: `sdk-contract-001` already proves stateful custom Toolset, Provider, Observer, policy, cancellation, and session composition. It is a trusted source-composition extension surface, not a runtime plugin system.
+E0 is already covered by `sdk-contract-001`: stateful custom Toolset, Provider, Observer, policy, cancellation, and session composition.
 
-E1 begins with `skills-001` after the Harness event/control work.
+E1 begins with `skills-001` after Harness event/control work.
 
-E2 is not scheduled until a real runtime-extension consumer appears and C7’s process-supervisor slice passes.
+E2 begins only after a real process-extension consumer and C7.1 process-supervisor Gate.
 
-## `zag-ext-v1` boundary
+E3 is planned after the common extension semantic contract exists. It has its own contract, runtime-selection, capability, resource, packaging, and adversarial Gates.
 
-`zag-ext-v1` is independent from `headless-v1`. They share design discipline — explicit version, NDJSON framing, bounded bodies, stdout protocol purity, structured errors — but serve opposite directions.
+## Common `zag-ext-v1` semantics
+
+`zag-ext-v1` names the language-neutral **semantic model**, not one wire format. It defines:
+
+- extension identity/version and manifest bounds;
+- Tool definitions + D-007 capabilities;
+- invoke/progress/result/error correlation;
+- cancellation and lifecycle;
+- optional hooks/commands/declarative UI;
+- diagnostics, redaction, state namespace, and resource outcomes。
+
+Bindings:
+
+| Binding | Representation |
+|---------|----------------|
+| E2 process | versioned stdio NDJSON (`zag-ext-process-v1`) |
+| E3 WASM | versioned Component Model/WIT world (`zag:extension@1`) |
+
+Both map into the same host Tool/event contracts. They need semantic parity, not byte parity.
+
+## E2 process binding
 
 Minimum lifecycle:
 
@@ -55,80 +83,97 @@ host → shutdown
 ext  → shutdown_complete
 ```
 
-Hooks/commands/declarative UI are negotiated optional capabilities, not v1 prerequisites.
+Process stdout is protocol-only; diagnostics use bounded stderr. The supervisor owns group/job, frame/output bounds, deadlines, cancel, TERM→KILL, and reap.
+
+Process isolation gives crash/allocator isolation but **is not an OS sandbox**. Downloaded/untrusted native extensions additionally require C7.2 required OS enforcement with no downgrade.
+
+## E3 WASM Component binding
+
+The planned WASM tier uses a Zag-owned WIT contract rather than the old Pi WIT unchanged.
+
+V1 design constraints:
+
+- component exports manifest/ready and Tool invoke/result operations;
+- progress and cancellation use bounded host functions/resources defined by the WIT task;
+- no unrestricted WASI filesystem, network, environment, clocks, or process spawn by default;
+- workspace operations, if added, are host-mediated capabilities and re-use Zag path/permission enforcement;
+- memory, table, stack, fuel/epoch/time, output, and concurrent-invoke limits are explicit;
+- guest trap/invalid result becomes structured Tool failure and cannot invent run success;
+- guest never receives Host allocator pointers, session paths, trace writers, renderer objects, or raw secrets。
+
+WASM is not automatically safe. The runtime, WIT imports, WASI configuration, resource metering, and host implementation form the trusted computing base.
+
+If the chosen runtime introduces a large/unsafe dependency, it should be quarantined behind an adapter or supervised helper. `extension-wasm-runtime-001` decides in-process versus helper-process placement from measured/security evidence; Kernel remains independent of the engine.
 
 ## Manifest and Tool enforcement
 
-Every registered Tool supplies both:
+Every registered Tool supplies:
 
 - model-visible `ToolDefinition`;
-- runtime-only D-007 `ToolCapabilities`.
+- runtime-only D-007 `ToolCapabilities`;
+- behavior/protocol version and requested extension capabilities。
 
-The host validates the manifest and constructs an ordinary Zag `Tool` shim. `loop.run` still performs the normal permission → workspace → shell-policy → execution path. Missing/invalid descriptors reject registration.
+The host validates the manifest and constructs an ordinary Zag Tool shim. `loop.run` still performs permission → workspace → shell-policy → execution. Missing/invalid descriptors reject registration.
 
-A manifest is still only a **claim**. It cannot prevent an executable process from reading files, network, environment, or spawning children by itself. Host-side process/OS enforcement is what turns claims into bounds.
+A manifest is only a **request/claim**:
 
-## Trust and sandbox truth
-
-- Process separation gives crash and allocator isolation; it is **not an OS sandbox**.
-- Trusted local executable extensions may be considered only after bounded process ownership (group/job, stdout/stderr, deadline, cancel, TERM→KILL, reap).
-- Downloaded/untrusted native extensions additionally require a required OS-enforcement profile; no silent downgrade.
-- WASM is not automatically safe: safety depends on a small host-import capability surface and resource limits.
-- Static Zig extensions share host privileges and memory. They are trusted code, equivalent to the embedding application.
+- E2 native processes can exceed it unless OS enforcement constrains them;
+- E3 guests can exercise only granted WIT/WASI host imports, but a broad import surface would defeat the model;
+- hook `allow` never overrides host denial。
 
 ## Hooks
 
-Trusted static hooks may follow the stable lifecycle event contract without C7. Runtime-loaded executable hooks are E2 and require the process supervisor.
+Trusted static hooks may follow stable lifecycle events without C7. Runtime-loaded hooks use E2 or E3 and require their tier Gate.
 
-A hook may deny or make an explicitly permitted data transformation. It may never weaken Tool risk, permission, workspace, shell, sandbox, redaction, or terminal-truth requirements. `allow` cannot override a host denial.
+A hook may deny or perform an explicitly permitted data transformation. It may never weaken risk, permission, workspace, shell, sandbox, redaction, or terminal truth. Modified data is revalidated.
 
 ## UI boundary
 
 Zag intentionally does not copy Pi’s arbitrary extension-authored renderer/component API.
 
-Extensions may request host-rendered declarative interactions such as:
+E1/E2/E3 may request host-rendered declarative interactions:
 
 - notify/status/progress;
 - select/confirm/input;
-- markdown/diff/list payloads.
+- markdown/diff/list。
 
-The host owns rendering, redaction, input focus, and whether the surface is available. UI side-channel messages cannot replace Tool/result or run terminal semantics.
+The host owns rendering, redaction, input focus, and availability. UI side channels cannot replace Tool or run terminals.
 
-## State and secrets
+## State, packaging, and secrets
 
-- Extensions cannot directly mutate the canonical transcript, session file, trace, or private Agent memory.
-- Host events expose only the documented, redacted view.
-- Private extension state uses a namespaced product-owned root when that contract is designed; no raw session path is required.
-- Child processes inherit no full environment by default. Secret/env grants are explicit process-supervisor policy.
-
-## Packaging and discovery
-
-The first E2 delivery, if triggered, accepts explicit local manifests/paths only. It does not include a marketplace, npm-compatible installer, silent auto-update, or package-manager parity.
-
-No `zag-hooks`, `zag-mcp`, `zag-wasm`, or extension-host package is created until code ownership pressure exists. Protocol types belong at L0 only when an implementation task consumes them.
+- Extensions cannot directly mutate transcript/session/trace/private Agent memory.
+- Host events expose documented redacted data only.
+- E2 children inherit a minimal explicit environment, not the full host environment.
+- E3 receives no environment/secrets except named host grants.
+- Initial E2 accepts explicit local manifests/paths only.
+- E3 package format is planned as manifest + component + deterministic hash/provenance; signing/remote registry requires a later supply-chain Gate.
+- No marketplace, silent updater, or npm parity is implied。
 
 ## Legacy reference
 
-The historical `pi-mono-zig@9d1f78c` process-JSONL host, manifest/diagnostics, and process lifecycle are design/fixture references. Its Bun compatibility host is not a Zag dependency. Its native C ABI was draft/unimplemented, and its WASM host was not production-complete.
+The historical `pi-mono-zig@9d1f78c` process-JSONL host, manifest/diagnostics, `pi-tool-v0.wit`, and fixtures are design references. Its Bun host is not a Zag dependency; native C ABI was draft/unimplemented; general WASM runtime was not production-complete.
 
-Any imported source/fixture follows D-009 provenance rules.
+Zag writes its own versioned process/WIT contracts. Imported fixtures follow D-009 provenance rules.
 
 ## Release ladder
 
 1. **E0 (closed):** trusted static Zig source composition.
-2. **E1:** passive Skills with jailed discovery, budget, conflict, disable, and no-execute fixtures.
-3. **Events first:** versioned lifecycle events; optional trusted static deny-only hooks may then be designed.
-4. **Supervisor:** bounded child lifecycle; still no sandbox claim.
-5. **E2:** trusted local `zag-ext-v1` process extension.
-6. **Required OS enforcement:** prerequisite for untrusted native extensions.
-7. **WASM research:** only after a concrete untrusted portable-extension need and runtime budget.
+2. **E1:** passive Skills (jail/budget/conflict/disable/no-execute).
+3. **Common semantics:** lifecycle events plus `zag-ext-v1` manifest/capability model.
+4. **C7.1:** process supervisor.
+5. **E2:** trusted local process binding; C7.2 additionally gates untrusted native code.
+6. **E3.1 `extension-wasm-contract-001`:** WIT/component/package contract and conformance fixtures.
+7. **E3.2 `extension-wasm-runtime-001`:** measured engine selection + quarantined minimal host + compute-only Tool.
+8. **E3.3 `extension-wasm-capabilities-001`:** host-mediated workspace/progress/cancel capabilities, metering, adversarial escape/trap tests.
+9. **E3.4 packaging:** local install/trust/disable/quarantine/provenance; remote distribution only after supply-chain Gate。
 
 ## Consequences
 
 - Pi-like runtime extensibility is achievable without embedding JavaScript or freezing a Zig ABI.
-- Runtime extension breadth is deliberately later than Skills/events and cannot bypass C7.
-- Declarative host-rendered UI is an intentional compatibility difference from Pi.
-- Extensions never weaken the closed Phase H, SDK, or Headless contracts.
+- Process is the compatibility/system-integration path; WASM is the planned portable third-party extension path.
+- Extension UI is host-rendered declarative data.
+- WASM runtime code remains quarantined from Kernel types and cannot become a premature performance/security claim.
+- Extensions never weaken closed Phase H, SDK, or Headless contracts.
 
 ## Related
 

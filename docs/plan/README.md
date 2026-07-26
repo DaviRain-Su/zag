@@ -50,6 +50,8 @@ completed foundation
 
 Only `pi-alignment-001` and `cli-sigint-001` currently have binding task docs. Later IDs are roadmap placeholders until their own analysis/task contracts land.
 
+D-010 also records a formal post-foundation extension track: `extension-schema-001` → C7.1 / E2 process binding → E3 `extension-wasm-contract-001` → runtime → capabilities → package. These are planned directions, not ready tasks or implementation claims.
+
 ## Task index
 
 ### Active / next

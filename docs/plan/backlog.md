@@ -19,5 +19,7 @@ Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/
 | 2026-07-25 | h-integration-001 review | P3 | Trace `tool_result` has no call-id field; pending cancelled pairing is transcript/session-owned (schema-true; optional future id on tool_result). |
 | 2026-07-25 | h-integration-001 review | P3 | Jail fixture `SkipZigTest` on Windows / symlink `AccessDenied` — document CI hosts without symlink support skip rather than fail closed. |
 | 2026-07-25 | h-shell-001 Oracle | P3 | Add a shell-specific valid UTF-8 NUL/control-byte transcript/session/resume/parsed-trace roundtrip fixture; core trace control-byte escaping already passes, so this is evidence hardening rather than an L2 blocker. |
-| 2026-07-26 | D-009 | deferred | Provider zoo/OAuth, Bun/TS compatibility, Pi package manager, TS-RPC parity, full WASM, Oracle/Graph/Memory/MCP/sandbox/dashboard require explicit re-entry triggers; they are not implied parity work. |
+| 2026-07-26 | D-009/D-010 | deferred | Provider zoo/OAuth, Bun/TS compatibility, Pi package manager, TS-RPC parity, Oracle/Graph/Memory/dashboard are not parity work. E2/E3 extensions follow their explicit process/WASM Gates. |
 | 2026-07-26 | D-009 | P2 | Historical `pi-mono-zig` goldens may be imported only by a scoped provenance task (exact commit/path + MIT notice + relevance test). |
+| 2026-07-26 | D-010 review | P2 | WASM runtime selection must measure Component Model support, macOS/Linux integration, license/security update path, metering, trap isolation, and binary/startup/RSS cost before choosing an engine. |
+| 2026-07-26 | D-010 review | P3 | E2/E3 supply-chain work (signing/remote registry/updater) remains a separate Gate after local manifest+digest+quarantine. |

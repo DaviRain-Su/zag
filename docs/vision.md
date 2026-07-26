@@ -85,8 +85,8 @@ Zag 的稳定核心是少量可组合合同，不是功能集合：
 ```text
 E0 trusted static Zig       已由 SDK Gate 覆盖
 E1 passive Skills/prompts   运行时发现，无代码执行
-E2 zag-ext-v1 process       任意语言；先过 process-supervisor Gate
-future WASM research        仅在真实 untrusted use case 下评估
+E2 process binding          兼容 MCP/现有程序；先过 process-supervisor Gate
+E3 WASM Component           计划中的首选可安装第三方扩展格式；独立 runtime/capability Gates
 ```
 
 不提供 Zig `.so`/`.dylib` 动态 ABI，也不嵌 Lua/QuickJS/Bun。进程隔离不等于 sandbox；untrusted native 扩展另需 required OS enforcement。扩展 UI 只发送声明式数据，由 Zag 产品壳渲染，不注入 renderer/component 代码。
@@ -113,7 +113,7 @@ future WASM research        仅在真实 untrusted use case 下评估
 
 - provider zoo / OAuth 全家桶；仅按真实需求扩现有 WireAdapter；
 - Bun/TypeScript compatibility host、Pi package manager、TS-RPC byte parity；
-- full WASM extension platform、marketplace；
+- 在 E3 WIT/runtime/capability/package Gates 前发布或宣传 WASM extension platform；
 - Oracle/subagents/Graph、Memory Repo、MCP（无当前失败场景）；
 - OS sandbox/background jobs（需独立 process-supervisor Gate）；
 - ACP/dashboard、cloud thread/collaboration、HTML/share/image/theme breadth；

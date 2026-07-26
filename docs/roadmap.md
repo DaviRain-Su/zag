@@ -99,9 +99,24 @@ Minimal TUI depends on the event/control contracts; it must only assemble Kernel
 | Supervisor | bounded child ownership | C7.1, only after concrete runtime-extension consumer |
 | E2 | trusted local `zag-ext-v1` process extension | supervisor + versioned protocol + D-007 composition |
 | Untrusted native | downloaded/third-party process | additionally required OS enforcement; no downgrade |
-| WASM | optional portable/untrusted research | concrete use case + runtime/host capability Gate |
+| E3 WASM Component | planned preferred installable third-party extension format | WIT contract → measured runtime → host capabilities/metering → packaging/trust |
 
 No dynamic Zig library ABI, embedded Lua/QuickJS/Bun, Pi package-manager parity, or arbitrary extension-rendered TUI.
+
+Planned post-M2 extension tasks (each needs its own docs-first contract):
+
+```text
+extension-schema-001
+        │
+process-supervisor-001 ──► extension-process-001 (E2)
+        │
+        └─► extension-wasm-contract-001
+               → extension-wasm-runtime-001
+               → extension-wasm-capabilities-001
+               → extension-wasm-package-001 (E3)
+```
+
+E3 is a formal direction, not current implementation. Engine choice remains open until measured/security evidence exists.
 
 ## Capability domains after D-009
 
@@ -111,7 +126,7 @@ No dynamic Zig library ABI, embedded Lua/QuickJS/Bun, Pi package-manager parity,
 | C5 Context | session fork in M1 | repo map until measured need; LLM summary optional; Memory default-off |
 | C6 Control/Orchestration | steering/follow-up in M1 | Oracle, executable subagents, Graph |
 | C7 Process/Sandbox | none | process supervisor only when executable/background use appears; OS enforcement after that |
-| C8 Extensions | E0 static SDK already; E1 passive Skills in M2 | runtime hooks/commands/MCP via E2 `zag-ext-v1` only after C7.1; WASM research only |
+| C8 Extensions | E0 static SDK already; E1 passive Skills in M2 | E2 process after C7.1；E3 WASM Component is the planned portable third-party tier |
 | C9 Product shell | minimal TUI in M2 | ACP, dashboard, themes/images/full configuration UX |
 
 The detailed phase docs describe domain constraints. A deferred item is not an implied future commitment.

@@ -2,86 +2,103 @@
 
 | Item | Content |
 |------|---------|
-| Prerequisite | Phase H + SDK/process contracts ✅；E2 additionally needs C7 process supervisor |
+| Prerequisite | Phase H + SDK/process contracts ✅；E2 needs C7.1；E3 needs its runtime/capability Gates |
 | Near-term slice | M2 `skills-001` — E1 passive Skills |
-| Decision | [D-010 extension tiers](../decisions/active/D-010-extension-tiers-and-process-protocol.md) |
+| Long-term target | E3 WASM Component extension platform |
+| Decision | [D-010](../decisions/active/D-010-extension-tiers-and-process-protocol.md) |
 | Module | [extensions](../modules/extensions.md) |
 
 ## Tier model
 
-| Tier | Mechanism | Delivery status |
-|------|-----------|-----------------|
-| E0 | trusted static Zig source composition | SDK L2 closed at `ebdd7ab` |
-| E1 | passive runtime packages | `skills-001` planned |
-| E2 | runtime process extension over `zag-ext-v1` | deferred: process supervisor + real consumer |
-| Research | WASM/component host | no commitment |
+| Tier | Mechanism | Delivery |
+|------|-----------|----------|
+| E0 | trusted static Zig composition | SDK L2 closed |
+| E1 | passive packages | `skills-001` in M2 |
+| E2 | native process binding | after C7.1 + concrete process integration |
+| E3 | WASM Component/WIT binding | planned extension target after common semantics |
 
-No dynamic `.so`/`.dylib` Zig ABI and no embedded Lua/QuickJS/Bun runtime.
+No dynamic Zig shared-library ABI and no embedded Lua/QuickJS/Bun runtime.
 
-## E1 passive Skills (scheduled)
+## E1 passive Skills
 
-- discover `SKILL.md` from documented jailed roots;
-- validate frontmatter/name/description;
-- bound per-file and aggregate prompt injection;
+- jailed `SKILL.md` discovery;
+- frontmatter/name/description validation;
+- bounded prompt injection;
 - deterministic precedence/conflicts;
-- explicit disable and behavior-neutral no-Skill mode;
-- no executable/provider/hook/UI/network/environment privilege。
+- explicit disable/no-execute neutrality。
 
-## Lifecycle hooks
+## Common extension semantics
 
-Trusted static deny-only hooks may be designed after `harness-events-001`. They consume versioned events and validated descriptors. A hook may make policy stricter; `allow` never overrides a host deny.
+Before E2/E3, define engine/transport-neutral `zag-ext-v1` entities: manifest, Tool capabilities, invoke/progress/result/error, cancel/lifecycle, diagnostics, optional hooks/commands/declarative UI.
 
-Runtime-installed hooks are E2 executable extensions and require C7 process ownership.
+Tool definitions always pass D-007 validation and normal host permission/jail/shell/trace composition.
 
-## E2 process extensions
+## E2 native process
 
-Triggered only by a concrete local runtime-extension consumer:
+Compatibility path for MCP, existing programs, and OS integrations that cannot compile to WASM:
 
-1. C7 process group/job ownership, bounded I/O, deadlines, cancel, TERM→KILL/reap;
-2. versioned `zag-ext-v1` handshake/manifest/Tool terminal protocol;
-3. D-007 validation before Toolset insertion;
-4. explicit environment/secret policy;
-5. crash/timeout/malformed/output-overflow fixtures;
-6. declarative host-rendered UI only。
+1. C7.1 process supervisor;
+2. NDJSON handshake/manifest/Tool binding;
+3. bounded I/O/deadline/cancel/reap;
+4. minimal environment and structured failure;
+5. C7.2 required OS enforcement before untrusted/downloaded native code。
 
-A trusted local process may ship after supervisor evidence with an honest non-sandbox claim. A downloaded/untrusted native extension additionally requires an OS-enforcement profile that fails closed.
+## E3 WASM Component
 
-## UI boundary
+Preferred long-term installable third-party extension format:
 
-Extensions send declarative intents (notify/status/progress/select/confirm/input/markdown/diff/list). Zag owns rendering, focus, redaction, and availability. Pi-style arbitrary component factories/renderers are intentionally unsupported.
+1. `extension-wasm-contract-001`: Zag WIT world, package manifest, conformance goldens;
+2. `extension-wasm-runtime-001`: engine evaluation/measurement, quarantine decision, compute-only Tool;
+3. `extension-wasm-capabilities-001`: host-mediated workspace/progress/cancel, metering and adversarial tests;
+4. packaging/trust: local digest/provenance/enable/disable/quarantine; remote registry only after supply-chain Gate。
+
+Default guest receives no unrestricted filesystem/network/environment/process access. WASM safety is the runtime + narrow host capability surface + resource limits, not the file suffix.
+
+## Hooks and UI
+
+Trusted static deny-only hooks may follow stable lifecycle events. Runtime hooks use E2/E3.
+
+UI is declarative host-rendered data only. No arbitrary component factories, renderers, terminal input callbacks, or Host pointers.
 
 ## Invariants
 
-- metadata missing/invalid → registration fails closed;
-- manifest declaration does not equal enforcement;
-- extension Tool follows the same permission/jail/shell/trace path as built-ins;
-- extension cannot mutate canonical session/trace/private Agent memory;
-- executable failure cannot create false success;
-- process separation is not called sandbox;
+- metadata missing/invalid → fail closed;
+- manifest request != host grant/enforcement;
+- hook allow cannot override host deny;
+- extension cannot mutate canonical session/trace/private Agent state;
+- runtime/trap/crash cannot create false success;
+- process != sandbox; WASM != automatically safe;
 - no stable C/Zig dynamic plugin ABI。
 
 ## Acceptance
 
-### `skills-001`
+### E1
 
-- [ ] discovery roots/order/conflicts deterministic;
-- [ ] symlink/escape rejected;
-- [ ] invalid or oversized content fails per contract;
-- [ ] disabled/no-Skill path behavior-neutral;
-- [ ] no executable path introduced。
+- [ ] roots/order/conflicts deterministic;
+- [ ] symlink/escape invalid;
+- [ ] invalid/oversized content bounded;
+- [ ] disabled path behavior-neutral;
+- [ ] no executable path。
 
-### Future E2
+### E2
 
-- [ ] supervisor lifecycle/output/cancel/reap Gate passes;
-- [ ] `zag-ext-v1` negotiation and exactly-one invoke terminal pass;
-- [ ] D-007/permission/containment/redaction/trace composition passes;
-- [ ] untrusted required-sandbox unavailable → refuse execution;
-- [ ] extension crash/timeout cannot corrupt session or run terminal。
+- [ ] supervisor and protocol Gates;
+- [ ] D-007/security composition;
+- [ ] sandbox-required mode refuses downgrade。
+
+### E3
+
+- [ ] WIT semantic conformance independent from engine;
+- [ ] selected runtime has measured footprint/support/security evidence;
+- [ ] no-WASI defaults and denied imports proven;
+- [ ] memory/fuel/time/output/cancel/trap matrix;
+- [ ] host workspace capabilities preserve permission/containment;
+- [ ] package provenance/disable/quarantine deterministic。
 
 ## Non-goals
 
-- Pi/npm package-manager compatibility/marketplace;
-- Bun/TS host or TS-RPC parity;
+- npm/Pi package parity/marketplace in initial tiers;
+- Bun/TS or TS-RPC compatibility;
 - arbitrary extension UI code;
-- full WASM platform before evidence;
-- executable extensions before C7。
+- unrestricted WASI;
+- choosing a WASM engine before the runtime Gate。

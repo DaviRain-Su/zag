@@ -28,7 +28,7 @@
 │  （对标 models/    │  zag-tools（fs·edit·shell·grep）           │
 │   sampler）        │  zag-workspace（jail·git）                 │
 │  zag-ai            │  zag-sandbox*（C7）                        │
-│   canonical msgs   │  zag-hooks / zag-mcp*（C8）                │
+│   canonical msgs   │  extension adapters*（C8 / D-010）         │
 │   + wire adapters  │                                           │
 │  openai-zig*       │                                           │
 ├────────────────────┴─────────────────────────────────────────┤
@@ -55,7 +55,7 @@ E1 passive package              ──► product discovery + bounded context
 E2 executable child             ◄─► zag-ext-v1 ◄─ product supervisor
 ```
 
-E2 transports canonical data and constructs validated Tool shims; it never moves allocators, renderer pointers, or private Agent memory across the boundary. Product process ownership is separate from OS sandbox enforcement. WASM remains optional research, not a current layer or package.
+E2 transports canonical data and constructs validated Tool shims; it never moves allocators, renderer pointers, or private Agent memory across the boundary. Product process ownership is separate from OS sandbox enforcement. E3 WASM Component is the planned portable third-party binding; its runtime stays quarantined from Kernel and is selected only by an evidence Gate.
 
 ### 分层职责
 

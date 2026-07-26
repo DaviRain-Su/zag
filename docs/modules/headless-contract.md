@@ -200,7 +200,7 @@ The matrix applies **only in headless mode** (`--json` or `--json-stream`). Defa
 | `cancelled` | 11 | true | Clean cooperative cancel (e.g., SIGINT). |
 | `timeout` | 20 | false | End-to-end provider deadline fired. |
 | `unsupported_control` | 21 | false | Backend cannot enforce required deadline/active-cancel. |
-| `required_sandbox_unavailable` | 22 | false | Reserved for a future required-sandbox mode; currently no CLI path produces it. |
+| `required_sandbox_unavailable` | 22 | false | Reserved for a future C7.2-required native extension/execution profile; currently no CLI path produces it. |
 | `provider_configuration` | 30 | — | Missing API key, unknown provider, unsupported API style, missing base URL. |
 | `provider_error` | 31 | — | Runtime provider/network/model/auth failure. |
 | `invalid_toolset` | 32 | — | Loop start-up toolset validation failed. |

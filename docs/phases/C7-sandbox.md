@@ -32,7 +32,7 @@ Required before calling a native extension untrusted or enabling higher-autonomy
 4. constructive escape tests;
 5. no silent downgrade to trusted-host mode。
 
-WASM host capability enforcement is a separate future research Gate, not a substitute claim made by C7 docs.
+E3 WASM host capability enforcement is a separate planned Gate. It does not inherit a sandbox claim from C7, and it does not replace C7.2 for untrusted native processes.
 
 ## Current boundary
 
@@ -49,7 +49,7 @@ WASM host capability enforcement is a separate future research Gate, not a subst
 - [ ] process tree cancelled/reaped within bounds;
 - [ ] stdout/stderr/frame bodies bounded with retained diagnostics;
 - [ ] crash/hang/malformed output have deterministic outcomes;
-- [ ] secrets absent unless explicitly granted;
+- [ ] configured fake secret/environment key is absent from child env/stdout/stderr unless explicitly granted;
 - [ ] direct-process fixtures cover supported hosts。
 
 ### Enforcement

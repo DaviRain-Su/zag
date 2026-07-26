@@ -61,7 +61,7 @@ Zag does not track Pi’s complete feature list. The following are not roadmap p
 - Bun/TypeScript extension compatibility;
 - Pi package-manager or marketplace compatibility;
 - TS-RPC byte compatibility;
-- a full WASM extension platform;
+- Pi-compatible WASM APIs or runtime parity (Zag E3 follows D-010 and its own WIT/Gates);
 - cloud sharing/collaboration, HTML export, image/UI/theme breadth;
 - Graph, Memory, Oracle, MCP, or OS sandbox without a concrete user failure and prerequisite Gate.
 

@@ -21,7 +21,7 @@
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | `packages/zag-cli/src/cli.zig` + core cancel flag | 保持 signal UX 在产品层 |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
-| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1/E2 unimplemented | no package until a real implementation owner exists |
+| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1/E2/E3 unimplemented | no package until an implementation task proves ownership; WASM engine quarantined from Kernel |
 
 ### 包边界速查
 
@@ -67,6 +67,6 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | REPL/one-shot input ownership and Ctrl+C lifecycle |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
-| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK + E1 Skills + future E2 `zag-ext-v1` process extensions |
+| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK + E1 Skills + E2 process binding + planned E3 WASM Component |
 
 总览：[../maturity.md](../maturity.md) · [../phases/H-harden.md](../phases/H-harden.md) · [../phases/C5-context.md](../phases/C5-context.md)  

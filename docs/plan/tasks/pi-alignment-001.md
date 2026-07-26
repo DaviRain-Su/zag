@@ -30,6 +30,10 @@ Replace the unbounded “All-in-One” positioning with a Pi-inspired, Zig-nativ
 - `docs/phases/C7-sandbox.md`
 - `docs/phases/C8-extensions.md`
 - `docs/phases/C9-product-shell.md`
+- `docs/modules/cli-interaction.md`
+- `docs/modules/extensions.md`
+- `docs/modules/headless-contract.md`
+- `docs/maturity.md`
 - `docs/references.md`
 - `docs/decisions/`
 - `docs/plan/`
@@ -39,8 +43,8 @@ Replace the unbounded “All-in-One” positioning with a Pi-inspired, Zig-nativ
 - Product docs consistently name Zag a Pi-inspired Zig-native Harness, not an all-in-one parity project.
 - Current Pi, the historical Zig port, and Zag each have a distinct role; no external source dependency/submodule is introduced.
 - The near-term DAG is Ctrl+C → events → steering/follow-up + session fork → Skills/edit/minimal TUI.
-- Provider zoo, OAuth, Bun/TS compatibility, package manager, TS-RPC parity, full WASM, Graph, Memory, MCP, and OS sandbox are not near-term obligations.
+- Provider zoo, OAuth, Bun/TS compatibility, package manager, TS-RPC parity, Graph, Memory, and dashboard are not near-term obligations; D-010 makes E3 WASM a formal post-foundation target with separate Gates.
 - Existing Phase H L2, SDK-ready L2, and Headless L2 evidence remains unchanged.
 - Zig performance/size/startup claims remain prohibited without benchmarks.
-- D-010 fixes extension tiers: E0 static SDK, E1 passive packages, E2 `zag-ext-v1` after C7.1; no dynamic ABI/script VM; declarative host-rendered UI only.
+- D-010 fixes extension tiers: E0 static SDK, E1 passive packages, E2 process after C7.1, and planned E3 WASM Component with WIT/runtime/capability/package Gates; no dynamic ABI/script VM; declarative host-rendered UI only.
 - Docs lint and independent review pass before ff-only merge.

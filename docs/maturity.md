@@ -38,7 +38,7 @@
 | Headless / Process SDK | **L2** | `headless-001` done at `a1a1e0f`：`headless-v1` + `--json`/`--json-stream` + headless-only exit matrix；process fixture 4/4（real binary + mock provider, both backends）；stdout purity；stream terminal uniqueness incl. halt-then-success；default mode 0/1/2 unchanged；`-Dtui` optional + Kernel no-TUI scan | clean JSON/streaming output + stable errors/exit codes ✅ | ACP/editor integration |
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 仅规格 | H 不做；依赖 event/cancel/session contract | typed agents/Graph |
-| Runtime Extensions | L0 | D-010 spec only；trusted static Zig composition is already covered by SDK L2, but passive discovery / `zag-ext-v1` host do not exist | E1 Skills first；E2 requires C7.1 supervisor；untrusted native also C7.2 enforcement | declarative UI / optional WASM research |
+| Runtime Extensions | L0 | D-010 spec only；trusted static Zig composition is SDK L2, but E1 discovery / E2 process / E3 WASM host do not exist | E1 Skills；E2 requires C7.1；E3 requires WIT/runtime/capability/package Gates；untrusted native requires C7.2 | declarative UI + WASM Component platform |
 | Quality / Evals | **L2** | 既有 module/doctor/Agent/shell/edit/read-search matrices 均通过；fresh integration audit 在 `d22ce6e` PASS；gate 数字见总状态 | existing composition ✅；shell/edit/read-search matrices ✅；fresh integration audit PASS | edit/cost/perf baselines |
 
 ## Phase H production-floor exit

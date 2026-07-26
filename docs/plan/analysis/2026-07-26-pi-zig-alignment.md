@@ -68,7 +68,8 @@ Runtime extensibility follows [D-010](../../decisions/active/D-010-extension-tie
 | Skills discovery/frontmatter tests | Reimplement small passive subset | Bounded prompt budget; no executable privilege |
 | TUI renderer/input/tool-card patterns | Design reference | Minimal product shell; Kernel has no TUI dependency |
 | Provider/SSE goldens | Import only per scoped need | Exact provenance + MIT notice; no provider-count parity |
-| OAuth/provider zoo/Bun/TS-RPC/package manager/full WASM | Archive | Not roadmap obligations |
+| OAuth/provider zoo/Bun/TS-RPC/package manager | Archive | Not roadmap obligations |
+| Legacy WASM WIT/spike | Contract/fixture reference | Zag E3 is planned with its own WIT/runtime/capability Gates; old runtime is not reused as production code |
 
 ## Reduced delivery DAG
 

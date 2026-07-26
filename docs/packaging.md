@@ -84,7 +84,7 @@ L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run
 
 1. **只准朝下依赖**；L4 不得 import L5/L6。
 2. L2 包之间不互相依赖，经 L0 契约通信（例外须在本文件登记）。
-3. HTTP/network details quarantine in `openai-zig` / `zag-ai` / future `zag-mcp`; `zag-agent-core` does not see wire clients.
+3. HTTP/network/WASM runtime details stay quarantined in `openai-zig` / `zag-ai` / future consumed extension adapters; `zag-agent-core` sees no wire client or engine type.
 4. Model-visible `ToolDefinition` 与 local runtime `ToolCapabilities` 分离；见 [D-007](./decisions/active/D-007-tool-runtime-descriptor.md)。
 5. 每个包独立 `zig build test`；契约测试放在被依赖方；SDK Gate 另有 external consumer fixture。
 
