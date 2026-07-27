@@ -17,3 +17,4 @@ zig-pkg/
 .env
 .env.*
 !*.env.example
+.worktrees
