@@ -23,10 +23,10 @@
 | [harness-events.md](./harness-events.md) | M1 events ✅ | coding-agent SDK adapter over Core Loop facts + facade run facts; closed at `aecf402` | no Core `lifecycle.zig`; steering and fork closed separately |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session-owned bounded queues + explicit Core `ControlInput`; closed at `a5ff2b7` | no provider/Tool preemption; Trace/headless schemas unchanged; no maturity change |
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | idle-only durable `Session.fork`; closed at `0a3087f` | schema v1 unchanged; Session remains L2; no tree/journal claim |
-| [skills.md](./skills.md) | M2 / C8 E1 | contract **in-progress** (`skills-001`); coding-agent only | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
+| [skills.md](./skills.md) | M2 / C8 E1 ✅ | implemented (`skills-001` @ `caafef5`); coding-agent only | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
-| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1 Skills contract in-progress; E2/E3 unimplemented | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
+| [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1 Skills implemented @ `caafef5`; E2/E3 unimplemented | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
 
 ### 包边界速查
 
@@ -74,7 +74,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [harness-events.md](./harness-events.md) | M1 events ✅ | product SDK lifecycle adapter closed at `aecf402`; no Core lifecycle channel |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session control queues + protocol-safe Core insertion seam; closed at `a5ff2b7` |
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | Idle-only durable `Session.fork`; closed at `0a3087f`; schema v1 and Session L2 unchanged |
-| [skills.md](./skills.md) | M2 / C8 E1 | Passive Agent Skills binding contract (`skills-001` docs in-progress); coding-agent only |
+| [skills.md](./skills.md) | M2 / C8 E1 ✅ | Passive Agent Skills binding contract (`skills-001` done @ `caafef5`); coding-agent only |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |

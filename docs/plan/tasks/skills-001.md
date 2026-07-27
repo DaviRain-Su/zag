@@ -1,7 +1,7 @@
 ---
 id: skills-001
 scope: coding-agent/skills (E1 passive)
-status: implemented
+status: done
 priority: P1
 depends-on:
   - session-fork-001
@@ -16,6 +16,9 @@ Deliver the first **Zig-native E1 passive Agent Skills** slice:
 - model-visible summaries with on-demand body loading;
 - manual activation;
 - ordinary downstream safety Gates (ask + workspace jail + shell protect + redaction).
+
+`skills-001` closed at `caafef5` after implementation, review-fix fixtures, dual-backend
+merged-main Gates, and docs-truth closeout. Runtime Extensions remains **L0** (no maturity raise).
 
 **Owner:** `zag-coding-agent` only. Do **not** change Core, session schema v1,
 Trace v1, `headless-v1`, `project.zig`, or `--no-project` semantics.
@@ -55,7 +58,7 @@ maturity remains **L0**.
 
 # path
 
-## Docs (this commit track)
+## Docs (contract track)
 
 - `docs/modules/skills.md` — binding contract
 - `docs/plan/tasks/skills-001.md` — this task
@@ -64,7 +67,7 @@ maturity remains **L0**.
   `docs/roadmap.md`, `docs/maturity.md`, `docs/INDEX.md` if discoverability needs it,
   `docs/plan/backlog.md` note resolution as appropriate
 
-## Implementation (later; not this docs commit)
+## Implementation (landed at `caafef5`)
 
 - `packages/zag-coding-agent/src/skills.zig` (or split modules) — discovery, parse, catalog
 - `packages/zag-coding-agent/src/agent.zig` — start/fork/deinit catalog; reply tool append; layers
@@ -125,16 +128,16 @@ The module doc is authoritative. Summary of binding rules:
 
 # verification
 
-## Docs Gate (contract track — this commit)
+## Docs Gate (contract track — complete)
 
 - [x] Binding module + task authored before implementation
-- [ ] Independent review of contract (when scheduled)
+- [x] Independent review of contract (status truth reconciled at closeout)
 - [x] `zig build docs-lint`
 - [x] `git diff --check`
 - [x] Explicit `git add` of intended docs files only
 - [x] One local docs commit on `task/skills-001` (body-path contract fix)
 
-## Implementation Gate
+## Implementation Gate (**complete**)
 
 Must pass every fixture in
 [skills.md §11](../../modules/skills.md#11-verification--exact-fixture-matrix-14)
@@ -142,21 +145,23 @@ items **1–14**, plus:
 
 - [x] Focused coding-agent tests green (`skills_tests.zig` §11.1–14)
 - [x] External SDK public-surface smoke (`tests/sdk-consumer-fixture`)
-- [ ] Root std + curl candidate Gates as required by plan closeout
+- [x] Root std + curl candidate Gates as required by plan closeout
 - [x] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
 - [x] Runtime Extensions maturity remains **L0**
-- [ ] Independent code review + ff-only merge + merged-main Gate before `done`
+- [x] Independent code review + ff-only merge + merged-main Gate before `done`
 
 # delivery evidence
 
 | Item | Evidence |
 |------|----------|
 | Contract | `docs/modules/skills.md` |
-| Task | this file `implemented` |
+| Task | this file `done` at `caafef5` (+ docs closeout) |
 | Implementation | `packages/zag-coding-agent/src/skills.zig` + `agent.zig` / `root.zig` / `cli.zig` |
 | Fixtures 1–14 | `packages/zag-coding-agent/src/skills_tests.zig` |
-| SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` skills-001 test |
-| Review / merge / Gate | _pending_ |
+| SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` skills-001 test; fixture **22/22** |
+| Review | contract/status truth closeout; implementation + review-fix fixtures at tip `caafef5` |
+| Merge | local main already at `caafef5` (same tip as `task/skills-001`) |
+| Merged-main Gate | std **40/40 steps, 609/609 tests**; curl **42/42 steps, 608/608 tests**; Core **89/89**; Coding **337/337**; CLI **30/30**; SDK **22/22**; OpenAPI **287/287**; catalog **40**; readability **91/100**; security **72/100** |
 | Maturity | Runtime Extensions **L0** (E1 Skills slice implemented; maturity not raised) |
 
 # non-goals (task boundary)
@@ -164,3 +169,15 @@ items **1–14**, plus:
 See module §10. Additionally out of scope for this task's implementation PR series:
 raising maturity, Prompt Templates, shared generic “resource loader” package
 extraction beyond what Skills needs, and CLI TUI autocomplete.
+
+# closeout
+
+- Docs contract landed at `875562a` / body-path reconcile `1d93084`; implementation
+  `c74e80c` through review-fix/fixture commits `fa7786d`–`caafef5`.
+- Local main and `task/skills-001` share tip `caafef5` (ff-equivalent land on main).
+- Merged-main dual-backend Gate: std **40/40 · 609/609**, curl **42/42 · 608/608**,
+  Core **89/89**, Coding **337/337**, CLI **30/30**, SDK **22/22**, OpenAPI **287/287**,
+  catalog **40**, readability **91/100**, security **72/100**.
+- Core, session schema v1, Trace v1, `headless-v1`, `project.zig`, default ask +
+  jail + shell protect, and every existing L2 row remain unchanged. Runtime Extensions
+  stays **L0**. Prompt Templates, E2/E3, remote install, and maturity raise remain excluded.

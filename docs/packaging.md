@@ -85,7 +85,7 @@ L2 领域服务      openai-zig          HTTP SDK ✅
 L3 产品 harness  zag-coding-agent ✅  Agent/Session · policy/permissions/HITL/remember · workspace containment · shell protect · context · persistence/observation/lifecycle adapter · model wiring · runtime tools (depends on zag-agent-core + zag-ai + zag-types)
 L4 内核 ★low-level composition
                  zag-agent-core ✅    loop · Transcript · Provider/Tool/Cancel ports · protocol history · required ToolPolicy/Jail/ShellPolicy/ContextView/LoopEventSink/ControlInput ports（**仅依赖 zag-types**）
-                 SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel/control/fork contract 已闭合；Gate fixture 7/7，current fixture 21/21
+                 SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel/control/fork/skills contract 已闭合；Gate fixture 7/7，current fixture 22/22
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
                  zag-tui / zag-acp   （C9）
 L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run` ✅
@@ -121,8 +121,9 @@ The migration preserved existing L2 schemas and behavior; it neither downgraded 
 reran package, SDK, headless, std/curl, and security fixtures. The final product lifecycle adapter Gate passed std
 **530/530**, curl **529/529**, and SDK consumer fixture **18/18** at that closeout. The follow-on bounded-control Gate at
 `a5ff2b7` passed std **567/567**, curl **566/566**, and SDK fixture **20/20** at that closeout. The idle-only durable
-Session-fork Gate at `0a3087f` passed std **579/579**, curl **578/578**, and the current SDK fixture **21/21**. None of
-these enrichments changed a maturity row. See [`modules/core-boundary.md`](./modules/core-boundary.md).
+Session-fork Gate at `0a3087f` passed std **579/579**, curl **578/578**, and SDK fixture **21/21** at that closeout. The
+E1 Skills Gate at `caafef5` passed std **609/609**, curl **608/608**, and the current SDK fixture **22/22**. None of
+these enrichments changed a maturity row (Runtime Extensions remains L0). See [`modules/core-boundary.md`](./modules/core-boundary.md).
 
 ### 概念层 ↔ 实际包名
 
@@ -171,7 +172,7 @@ Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 
 | Level | Contract | Current |
 |-------|----------|---------|
 | Low-level Zig composition | direct Provider/Toolset/Observer/Transcript/loop assembly | ✅ validated |
-| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ✅ closed at `ebdd7ab` — Gate fixture 7/7; current fixture **21/21** after D-011/lifecycle/control/session-fork enrichment; see [`sdk-contract.md`](./modules/sdk-contract.md) |
+| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ✅ closed at `ebdd7ab` — Gate fixture 7/7; current fixture **22/22** after D-011/lifecycle/control/session-fork/skills enrichment; see [`sdk-contract.md`](./modules/sdk-contract.md) |
 | Process SDK/headless | versioned JSON/events + stable errors/exit codes | ✅ closed — `headless-v1` + exit matrix + process fixture; merged-main Gate passed at `a1a1e0f` |
 
 ### SDK-ready Gate

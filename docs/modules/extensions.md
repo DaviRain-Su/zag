@@ -30,7 +30,7 @@ A feature may use several carriers. A Package is a bundle above E1/E2/E3, not an
 | Pi surface | Zag outcome | Carrier / state |
 |------------|-------------|-----------------|
 | Extension | selected Tools/events/commands/flags/shortcuts/providers/session/UI through a common vocabulary | E0 available in part; E2/E3 planned incrementally |
-| Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 **implemented** `skills-001` — binding [skills.md](./skills.md); maturity still L0 |
+| Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 **done** `skills-001` @ `caafef5` — binding [skills.md](./skills.md); maturity still L0 |
 | Prompt Template | deterministic `/name` prompt expansion with explicit non-recursive substitution | E1 planned after shared resource loader |
 | Theme | passive theme data rendered by the host product shell | after minimal TUI |
 | Package | local manifest bundling E1 resources and optional E2/E3 artifacts | package schema/trust Gates planned |
@@ -48,7 +48,7 @@ This is functional correspondence, not Pi API/schema/CLI/package-manager parity.
 | Tier | Surface | Current |
 |------|---------|---------|
 | E0 trusted static Zig | compile-time Provider/Toolset/Observer/policy and later native host UI | **available in part** through SDK-ready contract |
-| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` E1 Skills slice implemented ([skills.md](./skills.md)); Prompt Templates later |
+| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` E1 Skills slice done @ `caafef5` ([skills.md](./skills.md)); Prompt Templates later |
 | E2 process adapter | `zag-ext-v1` semantics over NDJSON | planned after C7.1 + real process consumer |
 | E3 WASM Component | `zag-ext-v1` semantics over Zag WIT | **planned preferred portable third-party executable tier** |
 
@@ -105,7 +105,7 @@ E0 is not installed by a runtime extension package.
 ### Skills
 
 The first runtime-discoverable resource is `SKILL.md`. Binding product contract:
-**[skills.md](./skills.md)** (`skills-001`, implemented; Runtime Extensions L0). Summary:
+**[skills.md](./skills.md)** (`skills-001`, done @ `caafef5`; Runtime Extensions L0). Summary:
 
 - Agent Skills v1 roots: user `$HOME/.agents/skills/<name>/SKILL.md` (CLI HOME /
   SDK host-owned user-root) and project `<workspace>/.agents/skills/...` only with

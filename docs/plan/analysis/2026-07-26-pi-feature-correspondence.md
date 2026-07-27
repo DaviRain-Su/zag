@@ -47,13 +47,13 @@ These axes are orthogonal:
 | Pi feature | Pi user outcome | Zag functional target | Carrier | Current truth / Gate | Deliberate difference |
 |------------|-----------------|-----------------------|---------|----------------------|-----------------------|
 | Extension | Register Tools, lifecycle handlers, commands, flags, shortcuts, providers, session actions, messages, and UI | A common feature vocabulary delivered incrementally; host policy/session/trace authority remains mandatory | E0, E2, E3 | E0 Tool/Provider/Observer composition L2; runtime extensions L0 | No `jiti`, arbitrary TS execution, dynamic Zig ABI, or host-memory mutation |
-| Skill | Discover reusable instructions, expose summaries, load `SKILL.md` on demand, optionally invoke manually | Bounded E1 discovery, precedence, trust, budget, disable/manual-only behavior, and downstream Tool enforcement | E1 + host Tool gates | `skills-001` docs **in-progress** ([skills.md](../../modules/skills.md)) | The loader never executes code, but Skill content may induce normal Tool/shell execution |
+| Skill | Discover reusable instructions, expose summaries, load `SKILL.md` on demand, optionally invoke manually | Bounded E1 discovery, precedence, trust, budget, disable/manual-only behavior, and downstream Tool enforcement | E1 + host Tool gates | `skills-001` **done** at `caafef5` ([skills.md](../../modules/skills.md)); Runtime Extensions L0 | The loader never executes code, but Skill content may induce normal Tool/shell execution |
 | Prompt Template | Expand `/name args` into reusable prompts | Explicit passive prompt resource with deterministic discovery, collision, and non-recursive substitution | E1 + host command router | Missing binding task; planned after shared E1 loader | Syntax may be smaller than Pi, but cannot be accidental or recursively substituted |
 | Theme | Install/select presentation data, adapt to terminal capabilities, reload | Passive theme data plus host-owned terminal renderer | E1-style data + host shell | After minimal TUI | No ANSI/renderer capability crosses E2/E3 |
 | Package | Install one bundle containing several extension resources and enable/disable them | Local runtime bundle manifest declaring E1 resources and optional E2/E3 artifacts; digest/provenance/trust/quarantine | Bundle layer above E1/E2/E3 | Schema/package Gates not started | E0 Zig source dependencies are build-time and never runtime-installed; no npm parity/marketplace |
 | Custom Model | Add/override model metadata for a known API shape without code | Validated runtime model catalog/configuration, with auth stored separately | Host configuration / passive data | Current catalog is static E0; runtime catalog unplanned | Pure data does not require WASM; shell-command secret lookup may be omitted or isolated |
 | Custom Provider | Add transport, streaming, auth, model discovery, and normalization | E0 custom Zig Provider; later runtime registration for portable/system integrations | E0; E2; E3 with narrow host imports | E0 custom Provider L2; runtime registration L0 | OAuth browser/keychain/ambient cloud credentials stay host/E2; E3 never gets broad raw OS access |
-| SDK | Embed the Harness in-process and compose tools/providers/events/session/control | Zig source-composition SDK enriched by public lifecycle/control contracts | E0 | SDK-ready L2; events and steering closed; idle-only durable fork closed at `0a3087f`; current fixture 21/21 | Functional composition, not Node API or semver parity |
+| SDK | Embed the Harness in-process and compose tools/providers/events/session/control | Zig source-composition SDK enriched by public lifecycle/control contracts | E0 | SDK-ready L2; events and steering closed; idle-only durable fork closed at `0a3087f`; E1 Skills closed at `caafef5`; current fixture 22/22 | Functional composition, not Node API or semver parity |
 | RPC mode | Drive a long-lived child with correlated commands, responses, and events | Independent Zag-native `rpc-v1` after public events/control/session contracts | Product process protocol | Planned capability, not part of `headless-v1` | Minimal command set first; no Pi/TS-RPC byte or command parity |
 | JSON mode | Run one prompt and consume structured result/events | Existing `headless-v1` `--json` and `--json-stream` | Product process output | Headless/Process L2 at `a1a1e0f` | Independent public schema; internal Observer/Trace unions are not serialized |
 | TUI + extension UI | Reuse terminal components; show dialogs/status/widgets/tool views; build richer interactive views | Host TUI plus staged extension UI: basic intents, render descriptors, then optional stateful declarative view/action protocol | Host/E0; E2/E3 requests | Minimal TUI planned; extension UI L0 | No raw terminal, arbitrary ANSI, renderer pointer, or untrusted native component factory across E2/E3 |
@@ -211,7 +211,7 @@ cli-sigint-001 ✅
   → harness-events-001 ✅
       ├→ harness-steering-001 ✅
       └→ session-fork-001 ✅ at 0a3087f
-  → skills-001 (docs in-progress) → prompt-templates-001
+  → skills-001 ✅ caafef5 → prompt-templates-001
   → edit-sharpness-001 + tui-minimal-001
 ```
 
@@ -253,7 +253,7 @@ These are capability placeholders. They become binding only after their own anal
 
 ## Remaining blind spots
 
-- Exact Agent Skills interoperability and global/project discovery roots are fixed by the `skills-001` binding contract ([skills.md](../../modules/skills.md)); implementation remains open.
+- Exact Agent Skills interoperability and global/project discovery roots are fixed by the `skills-001` binding contract ([skills.md](../../modules/skills.md)); E1 slice implemented at `caafef5` (Runtime Extensions L0).
 - `rpc-v1` command vocabulary is not specified; only its boundary and dependencies are fixed.
 - Stateful extension UI schema is not designed; only its safety/ownership boundary is fixed.
 - No WASM engine or WIT shape is selected beyond the staged contract constraints.

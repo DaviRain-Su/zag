@@ -41,7 +41,7 @@ Process and WASM remain separate bindings. Not every MCP/server/OS integration c
 
 E0 is already covered by `sdk-contract-001`: stateful custom Toolset, Provider, Observer, policy, cancellation, and session composition.
 
-E1 begins with `skills-001` (binding module [skills.md](../../modules/skills.md); docs contract in-progress), then a separately specified Prompt Template surface. Theme data follows the host TUI; a runtime Custom Model catalog is a distinct validated configuration task, not executable extension code. Passive resources carry no loader execution privilege, but their content may still induce ordinary Tool/shell calls, which remain subject to permission, containment, shell policy, and redaction.
+E1 begins with `skills-001` (binding module [skills.md](../../modules/skills.md); **done** at `caafef5`; Runtime Extensions remains L0), then a separately specified Prompt Template surface. Theme data follows the host TUI; a runtime Custom Model catalog is a distinct validated configuration task, not executable extension code. Passive resources carry no loader execution privilege, but their content may still induce ordinary Tool/shell calls, which remain subject to permission, containment, shell policy, and redaction.
 
 E2 begins only after a real process-extension consumer and C7.1 process-supervisor Gate.
 

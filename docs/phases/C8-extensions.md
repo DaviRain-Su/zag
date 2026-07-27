@@ -39,8 +39,8 @@ No dynamic Zig shared-library ABI and no embedded Lua/QuickJS/Bun runtime.
 
 ### Skills
 
-Binding contract: [skills.md](../modules/skills.md) (`skills-001` docs
-**in-progress**). Product rules in short:
+Binding contract: [skills.md](../modules/skills.md) (`skills-001` **done** at
+`caafef5`; Runtime Extensions L0). Product rules in short:
 
 - jailed `SKILL.md` discovery (user + optional trusted project `.agents/skills`);
 - project-trust ordering (default untrusted; independent of `--no-project`);
@@ -141,15 +141,16 @@ Raw terminal bytes, arbitrary ANSI, Host pointers, and untrusted native componen
 ### E1 Skills
 
 Exact matrix: [skills.md §11](../modules/skills.md#11-verification--exact-fixture-matrix-14).
+Implementation closed at `caafef5` (`skills_tests.zig` + SDK smoke); maturity still L0:
 
-- [ ] roots/order/conflicts deterministic;
-- [ ] project trust precedes project-resource discovery;
-- [ ] symlink/escape invalid;
-- [ ] invalid/oversized content bounded;
-- [ ] disabled/manual-only behavior deterministic;
-- [ ] no loader execution path;
-- [ ] induced Tool calls still pass ordinary security Gates;
-- [ ] start OOM / fork catalog / resume rediscovery / activation routes.
+- [x] roots/order/conflicts deterministic;
+- [x] project trust precedes project-resource discovery;
+- [x] symlink/escape invalid;
+- [x] invalid/oversized content bounded;
+- [x] disabled/manual-only behavior deterministic;
+- [x] no loader execution path;
+- [x] induced Tool calls still pass ordinary security Gates;
+- [x] start OOM / fork catalog / resume rediscovery / activation routes.
 
 ### E1 Prompt Templates
 

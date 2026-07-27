@@ -16,14 +16,15 @@ docs/plan/
 | Area | Status |
 |------|--------|
 | Phase H | **done/L2** — single-user trusted-host; fresh 11-sentence audit PASS; panel SHIP |
-| Zig SDK | **done/L2** at `ebdd7ab` — Gate fixture 7/7; current external consumer **21/21** |
+| Zig SDK | **done/L2** at `ebdd7ab` — Gate fixture 7/7; current external consumer **22/22** |
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
 | Core responsibility correction | **done** through `aecf402` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); ownership migration plus the product lifecycle adapter are closed without changing existing L2 rows |
 | Product SDK lifecycle | **done** at `aecf402` — coding-agent `LifecycleObserver` over Core source facts plus facade run facts; no Core lifecycle channel |
 | Bounded steering/follow-up | **done** at `a5ff2b7` — Session-owned queues + explicit Core `ControlInput`; SDK/Loop enrichment with no maturity change |
 | Session fork | **done** at `0a3087f` — idle-only durable child, parent immutability, schema v1, SDK 21/21; Session remains L2 |
-| Next code task | `skills-001` **in-progress** (docs contract) — [task](./tasks/skills-001.md) · [module](../modules/skills.md) |
+| E1 Skills | **done** at `caafef5` — passive discovery/catalog/`read_skill`/activation; SDK 22/22; Runtime Extensions remains L0 |
+| Next code task | `prompt-templates-001` planned — E1 passive templates after Skills |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -33,6 +34,11 @@ The `session-fork-001` merged-main Gate at `0a3087f` passed std **40/40 steps, 5
 **42/42 steps, 578/578 tests**, Core **89/89**, Coding **309/309**, external SDK **21/21**, OpenAPI **287/287**,
 catalog **40**, readability **91/100**, and security
 **72/100**. Session/Resume remains L2; no tree/journal/schema claim was added.
+
+The `skills-001` merged-main Gate at `caafef5` passed std **40/40 steps, 609/609 tests**, curl
+**42/42 steps, 608/608 tests**, Core **89/89**, Coding **337/337**, CLI **30/30**, external SDK **22/22**,
+OpenAPI **287/287**, catalog **40**, readability **91/100**, and security **72/100**. Runtime Extensions remains L0;
+no E1 maturity row was raised.
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -73,7 +79,7 @@ completed foundation
            └────► session-fork-001 (done @ 0a3087f) ✅
                            │
                            ▼
-          skills-001 (docs in-progress) → prompt-templates-001
+          skills-001 (done @ caafef5) ✅ → prompt-templates-001
                     + edit-sharpness-001 (M2)
                            │
                            ▼
@@ -81,12 +87,12 @@ completed foundation
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
-`harness-steering-001`, and `session-fork-001` are complete. Source review rejected the earlier lifecycle design because
-it would add a third Core event channel while leaving product policy/state in the kernel; the replacement coding-agent
-adapter closed at `aecf402`. Bounded steering/follow-up then closed at `a5ff2b7` with Session-owned queues and a thin
-Core insertion seam. The safe idle-only durable fork closed at `0a3087f` after independent reviews and merged-main
-Gates, without changing session schema v1 or the Session L2 row. `skills-001` is the active node: binding module and
-task are authored (docs-first); implementation and Runtime Extensions maturity raise are not claimed. Task priorities
+`harness-steering-001`, `session-fork-001`, and `skills-001` are complete. Source review rejected the earlier lifecycle
+design because it would add a third Core event channel while leaving product policy/state in the kernel; the replacement
+coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then closed at `a5ff2b7` with Session-owned queues
+and a thin Core insertion seam. The safe idle-only durable fork closed at `0a3087f` after independent reviews and
+merged-main Gates, without changing session schema v1 or the Session L2 row. E1 passive Skills closed at `caafef5`
+(coding-agent only; Runtime Extensions remains L0). `prompt-templates-001` is the next planned E1 node. Task priorities
 express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
@@ -97,12 +103,13 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| [skills-001](./tasks/skills-001.md) | **in-progress** (docs contract) | E1 passive `SKILL.md` discovery, trust, summary/`read_skill`, manual activation; binding [skills.md](../modules/skills.md); no maturity raise |
+| `prompt-templates-001` | planned | E1 passive Prompt Templates over Skills loader foundations; task file not yet authored |
 
 ### Completed foundation
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [skills-001](./tasks/skills-001.md) | P1 | done | E1 passive Agent Skills; closed at `caafef5`; Runtime Extensions remains L0 |
 | [session-fork-001](./tasks/session-fork-001.md) | P1 | done | Safe idle-only durable Session fork; closed at `0a3087f`; schema v1 and Session L2 unchanged |
 | [harness-steering-001](./tasks/harness-steering-001.md) | P1 | done | Session-owned bounded steering/follow-up + explicit Core `ControlInput`; closed at `a5ff2b7` |
 | [harness-events-001](./tasks/harness-events-001.md) | P1 | done | Coding-agent SDK lifecycle adapter; closed at `aecf402` |

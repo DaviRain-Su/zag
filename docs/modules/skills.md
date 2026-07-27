@@ -12,9 +12,9 @@ discovery, explicit project trust, model-visible summaries with on-demand body
 loading, manual activation, and ordinary downstream safety Gates.
 
 **Implementation status:** E1 passive slice landed in `zag-coding-agent` /
-`zag-cli` (`skills-001`). Runtime Extensions maturity remains **L0**; this
-document is the binding contract. Delivery does not raise the Runtime Extensions
-maturity row.
+`zag-cli` (`skills-001` **done** at `caafef5`). Runtime Extensions maturity
+remains **L0**; this document is the binding contract. Delivery does not raise
+the Runtime Extensions maturity row.
 
 Prerequisite contracts (unchanged by this slice):
 
