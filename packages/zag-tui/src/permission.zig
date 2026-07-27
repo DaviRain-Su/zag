@@ -1,4 +1,7 @@
 //! Single-slot permission rendezvous: worker AskFn publishes; UI decides.
+//!
+//! Redaction of tool name completes **outside** the permission spin lock.
+//! UI reads modal facts only via `snapshot()` under the lock.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -7,14 +10,28 @@ const coding = @import("zag-coding-agent");
 const c = @import("constants.zig");
 const present = @import("present.zig");
 
+pub const ModalSnapshot = struct {
+    pending: bool = false,
+    risk_label: [16]u8 = undefined,
+    risk_len: u8 = 0,
+    args_len: usize = 0,
+    tool_name: [c.permission_tool_name_max_bytes]u8 = undefined,
+    tool_name_len: u8 = 0,
+
+    pub fn riskSlice(self: *const ModalSnapshot) []const u8 {
+        return self.risk_label[0..self.risk_len];
+    }
+    pub fn toolNameSlice(self: *const ModalSnapshot) []const u8 {
+        return self.tool_name[0..self.tool_name_len];
+    }
+};
+
 pub const PermissionSlot = struct {
-    /// Short critical sections; spin (no Io.Mutex cancel points in callbacks).
     mu: std.atomic.Mutex = .unlocked,
     pending: bool = false,
     decided: bool = false,
     decision: coding.permissions.Decision = .deny,
     closing: bool = false,
-    /// Bounded modal facts (no raw args body).
     risk_label: [16]u8 = undefined,
     risk_len: u8 = 0,
     args_len: usize = 0,
@@ -28,15 +45,7 @@ pub const PermissionSlot = struct {
         self.mu.unlock();
     }
 
-    pub fn riskSlice(self: *const PermissionSlot) []const u8 {
-        return self.risk_label[0..self.risk_len];
-    }
-    pub fn toolNameSlice(self: *const PermissionSlot) []const u8 {
-        return self.tool_name[0..self.tool_name_len];
-    }
-
-    /// Worker-side AskFn body. Never reads stdin / never renders.
-    /// Waits by brief unlock + sleep (not under card lock).
+    /// Worker-side AskFn. Never reads stdin / never renders / never holds card lock.
     pub fn ask(
         self: *PermissionSlot,
         gpa: std.mem.Allocator,
@@ -49,6 +58,17 @@ pub const PermissionSlot = struct {
     ) coding.permissions.Decision {
         if (!ask_ctx_ok or redactor == null) return .deny;
 
+        // ── Outside lock: redact + truncate tool name; risk/args_len fixed ──
+        const risk = descriptor.capabilities.risk.label();
+        var risk_buf: [16]u8 = undefined;
+        const rlen = @min(risk.len, risk_buf.len);
+        @memcpy(risk_buf[0..rlen], risk[0..rlen]);
+
+        var tool_buf: [c.permission_tool_name_max_bytes]u8 = undefined;
+        const tlen = present.presentInto(gpa, redactor, &tool_buf, descriptor.definition.name);
+        const args_len = arguments_json.len;
+
+        // ── Under lock: publish fixed preprocessed fields only ──
         self.lock();
         if (self.closing) {
             self.unlock();
@@ -59,17 +79,11 @@ pub const PermissionSlot = struct {
             return .deny;
         }
 
-        const risk = descriptor.capabilities.risk.label();
-        const rlen = @min(risk.len, self.risk_label.len);
-        @memcpy(self.risk_label[0..rlen], risk[0..rlen]);
+        @memcpy(self.risk_label[0..rlen], risk_buf[0..rlen]);
         self.risk_len = @intCast(rlen);
-        self.args_len = arguments_json.len;
-        self.tool_name_len = @intCast(present.presentInto(
-            gpa,
-            redactor,
-            &self.tool_name,
-            descriptor.definition.name,
-        ));
+        self.args_len = args_len;
+        if (tlen > 0) @memcpy(self.tool_name[0..tlen], tool_buf[0..tlen]);
+        self.tool_name_len = @intCast(tlen);
 
         self.pending = true;
         self.decided = false;
@@ -78,7 +92,6 @@ pub const PermissionSlot = struct {
 
         wake_fn(wake_ctx);
 
-        // Wait for decision or closing without holding card_ring_mutex.
         while (true) {
             self.lock();
             if (self.decided or self.closing) {
@@ -89,9 +102,6 @@ pub const PermissionSlot = struct {
                 return out;
             }
             self.unlock();
-            // Brief yield without Io cancel points (worker wait).
-            // std.Thread.sleep removed in 0.16; libc nanosleep is inherent on
-            // macOS and link_libc Linux; raw Linux uses clock_nanosleep syscall.
             if (builtin.os.tag == .linux and !builtin.link_libc) {
                 var ts: std.os.linux.timespec = .{ .sec = 0, .nsec = 2 * std.time.ns_per_ms };
                 _ = std.os.linux.clock_nanosleep(.MONOTONIC, 0, &ts, null);
@@ -120,10 +130,27 @@ pub const PermissionSlot = struct {
         }
     }
 
-    pub fn isPending(self: *PermissionSlot) bool {
+    /// Atomic snapshot for UI render (only safe way to read modal fields).
+    pub fn snapshot(self: *PermissionSlot) ModalSnapshot {
         self.lock();
         defer self.unlock();
-        return self.pending and !self.decided;
+        var out: ModalSnapshot = .{
+            .pending = self.pending and !self.decided,
+            .risk_len = self.risk_len,
+            .args_len = self.args_len,
+            .tool_name_len = self.tool_name_len,
+        };
+        if (self.risk_len > 0) {
+            @memcpy(out.risk_label[0..self.risk_len], self.risk_label[0..self.risk_len]);
+        }
+        if (self.tool_name_len > 0) {
+            @memcpy(out.tool_name[0..self.tool_name_len], self.tool_name[0..self.tool_name_len]);
+        }
+        return out;
+    }
+
+    pub fn isPending(self: *PermissionSlot) bool {
+        return self.snapshot().pending;
     }
 
     pub fn resetClosing(self: *PermissionSlot) void {
@@ -168,4 +195,17 @@ test "permission null ctx / missing redactor deny" {
         coding.permissions.Decision.deny,
         slot.ask(gpa, &r, false, desc, "{}", Wake.f, &dummy),
     );
+}
+
+test "permission snapshot is only reader path" {
+    var slot = PermissionSlot{};
+    slot.pending = true;
+    slot.decided = false;
+    slot.risk_len = 4;
+    @memcpy(slot.risk_label[0..4], "read");
+    slot.args_len = 7;
+    const snap = slot.snapshot();
+    try std.testing.expect(snap.pending);
+    try std.testing.expectEqualStrings("read", snap.riskSlice());
+    try std.testing.expectEqual(@as(usize, 7), snap.args_len);
 }

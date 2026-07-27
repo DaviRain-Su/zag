@@ -512,13 +512,14 @@ pub fn run(init: std.process.Init) !void {
     }
 
     // ── TUI path (comptime-gated so -Dtui=false never types zag-tui) ────────
+    // Explicit teardown before process.exit — defers do not run across exit().
+    // Order: Guard.deinit (in runTui) → Session.deinit (in runTui) → Agent → App last.
     if (comptime tui_enabled) {
         if (want_tui) {
             const app = tui_entry.App.create(gpa) catch {
                 std.log.err("tui: preallocate failed", .{});
                 std.process.exit(1);
             };
-            defer app.destroy();
 
             agent_opts.permission_gate = if (permission_mode == .yolo)
                 coding.permissions.Gate.yolo()
@@ -526,18 +527,20 @@ pub fn run(init: std.process.Init) !void {
                 coding.permissions.Gate.ask(tui_entry.App.askFn, app);
             agent_opts.lifecycle = app.lifecycleObserver();
             agent_opts.observer = app.observer();
+            // TUI ask: hunk_reviewer already null; yolo: AutoAccept (bound above).
 
             var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
                 std.log.err("agent init failed (out of memory)", .{});
+                app.destroy();
                 std.process.exit(1);
             };
-            defer agent.deinit();
 
             var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
                 std.log.err("sigint guard init failed", .{});
+                agent.deinit();
+                app.destroy();
                 std.process.exit(1);
             };
-            // runTui always deinit's Guard on both success and failure paths.
             const tui_host_opts: tui_entry.HostResourceOptions = .{
                 .skills_enabled = host_opts.skills_enabled,
                 .project_skills_trust = host_opts.project_skills_trust,
@@ -560,8 +563,9 @@ pub fn run(init: std.process.Init) !void {
                 .permission_label = permission_mode.name(),
                 .shell_label = shell_policy.name(),
             });
-            // Order: Guard already deinit inside runTui → Agent.deinit (defer)
-            // → App.destroy (defer).
+            // Guard + Session already freed inside runTui. Explicit Agent then App.
+            agent.deinit();
+            app.destroy();
             std.process.exit(result.exit_code);
         }
     }

@@ -37,15 +37,14 @@ pub fn stateName(s: UiState) []const u8 {
     };
 }
 
-/// Render full frame into `out` writer callback. Returns error on write fail.
+/// Render full frame. Permission modal fields come from a lock-safe snapshot.
 pub fn renderFrame(
     term: *terminal.Terminal,
     size: terminal.Size,
     facts: StatusFacts,
     snap: []const cards.CardSlot,
     ed: *const editor.Editor,
-    perm_pending: bool,
-    perm_slot: *const permission.PermissionSlot,
+    modal: permission.ModalSnapshot,
 ) error{WriteFailed}!void {
     var buf: [16 * 1024]u8 = undefined;
     var list = std.ArrayList(u8).initBuffer(&buf);
@@ -106,12 +105,12 @@ pub fn renderFrame(
             ed.len,
             c.editor_max_bytes,
         });
-        if (perm_pending) {
+        if (modal.pending) {
             try appendFmt(&list, "┌─ permission (modal) ─\r\n", .{});
             try appendFmt(&list, "│ risk:{s}  args_len:{d}  tool:{s}\r\n", .{
-                perm_slot.riskSlice(),
-                perm_slot.args_len,
-                if (perm_slot.tool_name_len == 0) "—" else perm_slot.toolNameSlice(),
+                modal.riskSlice(),
+                modal.args_len,
+                if (modal.tool_name_len == 0) "—" else modal.toolNameSlice(),
             });
             try appendFmt(&list, "│ [a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny\r\n", .{});
             try appendFmt(&list, "└─\r\n", .{});

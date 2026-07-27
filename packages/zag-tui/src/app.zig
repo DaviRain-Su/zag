@@ -32,12 +32,24 @@ pub const OpenDisplay = enum {
     }
 };
 
-pub const BindError = error{MissingRedactor, MissingSignalHost, MissingAgent, MissingSession};
+pub const BindError = error{ MissingRedactor, MissingSignalHost, MissingAgent, MissingSession };
+
+/// Test-only teardown observer (no product effect when null).
+pub const TeardownProbe = struct {
+    steps: []u8,
+    len: usize = 0,
+
+    pub fn note(self: *TeardownProbe, tag: u8) void {
+        if (self.len < self.steps.len) {
+            self.steps[self.len] = tag;
+            self.len += 1;
+        }
+    }
+};
 
 pub const App = struct {
     gpa: std.mem.Allocator,
 
-    // Preallocated storage (heap, address-stable for App lifetime).
     editor_storage: []u8,
     history_entries: [][c.history_entry_max_bytes]u8,
     history_lens: []usize,
@@ -46,49 +58,46 @@ pub const App = struct {
     editor: editor_mod.Editor,
     history: editor_mod.History,
 
-    // App wake pipe (nonblocking CLOEXEC).
     wake_r: posix.fd_t = -1,
     wake_w: posix.fd_t = -1,
 
-    // Borrowed after bind (must outlive run).
     agent: ?*coding.Agent = null,
     session: ?*coding.Session = null,
     redactor: ?*const coding.redact.Redactor = null,
     host: ?SignalHost = null,
 
-    // Display facts (set by CLI before/at bind).
     id_display: [c.card_title_max_bytes]u8 = undefined,
     id_display_len: usize = 0,
     open_display: OpenDisplay = .n_a,
     perm_label: []const u8 = "ask",
     shell_label: []const u8 = "protect",
-    session_configured_ui: bool = false,
+    /// Cross-thread run_start fact — atomic (worker publish, UI read).
+    session_configured_ui: std.atomic.Value(bool) = .init(false),
 
     state: UiState = .idle,
     status_note: [128]u8 = undefined,
     status_note_len: usize = 0,
     quiesced: bool = false,
     raw_entered: bool = false,
+    /// Sticky host fatal: subsequent worker success must not yield exit 0.
+    host_fatal: bool = false,
+    sticky_exit: u8 = 0,
 
-    // Worker
     worker: ?std.Thread = null,
     worker_prompt: []u8 = &[_]u8{},
     worker_active: bool = false,
     worker_finished: std.atomic.Value(bool) = .init(false),
-    worker_had_error: bool = false,
+    worker_had_error: std.atomic.Value(bool) = .init(false),
 
-    // Input buffer for key decode.
     in_buf: [512]u8 = undefined,
     in_len: usize = 0,
-
-    // Snapshot scratch (UI thread only).
     snap_buf: [c.card_slots]cards_mod.CardSlot = undefined,
-
-    // Lifecycle identity
     last_run_started: bool = false,
 
-    /// Preallocate everything before Agent.init / Guard / Session / raw.
-    pub fn create(gpa: std.mem.Allocator) error{OutOfMemory, PipeFailed}!*App {
+    /// Optional teardown probe (tests).
+    teardown_probe: ?*TeardownProbe = null,
+
+    pub fn create(gpa: std.mem.Allocator) error{ OutOfMemory, PipeFailed }!*App {
         const app = try gpa.create(App);
         errdefer gpa.destroy(app);
 
@@ -125,8 +134,8 @@ pub const App = struct {
         return app;
     }
 
-    /// Final free — only after Agent.deinit (adapter ptrs live until then).
     pub fn destroy(self: *App) void {
+        if (self.teardown_probe) |p| p.note('A'); // App free last marker
         if (self.wake_r >= 0) {
             terminal_mod.closeFd(self.wake_r);
             self.wake_r = -1;
@@ -146,17 +155,24 @@ pub const App = struct {
         gpa.destroy(self);
     }
 
-    /// Detach for teardown; do not free storage yet.
     pub fn quiesce(self: *App) void {
+        if (self.teardown_probe) |p| p.note('Q');
         self.quiesced = true;
         self.host = null;
-        // Keep agent/session/redactor pointers until Agent.deinit returns
-        // (Options may still reference lifecycle adapter into App).
     }
 
-    pub fn setIdentity(self: *App, id: []const u8, open: OpenDisplay, perm: []const u8, shell: []const u8) void {
-        const n = present.copyTruncated(&self.id_display, id);
-        self.id_display_len = n;
+    /// Display path identity — **must** run after Session redactor bind.
+    /// Pipeline: redactAlloc → UTF-8 → truncate → fixed copy. Never raw path.
+    pub fn setIdentity(
+        self: *App,
+        gpa: std.mem.Allocator,
+        redactor: ?*const coding.redact.Redactor,
+        id: []const u8,
+        open: OpenDisplay,
+        perm: []const u8,
+        shell: []const u8,
+    ) void {
+        self.id_display_len = present.presentInto(gpa, redactor, &self.id_display, id);
         self.open_display = open;
         self.perm_label = perm;
         self.shell_label = shell;
@@ -182,20 +198,13 @@ pub const App = struct {
     }
 
     pub fn lifecycleObserver(self: *App) coding.LifecycleObserver {
-        return .{
-            .ptr = self,
-            .on_event = onLifecycle,
-        };
+        return .{ .ptr = self, .on_event = onLifecycle };
     }
 
     pub fn observer(self: *App) coding.Observer {
-        return .{
-            .ptr = self,
-            .on_event = onObserver,
-        };
+        return .{ .ptr = self, .on_event = onObserver };
     }
 
-    /// Gate.ask callback — runs on reply worker thread.
     pub fn askFn(
         ptr: ?*anyopaque,
         descriptor: zt.ToolDescriptor,
@@ -234,41 +243,49 @@ pub const App = struct {
 
     fn onLifecycle(ptr: ?*anyopaque, event: coding.LifecycleEvent) void {
         const self: *App = @ptrCast(@alignCast(ptr.?));
-        // Callback rules: no TTY I/O, no render, short lock publish + nonblocking wake.
         const red = self.redactor;
         switch (event) {
             .run_start => |rs| {
                 self.last_run_started = true;
-                self.session_configured_ui = rs.session_configured;
-                // Demote prior terminal into ordinary before new run.
-                self.card_ring.demoteTerminalToOrdinary(self.gpa, red);
-                self.card_ring.publishOrdinary(self.gpa, red, "run_start", if (rs.session_configured) "session_configured=y" else "session_configured=n");
+                self.session_configured_ui.store(rs.session_configured, .release);
+                self.card_ring.demoteTerminalToOrdinary();
+                self.card_ring.publishOrdinary(
+                    self.gpa,
+                    red,
+                    "run_start",
+                    if (rs.session_configured) "session_configured=y" else "session_configured=n",
+                );
             },
             .assistant_message => |m| {
+                // Lifecycle is card identity for assistant (turn/has_tools).
                 var title_buf: [64]u8 = undefined;
                 const title = std.fmt.bufPrint(&title_buf, "assistant turn={d}", .{m.turn}) catch "assistant";
-                self.card_ring.publishOrdinary(self.gpa, red, title, m.text);
+                // Replace-style: drop any open progressive "assistant" body card.
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(self.gpa, red, "assistant", title, m.text);
             },
             .tool_start => |t| {
-                var title_buf: [96]u8 = undefined;
-                const title = std.fmt.bufPrint(&title_buf, "tool start {s}", .{t.name}) catch "tool start";
+                // Full redact pipeline for name/id/args (arbitrary bytes).
+                var name_buf: [c.card_title_max_bytes]u8 = undefined;
+                const name_n = present.presentInto(self.gpa, red, &name_buf, t.name);
+                var title_buf: [c.card_title_max_bytes]u8 = undefined;
+                const title = std.fmt.bufPrint(&title_buf, "tool start {s}", .{name_buf[0..name_n]}) catch "tool start";
+                var id_buf: [64]u8 = undefined;
+                var args_buf: [c.card_body_max_bytes]u8 = undefined;
+                const id_n = present.presentInto(self.gpa, red, &id_buf, t.id);
+                const args_n = present.presentInto(self.gpa, red, &args_buf, t.arguments);
                 var body_buf: [c.card_body_max_bytes]u8 = undefined;
-                // Present id+args via redaction into a temp then publish.
-                // Avoid inventing tool_update.
-                const id_n = present.presentInto(self.gpa, red, body_buf[0..64], t.id);
-                const args_n = present.presentInto(self.gpa, red, body_buf[64..], t.arguments);
-                var composed: [c.card_body_max_bytes]u8 = undefined;
-                const body = std.fmt.bufPrint(&composed, "id={s} args={s}", .{
-                    body_buf[0..id_n],
-                    body_buf[64 .. 64 + args_n],
+                const body = std.fmt.bufPrint(&body_buf, "id={s} args={s}", .{
+                    id_buf[0..id_n],
+                    args_buf[0..args_n],
                 }) catch "tool";
-                // Title already has name — redact name path by publishing title via ordinary pipeline.
-                self.card_ring.publishOrdinary(self.gpa, red, title, body);
+                // Already redacted — fixed publish (no second redact).
+                self.card_ring.publishOrdinaryPrepared(cards_mod.PreparedCard.fromFixed(title, body));
             },
             .tool_end => |t| {
-                // End-only: still show end card; no fabricated start.
-                var title_buf: [96]u8 = undefined;
-                const title = std.fmt.bufPrint(&title_buf, "tool end {s}", .{t.name}) catch "tool end";
+                var name_buf: [c.card_title_max_bytes]u8 = undefined;
+                const name_n = present.presentInto(self.gpa, red, &name_buf, t.name);
+                var title_buf: [c.card_title_max_bytes]u8 = undefined;
+                const title = std.fmt.bufPrint(&title_buf, "tool end {s}", .{name_buf[0..name_n]}) catch "tool end";
                 self.card_ring.publishOrdinary(self.gpa, red, title, t.body);
             },
             .control_applied => |ctrl| {
@@ -281,7 +298,6 @@ pub const App = struct {
                 self.card_ring.publishOrdinary(self.gpa, red, title, ctrl.text);
             },
             .run_terminal => |term| {
-                // Numeric/enum only — terminal reserve, allocation-free.
                 var body_buf: [128]u8 = undefined;
                 const stop = @tagName(term.stop_reason);
                 const body = std.fmt.bufPrint(&body_buf, "ok={any} stop={s} turns={d} p={d} c={d} t={d}", .{
@@ -302,16 +318,22 @@ pub const App = struct {
         const self: *App = @ptrCast(@alignCast(ptr.?));
         switch (event) {
             .assistant_text => |text| {
-                // Full message body snapshot (not token delta) — replace-style ordinary card.
-                self.card_ring.publishOrdinary(self.gpa, self.redactor, "assistant_text", text);
+                // Progressive full-body snapshot: replace open assistant card only.
+                // Do NOT create a second lifecycle identity card — lifecycle
+                // `assistant_message` owns turn identity; this updates body only.
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(
+                    self.gpa,
+                    self.redactor,
+                    "assistant",
+                    "assistant progressive",
+                    text,
+                );
                 self.wake();
             },
             else => {},
         }
     }
 
-    /// Interactive loop. Requires bind + geometry check already passed by CLI.
-    /// Returns process exit code.
     pub fn run(self: *App) u8 {
         if (self.agent == null or self.session == null or self.redactor == null or self.host == null) {
             return 1;
@@ -336,7 +358,6 @@ pub const App = struct {
 
         var exit_code: u8 = 0;
         defer {
-            // Cooperative restore on normal/closing paths after join.
             if (self.worker) |*th| {
                 th.join();
                 self.worker = null;
@@ -346,10 +367,12 @@ pub const App = struct {
                 term.restore() catch {};
                 self.raw_entered = false;
             }
+            if (self.host_fatal and exit_code == 0) exit_code = 1;
+            if (self.sticky_exit != 0 and exit_code == 0) exit_code = self.sticky_exit;
         }
 
-        // Initial render.
         self.paint(&term) catch {
+            self.markHostFatal(1);
             self.permission.denyAndClose();
             self.fixedStderr("tui: render failed\n");
             exit_code = 1;
@@ -357,13 +380,11 @@ pub const App = struct {
         };
 
         while (self.state != .closed) {
-            // Poll stdin + app wake + SignalHost wake ≤250ms.
             var pollfds = [_]posix.pollfd{
                 .{ .fd = posix.STDIN_FILENO, .events = posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.wake_r, .events = posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.host.?.wakeFd(), .events = posix.POLL.IN, .revents = 0 },
             };
-            // If signal wake fd invalid, skip it by setting fd=-1.
             if (pollfds[2].fd < 0) {
                 pollfds[2].fd = -1;
                 pollfds[2].events = 0;
@@ -371,7 +392,6 @@ pub const App = struct {
 
             _ = posix.poll(&pollfds, c.poll_timeout_ms) catch {};
 
-            // Drain wakes.
             if (pollfds[1].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
                 terminal_mod.drainPipe(self.wake_r);
             }
@@ -379,7 +399,6 @@ pub const App = struct {
                 self.host.?.drainWake();
             }
 
-            // Join finished worker.
             if (self.worker_active and self.worker_finished.load(.acquire)) {
                 if (self.worker) |*th| {
                     th.join();
@@ -388,23 +407,24 @@ pub const App = struct {
                 self.afterWorkerJoin();
             }
 
-            // SignalHost pending: idle → clean exit 0; busy handled by Guard cancel.
+            // SIGINT via Guard: idle clean exit; busy deny pending modal + cancel.
             if (self.host.?.pendingInterrupt()) {
                 if (self.state == .idle) {
                     exit_code = 0;
                     self.state = .closed;
                     break;
                 }
-                // Busy: cooperative cancel already requested via Guard; show closing if needed.
                 if (self.state == .busy) {
-                    self.setNote("cancel pending");
+                    // Fail-closed: deny any pending AskFn so worker cannot hang.
+                    self.permission.denyAndClose();
+                    self.enterClosing();
                 }
             }
 
-            // Stdin readable.
             if (pollfds[0].revents & posix.POLL.IN != 0) {
                 const action = self.readAndHandleKeys() catch {
-                    self.permission.decide(.deny);
+                    self.permission.denyAndClose();
+                    self.markHostFatal(1);
                     self.fixedStderr("tui: read failed\n");
                     if (self.state == .busy) {
                         self.enterClosing();
@@ -428,9 +448,9 @@ pub const App = struct {
                 }
             }
 
-            // Timeout path still surfaces permission modal / terminal cards.
             self.paint(&term) catch {
-                self.permission.decide(.deny);
+                self.permission.denyAndClose();
+                self.markHostFatal(1);
                 if (self.state == .busy) {
                     self.enterClosing();
                     self.fixedStderr("tui: render failed; waiting for cancel\n");
@@ -442,13 +462,19 @@ pub const App = struct {
             };
 
             if (self.state == .closing and !self.worker_active) {
-                // Worker done; exit after join ack.
-                exit_code = 0;
+                // Host fatal sticky — never invent success after fatal.
+                exit_code = if (self.host_fatal) self.sticky_exit else 0;
+                if (exit_code == 0 and self.sticky_exit != 0) exit_code = self.sticky_exit;
                 self.state = .closed;
             }
         }
 
         return exit_code;
+    }
+
+    pub fn markHostFatal(self: *App, code: u8) void {
+        self.host_fatal = true;
+        if (self.sticky_exit == 0) self.sticky_exit = code;
     }
 
     fn enterClosing(self: *App) void {
@@ -458,6 +484,8 @@ pub const App = struct {
         self.setNote("closing… (Ctrl+C again may hard-exit 130)");
     }
 
+    /// After every reply worker join: ack Guard pending. **Does not** clear
+    /// control queues (steering/follow-up survive cancel/error for next reply).
     pub fn afterWorkerJoin(self: *App) void {
         self.worker_active = false;
         self.worker_finished.store(false, .release);
@@ -465,22 +493,19 @@ pub const App = struct {
             self.gpa.free(self.worker_prompt);
             self.worker_prompt = &[_]u8{};
         }
-        // §2.5: acknowledge cancel after every join (success or error).
         if (self.host) |h| h.acknowledgeCancel();
+        const had_err = self.worker_had_error.load(.acquire);
         if (self.state == .closing) {
-            // stay closing until loop exits
-        } else if (self.worker_had_error) {
+            // keep closing
+        } else if (had_err or self.host_fatal) {
             self.state = .@"error";
             self.setNote("reply error");
         } else {
             self.state = .idle;
             self.setNote("");
         }
-        // Idle-only clear of control queues after join.
-        if (self.state == .idle or self.state == .@"error") {
-            if (self.session) |s| s.clearControlQueues();
-        }
-        self.worker_had_error = false;
+        // Intentionally NO clearControlQueues — queues retain for next reply.
+        self.worker_had_error.store(false, .release);
         self.permission.resetClosing();
     }
 
@@ -493,18 +518,12 @@ pub const App = struct {
             else => return error.ReadFailed,
         };
         if (n == 0) {
-            // EOF
-            if (self.permission.isPending()) {
-                self.permission.decide(.deny);
-            }
-            if (self.state == .busy or self.state == .closing) {
-                return .closing;
-            }
+            if (self.permission.isPending()) self.permission.decide(.deny);
+            if (self.state == .busy or self.state == .closing) return .closing;
             if (self.editor.len == 0) return .quit_0;
             return .none;
         }
         if (self.in_len + n > self.in_buf.len) {
-            // Drop overflow; fail-closed for modal.
             self.in_len = 0;
             if (self.permission.isPending()) self.permission.decide(.deny);
             return .none;
@@ -521,7 +540,6 @@ pub const App = struct {
             action = self.handleKey(dec.key);
             if (action != .none) break;
         }
-        // Compact buffer.
         if (off > 0) {
             const left = self.in_len - off;
             if (left > 0) std.mem.copyForwards(u8, self.in_buf[0..left], self.in_buf[off..][0..left]);
@@ -531,7 +549,6 @@ pub const App = struct {
     }
 
     fn handleKey(self: *App, key: keys_mod.Key) KeyAction {
-        // Permission modal steals focus.
         if (self.permission.isPending()) {
             switch (key) {
                 .char => |ch| {
@@ -543,7 +560,6 @@ pub const App = struct {
                         self.permission.decide(.deny);
                         return .none;
                     }
-                    // Ignore other inserts while modal open.
                     return .none;
                 },
                 .enter, .escape => {
@@ -555,16 +571,13 @@ pub const App = struct {
                     if (self.state == .busy) return .closing;
                     return .none;
                 },
-                .ctrl_c => {
-                    // Signal path via Guard; do not forge.
-                    return .none;
-                },
+                .ctrl_c => return .none,
                 else => return .none,
             }
         }
 
         switch (key) {
-            .ctrl_c => return .none, // Guard owns SIGINT
+            .ctrl_c => return .none,
             .ctrl_d => {
                 if (self.state == .busy) return .closing;
                 if (self.editor.len == 0) return .quit_0;
@@ -676,7 +689,7 @@ pub const App = struct {
         self.setNote(if (kind == .steering) "steering_queued" else "followup_queued");
     }
 
-    pub fn dispatchReply(self: *App) error{Busy, StartFailed}!void {
+    pub fn dispatchReply(self: *App) error{ Busy, StartFailed }!void {
         if (self.worker_active) {
             self.setNote("busy_locked");
             return error.Busy;
@@ -684,7 +697,6 @@ pub const App = struct {
         const agent = self.agent orelse return error.StartFailed;
         const session = self.session orelse return error.StartFailed;
         const text = self.editor.slice();
-        // History push only on accepted dispatch.
         self.history.pushAccepted(text);
         const owned = self.gpa.dupe(u8, text) catch return error.StartFailed;
         self.worker_prompt = owned;
@@ -692,7 +704,7 @@ pub const App = struct {
         self.state = .busy;
         self.setNote("(starting…)");
         self.worker_finished.store(false, .release);
-        self.worker_had_error = false;
+        self.worker_had_error.store(false, .release);
         self.worker_active = true;
 
         const thread = std.Thread.spawn(.{}, workerMain, .{ self, agent, session }) catch {
@@ -712,7 +724,7 @@ pub const App = struct {
         }
         const prompt = self.worker_prompt;
         _ = agent.reply(session, prompt) catch {
-            self.worker_had_error = true;
+            self.worker_had_error.store(true, .release);
             self.card_ring.publishHostErrorFixed("host_error", "reply_error");
             return;
         };
@@ -728,10 +740,11 @@ pub const App = struct {
             steer = @intCast(s.steeringPending());
             follow = @intCast(s.followUpPending());
         }
+        const modal = self.permission.snapshot();
         const facts = render.StatusFacts{
             .id_display = self.idDisplay(),
             .open_display = self.open_display.label(),
-            .session_configured = self.session_configured_ui,
+            .session_configured = self.session_configured_ui.load(.acquire),
             .perm = self.perm_label,
             .shell = self.shell_label,
             .state = self.state,
@@ -739,20 +752,11 @@ pub const App = struct {
             .steering_pending = steer,
             .followup_pending = follow,
         };
-        try render.renderFrame(
-            term,
-            sz,
-            facts,
-            self.snap_buf[0..n],
-            &self.editor,
-            self.permission.isPending(),
-            &self.permission,
-        );
+        try render.renderFrame(term, sz, facts, self.snap_buf[0..n], &self.editor, modal);
     }
 
     fn fixedStderr(self: *App, msg: []const u8) void {
         _ = self;
-        // Fixed diagnostics only — no user/model content.
         if (builtin.os.tag == .linux and !builtin.link_libc) {
             _ = std.os.linux.write(posix.STDERR_FILENO, msg.ptr, msg.len);
         } else {
@@ -760,8 +764,6 @@ pub const App = struct {
         }
     }
 };
-
-// ── unit / integration tests (see also tests_gate.zig for §11 map) ──────────
 
 test "app create preallocates and destroy frees" {
     const gpa = std.testing.allocator;

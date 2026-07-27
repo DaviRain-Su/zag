@@ -19,6 +19,7 @@ pub const render = @import("render.zig");
 pub const app = @import("app.zig");
 pub const App = app.App;
 pub const OpenDisplay = app.OpenDisplay;
+pub const TeardownProbe = app.TeardownProbe;
 
 pub const version = "0.5.0";
 

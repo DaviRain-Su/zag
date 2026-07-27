@@ -1,5 +1,5 @@
-//! Small POSIX terminal backend: raw mode, alt-screen, winsize, nonblocking I/O.
-//! No third-party terminal library (no wholesale vaxis).
+//! Small POSIX terminal backend: raw mode on **stdin**, alt-screen/render on **stdout**.
+//! Supports distinct stdin/stdout TTYs. No wholesale vaxis.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -19,26 +19,30 @@ pub const Size = struct {
     }
 };
 
-// O_NONBLOCK bit values (match sigint.zig — avoid packed O struct layout).
 const O_NONBLOCK_LINUX: u32 = 0o4000;
 const O_NONBLOCK_MAC: c_int = 0x0004;
 
 pub const Terminal = struct {
-    tty_fd: posix.fd_t,
-    orig: posix.termios,
+    /// Input TTY (raw termios applied here).
+    in_fd: posix.fd_t,
+    /// Output TTY (alt-screen + renderer writes).
+    out_fd: posix.fd_t,
+    orig_in: posix.termios,
     raw: bool = false,
     alt: bool = false,
 
     pub fn open() error{NotATty, TermiosFailed}!Terminal {
-        const fd: posix.fd_t = posix.STDOUT_FILENO;
-        if (!isFdTty(fd)) return error.NotATty;
-        if (!isFdTty(posix.STDIN_FILENO)) return error.NotATty;
-        const orig = posix.tcgetattr(fd) catch return error.TermiosFailed;
-        return .{ .tty_fd = fd, .orig = orig };
+        const in_fd: posix.fd_t = posix.STDIN_FILENO;
+        const out_fd: posix.fd_t = posix.STDOUT_FILENO;
+        if (!isFdTty(in_fd)) return error.NotATty;
+        if (!isFdTty(out_fd)) return error.NotATty;
+        // Raw mode is applied to stdin (input); capture its original termios.
+        const orig_in = posix.tcgetattr(in_fd) catch return error.TermiosFailed;
+        return .{ .in_fd = in_fd, .out_fd = out_fd, .orig_in = orig_in };
     }
 
     pub fn enterRawAlt(self: *Terminal) error{TermiosFailed, WriteFailed}!void {
-        var t = self.orig;
+        var t = self.orig_in;
         // Keep ISIG so Guard SIGINT handler still fires on Ctrl+C.
         t.lflag.ECHO = false;
         t.lflag.ICANON = false;
@@ -49,11 +53,13 @@ pub const Terminal = struct {
         t.iflag.BRKINT = false;
         t.iflag.INPCK = false;
         t.iflag.ISTRIP = false;
+        // Input side only — do not require OPOST clear on a different out TTY.
         t.oflag.OPOST = false;
         t.cc[@intFromEnum(posix.V.MIN)] = 0;
         t.cc[@intFromEnum(posix.V.TIME)] = 0;
-        posix.tcsetattr(self.tty_fd, .FLUSH, t) catch return error.TermiosFailed;
+        posix.tcsetattr(self.in_fd, .FLUSH, t) catch return error.TermiosFailed;
         self.raw = true;
+        // Alt-screen + hide cursor on stdout (render channel).
         self.writeAll("\x1b[?1049h\x1b[?25l") catch {
             self.restore() catch {};
             return error.WriteFailed;
@@ -67,19 +73,20 @@ pub const Terminal = struct {
             self.alt = false;
         }
         if (self.raw) {
-            posix.tcsetattr(self.tty_fd, .FLUSH, self.orig) catch return error.TermiosFailed;
+            posix.tcsetattr(self.in_fd, .FLUSH, self.orig_in) catch return error.TermiosFailed;
             self.raw = false;
         }
     }
 
     pub fn size(self: *const Terminal) Size {
-        return windowSize(self.tty_fd) orelse .{ .cols = 80, .rows = 24 };
+        // Prefer output TTY geometry for layout.
+        return windowSize(self.out_fd) orelse windowSize(self.in_fd) orelse .{ .cols = 80, .rows = 24 };
     }
 
     pub fn writeAll(self: *Terminal, bytes: []const u8) error{WriteFailed}!void {
         var off: usize = 0;
         while (off < bytes.len) {
-            const n = rawWrite(self.tty_fd, bytes[off..]) catch return error.WriteFailed;
+            const n = rawWrite(self.out_fd, bytes[off..]) catch return error.WriteFailed;
             if (n == 0) return error.WriteFailed;
             off += n;
         }
@@ -111,7 +118,6 @@ pub fn windowSize(fd: posix.fd_t) ?Size {
     return .{ .cols = wsz.col, .rows = wsz.row };
 }
 
-/// Create nonblocking CLOEXEC self-pipe for app wake. Returns [read, write].
 pub fn makeWakePipe() error{PipeFailed}![2]posix.fd_t {
     if (builtin.os.tag == .linux) {
         var fds: [2]i32 = .{ -1, -1 };
@@ -196,7 +202,6 @@ pub fn drainPipe(fd: posix.fd_t) void {
     }
 }
 
-/// Nonblocking wake write; drop-on-full (never block).
 pub fn wakeWrite(fd: posix.fd_t) void {
     const b = [_]u8{1};
     _ = rawWrite(fd, &b) catch {};

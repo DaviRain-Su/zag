@@ -1,10 +1,10 @@
 //! Thin CLI adapter for zag-tui (only compiled when -Dtui=true).
 //! Implements SignalHost over sigint.Guard. Does not own TUI widgets.
 //!
-//! Teardown order (contract §2.6.1) is owned by the CLI caller:
+//! Teardown is **explicit** (no reliance on defer across process.exit):
 //!   ack → restore(in App.run) → App.quiesce → Guard.deinit → Session.deinit
-//!   → Agent.deinit → App.destroy last
-//! This module runs Session + bind + App.run and returns with App still allocated.
+//!   → Agent.deinit → App.destroy (App last)
+//! Caller must not double-deinit Guard when `guard_deinited` is true.
 
 const std = @import("std");
 const Io = std.Io;
@@ -16,8 +16,8 @@ const sigint = @import("sigint.zig");
 pub const App = zag_tui.App;
 pub const SignalHost = zag_tui.SignalHost;
 pub const OpenDisplay = zag_tui.OpenDisplay;
+pub const TeardownProbe = zag_tui.TeardownProbe;
 
-/// CLI-side SignalHost wrapping live Guard (borrowed; address-stable).
 pub const GuardSignalHost = struct {
     guard: *sigint.Guard,
 
@@ -80,29 +80,29 @@ pub const RunArgs = struct {
     base_system: []const u8,
     permission_label: []const u8,
     shell_label: []const u8,
+    /// Optional test probe; product null.
+    teardown_probe: ?*TeardownProbe = null,
 };
 
 pub const RunResult = struct {
     exit_code: u8,
-    /// When true, Guard.deinit was already performed (failure after install).
+    /// Guard.deinit already performed — caller must not deinit again.
     guard_deinited: bool = false,
+    /// Session already deinitialized inside runTui.
+    session_deinited: bool = true,
 };
 
-/// Session.start → bind → App.run → final ack + App.quiesce.
-/// On Session/bind failure: Guard.deinit performed here (guard_deinited=true);
-/// caller must not Guard.deinit again, then Agent.deinit → App.destroy.
-/// On success: Guard still installed; caller does Guard.deinit → Session already
-/// finished inside → Agent.deinit → App.destroy.
-///
-/// Session is fully owned and deinitialized inside this function (after Guard
-/// on success path's final teardown segment, or after Guard on failure).
+/// Full product TUI path after App prealloc + Agent.init + Guard.install.
+/// Explicitly deinitializes Guard and Session; leaves Agent + App to caller.
 pub fn runTui(args: RunArgs) RunResult {
     const gpa = args.gpa;
     const io = args.io;
     const app = args.app;
+    if (args.teardown_probe) |p| app.teardown_probe = p;
 
     if (terminalBelowMinimum()) {
         fixedStderr("tui: terminal too small (need ≥ 20×5)\n");
+        if (args.teardown_probe) |p| p.note('G');
         args.guard.deinit();
         return .{ .exit_code = 1, .guard_deinited = true };
     }
@@ -121,14 +121,16 @@ pub fn runTui(args: RunArgs) RunResult {
         .user_templates_root = args.host_opts.user_templates_root,
     }) catch {
         fixedStderr("tui: session start failed\n");
-        // §2.6.2: Guard.deinit before Agent (caller deinit Agent then App).
+        if (args.teardown_probe) |p| p.note('G');
         args.guard.deinit();
         return .{ .exit_code = 1, .guard_deinited = true };
     };
 
     const redactor = session.activeRedactor() orelse {
         fixedStderr("tui: missing session redactor\n");
+        if (args.teardown_probe) |p| p.note('G');
         args.guard.deinit();
+        if (args.teardown_probe) |p| p.note('S');
         session.deinit();
         return .{ .exit_code = 1, .guard_deinited = true };
     };
@@ -142,24 +144,28 @@ pub fn runTui(args: RunArgs) RunResult {
         .open_or_create => .n_a,
     };
     const id = args.session_path orelse "ephemeral";
-    app.setIdentity(id, open_disp, args.permission_label, args.shell_label);
+    // Path chrome: full redact pipeline with Session-owned redactor.
+    app.setIdentity(gpa, redactor, id, open_disp, args.permission_label, args.shell_label);
 
     app.bind(args.agent, &session, redactor, host) catch {
         fixedStderr("tui: bind failed\n");
+        if (args.teardown_probe) |p| p.note('G');
         args.guard.deinit();
+        if (args.teardown_probe) |p| p.note('S');
         session.deinit();
         return .{ .exit_code = 1, .guard_deinited = true };
     };
 
     const code = app.run();
 
-    // §2.6.1 final: ack → restore already in App.run → App.quiesce →
-    // Guard.deinit → Session.deinit → (caller) Agent.deinit → App.destroy.
+    // §2.6.1 final — explicit order (App storage still live).
     host.acknowledgeCancel();
     app.quiesce();
+    if (args.teardown_probe) |p| p.note('G');
     args.guard.deinit();
+    if (args.teardown_probe) |p| p.note('S');
     session.deinit();
-    return .{ .exit_code = code, .guard_deinited = true };
+    return .{ .exit_code = code, .guard_deinited = true, .session_deinited = true };
 }
 
 fn terminalBelowMinimum() bool {
@@ -172,7 +178,5 @@ fn fixedStderr(msg: []const u8) void {
 }
 
 test "tui_entry GuardSignalHost vtable maps Guard" {
-    // Compile-time shape only when Guard available; inert on unsupported.
-    // Full install tested via process fixtures when -Dtui=true.
     try std.testing.expect(@TypeOf(GuardSignalHost.asHost) != void);
 }

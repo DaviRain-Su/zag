@@ -159,5 +159,5 @@ PASS-record tip.
 | Signal-host / Guard order follow-up | `6c73e4652a737b3fead0dbd15a2c661ebe66cfda` |
 | Teardown order follow-up (PASS tip) | `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` |
 | Contract PASS record (this docs tip) | tip with message `docs: record minimal TUI contract pass` |
-| Implementation | **not started** (future Goal / separate node) |
-| Closeout | blocked on implementation |
+| Implementation candidate | this branch `task/tui-minimal-001-impl` — awaiting independent review + coordinator Gates |
+| Closeout | blocked on independent review + coordinator task/main Gates (not claimed done) |

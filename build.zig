@@ -489,6 +489,8 @@ pub fn build(b: *std.Build) void {
                 },
             }),
         });
+        // PTY harness uses openpty/fork/waitpid (libc); test artifact only.
+        tui_process_tests.root_module.link_libc = true;
         run_tui_process_tests = b.addRunArtifact(tui_process_tests);
     }
 
