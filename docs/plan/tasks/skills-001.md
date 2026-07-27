@@ -160,7 +160,7 @@ items **1–14**, plus:
 | Fixtures 1–14 | `packages/zag-coding-agent/src/skills_tests.zig` |
 | SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` skills-001 test; fixture **22/22** |
 | Review | contract/status truth closeout; implementation + review-fix fixtures at tip `caafef5` |
-| Merge | local main already at `caafef5` (same tip as `task/skills-001`) |
+| Merge | implementation tip `caafef5` ff-only landed on local main; later docs-only closeout/follow-ups do not change behavior |
 | Merged-main Gate | std **40/40 steps, 609/609 tests**; curl **42/42 steps, 608/608 tests**; Core **89/89**; Coding **337/337**; CLI **30/30**; SDK **22/22**; OpenAPI **287/287**; catalog **40**; readability **91/100**; security **72/100** |
 | Maturity | Runtime Extensions **L0** (E1 Skills slice implemented; maturity not raised) |
 
@@ -174,7 +174,8 @@ extraction beyond what Skills needs, and CLI TUI autocomplete.
 
 - Docs contract landed at `875562a` / body-path reconcile `1d93084`; implementation
   `c74e80c` through review-fix/fixture commits `fa7786d`–`caafef5`.
-- Local main and `task/skills-001` share tip `caafef5` (ff-equivalent land on main).
+- Implementation tip `caafef5` was ff-only landed on local main; later docs-only
+  closeout/follow-ups do not change behavior.
 - Merged-main dual-backend Gate: std **40/40 · 609/609**, curl **42/42 · 608/608**,
   Core **89/89**, Coding **337/337**, CLI **30/30**, SDK **22/22**, OpenAPI **287/287**,
   catalog **40**, readability **91/100**, security **72/100**.
