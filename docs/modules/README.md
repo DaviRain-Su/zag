@@ -70,7 +70,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [trace-observability.md](./trace-observability.md) | H7 | 审计 trace |
 | [sdk-contract.md](./sdk-contract.md) | SDK-ready | Public Zig source-composition contract（status: closed at `ebdd7ab`） |
 | [headless-contract.md](./headless-contract.md) | Headless Gate **L2** | Public JSON/NDJSON process contract + exit matrix; closed at `a1a1e0f` |
-| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 ✅; `ci-hang-sigint-linux-errno-001` ✅ `bc737025`; CI fuses docs in-progress | REPL/one-shot input ownership, Ctrl+C lifecycle, raw Linux errno decode under `link_libc`; broader Linux reliability still open |
+| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 ✅; `ci-hang-sigint-linux-errno-001` ✅ `bc737025`; [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) ✅ host rails only; process-idle + Linux Gate still planned | REPL/one-shot input ownership, Ctrl+C lifecycle, raw Linux errno decode under `link_libc`; host CI fuses done; process-idle + final Linux Gate remain open |
 | [harness-events.md](./harness-events.md) | M1 events ✅ | product SDK lifecycle adapter closed at `aecf402`; no Core lifecycle channel |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session control queues + protocol-safe Core insertion seam; closed at `a5ff2b7` |
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | Idle-only durable `Session.fork`; closed at `0a3087f`; schema v1 and Session L2 unchanged |

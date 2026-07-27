@@ -37,9 +37,10 @@ Binding behavior remains [CLI interaction contract](../../modules/cli-interactio
 ff-only local main advance, and merged-main local macOS dual-backend Gate.
 Maturity is **unchanged**. This node does **not** close the broader Linux
 reliability goal: no fresh post-fix remote Linux runner ran in the closeout
-session; separately planned process-idle fixture work, CI fuses, and a final
-merged-path Linux dual-backend Gate remain required before prompt-templates
-work.
+session; separately planned process-idle fixture work and a final merged-path
+Linux dual-backend Gate remain required before prompt-templates work.
+Host CI fuses (`ci-hang-ci-fuses-001`) are **done** separately as rails only
+(timeout/cancel ≠ product hang proof) and are not residual open work.
 
 # context
 
@@ -80,16 +81,18 @@ reproduces. This task must not skip, soften, lengthen, or claim-fixed that
 fixture without independent evidence. No `.github` workflow change and no CI
 timeout/concurrency knobs.
 
-Separately planned follow-ons (not authored as task files yet; no links):
+Separately tracked follow-ons:
 
-- `ci-hang-sigint-process-idle-001` — idle process-fixture reliability;
-- `ci-hang-ci-fuses-001` — CI timeout/concurrency fuses;
+- `ci-hang-sigint-process-idle-001` — idle process-fixture reliability
+  (planned; task file not yet authored);
+- [ci-hang-ci-fuses-001](./ci-hang-ci-fuses-001.md) — **done** as host
+  concurrency + 30m job timeout rails only (not residual open work);
 - final merged-path Linux dual-backend Gate (fresh remote Linux runner after
-  those nodes).
+  process-idle; still required).
 
-These remain **required** before treating broader Linux SIGINT reliability as
-closed and before prompt-templates work. This errno node alone does not
-satisfy them.
+Active residual before broader Linux SIGINT reliability close / prompt-templates:
+process-idle + final Linux Gate only. Host CI fuses are done separately and
+are not residual. This errno node alone does not satisfy the residual chain.
 
 ## References
 
@@ -240,8 +243,9 @@ shape preserved: drain is best-effort).
 - Prompt Templates, TUI, maturity raise, schema/Trace/headless field changes.
 - Unrelated `.gitignore` or packaging refactors.
 - Claiming build-runner process-group normalization.
-- Closing broader Linux reliability without process-idle, CI fuses, and a
-  fresh post-fix remote Linux dual-backend Gate.
+- Closing broader Linux reliability without process-idle and a fresh
+  post-fix remote Linux dual-backend Gate (host CI fuses done separately as
+  rails only; not residual open work).
 
 ## 10. Executable fixtures (implementation Gate)
 
@@ -293,7 +297,7 @@ F5 is full suite honesty without hiding fixture debt.
 | Merge | coordinator ff-only advanced local main `3cd0837` → `bc737025` while preserving unrelated canonical `.gitignore`; **no push** |
 | Merged-main Gate (local macOS) | std **40/40 steps, 611/611 tests**; curl **42/42 steps, 610/610 tests**; OpenAPI **287/287**; catalog **40**; docs lint; readability **91**; security **72**; committed-range diff clean |
 | Maturity | **unchanged** — no L2/L3 claim added |
-| Not claimed | fresh post-fix remote Linux runner; process-idle fixture; CI fuses; broader Linux reliability close |
+| Not claimed | fresh post-fix remote Linux runner; process-idle fixture; broader Linux reliability close (host CI fuses done separately as rails only; not residual) |
 
 # non-goals (task boundary)
 
@@ -317,9 +321,10 @@ Broader Linux reliability and prompt-templates remain outside this node.
 - Pure raw-Linux decoder regression ran in both std and curl-linked test
   artifacts; local host gates passed.
 - **Not closed by this node:** no fresh post-fix remote Linux runner was run
-  in the closeout session. Separately planned `ci-hang-sigint-process-idle-001`,
-  `ci-hang-ci-fuses-001` (later done as host concurrency + 30m timeout rails;
-  timeout/cancel ≠ product hang proof), and the final merged-path Linux
-  dual-backend Gate remain **required** before prompt-templates work.
+  in the closeout session. Active residual chain before prompt-templates:
+  separately planned `ci-hang-sigint-process-idle-001` (task file not yet
+  authored) and the final merged-path Linux dual-backend Gate.
+  Host CI fuses (`ci-hang-ci-fuses-001`) are **done** separately as rails only
+  (timeout/cancel ≠ product hang proof) and are **not** residual open work.
 - Maturity unchanged. No `.github`, source, `.gitignore`, quality-score body,
   or prompt-template edits in this closeout.
