@@ -19,7 +19,7 @@
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | coding-agent `workspace.zig`/`shell_policy.zig`/`redact.zig` | future C7 OS sandbox remains separate |
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
 | [trace-observability.md](./trace-observability.md) | H7 | `packages/zag-coding-agent/src/{trace,redact,observer}.zig`；Core emits source facts via `LoopEventSink` | implementation moved to coding-agent by core-observation-ownership-001 |
-| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 ✅; errno hotfix **in-progress** (`ci-hang-sigint-linux-errno-001`) | `packages/zag-cli/src/{cli,sigint}.zig` + core cancel flag | 保持 signal UX 在产品层；raw Linux errno 不得走 libc `posix.errno` |
+| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 ✅; errno hotfix ✅ `bc737025` (`ci-hang-sigint-linux-errno-001`); process-idle + CI fuses + Linux Gate still planned | `packages/zag-cli/src/{cli,sigint}.zig` + core cancel flag | 保持 signal UX 在产品层；raw Linux errno 不得走 libc `posix.errno` |
 | [harness-events.md](./harness-events.md) | M1 events ✅ | coding-agent SDK adapter over Core Loop facts + facade run facts; closed at `aecf402` | no Core `lifecycle.zig`; steering and fork closed separately |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session-owned bounded queues + explicit Core `ControlInput`; closed at `a5ff2b7` | no provider/Tool preemption; Trace/headless schemas unchanged; no maturity change |
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | idle-only durable `Session.fork`; closed at `0a3087f` | schema v1 unchanged; Session remains L2; no tree/journal claim |
@@ -70,7 +70,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [trace-observability.md](./trace-observability.md) | H7 | 审计 trace |
 | [sdk-contract.md](./sdk-contract.md) | SDK-ready | Public Zig source-composition contract（status: closed at `ebdd7ab`） |
 | [headless-contract.md](./headless-contract.md) | Headless Gate **L2** | Public JSON/NDJSON process contract + exit matrix; closed at `a1a1e0f` |
-| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 ✅; `ci-hang-sigint-linux-errno-001` **in-progress** | REPL/one-shot input ownership, Ctrl+C lifecycle, raw Linux errno decode under `link_libc` |
+| [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 ✅; `ci-hang-sigint-linux-errno-001` ✅ `bc737025` | REPL/one-shot input ownership, Ctrl+C lifecycle, raw Linux errno decode under `link_libc`; broader Linux reliability still open |
 | [harness-events.md](./harness-events.md) | M1 events ✅ | product SDK lifecycle adapter closed at `aecf402`; no Core lifecycle channel |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session control queues + protocol-safe Core insertion seam; closed at `a5ff2b7` |
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | Idle-only durable `Session.fork`; closed at `0a3087f`; schema v1 and Session L2 unchanged |

@@ -1,7 +1,7 @@
 ---
 id: ci-hang-sigint-linux-errno-001
 scope: product/cli-interaction
-status: in-progress
+status: done
 priority: P0
 depends-on:
   - cli-sigint-001
@@ -32,6 +32,15 @@ do **not** add CI timeout/concurrency in this node.
 Binding behavior remains [CLI interaction contract](../../modules/cli-interaction.md)
 (extended by this task for raw-Linux errno decoding).
 
+`ci-hang-sigint-linux-errno-001` closed at `bc737025` after contract
+`b56b238`, implementation, independent review-fix PASS (zero blockers),
+ff-only local main advance, and merged-main local macOS dual-backend Gate.
+Maturity is **unchanged**. This node does **not** close the broader Linux
+reliability goal: no fresh post-fix remote Linux runner ran in the closeout
+session; separately planned process-idle fixture work, CI fuses, and a final
+merged-path Linux dual-backend Gate remain required before prompt-templates
+work.
+
 # context
 
 ## Bug (verified)
@@ -41,7 +50,7 @@ Binding behavior remains [CLI interaction contract](../../modules/cli-interactio
 2. Product `sigint.zig` intentionally invokes **raw** `std.os.linux.*` on Linux
    (no product `link_libc` force from this module; see cli-sigint-001 review
    item 1).
-3. Those raw returns are currently passed to `std.posix.errno(rc)`.
+3. Those raw returns were previously passed to `std.posix.errno(rc)`.
 4. In Zig 0.16, `std.posix.errno = system.errno`, and
    `system = std.c` whenever `builtin.link_libc` is true (or on always-libc
    platforms). `std.c.errno(rc)` treats only `rc == -1` as error and otherwise
@@ -55,7 +64,7 @@ Binding behavior remains [CLI interaction contract](../../modules/cli-interactio
    artifacts (and any future product path that both uses raw Linux syscalls
    and links libc).
 
-False comment currently in source (must be corrected by implementation):
+False comment previously in source (corrected by implementation):
 
 > `std.posix.errno(rc)` normalises both [raw Linux and libc].
 
@@ -70,6 +79,17 @@ the process fixture) remains a **separate** bounded failure if it still
 reproduces. This task must not skip, soften, lengthen, or claim-fixed that
 fixture without independent evidence. No `.github` workflow change and no CI
 timeout/concurrency knobs.
+
+Separately planned follow-ons (not authored as task files yet; no links):
+
+- `ci-hang-sigint-process-idle-001` — idle process-fixture reliability;
+- `ci-hang-ci-fuses-001` — CI timeout/concurrency fuses;
+- final merged-path Linux dual-backend Gate (fresh remote Linux runner after
+  those nodes).
+
+These remain **required** before treating broader Linux SIGINT reliability as
+closed and before prompt-templates work. This errno node alone does not
+satisfy them.
 
 ## References
 
@@ -86,7 +106,7 @@ timeout/concurrency knobs.
 
 # path
 
-## Docs (this commit — contract track)
+## Docs (contract + closeout)
 
 - `docs/plan/tasks/ci-hang-sigint-linux-errno-001.md` — this task
 - `docs/modules/cli-interaction.md` — binding errno + drain contract extension
@@ -146,8 +166,8 @@ unchanged.
 
 ## 4. Transaction order (errno decode)
 
-For **every** raw `std.os.linux` call in the local `sys` block that today
-passes its `usize` result to `std.posix.errno`:
+For **every** raw `std.os.linux` call in the local `sys` block that previously
+passed its `usize` result to `std.posix.errno`:
 
 1. Invoke `std.os.linux.<syscall>(...)`.
 2. Decode with **`std.os.linux.errno(rc)`** (kernel signed-window semantics:
@@ -220,6 +240,8 @@ shape preserved: drain is best-effort).
 - Prompt Templates, TUI, maturity raise, schema/Trace/headless field changes.
 - Unrelated `.gitignore` or packaging refactors.
 - Claiming build-runner process-group normalization.
+- Closing broader Linux reliability without process-idle, CI fuses, and a
+  fresh post-fix remote Linux dual-backend Gate.
 
 ## 10. Executable fixtures (implementation Gate)
 
@@ -238,42 +260,66 @@ F5 is full suite honesty without hiding fixture debt.
 
 # verification
 
-## Docs Gate (this commit)
+## Docs Gate (complete)
 
 - [x] Binding module extension + task authored before production code
-- [ ] Independent contract review (downstream)
-- [x] `zig build docs-lint`
+- [x] Independent contract review (reconciled at closeout)
+- [x] `zig build docs-lint` / `python3 scripts/lint_docs.py`
 - [x] `git diff --check`
 - [x] Explicit `git add` of intended docs files only
-- [ ] One local docs commit on `task/ci-hang-001` (filled at commit)
+- [x] One local docs commit on `task/ci-hang-001` (closeout)
 
-## Implementation Gate (this commit)
+## Implementation Gate (complete)
 
 - [x] F1 pure raw-Linux errno regression green under std **and** curl test artifacts
 - [x] F2 empty nonblocking drain terminates
 - [x] F3–F4 pending-interrupt + focused SIGINT suite green
-- [x] F5 full std + curl `zig build test --summary all` (host run: both green; idle process-fixture not red on this host — still tracked separate if it reappears)
+- [x] F5 full std + curl `zig build test --summary all` (candidate + merged-main local macOS host)
 - [x] False `posix.errno` normalization comment removed/corrected
 - [x] Every audited Linux raw site uses `std.os.linux.errno` via `linuxRawErrno` only
 - [x] No Linux product path switched to libc; no CI workflow edit; no maturity raise
-- [ ] Independent code review + ff-only merge + merged-main Gate before `done`
+- [x] Independent code review + ff-only merge + merged-main local Gate before `done`
 
 # delivery evidence
 
 | Item | Evidence |
 |------|----------|
-| Contract | `docs/modules/cli-interaction.md` |
-| Task | this file (`in-progress` — implementation commit; review pending) |
-| Implementation | `packages/zag-cli/src/sigint.zig` — `linuxRawErrno` on pipe2/read/fcntl sites |
-| Fixtures F1–F4 | F1 + F2 unit tests in `sigint.zig`; F3–F4 retained suite green |
-| Dual-backend Gate | `zig build test -Dhttp_backend=std --summary all` and `-Dhttp_backend=curl --summary all` |
+| Contract | `docs/modules/cli-interaction.md`; candidate contract commit `b56b238db19116899f78af9bb71cf78844084fe9` |
+| Task | this file `done` at `bc737025` (+ docs closeout) |
+| Implementation | `packages/zag-cli/src/sigint.zig` — `linuxRawErrno` on pipe2/read/fcntl sites; tip `bc737025b4ce733e83de9c13f7afede7e6e2a3e6` |
+| Fixtures F1–F4 | F1 + F2 unit tests in `sigint.zig`; pure raw-Linux decoder regression ran in both std and curl-linked test artifacts; F3–F4 retained suite green |
+| Review | independent review-fix **PASS**, zero blockers |
+| Candidate Gate | std **611/611**; curl **610/610**; docs lint + score readability **91** / security **72**; committed-range diff clean |
+| Merge | coordinator ff-only advanced local main `3cd0837` → `bc737025` while preserving unrelated canonical `.gitignore`; **no push** |
+| Merged-main Gate (local macOS) | std **40/40 steps, 611/611 tests**; curl **42/42 steps, 610/610 tests**; OpenAPI **287/287**; catalog **40**; docs lint; readability **91**; security **72**; committed-range diff clean |
 | Maturity | **unchanged** — no L2/L3 claim added |
+| Not claimed | fresh post-fix remote Linux runner; process-idle fixture; CI fuses; broader Linux reliability close |
 
 # non-goals (task boundary)
 
 See §9. No CI workflow, process-fixture bound softening, or maturity raise.
+Broader Linux reliability and prompt-templates remain outside this node.
 
 # closeout
 
-Implementation landed; independent contract/code review + merged-main Gate
-remain before `done`.
+- Contract candidate: `b56b238db19116899f78af9bb71cf78844084fe9`.
+- Implementation tip: `bc737025b4ce733e83de9c13f7afede7e6e2a3e6`
+  (`linuxRawErrno` / `std.os.linux.errno` on audited pipe2/read/fcntl sites;
+  F1/F2 unit fixtures).
+- Independent review-fix: **PASS**, zero blockers.
+- Candidate dual-backend Gate: std **611/611**, curl **610/610**, docs
+  lint + score **91/72**, committed-range diff clean.
+- Coordinator ff-only advanced local main `3cd0837` → `bc737025` while
+  preserving unrelated canonical `.gitignore`. **No push** occurred.
+- Merged-main local macOS Gate again passed: std **40/40 steps · 611/611**,
+  curl **42/42 steps · 610/610**, OpenAPI **287/287**, catalog **40**, docs
+  lint, readability **91**, security **72**, committed-range diff clean.
+- Pure raw-Linux decoder regression ran in both std and curl-linked test
+  artifacts; local host gates passed.
+- **Not closed by this node:** no fresh post-fix remote Linux runner was run
+  in the closeout session. Separately planned `ci-hang-sigint-process-idle-001`,
+  `ci-hang-ci-fuses-001` (idle fixture and CI fuses remain unimplemented /
+  planned; task files not yet authored — no links), and the final merged-path
+  Linux dual-backend Gate remain **required** before prompt-templates work.
+- Maturity unchanged. No `.github`, source, `.gitignore`, quality-score body,
+  or prompt-template edits in this closeout.

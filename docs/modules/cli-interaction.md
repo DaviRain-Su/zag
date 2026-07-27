@@ -1,7 +1,7 @@
 ---
 status: active
 scope: CLI interaction and signal lifecycle
-task: ci-hang-sigint-linux-errno-001
+task: ci-hang-sigint-linux-errno-001 (done @ bc737025)
 ---
 
 # CLI interaction contract
@@ -11,11 +11,17 @@ This module owns plain CLI and REPL behavior. Machine output remains defined by
 remain defined by [sdk-contract.md](./sdk-contract.md).
 
 **Lifecycle status:** M0 Ctrl+C contract closed by `cli-sigint-001` at `d542332`.
-**Active follow-on:** `ci-hang-sigint-linux-errno-001` (**in-progress**, implementation
-landed in `packages/zag-cli/src/sigint.zig` via `linuxRawErrno` /
-`std.os.linux.errno`; independent review + merge Gate pending) binds raw-Linux
-errno decoding so self-pipe drains terminate under curl-linked `link_libc`
-without switching product Linux paths to libc or raising maturity.
+**Errno follow-on:** `ci-hang-sigint-linux-errno-001` (**done** at `bc737025`;
+contract `b56b238`) binds raw-Linux errno decoding via `linuxRawErrno` /
+`std.os.linux.errno` so self-pipe drains terminate under curl-linked
+`link_libc` without switching product Linux paths to libc or raising maturity.
+Independent review-fix PASS (zero blockers); candidate + merged-main local
+macOS dual-backend Gates green (std **611/611**, curl **610/610**). Pure
+raw-Linux decoder regression ran in both std and curl-linked test artifacts.
+**Broader Linux reliability is not closed:** no fresh post-fix remote Linux
+runner in the closeout session; planned process-idle fixture work, CI fuses,
+and a final merged-path Linux dual-backend Gate remain required before
+prompt-templates work (task files not yet authored — no links).
 
 ## Ownership boundary
 
@@ -181,18 +187,20 @@ Every raw Linux result that is classified by errno today must use kernel decode:
 
 ### Verification (errno node)
 
-Implementation of `ci-hang-sigint-linux-errno-001` must prove at least:
+`ci-hang-sigint-linux-errno-001` closeout evidence (done at `bc737025`):
 
 1. **Pure raw-Linux errno regression** — kernel-encoded `-EAGAIN` (synthetic `usize`) decodes as would-block /
    non-SUCCESS through the product decode path under both std and curl-linked test artifacts (`link_libc` false and
-   true), without relying on thread `errno` state.
-2. **Empty nonblocking drain** — wake-pipe drain terminates promptly when the pipe has no data.
+   true), without relying on thread `errno` state. **Proven** in both std and curl-linked test artifacts.
+2. **Empty nonblocking drain** — wake-pipe drain terminates promptly when the pipe has no data. **Proven** (F2).
 3. **Pending-interrupt suite retained** — first wake + idle interrupted path; second-signal predicate remains handler
    state; focused zag-cli SIGINT unit tests stay green.
-4. **Dual-backend full Gate** — `zig build test -Dhttp_backend=std --summary all` and
-   `zig build test -Dhttp_backend=curl --summary all`, with honest separate reporting if the idle process fixture still
-   fails for unrelated reasons.
-5. **Docs** — `zig build docs-lint` and committed-range `git diff --check`; no maturity inflation.
+4. **Dual-backend full Gate (local host)** — candidate std **611/611**, curl **610/610**; merged-main local macOS
+   again std **40/40 · 611/611**, curl **42/42 · 610/610**. Idle process-fixture reliability remains separately
+   planned (not claimed fixed by this node).
+5. **Docs** — docs lint + score readability **91** / security **72**; committed-range `git diff --check` clean; no
+   maturity inflation.
+6. **Not claimed** — fresh post-fix remote Linux runner; process-idle fixture; CI fuses; broader Linux reliability.
 
 ## Verification
 

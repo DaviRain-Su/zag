@@ -24,7 +24,8 @@ docs/plan/
 | Bounded steering/follow-up | **done** at `a5ff2b7` — Session-owned queues + explicit Core `ControlInput`; SDK/Loop enrichment with no maturity change |
 | Session fork | **done** at `0a3087f` — idle-only durable child, parent immutability, schema v1, SDK 21/21; Session remains L2 |
 | E1 Skills | **done** at `caafef5` — passive discovery/catalog/`read_skill`/activation; SDK 22/22; Runtime Extensions remains L0 |
-| Next code task | **P0 in-progress:** `ci-hang-sigint-linux-errno-001` (Linux raw errno under curl/`link_libc`); then `prompt-templates-001` planned — E1 passive templates after Skills |
+| Linux SIGINT raw errno | **done** at `bc737025` — `ci-hang-sigint-linux-errno-001`; candidate Gate std 611/611, curl 610/610; merged-main local macOS std 611/611, curl 610/610; maturity unchanged |
+| Next code task | **Planned (not yet task-authored):** process-idle fixture + CI fuses + final merged-path Linux dual-backend Gate before `prompt-templates-001` (E1 passive templates after Skills). Broader Linux reliability is **not** closed by the errno node alone. |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -39,6 +40,15 @@ The `skills-001` merged-main Gate at `caafef5` passed std **40/40 steps, 609/609
 **42/42 steps, 608/608 tests**, Core **89/89**, Coding **337/337**, CLI **30/30**, external SDK **22/22**,
 OpenAPI **287/287**, catalog **40**, readability **91/100**, and security **72/100**. Runtime Extensions remains L0;
 no E1 maturity row was raised.
+
+The `ci-hang-sigint-linux-errno-001` node closed at `bc737025` (contract `b56b238`) after independent review-fix
+**PASS** (zero blockers). Candidate Gate: std **611/611**, curl **610/610**, docs lint + score readability **91** /
+security **72**, committed-range diff clean. Coordinator ff-only advanced local main `3cd0837` → `bc737025` while
+preserving unrelated canonical `.gitignore` (**no push**). Merged-main local macOS Gate again: std **40/40 steps,
+611/611 tests**, curl **42/42 steps, 610/610 tests**, OpenAPI **287/287**, catalog **40**, docs lint, readability
+**91**, security **72**, committed-range diff clean. Pure raw-Linux decoder regression ran in both std and
+curl-linked test artifacts. Maturity unchanged. Broader Linux reliability remains open (no fresh post-fix remote
+Linux runner; process-idle, CI fuses, and final merged-path Linux Gate still planned).
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -55,7 +65,9 @@ completed foundation
                   ▼
           cli-sigint-001 (M0, done) ✅
                   │
-                  ├─► ci-hang-sigint-linux-errno-001 (P0, in-progress) — raw Linux errno under curl link_libc
+                  ├─► ci-hang-sigint-linux-errno-001 (P0, done @ bc737025) ✅
+                  │     remaining before prompt-templates: process-idle + CI fuses
+                  │     + final merged-path Linux dual-backend Gate (planned, no task files yet)
                   │
                   ▼
         core-boundary-001 (docs, done) ✅
@@ -89,14 +101,17 @@ completed foundation
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
-`harness-steering-001`, `session-fork-001`, and `skills-001` are complete. Source review rejected the earlier lifecycle
-design because it would add a third Core event channel while leaving product policy/state in the kernel; the replacement
-coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then closed at `a5ff2b7` with Session-owned queues
-and a thin Core insertion seam. The safe idle-only durable fork closed at `0a3087f` after independent reviews and
-merged-main Gates, without changing session schema v1 or the Session L2 row. E1 passive Skills closed at `caafef5`
-(coding-agent only; Runtime Extensions remains L0). Active P0 hotfix: `ci-hang-sigint-linux-errno-001` (docs-first
-contract open) must land before treating curl-linked Linux SIGINT drains as reliable; it does not reopen M0 lifecycle
-design and does not raise maturity. `prompt-templates-001` remains the next planned E1 node after the hotfix.
+`harness-steering-001`, `session-fork-001`, `skills-001`, and `ci-hang-sigint-linux-errno-001` are complete. Source
+review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product
+policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then
+closed at `a5ff2b7` with Session-owned queues and a thin Core insertion seam. The safe idle-only durable fork closed at
+`0a3087f` after independent reviews and merged-main Gates, without changing session schema v1 or the Session L2 row. E1
+passive Skills closed at `caafef5` (coding-agent only; Runtime Extensions remains L0). The Linux raw-errno SIGINT
+hotfix closed at `bc737025` after independent review-fix PASS and merged-main local macOS dual-backend Gate; pure
+raw-Linux decoder regressions ran in both std and curl-linked test artifacts. It does not reopen M0 lifecycle design
+and does not raise maturity. **Broader Linux reliability remains open:** no fresh post-fix remote Linux runner ran in
+the closeout session; planned `ci-hang-sigint-process-idle-001`, `ci-hang-ci-fuses-001` (task files not yet authored —
+no links), and a final merged-path Linux dual-backend Gate remain required before `prompt-templates-001`.
 Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
@@ -107,13 +122,16 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| [ci-hang-sigint-linux-errno-001](./tasks/ci-hang-sigint-linux-errno-001.md) | **in-progress** | P0 M0 follow-on: raw Linux `std.os.linux.errno` decode for SIGINT self-pipe under curl/`link_libc`; no maturity raise; idle process-fixture timeout remains separate |
+| `ci-hang-sigint-process-idle-001` | planned | M0 follow-on: idle process-fixture reliability; task file not yet authored |
+| `ci-hang-ci-fuses-001` | planned | M0 follow-on: CI timeout/concurrency fuses; task file not yet authored |
+| final merged-path Linux dual-backend Gate | planned | Fresh remote Linux runner after idle + fuses; required before prompt-templates |
 | `prompt-templates-001` | planned | E1 passive Prompt Templates over Skills loader foundations; task file not yet authored |
 
 ### Completed foundation
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [ci-hang-sigint-linux-errno-001](./tasks/ci-hang-sigint-linux-errno-001.md) | P0 | done | Raw Linux `std.os.linux.errno` decode for SIGINT self-pipe under curl/`link_libc`; closed at `bc737025`; maturity unchanged; broader Linux reliability still open |
 | [skills-001](./tasks/skills-001.md) | P1 | done | E1 passive Agent Skills; closed at `caafef5`; Runtime Extensions remains L0 |
 | [session-fork-001](./tasks/session-fork-001.md) | P1 | done | Safe idle-only durable Session fork; closed at `0a3087f`; schema v1 and Session L2 unchanged |
 | [harness-steering-001](./tasks/harness-steering-001.md) | P1 | done | Session-owned bounded steering/follow-up + explicit Core `ControlInput`; closed at `a5ff2b7` |

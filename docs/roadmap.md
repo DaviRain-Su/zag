@@ -59,7 +59,11 @@ Phase H correctness ──► Zig SDK-ready ──► closed
 M0 — interaction reliability
   cli-sigint-001 ✅
         │
-        └─► ci-hang-sigint-linux-errno-001 (P0, in-progress)
+        └─► ci-hang-sigint-linux-errno-001 ✅ bc737025
+              │
+              ├─► ci-hang-sigint-process-idle-001 (planned; no task file yet)
+              ├─► ci-hang-ci-fuses-001 (planned; no task file yet)
+              └─► final merged-path Linux dual-backend Gate (planned)
         │
         ▼
 M0.5 — thin Core responsibility migration
@@ -99,10 +103,18 @@ Task: [cli-sigint-001](./plan/tasks/cli-sigint-001.md) — **done** at `d542332`
 - no new std-HTTP or Tool/shell active-preemption claim;
 - independent verification passed; merged-main std **465/465** and curl **464/464** Gates are green.
 
-Follow-on (P0, **in-progress**, docs-first): [ci-hang-sigint-linux-errno-001](./plan/tasks/ci-hang-sigint-linux-errno-001.md) —
+Follow-on (P0, **done** at `bc737025`): [ci-hang-sigint-linux-errno-001](./plan/tasks/ci-hang-sigint-linux-errno-001.md) —
 decode raw Linux self-pipe/`read`/`pipe2`/`fcntl` returns with `std.os.linux.errno` so curl-linked `link_libc`
-builds do not misclassify `-EAGAIN` as success and hang in `drainWake`. Does not raise maturity; does not soften the
-separately tracked idle process-fixture timeout; does not change CI workflows.
+builds do not misclassify `-EAGAIN` as success and hang in `drainWake`. Candidate Gate std **611/611**, curl
+**610/610**; independent review-fix PASS (zero blockers); ff-only local main `3cd0837` → `bc737025`; merged-main
+local macOS Gate again std **40/40 · 611/611**, curl **42/42 · 610/610**. Pure raw-Linux decoder regression ran in
+both std and curl-linked test artifacts; local host gates passed. Does not raise maturity; does not soften the
+separately tracked idle process-fixture timeout; does not change CI workflows. **No push.**
+
+**Broader Linux reliability is not closed:** no fresh post-fix remote Linux runner ran in the closeout session.
+Separately planned `ci-hang-sigint-process-idle-001`, `ci-hang-ci-fuses-001` (idle fixture and CI fuses remain
+unimplemented/planned; task files not yet authored — no links), and the final merged-path Linux dual-backend Gate
+remain required before prompt-templates work.
 
 Contract: [CLI interaction](./modules/cli-interaction.md).
 
