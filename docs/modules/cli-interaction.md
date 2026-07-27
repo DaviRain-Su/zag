@@ -1,6 +1,7 @@
 ---
 status: active
 scope: CLI interaction and signal lifecycle
+task: ci-hang-sigint-linux-errno-001
 ---
 
 # CLI interaction contract
@@ -8,6 +9,11 @@ scope: CLI interaction and signal lifecycle
 This module owns plain CLI and REPL behavior. Machine output remains defined by
 [headless-contract.md](./headless-contract.md); Agent cancellation semantics
 remain defined by [sdk-contract.md](./sdk-contract.md).
+
+**Lifecycle status:** M0 Ctrl+C contract closed by `cli-sigint-001` at `d542332`.
+**Active follow-on:** `ci-hang-sigint-linux-errno-001` (**in-progress**, docs-first)
+binds raw-Linux errno decoding so self-pipe drains terminate under curl-linked
+`link_libc` without switching product Linux paths to libc or raising maturity.
 
 ## Ownership boundary
 
@@ -89,6 +95,103 @@ That parent status is not a Zag contract violation. The direct child must not em
 as `ReadFailed`. Tests spawn the built binary directly. `README` and chapters may show `zig build run` for convenience,
 but `./zig-out/bin/zag` is the exit-code authority.
 
+## Linux raw syscall errno decoding (`ci-hang-sigint-linux-errno-001`)
+
+### Problem class
+
+On Linux the product signal module uses **raw** `std.os.linux` syscalls so the product binary is not forced to
+`link_libc` by signal ownership. Curl-linked builds and some test artifacts set `link_libc = true` via `attachCurl`
+(and the host-native process fixture links libc for `waitpid`/`kill` only).
+
+In Zig 0.16, `std.posix.errno` aliases `system.errno`, and `system` is `std.c` whenever `builtin.link_libc` is true.
+`std.c.errno` is libc-shaped: only `rc == -1` is an error. Kernel raw returns encode errors as **negative errno** in a
+`usize` (values in approximately `(-4096, 0)` as signed), which is **not** `-1`. Passing a raw `-EAGAIN` through
+`std.posix.errno` under `link_libc` can yield `.SUCCESS`; a subsequent `@intCast` of that huge `usize` makes
+`sys.read` appear to return a massive success length. `drainWake` then spins until `got == 0` and never terminates.
+
+### Binding rule
+
+| Call convention | Decode with | When |
+|-----------------|-------------|------|
+| Raw `std.os.linux.*` returning kernel `usize` | **`std.os.linux.errno(rc)`** (kernel signed-window semantics) | **Always** on those sites, **independent of `link_libc`** |
+| Libc / macOS / BSD (`std.c.*`, `-1` + thread errno) | libc return / `std.c.errno` / existing platform patterns | Non-Linux product paths; never mixed onto raw Linux results |
+
+**Forbidden:** documenting or implementing “`std.posix.errno` normalises both raw Linux and libc” for product Linux
+raw sites. That statement is false when `link_libc` is true.
+
+### Audited product sites (`packages/zag-cli/src/sigint.zig` `sys` block)
+
+Every raw Linux result that is classified by errno today must use kernel decode:
+
+1. `pipe2` — success → fds; else `PipeFailed`.
+2. `read` — `.SUCCESS` → return byte count **only after SUCCESS**; `.INTR` → retry; `.AGAIN` → return `0`; else
+   `ReadFailed`.
+3. `fcntl` GETFD / SETFD (CLOEXEC path) — non-SUCCESS → failure.
+4. `fcntl` GETFL / SETFL (NONBLOCK path) — non-SUCCESS → failure.
+
+`write` wake, `close`, and `exit_group` remain intentionally unchecked or noreturn as today.
+
+### Drain and idle wake
+
+- Self-pipe ends stay NONBLOCK + CLOEXEC for the process lifetime.
+- `drainWake` reads until `sys.read` returns `0` (empty would-block or EOF class) or a typed read failure aborts the
+  drain; it must **not** spin on misdecoded `EAGAIN`.
+- Idle first SIGINT still exits `0` without a runtime `ReadFailed` stack for the expected wake path.
+- Second unacknowledged SIGINT still hard-exits `130`.
+
+### API / lifetimes / defaults
+
+- Public Guard / line-read API and one-shot install lifecycle are unchanged from `cli-sigint-001`.
+- Product Linux path stays raw syscalls (do **not** “fix” the hang by switching product Linux signal I/O to libc).
+- Process fixture may keep host-native libc linkage for process control only; that does not authorize product decode
+  mistakes.
+- Permission default **ask**, workspace jail, and shell protect remain unchanged and out of this module’s errno path.
+
+### Errors
+
+| Condition | Binding result |
+|-----------|----------------|
+| Nonblocking empty read (`E.AGAIN`) | `0` bytes from `sys.read`; drain terminates |
+| `E.INTR` | retry inside `sys.read` |
+| Unexpected read errno | `error.ReadFailed` |
+| pipe2 / fcntl failure | existing init failure paths (`SigintInitFailed` / pipe fail) |
+
+### Safety and budgets
+
+- Handler remains async-signal-safe; no allocation or buffered I/O on the signal path.
+- Drain uses a small fixed stack buffer; no new unbounded heap on the wake path.
+- No weakening of ask / jail / shell protect; no secret or absolute-path leakage in fixtures.
+
+### Compatibility
+
+- std vs curl provider-control truth unchanged.
+- headless observed cancel exit `11` and hard escape `130` unchanged.
+- Linux product non-libc claim preserved: signal module does not force `link_libc`.
+- No maturity raise from this fix alone.
+
+### Non-goals (errno node)
+
+- Softening, skipping, or claiming fixed a separately tracked idle process-fixture timeout without evidence.
+- `.github` workflow timeout/concurrency changes.
+- std HTTP active cancellation redesign; Tool/shell mid-flight preemption.
+- Build-runner process-group normalization.
+- Prompt Templates, TUI, schema/Trace/headless field changes.
+
+### Verification (errno node)
+
+Implementation of `ci-hang-sigint-linux-errno-001` must prove at least:
+
+1. **Pure raw-Linux errno regression** — kernel-encoded `-EAGAIN` (synthetic `usize`) decodes as would-block /
+   non-SUCCESS through the product decode path under both std and curl-linked test artifacts (`link_libc` false and
+   true), without relying on thread `errno` state.
+2. **Empty nonblocking drain** — wake-pipe drain terminates promptly when the pipe has no data.
+3. **Pending-interrupt suite retained** — first wake + idle interrupted path; second-signal predicate remains handler
+   state; focused zag-cli SIGINT unit tests stay green.
+4. **Dual-backend full Gate** — `zig build test -Dhttp_backend=std --summary all` and
+   `zig build test -Dhttp_backend=curl --summary all`, with honest separate reporting if the idle process fixture still
+   fails for unrelated reasons.
+5. **Docs** — `zig build docs-lint` and committed-range `git diff --check`; no maturity inflation.
+
 ## Verification
 
 - The process fixture starts the real direct binary in an isolated cwd with a synthetic environment. It reads no
@@ -100,6 +203,8 @@ but `./zig-out/bin/zag` is the exit-code authority.
 - std active hard escape exits `130`. curl active cancellation exits `11` with exactly one cancelled result envelope.
 - Direct-child stderr contains no runtime `error:`, stack trace, or `ReadFailed`.
 - Existing REPL delimiter, default-mode, SDK cancel, and headless terminal tests remain green.
+- Additional errno regressions in the Linux raw-decode section above are required for
+  `ci-hang-sigint-linux-errno-001` closeout.
 
 ## Non-goals
 
@@ -107,4 +212,6 @@ but `./zig-out/bin/zag` is the exit-code authority.
 - OS process-tree supervision;
 - mid-flight Tool/shell preemption;
 - changing `headless-v1` exit codes;
-- TUI keybinding design.
+- TUI keybinding design;
+- CI workflow timeout/concurrency knobs as a substitute for correct errno decode;
+- switching Linux product signal syscalls to libc to avoid kernel errno handling.

@@ -24,7 +24,7 @@ docs/plan/
 | Bounded steering/follow-up | **done** at `a5ff2b7` — Session-owned queues + explicit Core `ControlInput`; SDK/Loop enrichment with no maturity change |
 | Session fork | **done** at `0a3087f` — idle-only durable child, parent immutability, schema v1, SDK 21/21; Session remains L2 |
 | E1 Skills | **done** at `caafef5` — passive discovery/catalog/`read_skill`/activation; SDK 22/22; Runtime Extensions remains L0 |
-| Next code task | `prompt-templates-001` planned — E1 passive templates after Skills |
+| Next code task | **P0 in-progress:** `ci-hang-sigint-linux-errno-001` (Linux raw errno under curl/`link_libc`); then `prompt-templates-001` planned — E1 passive templates after Skills |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -54,6 +54,8 @@ completed foundation
                   │
                   ▼
           cli-sigint-001 (M0, done) ✅
+                  │
+                  ├─► ci-hang-sigint-linux-errno-001 (P0, in-progress) — raw Linux errno under curl link_libc
                   │
                   ▼
         core-boundary-001 (docs, done) ✅
@@ -92,8 +94,10 @@ design because it would add a third Core event channel while leaving product pol
 coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then closed at `a5ff2b7` with Session-owned queues
 and a thin Core insertion seam. The safe idle-only durable fork closed at `0a3087f` after independent reviews and
 merged-main Gates, without changing session schema v1 or the Session L2 row. E1 passive Skills closed at `caafef5`
-(coding-agent only; Runtime Extensions remains L0). `prompt-templates-001` is the next planned E1 node. Task priorities
-express safety impact; the dependency chain, not priority labels, fixes delivery order.
+(coding-agent only; Runtime Extensions remains L0). Active P0 hotfix: `ci-hang-sigint-linux-errno-001` (docs-first
+contract open) must land before treating curl-linked Linux SIGINT drains as reliable; it does not reopen M0 lifecycle
+design and does not raise maturity. `prompt-templates-001` remains the next planned E1 node after the hotfix.
+Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -103,6 +107,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
+| [ci-hang-sigint-linux-errno-001](./tasks/ci-hang-sigint-linux-errno-001.md) | **in-progress** | P0 M0 follow-on: raw Linux `std.os.linux.errno` decode for SIGINT self-pipe under curl/`link_libc`; no maturity raise; idle process-fixture timeout remains separate |
 | `prompt-templates-001` | planned | E1 passive Prompt Templates over Skills loader foundations; task file not yet authored |
 
 ### Completed foundation

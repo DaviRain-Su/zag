@@ -57,7 +57,9 @@ Phase H correctness ──► Zig SDK-ready ──► closed
 
 ```text
 M0 — interaction reliability
-  cli-sigint-001
+  cli-sigint-001 ✅
+        │
+        └─► ci-hang-sigint-linux-errno-001 (P0, in-progress)
         │
         ▼
 M0.5 — thin Core responsibility migration
@@ -96,6 +98,11 @@ Task: [cli-sigint-001](./plan/tasks/cli-sigint-001.md) — **done** at `d542332`
 - direct binary behavior is contractual; `zig build run` parent-process-group behavior is only documented;
 - no new std-HTTP or Tool/shell active-preemption claim;
 - independent verification passed; merged-main std **465/465** and curl **464/464** Gates are green.
+
+Follow-on (P0, **in-progress**, docs-first): [ci-hang-sigint-linux-errno-001](./plan/tasks/ci-hang-sigint-linux-errno-001.md) —
+decode raw Linux self-pipe/`read`/`pipe2`/`fcntl` returns with `std.os.linux.errno` so curl-linked `link_libc`
+builds do not misclassify `-EAGAIN` as success and hang in `drainWake`. Does not raise maturity; does not soften the
+separately tracked idle process-fixture timeout; does not change CI workflows.
 
 Contract: [CLI interaction](./modules/cli-interaction.md).
 
