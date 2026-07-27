@@ -37,10 +37,11 @@ Contract: [headless](../modules/headless-contract.md).
 
 Prerequisites `harness-events-001` and `harness-steering-001` are closed. The
 **docs-only binding contract** is [tui-minimal.md](../modules/tui-minimal.md)
-([task](../plan/tasks/tui-minimal-001.md), status `ready` for re-review).
-Round-1 architecture/safety reviews were **BLOCKED**; freezes were tightened.
-Implementation remains **BLOCKED** until re-review PASS and merge. This phase
-does **not** claim a shipped TUI or maturity raise.
+([task](../plan/tasks/tui-minimal-001.md), status `ready` — **contract PASS** @
+`c7a8f3a`, product implementation **not started**). Independent architecture
+and safety final re-reviews **PASS** (zero blockers). Docs-only contract may
+ff-only merge; a separate future Goal must open the implementation node. This
+phase does **not** claim a shipped TUI or maturity raise.
 
 Contract freezes (detail in the module — do not fork):
 
@@ -110,16 +111,16 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 
 ## Acceptance for `tui-minimal-001`
 
-### Contract track (docs candidate)
+### Contract track (docs; PASS @ `c7a8f3a`)
 
 - [x] binding module [tui-minimal.md](../modules/tui-minimal.md) authored
 - [x] task [tui-minimal-001](../plan/tasks/tui-minimal-001.md) authored (`status: ready`)
-- [x] round-1 BLOCKED findings closed in docs freeze (re-review pending)
-- [ ] independent architecture/ownership contract **re-review** PASS
-- [ ] independent safety/fail-closed contract **re-review** PASS
-- [ ] docs lint / score / diff green on candidate; no product code in contract node
+- [x] round-1 BLOCKED findings closed (`a38f0ec` → `6c73e46` → `c7a8f3a`)
+- [x] independent architecture/ownership contract **re-review** PASS @ `c7a8f3a` (zero blockers)
+- [x] independent safety/fail-closed contract **re-review** PASS @ `c7a8f3a` (zero blockers)
+- [x] docs lint / score / diff green on contract docs path; no product code in contract node
 
-### Product implementation track (later — do not check from contract node)
+### Product implementation track (later — keep unchecked until separate impl node)
 
 - [ ] core prompt→Tool→result flow works without losing permission/error/session semantics;
 - [ ] Ctrl+C behavior follows [CLI interaction](../modules/cli-interaction.md);

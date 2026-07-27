@@ -143,7 +143,7 @@ completed foundation
                     + edit-sharpness-001 (done @ 7be5151; Tools write/edit L2)
                            │
                            ▼
-                     tui-minimal-001 (contract candidate; re-review pending; impl BLOCKED)
+                     tui-minimal-001 (contract PASS @ c7a8f3a; product impl not started)
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
@@ -154,12 +154,14 @@ completed foundation
 docs/closeout `7be5151`; candidate + merged-main local macOS std **655/655**, curl
 **654/654**; Tools · write/edit stays **L2**; no push / no fresh remote Linux for
 this tip).
-[tui-minimal-001](./tasks/tui-minimal-001.md) is a **docs contract candidate**
-(`status: ready`) with binding [tui-minimal.md](../modules/tui-minimal.md).
-Round-1 architecture/safety reviews were **BLOCKED**; unique freezes were
-closed in a docs follow-up; **re-review pending**. Product TUI implementation is
-**BLOCKED** until re-review PASS and merge. Later package owner is **only**
-`packages/zag-tui/`. No C9 product acceptance or maturity claim. Source
+[tui-minimal-001](./tasks/tui-minimal-001.md) is a **docs contract PASS**
+(`status: ready`) at candidate `c7a8f3a` with binding
+[tui-minimal.md](../modules/tui-minimal.md): independent architecture and
+safety final re-reviews **PASS** (zero blockers; A1–A11 / B-S1–B-S10 closed).
+Docs-only contract may ff-only merge. **Production TUI is not started** and
+must not auto-start from merge — a future Goal must open a separate
+implementation node. Later package owner is **only** `packages/zag-tui/`. No
+C9 product acceptance or maturity claim. Source
 review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product
 policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then
 closed at `a5ff2b7` with Session-owned queues and a thin Core insertion seam. The safe idle-only durable fork closed at
@@ -195,7 +197,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| [tui-minimal-001](./tasks/tui-minimal-001.md) | **ready** (contract candidate; re-review pending; impl BLOCKED) | docs-only minimal host TUI binding ([tui-minimal.md](../modules/tui-minimal.md)); unique `zag-tui` package; dual-thread + redactAlloc freezes; **no** product TUI / maturity claim |
+| [tui-minimal-001](./tasks/tui-minimal-001.md) | **ready** (contract **PASS** @ `c7a8f3a`; product impl not started) | docs-only minimal host TUI binding ([tui-minimal.md](../modules/tui-minimal.md)); arch+safety re-review PASS zero blockers; unique `zag-tui`; **no** product TUI / maturity claim |
 
 ### Completed foundation
 

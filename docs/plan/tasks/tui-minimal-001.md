@@ -1,6 +1,6 @@
 ---
 id: tui-minimal-001
-scope: host-shell/tui-minimal (M2 / C9 contract candidate)
+scope: host-shell/tui-minimal (M2 / C9 contract PASS; product impl not started)
 status: ready
 priority: P1
 depends-on:
@@ -18,9 +18,9 @@ node can assemble public coding-agent / CLI APIs into a small interactive
 shell **without** inventing lifecycle kinds, weakening ask/jail/shell,
 polluting headless stdout, or placing UI logic in Kernel packages.
 
-This task node is **docs-only (contract candidate)**. It does **not**
-implement a product TUI, does **not** check off C9 product acceptance as
-done, and does **not** claim maturity or Linux tip evidence.
+This task node is **docs-only**. It does **not** implement a product TUI,
+does **not** check off C9 product acceptance as done, and does **not** claim
+maturity or Linux tip evidence.
 
 **Binding specification:** [tui-minimal.md](../../modules/tui-minimal.md)
 (+ phase constraints in [C9-product-shell.md](../../phases/C9-product-shell.md)).
@@ -29,33 +29,33 @@ done, and does **not** claim maturity or Linux tip evidence.
 
 | Track | Status |
 |-------|--------|
-| Contract freeze (this node) | **candidate** — BLOCKED closed @ `a38f0ec`; signal-host @ `6c73e46`; teardown order follow-up; **re-review pending** |
-| Overall product task | **`ready`** for re-review; **implementation BLOCKED** |
-| Production TUI implementation | **not started** — blocked (see split below) |
+| Contract freeze (this node) | **PASS** @ candidate `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` — independent architecture/ownership + safety/fail-closed final re-reviews, **zero blockers**; A1–A11 / B-S1–B-S10 closed |
+| Overall product task | **`ready`** — contract track done; product implementation **not started** (needs future Goal/impl node) |
+| Production TUI implementation | **not started** — not auto-started by contract PASS or merge |
 | Maturity / C9 product acceptance | **unchanged / not claimed** |
 | Session v1 / Trace v1 / headless-v1 / Core | **must remain unchanged** by later impl |
 
 ## Contract vs implementation split
 
 ```text
-THIS NODE (docs contract candidate)
+THIS NODE (docs contract)
+  status: ready (contract track PASS @ c7a8f3a; not product done)
   paths: docs only
-  verify: lint_docs + score_docs --check + git diff --check
-  review: architecture/ownership + safety/fail-closed (re-review after blocker fix)
-  merge: candidate only; does not ship TUI
+  verify: docs lint + score_docs --check + git diff --check (no full std/curl claim)
+  merge: docs-only contract may ff-only merge; does not ship TUI
 
-LATER NODE (implementation; separate tip / Gate)
-  BLOCKED until:
-    1) independent architecture/ownership contract PASS
-    2) independent safety/fail-closed contract PASS
-    3) this contract merged to the integration branch used for impl
+LATER NODE (implementation; separate tip / Gate / worktree)
+  NOT opened by this node
+  Requires:
+    1) contract PASS (done @ c7a8f3a) and contract merge
+    2) explicit future Goal / reconciliation selecting an implementation delivery
   paths: packages/zag-tui/ ONLY + zag-cli wire + build wiring + tests
   verify: full fixture matrix in tui-minimal.md §11 + dual-backend Gates
 ```
 
-Frontmatter `status: ready` means dependencies are met for **contract
-re-review**, not that implementation may start before the two contract PASS
-results and merge.
+Frontmatter `status: ready` means the **contract track is ready for merge**
+and a future Goal may select implementation work — **not** that product TUI
+is done or that implementation has started.
 
 # context
 
@@ -67,14 +67,8 @@ results and merge.
   `-Dtui` default false, Kernel no-TUI scan
 - Closed C4 first slice: [edit-sharpness-001](./edit-sharpness-001.md) @
   `7be5151` — hunk review ≠ permission; TUI ask v1 hunk_reviewer **null**
-- Round-1 architecture A1–A5 (+ A6–A10) and safety B-S1–B-S9 **BLOCKED**;
-  unique freezes landed @ `a38f0ec`
-- Follow-up: Guard install **after** `Agent.init`; `SignalHost` defined by
-  `zag-tui`, implemented by CLI over `sigint.Guard`; post-join
-  `acknowledge_cancel`; ≤250 ms poll timeout for coalesced wakes
-- Follow-up A11/B-S10: final teardown
-  ack → restore tty → App quiesce → **Guard.deinit** → Session.deinit →
-  Agent.deinit → App free last (Guard unbind/drain before Agent storage free)
+- Round-1 architecture/safety **BLOCKED** → freezes @ `a38f0ec` → signal-host
+  @ `6c73e46` → teardown @ `c7a8f3a` → **final re-reviews PASS** (zero blockers)
 
 # path
 
@@ -104,40 +98,35 @@ results and merge.
 # contract summary
 
 Authoritative detail lives in [tui-minimal.md](../../modules/tui-minimal.md).
-Do not restate conflicting rules here.
+Do not restate conflicting rules here. Mechanism freezes are unchanged by this
+PASS-record tip.
 
-### Frozen choices (index after blocker close)
+### Frozen choices (index)
 
 | Topic | Freeze |
 |-------|--------|
-| Package owner | **only** `packages/zag-tui/` (`zag-tui`); CLI wires when `-Dtui=true`; no `zag-cli/src/tui` |
-| Dep direction | CLI → `zag-tui` only; **no** TUI import of CLI/`sigint`; `SignalHost` defined by TUI, implemented by CLI over Guard |
-| Init order | App prealloc → `Agent.init` → `Guard.install(&agent.cancel)` → `Session.start` → bind redactor/SignalHost → raw |
-| Post-join | every worker join success/error → `SignalHost.acknowledge_cancel` before idle (avoid false second SIGINT) |
-| Final teardown | ack → restore tty → App quiesce (keep storage) → Guard.deinit → Session.deinit → Agent.deinit → App free; never Agent before Guard |
-| Wake | bounded nonblocking drop-on-full + poll timeout ≤250 ms |
-| Concurrency | UI + single reply worker; short locks; permission single-slot rendezvous; no worker TTY I/O |
-| Session | product `create_new`/`resume_existing` only; no `open_or_create` product path |
-| Bind matrix | ask→`Gate.ask(TuiPermissionAdapter)`; yolo explicit; TUI ask hunk **null**; yolo AutoAccept |
-| Redaction / reserves / mode matrix | unchanged from `a38f0ec` freezes (no rollback) |
+| Package owner | **only** `packages/zag-tui/` (`zag-tui`); CLI wires when `-Dtui=true` |
+| Dep direction | CLI → `zag-tui` only; `SignalHost` defined by TUI, implemented by CLI |
+| Init / teardown / redaction / concurrency / mode matrix | as frozen through `c7a8f3a` |
 | Non-goals | theme/dashboard/RPC/ACP/E2–E3/schema/maturity/Pi parity/wholesale vaxis |
 
 # verification (contract track — this node)
 
 - [x] Round-1 architecture + safety **BLOCKED** findings closed @ `a38f0ec`
-- [x] Signal host / Guard-after-Agent order follow-up recorded (still not PASS)
-- [x] Teardown order A11/B-S10 follow-up recorded (still not PASS)
-- [ ] Independent **architecture / ownership** contract **re-review** PASS
-- [ ] Independent **safety / fail-closed** contract **re-review** PASS
-- [ ] `python3 scripts/lint_docs.py`
-- [ ] `python3 scripts/score_docs.py --check`
-- [ ] `git diff --check`
-- [ ] Diff contains **only** expected docs (+ quality reports if body/score changes)
-- [ ] Confirm **no** `packages/`, `src/`, `build.zig*` product changes
-- [ ] C9 product acceptance remains **unchecked**
-- [ ] No maturity raise; no “TUI implemented” / current-tip Linux claim
+- [x] Signal host / Guard-after-Agent order follow-up @ `6c73e46`
+- [x] Teardown order A11/B-S10 follow-up @ `c7a8f3a`
+- [x] Independent **architecture / ownership** contract **re-review** PASS @ `c7a8f3a` (zero blockers)
+- [x] Independent **safety / fail-closed** contract **re-review** PASS @ `c7a8f3a` (zero blockers)
+- [x] `python3 scripts/lint_docs.py` (docs path; this tip)
+- [x] `python3 scripts/score_docs.py --check` (docs path; this tip)
+- [x] `git diff --check` on contract docs range
+- [x] Diff contains **only** expected docs (+ quality reports if body/score changes)
+- [x] Confirm **no** `packages/`, `src/`, `build.zig*` product changes
+- [x] C9 product acceptance remains **unchecked**
+- [x] No maturity raise; no “TUI implemented” / current-tip Linux claim
+- [ ] Full std/curl product Gate — **not run on this tip**; do not invent numbers
 
-# verification (implementation track — later; blocked)
+# verification (implementation track — later; not started)
 
 - [ ] Full matrix in [tui-minimal.md §11](../../modules/tui-minimal.md)
 - [ ] Independent code review PASS
@@ -155,6 +144,7 @@ Do not restate conflicting rules here.
 - Maturity promotion
 - Pi API or TUI parity; wholesale vaxis port
 - This contract node adding packages, dependencies, or product code
+- Claiming product TUI done or auto-starting implementation from contract merge
 
 # lineage (tips)
 
@@ -163,7 +153,7 @@ Do not restate conflicting rules here.
 | Contract candidate (initial freeze) | `d01d70b7d02566f0354f976775dab020399d0df5` |
 | Blocker-close follow-up | `a38f0ecde46d9f0c948f3a36dd8f46b1a7aad66f` |
 | Signal-host / Guard order follow-up | `6c73e4652a737b3fead0dbd15a2c661ebe66cfda` |
-| Teardown order follow-up | tip with message `docs: fix TUI teardown ordering` |
-| Contract PASS record | pending re-review |
-| Implementation | blocked |
-| Closeout | blocked |
+| Teardown order follow-up (PASS tip) | `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` |
+| Contract PASS record (this docs tip) | tip with message `docs: record minimal TUI contract pass` |
+| Implementation | **not started** (future Goal / separate node) |
+| Closeout | blocked on implementation |

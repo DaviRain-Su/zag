@@ -1,6 +1,6 @@
 ---
 status: active
-scope: minimal host TUI binding contract (docs candidate)
+scope: minimal host TUI binding contract (PASS; not product implementation)
 task: tui-minimal-001
 prerequisite:
   - harness-events-001
@@ -14,16 +14,20 @@ prerequisite:
 
 This module is the **single authoritative binding** for `tui-minimal-001`.
 It freezes how a host TUI may assemble public `zag-coding-agent` /
-`zag-cli` surfaces. It is a **contract candidate**: it does **not** ship a
-product TUI, does **not** mark C9 implementation acceptance complete, and
-does **not** raise any maturity row.
+`zag-cli` surfaces. It does **not** ship a product TUI, does **not** mark
+C9 product implementation acceptance complete, and does **not** raise any
+maturity row.
 
-**Review state:** round-1 reviews **BLOCKED** (closed @ `a38f0ec`); signal-host
-init order @ `6c73e46`; this tip freezes **final/failure teardown** so
-`Guard.deinit` (unbind + in-flight drain) always precedes `Agent.deinit` (A11 /
-B-S10). Re-review is **pending**. Implementation remains **BLOCKED** until
-architecture/ownership + safety/fail-closed contract reviews **PASS** and this
-contract merges. See [task](../plan/tasks/tui-minimal-001.md).
+**Contract freeze PASS** at candidate tip
+`c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` after independent
+**architecture/ownership** and **safety/fail-closed** final re-reviews
+(**zero blockers**; A1–A11 and B-S1–B-S10 closed). Lineage: initial freeze
+`d01d70b` → blocker close `a38f0ec` → signal-host order `6c73e46` → teardown
+order `c7a8f3a` (PASS tip). Docs-only contract may ff-only merge. **Production
+TUI remains not started.** Implementation must **not** auto-start from this
+node; a later Goal/reconciliation must explicitly open a separate
+implementation delivery node/worktree after contract merge. See
+[task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
@@ -898,12 +902,12 @@ injection is required where noted.
 
 - [x] Binding module authored (`docs/modules/tui-minimal.md`)
 - [x] Task file authored (`docs/plan/tasks/tui-minimal-001.md`)
-- [x] Round-1 architecture + safety **BLOCKED** findings addressed in this freeze
-- [ ] Independent architecture/ownership **re-review** PASS
-- [ ] Independent safety/fail-closed **re-review** PASS
-- [ ] Docs lint + score + `git diff --check` green on candidate
-- [ ] **No** C9 product implementation acceptance checked off as done
-- [ ] **No** maturity row raise; **no** “TUI implemented” claim
+- [x] Round-1 architecture + safety **BLOCKED** findings addressed (`a38f0ec`+)
+- [x] Independent architecture/ownership **re-review** PASS @ `c7a8f3a` (zero blockers)
+- [x] Independent safety/fail-closed **re-review** PASS @ `c7a8f3a` (zero blockers)
+- [x] Docs lint + score + `git diff --check` green on contract docs path (this tip)
+- [x] **No** C9 product implementation acceptance checked off as done
+- [x] **No** maturity row raise; **no** “TUI implemented” claim
 
 ## Related
 
