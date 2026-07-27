@@ -28,7 +28,7 @@ docs/plan/
 | CI safety fuses | **done/closed** at `97f43de` — [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md); binding [quality/README](../quality/README.md); exact fuses `${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress: true` + 30m/job; full dual-OS dual-backend retained; independent review + ff-only local merge; **no push**; maturity unchanged |
 | Process-idle residual | **done** (Phase B Pass path): [ci-hang-sigint-process-idle-001](./tasks/ci-hang-sigint-process-idle-001.md) — existing idle oracle PASS on fresh remote Linux at tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **611/611** + process fixture **2/2**; curl **610/610** + **2/2**; macOS job success; no product/fixture change; fuses did **not** fire). Current Linux idle status is PASS at that exact tip/run only — not a universal future guarantee. CI fuses remain host rails only. |
 | Final Linux dual-backend Gate | **done** (docs-only): [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) — full remote dual-OS dual-backend Gate closed at exact product tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **40/40 · 611/611** + process fixture **2/2** `126ms`; curl **42/42 · 610/610** + **2/2** `126ms`; libcurl install success; macOS job + both std/curl success; OpenAPI **287/287**; catalog **40**; docs **91/73**; fuses configured but **did not fire**). M0 Linux dual-backend reliability closed **only** at that tip/run — not a universal future guarantee. No product/build/`.github` changes after the remote run (base `b953e0b` is two later docs evidence commits only). |
-| Prompt Templates (E1) | **in-progress** (docs contract): [prompt-templates-001](./tasks/prompt-templates-001.md) + binding [prompt-templates.md](../modules/prompt-templates.md); independent contract PASS required before production code; Runtime Extensions remains L0 |
+| Prompt Templates (E1) | **done** at `61326ae` — [prompt-templates-001](./tasks/prompt-templates-001.md) + binding [prompt-templates.md](../modules/prompt-templates.md); passive coding-agent slice + thin CLI routing; Runtime Extensions remains L0 (no E1 maturity raise) |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -77,7 +77,22 @@ Linux dual-backend Gate
 green (OpenAPI **287/287**, catalog **40**, docs **91/73**); M0 Linux
 dual-backend reliability closed **only** at exact tip `8a93ec6` / run
 `30273762011` — not a universal future guarantee. `prompt-templates-001` is
-**in-progress** (docs contract freeze; not implemented).
+**done** at `61326ae` (contract `e00255b` → implementation `5487c4b` → review
+fix/candidate `61326ae`; merged-main local macOS std **40/40 · 633/633**, curl
+**42/42 · 632/632**; Runtime Extensions remains L0; no push / no fresh remote
+Linux evidence for this tip).
+
+The `prompt-templates-001` candidate Gate at `61326ae` passed std **40/40 steps,
+633/633 tests**, curl **42/42 steps, 632/632 tests**, docs lint/score, and
+committed-range diff clean. Independent correctness/boundary review **PASS**
+(zero remaining blockers). Coordinator ff-only advanced local main `4fcfb31` →
+`61326ae` while preserving an unrelated existing canonical `.gitignore` edit
+(**no push**). Merged-main local macOS Gate again: std **40/40 · 633/633**, curl
+**42/42 · 632/632**, OpenAPI **287/287**, catalog **40**, docs lint, readability
+**91/100** (54 files), security **73/100** (54 files), diff check pass.
+Generated quality reports changed timestamps only and were restored. Runtime
+Extensions remains L0; no E1 maturity row was raised; Core / session schema v1 /
+Trace v1 / headless-v1 / `project.zig` / `--no-project` unchanged.
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -123,7 +138,7 @@ completed foundation
            └────► session-fork-001 (done @ 0a3087f) ✅
                            │
                            ▼
-          skills-001 (done @ caafef5) ✅ → prompt-templates-001 (in-progress: docs contract)
+          skills-001 (done @ caafef5) ✅ → prompt-templates-001 (done @ 61326ae) ✅
                     + edit-sharpness-001 (M2)
                            │
                            ▼
@@ -131,15 +146,17 @@ completed foundation
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
-`harness-steering-001`, `session-fork-001`, `skills-001`, and `ci-hang-sigint-linux-errno-001` are complete. Source
+`harness-steering-001`, `session-fork-001`, `skills-001`, `prompt-templates-001`, and
+`ci-hang-sigint-linux-errno-001` are complete. Source
 review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product
 policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then
 closed at `a5ff2b7` with Session-owned queues and a thin Core insertion seam. The safe idle-only durable fork closed at
 `0a3087f` after independent reviews and merged-main Gates, without changing session schema v1 or the Session L2 row. E1
-passive Skills closed at `caafef5` (coding-agent only; Runtime Extensions remains L0). The Linux raw-errno SIGINT
-hotfix closed at `bc737025` after independent review-fix PASS and merged-main local macOS dual-backend Gate; pure
-raw-Linux decoder regressions ran in both std and curl-linked test artifacts. It does not reopen M0 lifecycle design
-and does not raise maturity.
+passive Skills closed at `caafef5` (coding-agent only; Runtime Extensions remains L0). E1 passive Prompt Templates
+closed at `61326ae` (coding-agent only + thin CLI routing; Runtime Extensions remains L0; no E1 maturity raise). The
+Linux raw-errno SIGINT hotfix closed at `bc737025` after independent review-fix PASS and merged-main local macOS
+dual-backend Gate; pure raw-Linux decoder regressions ran in both std and curl-linked test artifacts. It does not
+reopen M0 lifecycle design and does not raise maturity.
 [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) is **done/closed** at `97f43de` as host rails only
 (`workflow+ref` concurrency cancel-in-progress + 30m/job; timeout/cancel ≠ product hang proof; remote Actions
 enforcement not claimed). Process-idle residual
@@ -153,8 +170,9 @@ Final merged-path Linux dual-backend Gate
 (Ubuntu std **40/40 · 611/611** + fixture **2/2** `126ms`; curl **42/42 · 610/610** + **2/2** `126ms`; macOS
 success; OpenAPI **287/287**; catalog **40**; docs **91/73**). M0 Linux dual-backend reliability is **closed only
 at exact tip `8a93ec6` / run `30273762011`** — not a universal future guarantee. `prompt-templates-001` is
-**in-progress** on the docs-first contract track ([task](./tasks/prompt-templates-001.md), binding
-[module](../modules/prompt-templates.md)); production implementation is blocked until independent contract PASS.
+**done** at `61326ae` ([task](./tasks/prompt-templates-001.md), binding
+[module](../modules/prompt-templates.md)); merged-main local macOS dual-backend Gate std **40/40 · 633/633**, curl
+**42/42 · 632/632**; **no push** and no fresh remote/Linux evidence claimed for this tip.
 Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
@@ -165,12 +183,14 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| [prompt-templates-001](./tasks/prompt-templates-001.md) | **in-progress** (docs contract) | E1 passive Prompt Templates; binding [prompt-templates.md](../modules/prompt-templates.md); independent contract PASS before production code; no Core ports; maturity stays L0 |
+| `edit-sharpness-001` | planned (M2; task file not yet authored) | patch-grade edit + review/verification; not co-delivered with Prompt Templates |
+| `tui-minimal-001` | planned (after M2 edit; task file not yet authored) | minimal host TUI; depends on event/control contracts |
 
 ### Completed foundation
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [prompt-templates-001](./tasks/prompt-templates-001.md) | P1 | **done** @ `61326ae` | E1 passive Prompt Templates; coding-agent discovery/catalog/one-pass expand + thin CLI routing; contract `e00255b` PASS → impl `5487c4b` → fix `61326ae`; candidate + merged-main local macOS std **40/40 · 633/633**, curl **42/42 · 632/632**; OpenAPI **287/287**; catalog **40**; docs **91/73**; no push / no fresh remote Linux for this tip; Runtime Extensions remains L0 |
 | [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) | P0 | **done** (docs-only Gate) @ tip `8a93ec6` / run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) | Final merged-path remote Linux dual-backend Gate; Ubuntu std **40/40 · 611/611** + fixture **2/2** `126ms`, curl **42/42 · 610/610** + **2/2** `126ms`; macOS success; OpenAPI **287/287**; catalog **40**; docs **91/73**; `waitBounded(4000)` + idle 0 + std 130/curl 11 + `linuxRawErrno` + exact fuses preserved; fuses did **not** fire; M0 dual-backend reliability closed **at exact tip/run only**; prompt-templates unblocked for planning; maturity unchanged |
 | [ci-hang-sigint-process-idle-001](./tasks/ci-hang-sigint-process-idle-001.md) | P0 | **done** (Phase B) @ tip `8a93ec6` / run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) | Idle process-fixture residual; Ubuntu std **611/611** + fixture **2/2**, curl **610/610** + **2/2**; macOS success; no product/fixture change; `waitBounded(4000)` + std 130/curl 11 preserved; final Linux Gate closed by [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md); maturity unchanged |
 | [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) | P0 | done/closed @ `97f43de` | Exact fuses `${{ github.workflow }}-${{ github.ref }}` + cancel-in-progress + 30m/job; dual-OS dual-backend retained; review + ff-only local merge; no push; process-idle residual **done**; final Linux Gate **done** at exact tip/run; maturity unchanged |

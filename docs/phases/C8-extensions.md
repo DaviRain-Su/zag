@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Prerequisite | Phase H + SDK/process contracts ✅; E2 needs C7.1; E3 needs its runtime/capability Gates |
-| Near-term slice | M2 `skills-001`, then Prompt Templates — E1 passive resources |
+| Near-term slice | M2 `skills-001` ✅ + Prompt Templates ✅ — E1 passive resources (Runtime Extensions L0) |
 | Long-term target | E3 WASM Component extension platform |
 | Decision | [D-010](../decisions/active/D-010-extension-tiers-and-process-protocol.md) |
 | Module | [extensions](../modules/extensions.md) · E1 Skills binding [skills](../modules/skills.md) · E1 Prompt Templates binding [prompt-templates](../modules/prompt-templates.md) |
@@ -29,7 +29,7 @@ C8 delivers the executable/passive extension mechanisms behind a broader product
 | Tier | Mechanism | Delivery |
 |------|-----------|----------|
 | E0 | trusted static Zig composition | SDK L2 closed in its current scope |
-| E1 | passive resources | `skills-001`, then Prompt Templates; theme data later |
+| E1 | passive resources | `skills-001` ✅ `caafef5`, `prompt-templates-001` ✅ `61326ae`; theme data later |
 | E2 | native process binding | after C7.1 + concrete process integration |
 | E3 | WASM Component/WIT binding | formal planned target after common semantics |
 
@@ -54,7 +54,7 @@ Binding contract: [skills.md](../modules/skills.md) (`skills-001` **done** at
 ### Prompt Templates
 
 Binding contract: [prompt-templates.md](../modules/prompt-templates.md)
-(`prompt-templates-001` **in-progress** docs track; Runtime Extensions L0):
+(`prompt-templates-001` **done** at `61326ae`; Runtime Extensions L0):
 
 - deterministic non-recursive discovery of direct `*.md` files;
 - explicit one-pass non-recursive substitution (`$ARGUMENTS` / `$$`);
@@ -158,12 +158,12 @@ Implementation closed at `caafef5` (`skills_tests.zig` + SDK smoke); maturity st
 ### E1 Prompt Templates
 
 Exact matrix: [prompt-templates.md §11](../modules/prompt-templates.md#11-verification--exact-fixture-matrix).
-Docs contract in-progress; not implemented:
+Implementation fixtures green (`prompt_templates_tests.zig` + SDK smoke); maturity still L0:
 
-- [ ] non-recursive discovery/one-pass substitution;
-- [ ] project-override collision and `/name` expansion deterministic;
-- [ ] `/skill:` precedence + unknown slash raw compatibility;
-- [ ] no-execute neutrality; induced Tools still gated.
+- [x] non-recursive discovery/one-pass substitution;
+- [x] project-override collision and `/name` expansion deterministic;
+- [x] `/skill:` precedence + unknown slash raw compatibility;
+- [x] no-execute neutrality; induced Tools still gated.
 
 ### E2
 

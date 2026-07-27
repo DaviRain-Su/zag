@@ -1,7 +1,7 @@
 ---
 id: prompt-templates-001
 scope: coding-agent/prompt-templates (E1 passive)
-status: in-progress # implementation landed; done after merged-main Gate
+status: done
 priority: P1
 depends-on:
   - skills-001
@@ -14,24 +14,22 @@ Deliver the **minimal passive E1 Prompt Templates** capability as
 **product-owned** functionality in `packages/zag-coding-agent` with only **thin
 explicit CLI routing** in `packages/zag-cli`:
 
-1. **Docs-first (this track):** freeze the binding contract and obtain independent
-   contract PASS **before** any production implementation.
-2. **Implementation (later track):** deterministic bounded non-recursive Markdown
-   template discovery and one-pass expansion **without** moving behavior into
+1. **Docs-first:** freeze the binding contract and obtain independent contract
+   PASS **before** production implementation.
+2. **Implementation:** deterministic bounded non-recursive Markdown template
+   discovery and one-pass expansion **without** moving behavior into
    `zag-agent-core`.
 
-Preserve ask + workspace jail + shell protect, all closed schemas, existing raw
-unknown-slash behavior, and maturity truth. Do **not** co-deliver scripts, hooks,
-MCP, WASM, network/provider registration, dynamic ABI, edit sharpness, or TUI
-work. Do **not** modify `.gitignore`, merge, push, or change shared state in this
-docs commit series.
+`prompt-templates-001` closed at tip `61326ae7ae8f7bbef3de99377a8c9975d239d6df`
+after contract freeze, implementation, review fix, independent correctness /
+boundary review (zero remaining blockers), dual-backend candidate + merged-main
+local macOS Gates, and this docs-truth closeout. Runtime Extensions remains
+**L0** (no maturity raise; no E1 maturity row).
 
 **Owner:** `zag-coding-agent` only. Do **not** change Core, session schema v1,
 Trace v1, `headless-v1`, `project.zig`, or `--no-project` semantics.
 
 Binding specification: [Prompt Templates (E1 passive)](../../modules/prompt-templates.md).
-
-Runtime Extensions maturity remains **L0**.
 
 # context
 
@@ -57,26 +55,25 @@ Runtime Extensions maturity remains **L0**.
   - `packages/zag-coding-agent/src/skills.zig` (catalog/lifetime/routing patterns)
   - `packages/zag-coding-agent/src/project.zig` (unchanged AGENTS.md only)
   - `packages/zag-cli/src/cli.zig` (flags, one-shot/REPL/headless skill routing)
-  - `tests/sdk-consumer-fixture/` (public surface smoke when implementing)
+  - `tests/sdk-consumer-fixture/` (public surface smoke)
 
 # path
 
-## Docs (contract track — this commit)
+## Docs (contract track — complete)
 
 - `docs/modules/prompt-templates.md` — binding contract
 - `docs/plan/tasks/prompt-templates-001.md` — this task
-- status links only: `docs/plan/README.md`, `docs/modules/README.md`,
+- status links: `docs/plan/README.md`, `docs/modules/README.md`,
   `docs/modules/extensions.md`, `docs/phases/C8-extensions.md`,
-  `docs/roadmap.md`, `docs/maturity.md` (L0 truth, no raise), `docs/INDEX.md`,
-  and minimal plan-status wording where `prompt-templates-001` was “unblocked /
-  not authored”
+  `docs/roadmap.md`, `docs/maturity.md` (L0 truth, no raise), and related
+  current-status wording
 
-## Implementation (later; not this docs commit)
+## Implementation (complete)
 
-- `packages/zag-coding-agent/src/prompt_templates.zig` (or split under coding-agent)
+- `packages/zag-coding-agent/src/prompt_templates.zig`
+- `packages/zag-coding-agent/src/prompt_templates_tests.zig` — §11 fixtures
 - `packages/zag-coding-agent/src/agent.zig` — start/fork/deinit catalog
 - `packages/zag-coding-agent/src/root.zig` — public parse/expand export
-- coding-agent tests covering module §11 fixtures **1–17**
 - `packages/zag-cli/src/cli.zig` — enable/trust flags, HOME → user root, thin
   routing with `/skill:` precedence then known `/name`
 - `tests/sdk-consumer-fixture/` — public options + parse/expand smoke (no
@@ -132,45 +129,83 @@ The module doc is authoritative. Summary of binding product laws:
 
 # verification
 
-## Docs Gate (contract track)
+## Docs Gate (contract track — complete)
 
 - [x] Binding module + task authored before implementation
-- [ ] Independent review of contract **PASS** (required before production code)
-- [x] `zig build docs-lint`
+- [x] Independent review of contract **PASS** before production code
+      (contract tip `e00255b16d98200bff167412bc6237b2fb252cfb`)
+- [x] `zig build docs-lint` / `python3 scripts/lint_docs.py`
 - [x] `git diff --check`
 - [x] Explicit `git add` of intended docs files only
-- [ ] One local docs commit on `task/prompt-templates-001`
+- [x] Contract docs commit on `task/prompt-templates-001` (`e00255b`); this
+      file’s closeout commit is docs-only after merged-main Gate
 
-## Implementation Gate
+## Implementation Gate (**complete**)
 
 Must pass every fixture in
 [prompt-templates.md §11](../../modules/prompt-templates.md#11-verification--exact-fixture-matrix)
 items **1–17**, plus:
 
-- [x] Focused coding-agent tests green (`prompt_templates_tests.zig` §11 rows 1–17)
-- [x] External SDK public-surface smoke (`tests/sdk-consumer-fixture`)
-- [ ] Root std + curl candidate Gates as required by plan closeout
+- [x] Focused coding-agent tests green (`prompt_templates_tests.zig` §11 rows
+      1–17; rows 7–8 combined in one test; plus unit tests in
+      `prompt_templates.zig`)
+- [x] External SDK public-surface smoke (`tests/sdk-consumer-fixture`
+      `prompt-templates-001` test; fixture source currently **23** tests)
+- [x] Root std + curl candidate Gates (at tip `61326ae`: std **40/40 steps,
+      633/633 tests**; curl **42/42 steps, 632/632 tests**; docs lint/score;
+      `git diff --check`; clean worktree)
 - [x] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
 - [x] Runtime Extensions maturity remains **L0**
-- [ ] Independent code review + ff-only merge + merged-main Gate before `done`
-
-# non-goals (task boundary)
-
-See module §10. Additionally out of scope for the docs PR: production code,
-maturity raise, quality score body hand-edits, `.gitignore` changes, merge/push,
-and any co-delivery of edit/TUI/scripts/hooks/MCP/WASM.
+- [x] Independent correctness/boundary review **PASS** (zero remaining blockers)
+      on implementation `5487c4be3e17b2fa49fe718ac2c9b97f7c9e574f` + review
+      fix/candidate `61326ae7ae8f7bbef3de99377a8c9975d239d6df`
+- [x] ff-only local main advance + merged-main local macOS Gate before `done`
 
 # delivery evidence
 
 | Item | Evidence |
 |------|----------|
-| Contract | `docs/modules/prompt-templates.md` |
-| Task | this file `in-progress` (implementation landed; await merge Gate) |
-| Implementation | `packages/zag-coding-agent/src/prompt_templates.zig` + Session/CLI/SDK wiring + §11 fixtures |
-| Maturity | Runtime Extensions **L0** (no raise) |
+| Contract | `docs/modules/prompt-templates.md` @ `e00255b16d98200bff167412bc6237b2fb252cfb`; independent contract review **PASS** before product code |
+| Task | this file `done` at tip `61326ae` (+ docs closeout) |
+| Implementation | `5487c4be3e17b2fa49fe718ac2c9b97f7c9e574f` — `packages/zag-coding-agent/src/prompt_templates.zig` + Session/CLI/SDK wiring + §11 fixtures |
+| Review fix / candidate | `61326ae7ae8f7bbef3de99377a8c9975d239d6df` — exact 24 KiB files under limited read |
+| Fixtures 1–17 | `packages/zag-coding-agent/src/prompt_templates_tests.zig` (16 focused tests covering matrix rows 1–17; §11.7–8 combined) + unit tests in `prompt_templates.zig` |
+| SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` `prompt-templates-001` public options + expand + no implicit reply parse; fixture source **23** tests |
+| Review | independent correctness/boundary review **PASS**, zero remaining blockers, at candidate `61326ae` |
+| Merge | coordinator ff-only advanced local main `4fcfb31e992e268b3481e8fd9a752fd5a80741f3` → `61326ae7ae8f7bbef3de99377a8c9975d239d6df` while preserving an unrelated existing canonical `.gitignore` edit; **no push** |
+| Candidate Gate @ `61326ae` | std **40/40 steps, 633/633 tests**; curl **42/42 steps, 632/632 tests**; docs lint/score; `git diff --check`; clean state |
+| Merged-main Gate @ `61326ae` | local macOS dual-backend: std **40/40 steps, 633/633 tests**; curl **42/42 steps, 632/632 tests**; OpenAPI **287/287**; catalog **40**; docs lint; readability **91/100** across **54** files; security **73/100** across **54** files; `git diff --check` pass. Generated quality reports changed timestamps only and were restored. |
+| Remote / Linux | **Not claimed** for this Prompt Templates tip — no push and no fresh remote/Linux evidence |
+| Maturity | Runtime Extensions **L0** (E1 Prompt Templates slice implemented; maturity not raised; no E2/E3/scripts/hooks/MCP/WASM/TUI/edit claim) |
 
-# closeout criteria
+# non-goals (task boundary)
 
-- Docs contract frozen; independent contract review PASS; docs-lint clean.
-- Implementation later lands fixtures 1–17 without Core/schema/maturity changes.
-- Status → `done` only after implementation merged-main Gate; not after docs alone.
+See module §10. Out of scope for this task’s implementation series: raising
+Runtime Extensions maturity, E2/E3, scripts/hooks/MCP/WASM, edit sharpness, TUI,
+shared generic “resource loader” package extraction beyond what this slice needs,
+quality score body hand-edits, `.gitignore` product changes, and merge/push of
+shared remotes from this closeout.
+
+# closeout
+
+- Contract frozen at `e00255b16d98200bff167412bc6237b2fb252cfb` with independent
+  contract review **PASS** before production code.
+- Implementation landed at `5487c4be3e17b2fa49fe718ac2c9b97f7c9e574f`; review fix
+  and candidate tip `61326ae7ae8f7bbef3de99377a8c9975d239d6df` passed independent
+  correctness/boundary review with **zero remaining blockers**.
+- Candidate Gate at `61326ae`: std **40/40 · 633/633**, curl **42/42 · 632/632**,
+  docs lint/score, diff check, clean state.
+- Coordinator ff-only advanced local main `4fcfb31` → `61326ae` while preserving
+  an unrelated existing canonical `.gitignore` edit (**no push**).
+- Merged-main local macOS Gate at exact `61326ae`: std **40/40 · 633/633**, curl
+  **42/42 · 632/632**, OpenAPI **287/287**, catalog **40**, docs lint, readability
+  **91/100** (54 files), security **73/100** (54 files), diff check pass.
+  Timestamp-only quality-report churn restored. **No** fresh remote/Linux Gate
+  claimed for this tip.
+- Product shape: minimal passive E1 slice owned by `zag-coding-agent` with thin
+  CLI routing. Core, session schema v1, Trace v1, `headless-v1`, `project.zig`,
+  `--no-project`, default ask + workspace jail + shell protect, and every existing
+  L2 row remain unchanged. Runtime Extensions stays **L0**. This task does **not**
+  claim an E1 maturity raise or E2/E3/scripts/hooks/MCP/WASM/TUI/edit capability.
+- Docs-only closeout date **2026-07-28** reconciles current-status wording after
+  the merged-main Gate; it does not change product behavior.

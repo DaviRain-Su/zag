@@ -10,13 +10,15 @@ This module is the **binding contract** for `prompt-templates-001`: Zig-native,
 passive Prompt Templates discovery and one-pass slash expansion. It freezes
 product ownership, roots/trust, format, collision, substitution, budgets,
 lifecycle, routing precedence, errors, safety, compatibility, non-goals, and
-executable fixtures **before** production implementation.
+executable fixtures.
 
-**Implementation status:** production code landed under coding-agent + thin CLI
-routing (`prompt_templates.zig`, Session catalog/lifetime, public parse/expand,
-`--no-prompt-templates` / `--trust-project-templates`). Runtime Extensions
-maturity remains **L0**; this slice must not raise maturity. Delivery does not
-move behavior into `zag-agent-core`.
+**Implementation status:** E1 passive slice landed in `zag-coding-agent` /
+`zag-cli` (`prompt-templates-001` **done** at
+`61326ae7ae8f7bbef3de99377a8c9975d239d6df`). Production code owns discovery,
+Session catalog/lifetime, public parse/one-pass expand, and thin CLI routing
+(`prompt_templates.zig`, `--no-prompt-templates` / `--trust-project-templates`).
+Runtime Extensions maturity remains **L0**; this slice does **not** raise
+maturity and does not move behavior into `zag-agent-core`.
 
 Prerequisite contracts (unchanged by this slice):
 
@@ -467,23 +469,29 @@ executes it.
 
 ### 11.2 Gates
 
-**Docs track (this commit series):**
+**Docs track (complete):**
 
 - Binding module + task authored
-- Independent contract review PASS before production implementation
-- `zig build docs-lint`
+- Independent contract review PASS at `e00255b` before production implementation
+- `zig build docs-lint` / `python3 scripts/lint_docs.py`
 - `git diff --check`
 - Explicit `git add` of intended docs files only
-- One local docs commit
+- Contract and closeout docs commits on `task/prompt-templates-001`
 
-**Implementation track (later; not this docs commit):**
+**Implementation track (complete at `61326ae`):**
 
-- Focused coding-agent tests for §11 rows 1–17
-- External SDK public-surface smoke
-- Root std + curl candidate Gates as required by delivery plan
+- Focused coding-agent tests for §11 rows 1–17 (`prompt_templates_tests.zig`;
+  rows 7–8 combined) + unit tests in `prompt_templates.zig`
+- External SDK public-surface smoke (`tests/sdk-consumer-fixture`; fixture
+  source **23** tests including `prompt-templates-001`)
+- Root std + curl candidate Gates: std **40/40 · 633/633**, curl
+  **42/42 · 632/632**
 - No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
 - Runtime Extensions maturity remains **L0**
-- Independent code review + ff-only merge + merged-main Gate before `done`
+- Independent correctness/boundary review PASS (zero remaining blockers) +
+  ff-only local main `4fcfb31` → `61326ae` + merged-main local macOS Gate
+  (std/curl as above; OpenAPI **287/287**; catalog **40**; docs **91/73**).
+  **No push**; no fresh remote/Linux evidence claimed for this tip.
 
 ## 12. Ownership checklist (implementation map)
 
@@ -498,17 +506,14 @@ executes it.
 
 ## 13. Doc maintenance
 
-When this contract lands (docs track):
+Contract and implementation are closed (`prompt-templates-001` **done** at
+`61326ae`, docs closeout **2026-07-28**):
 
 - keep this module as binding truth;
-- point [extensions.md](./extensions.md) and [C8](../phases/C8-extensions.md) at
-  project-override collision (not first-wins);
-- task [prompt-templates-001](../plan/tasks/prompt-templates-001.md) status
-  reflects docs in-progress until implementation closeout;
-- leave Runtime Extensions at **L0**.
-
-When behavior later lands:
-
-- update extensions/C8 acceptance checkboxes for E1 Prompt Templates;
-- update task delivery evidence;
-- still do not raise maturity without a separate maturity Gate.
+- [extensions.md](./extensions.md) and [C8](../phases/C8-extensions.md) record
+  project-override collision (not first-wins) and E1 Prompt Templates acceptance;
+- task [prompt-templates-001](../plan/tasks/prompt-templates-001.md) is **done**;
+- Runtime Extensions remains **L0** — no E1 maturity raise without a separate
+  maturity Gate;
+- exclusions remain explicit: no E2/E3, scripts/hooks/MCP/WASM, edit, or TUI
+  claims from this slice.
