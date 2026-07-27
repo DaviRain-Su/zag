@@ -986,30 +986,32 @@ test "skills §11.12: compose append + duplicate InvalidToolset" {
     try std.testing.expectError(error.InvalidToolset, agent.reply(&s, "hi"));
 }
 
-// ── §11.13 Skill-induced tools still gated ──────────────────────────────────
+// ── §11.13 Skill-induced tools still gated (composition fixture) ────────────
+//
+// After body load / manual activation, model-driven write_file / run_shell /
+// path tools must still hit ask + jail + protect + redaction. The prior fixture
+// only asserted ask-deny via a write stub not running; this matrix asserts
+// machine-readable codes for ask, jail, and shell protect, plus durable
+// redaction of skill-activated user text.
 
-test "skills §11.13: after body load, write/shell still ask+jail+protect" {
+test "skills §11.13: after activation ask+jail+protect+redaction still gate" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
+    const redact_mod = @import("redact.zig");
+    const secret = redact_mod.testing.fake_api_key;
 
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
-    try writeSkill(io, tmp.dir, "induce", "d", "use write_file and run_shell", false);
+
+    // Skill body plants a configured secret so activation → ordinary user text
+    // still goes through session redaction on durable save.
+    const skill_body = try std.fmt.allocPrint(gpa, "use write_file and run_shell; key={s}", .{secret});
+    defer gpa.free(skill_body);
+    try writeSkill(io, tmp.dir, "induce", "d", skill_body, false);
     const user_root = try absPathOf(io, tmp.dir, gpa);
     defer gpa.free(user_root);
 
-    var s = try Session.start(gpa, io, .{
-        .base_system = "sys",
-        .load_project_instructions = false,
-        .user_skills_root = user_root,
-    });
-    defer s.deinit();
-
-    // Expand skill then run agent with ask-deny and shell protect defaults.
-    const act = try skills.expandSkillActivation(gpa, s.skills_catalog, "induce", "");
-    defer gpa.free(act.user_text);
-
-    const WriteStub = struct {
+    const HandlerStub = struct {
         ran: bool = false,
         fn h(_: tool.Context, instance: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
             const self: *@This() = @ptrCast(@alignCast(instance.?));
@@ -1017,25 +1019,19 @@ test "skills §11.13: after body load, write/shell still ask+jail+protect" {
             return error.ToolFailed;
         }
     };
-    var stub: WriteStub = .{};
-    const write_tool = try tool.buildTool(gpa, .{
-        .definition = .{
-            .name = "write_file",
-            .description = "w",
-            .parameters_json = "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"},\"content\":{\"type\":\"string\"}},\"required\":[\"path\",\"content\"]}",
-        },
-        .capabilities = .{
-            .risk = .write,
-            .workspace = .{ .path_field = "path" },
-            .cancellation = .none,
-            .shell = .none,
-        },
-        .instance = &stub,
-        .handler = WriteStub.h,
-    });
 
-    const Mock = struct {
+    const write_params =
+        \\{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}
+    ;
+    const shell_params =
+        \\{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}
+    ;
+
+    // Shared one-shot tool-call mock: call 1 returns a single tool call, call 2 stops.
+    const OneShotToolMock = struct {
         calls: u32 = 0,
+        tool_name: []const u8,
+        arguments: []const u8,
         fn chat(
             ptr: *anyopaque,
             arena: std.mem.Allocator,
@@ -1048,9 +1044,9 @@ test "skills §11.13: after body load, write/shell still ask+jail+protect" {
             if (self.calls == 1) {
                 const tc = try arena.alloc(core.message.ToolCall, 1);
                 tc[0] = .{
-                    .id = "w1",
-                    .name = "write_file",
-                    .arguments = try arena.dupe(u8, "{\"path\":\"/etc/passwd\",\"content\":\"x\"}"),
+                    .id = try arena.dupe(u8, "t1"),
+                    .name = try arena.dupe(u8, self.tool_name),
+                    .arguments = try arena.dupe(u8, self.arguments),
                 };
                 return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
             }
@@ -1061,29 +1057,233 @@ test "skills §11.13: after body load, write/shell still ask+jail+protect" {
             };
         }
     };
-    var mock: Mock = .{};
-    const provider = core.provider.Provider{
-        .ptr = &mock,
-        .vtable = &.{ .chat = Mock.chat },
-    };
 
-    var agent = try Agent.init(gpa, io, provider, .{
-        .permission_mode = .ask,
-        .permission_gate = @import("permissions.zig").Gate.ask(struct {
-            fn deny(_: ?*anyopaque, _: tool.ToolDescriptor, _: []const u8) @import("permissions.zig").Decision {
-                return .deny;
+    // ── A) ask-deny: write_file after activation → permission_denied ─────────
+    {
+        var s = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .user_skills_root = user_root,
+        });
+        defer s.deinit();
+        const act = try skills.expandSkillActivation(gpa, s.skills_catalog, "induce", "");
+        defer gpa.free(act.user_text);
+
+        var stub: HandlerStub = .{};
+        const write_tool = try tool.buildTool(gpa, .{
+            .definition = .{
+                .name = "write_file",
+                .description = "w",
+                .parameters_json = write_params,
+            },
+            .capabilities = .{
+                .risk = .write,
+                .workspace = .{ .path_field = "path" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+            .instance = &stub,
+            .handler = HandlerStub.h,
+        });
+
+        var mock: OneShotToolMock = .{
+            .tool_name = "write_file",
+            // In-jail relative path so permission (not jail) is the denying gate.
+            .arguments = "{\"path\":\"secret.txt\",\"content\":\"x\"}",
+        };
+        const provider = core.provider.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = OneShotToolMock.chat },
+        };
+        var agent = try Agent.init(gpa, io, provider, .{
+            .permission_mode = .ask,
+            .permission_gate = @import("permissions.zig").Gate.ask(struct {
+                fn deny(_: ?*anyopaque, _: tool.ToolDescriptor, _: []const u8) @import("permissions.zig").Decision {
+                    return .deny;
+                }
+            }.deny, null),
+            .toolset = &[_]tool.Tool{write_tool},
+            .shell_policy = .protect,
+            .verbose = false,
+            .max_turns = 4,
+        });
+        defer agent.deinit();
+
+        const result = try agent.reply(&s, act.user_text);
+        try std.testing.expect(!stub.ran);
+        try std.testing.expectEqualStrings("done", result.final_text);
+        var saw_perm = false;
+        for (s.transcript.items()) |m| {
+            if (m.role == .tool and core.tool_error.hasCode(m.content, .permission_denied)) {
+                saw_perm = true;
             }
-        }.deny, null),
-        .toolset = &[_]tool.Tool{write_tool},
-        .shell_policy = .protect,
-        .verbose = false,
-        .max_turns = 4,
-    });
-    defer agent.deinit();
+        }
+        try std.testing.expect(saw_perm);
+    }
 
-    const result = try agent.reply(&s, act.user_text);
-    try std.testing.expect(!stub.ran);
-    try std.testing.expectEqualStrings("done", result.final_text);
+    // ── B) jail deny: yolo write_file escape after activation → jail_deny ────
+    {
+        var s = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .user_skills_root = user_root,
+        });
+        defer s.deinit();
+        const act = try skills.expandSkillActivation(gpa, s.skills_catalog, "induce", "");
+        defer gpa.free(act.user_text);
+
+        var stub: HandlerStub = .{};
+        const write_tool = try tool.buildTool(gpa, .{
+            .definition = .{
+                .name = "write_file",
+                .description = "w",
+                .parameters_json = write_params,
+            },
+            .capabilities = .{
+                .risk = .write,
+                .workspace = .{ .path_field = "path" },
+                .cancellation = .none,
+                .shell = .none,
+            },
+            .instance = &stub,
+            .handler = HandlerStub.h,
+        });
+
+        var mock: OneShotToolMock = .{
+            .tool_name = "write_file",
+            .arguments = "{\"path\":\"/etc/passwd\",\"content\":\"x\"}",
+        };
+        const provider = core.provider.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = OneShotToolMock.chat },
+        };
+        var agent = try Agent.init(gpa, io, provider, .{
+            .permission_mode = .yolo,
+            .toolset = &[_]tool.Tool{write_tool},
+            .shell_policy = .protect,
+            .verbose = false,
+            .max_turns = 4,
+        });
+        defer agent.deinit();
+
+        _ = try agent.reply(&s, act.user_text);
+        try std.testing.expect(!stub.ran);
+        var saw_jail = false;
+        for (s.transcript.items()) |m| {
+            if (m.role == .tool and core.tool_error.hasCode(m.content, .jail_deny)) {
+                saw_jail = true;
+            }
+        }
+        try std.testing.expect(saw_jail);
+    }
+
+    // ── C) shell protect: yolo run_shell after activation → shell_deny ───────
+    {
+        var s = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .user_skills_root = user_root,
+        });
+        defer s.deinit();
+        const act = try skills.expandSkillActivation(gpa, s.skills_catalog, "induce", "");
+        defer gpa.free(act.user_text);
+
+        var stub: HandlerStub = .{};
+        const shell_tool = try tool.buildTool(gpa, .{
+            .definition = .{
+                .name = "run_shell",
+                .description = "s",
+                .parameters_json = shell_params,
+            },
+            .capabilities = .{
+                .risk = .execute,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .command_argument,
+            },
+            .instance = &stub,
+            .handler = HandlerStub.h,
+        });
+
+        var mock: OneShotToolMock = .{
+            .tool_name = "run_shell",
+            .arguments = "{\"command\":\"rm -rf /\"}",
+        };
+        const provider = core.provider.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = OneShotToolMock.chat },
+        };
+        var agent = try Agent.init(gpa, io, provider, .{
+            .permission_mode = .yolo,
+            .toolset = &[_]tool.Tool{shell_tool},
+            .shell_policy = .protect,
+            .verbose = false,
+            .max_turns = 4,
+        });
+        defer agent.deinit();
+
+        _ = try agent.reply(&s, act.user_text);
+        try std.testing.expect(!stub.ran);
+        var saw_shell = false;
+        for (s.transcript.items()) |m| {
+            if (m.role == .tool and core.tool_error.hasCode(m.content, .shell_deny)) {
+                saw_shell = true;
+                // Generic deny body must not echo the blocked command.
+                try std.testing.expect(std.mem.indexOf(u8, m.content, "rm -rf") == null);
+            }
+        }
+        try std.testing.expect(saw_shell);
+    }
+
+    // ── D) redaction: skill-activated body with secret → durable redact ──────
+    {
+        const dir_name = ".zag-test-skills-11-13-redact";
+        const sess_path = ".zag-test-skills-11-13-redact/s.jsonl";
+        Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+        try Io.Dir.cwd().createDirPath(io, dir_name);
+        defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+        const secret_slots = [_][]const u8{secret};
+        var s = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+            .user_skills_root = user_root,
+            .secrets = &secret_slots,
+            .pattern_redaction = true,
+        });
+        defer s.deinit();
+
+        const act = try skills.expandSkillActivation(gpa, s.skills_catalog, "induce", "");
+        defer gpa.free(act.user_text);
+        try std.testing.expect(std.mem.indexOf(u8, act.user_text, secret) != null);
+
+        var agent = try Agent.init(gpa, io, noopProvider(), .{
+            .permission_mode = .yolo,
+            .toolset = &[_]tool.Tool{},
+            .verbose = false,
+            .max_turns = 2,
+            .secrets = &secret_slots,
+            .pattern_redaction = true,
+        });
+        defer agent.deinit();
+
+        _ = try agent.reply(&s, act.user_text);
+
+        // In-memory transcript may retain raw secret (product contract).
+        var mem_has = false;
+        for (s.transcript.items()) |m| {
+            if (std.mem.indexOf(u8, m.content, secret) != null) mem_has = true;
+        }
+        try std.testing.expect(mem_has);
+
+        // Durable session must redact skill-activated ordinary user-message text.
+        const sess_bytes = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(2 * 1024 * 1024));
+        defer gpa.free(sess_bytes);
+        try std.testing.expect(std.mem.indexOf(u8, sess_bytes, secret) == null);
+        try std.testing.expect(std.mem.indexOf(u8, sess_bytes, redact_mod.marker) != null);
+    }
 }
 
 // ── §11.14 Activation parse + reply never implicit ──────────────────────────
