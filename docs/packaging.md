@@ -85,7 +85,7 @@ L2 领域服务      openai-zig          HTTP SDK ✅
 L3 产品 harness  zag-coding-agent ✅  Agent/Session · policy/permissions/HITL/remember · workspace containment · shell protect · context · persistence/observation/lifecycle adapter · model wiring · runtime tools (depends on zag-agent-core + zag-ai + zag-types)
 L4 内核 ★low-level composition
                  zag-agent-core ✅    loop · Transcript · Provider/Tool/Cancel ports · protocol history · required ToolPolicy/Jail/ShellPolicy/ContextView/LoopEventSink/ControlInput ports（**仅依赖 zag-types**）
-                 SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel/control/fork/skills/prompt-templates contract 已闭合；Gate fixture 7/7，current fixture 23/23
+                 SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel/control/fork/skills/prompt-templates contract 已闭合；Gate fixture 7/7，current fixture 24/24（`61326ae` 时为 23/23）
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
                  zag-tui / zag-acp   （C9）
 L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run` ✅
@@ -173,7 +173,7 @@ Monorepo 是常态（Grok Build 也是单仓）。一个包升级为独立 repo 
 | Level | Contract | Current |
 |-------|----------|---------|
 | Low-level Zig composition | direct Provider/Toolset/Observer/Transcript/loop assembly | ✅ validated |
-| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ✅ closed at `ebdd7ab` — Gate fixture 7/7; current fixture **23/23** after D-011/lifecycle/control/session-fork/skills/prompt-templates enrichment; see [`sdk-contract.md`](./modules/sdk-contract.md) |
+| Zig SDK-ready | supported high-level injection + ownership/error/event/cancel/session compatibility | ✅ closed at `ebdd7ab` — Gate fixture 7/7; current fixture **24/24** after D-011/lifecycle/control/session-fork/skills/prompt-templates/edit-sharpness enrichment (was **23/23** at `61326ae`); see [`sdk-contract.md`](./modules/sdk-contract.md) |
 | Process SDK/headless | versioned JSON/events + stable errors/exit codes | ✅ closed — `headless-v1` + exit matrix + process fixture; merged-main Gate passed at `a1a1e0f` |
 
 ### SDK-ready Gate
