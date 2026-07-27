@@ -473,11 +473,14 @@ pub fn build(b: *std.Build) void {
     );
     sigint_fixture_step.dependOn(&run_sigint_process_tests.step);
 
-    // tui-minimal-001: process-level --tui mode matrix / non-TTY (only when -Dtui=true).
+    // tui-minimal-001: process-level --tui mode matrix / non-TTY / PTY Gates
+    // (only when -Dtui=true). Reuses sigint-slow-mock for blocked-provider evidence.
     var run_tui_process_tests: ?*std.Build.Step.Run = null;
     if (tui) {
         const tui_fixture_opts = b.addOptions();
         tui_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
+        tui_fixture_opts.addOptionPath("slow_mock_bin", sigint_slow_mock_exe.getEmittedBin());
+        tui_fixture_opts.addOption(HttpBackend, "http_backend", http_backend);
         tui_fixture_opts.addOption(bool, "tui_enabled", true);
         const tui_process_tests = b.addTest(.{
             .root_module = b.createModule(.{
