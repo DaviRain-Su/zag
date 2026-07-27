@@ -37,7 +37,12 @@ merged-path Linux dual-backend Gate
 **done** (docs-only) on the same tip/run (OpenAPI **287/287**, catalog **40**,
 docs **91/73**). Broader M0 Linux dual-backend reliability is **closed only**
 at exact tip `8a93ec6` / run `30273762011` — not a universal future guarantee.
-`prompt-templates-001` is **done** at `61326ae`
+Post-TUI default-path remote dual-backend Gate is a **separate** node
+[post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
+(**in-progress**, Phase A): exact target tip
+`b1513073190089bd2dc2473a466373c8a1702f1f`; **no** run id yet; **no** push;
+historical M0 tip/run numbers are **not** reusable as that Gate’s PASS; **no**
+remote `-Dtui` claim. `prompt-templates-001` is **done** at `61326ae`
 ([task](../plan/tasks/prompt-templates-001.md), binding
 [prompt-templates.md](./prompt-templates.md)): thin CLI routing for
 `--no-prompt-templates` / `--trust-project-templates`, HOME → user root, and

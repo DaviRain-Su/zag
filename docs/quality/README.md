@@ -42,7 +42,11 @@ tip `8a93ec6` (not by fuses alone; fuses did **not** fire on that run). Final
 merged-path Linux dual-backend Gate
 [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md) is
 **done** on that same tip/run (docs-only; exact tip/run scope only — not a
-universal future guarantee).
+universal future guarantee). Post-TUI default-path remote dual-backend Gate
+[post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
+is a **separate** node (**in-progress**, Phase A; target tip `b151307`; **no**
+run id; **no** push; default non-TUI matrix only; fuses remain rails only and
+never product PASS).
 
 Target workflow: `.github/workflows/ci.yml` — exact fuses:
 `concurrency.group: ${{ github.workflow }}-${{ github.ref }}`,
@@ -230,6 +234,7 @@ Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
 - Predecessor: [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 - Process-idle residual (**done** Phase B): [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
 - Final Linux dual-backend Gate (**done**, exact tip/run only): [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md)
+- Post-TUI remote dual-backend Gate (**in-progress** Phase A; target tip `b151307`; no run id): [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
 - Product CLI (unchanged by fuses): [cli-interaction](../modules/cli-interaction.md)
 - Provider contracts: [contracts.md](./contracts.md)
 - Dual-backend bake-off: [http-backend-bakeoff.md](./http-backend-bakeoff.md)
