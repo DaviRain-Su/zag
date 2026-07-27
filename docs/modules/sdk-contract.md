@@ -17,6 +17,12 @@
 > public options/parse/expand closed at `61326ae` (`prompt-templates-001`). The current external
 > fixture is **23/23**. None of these enrichments reopen the `ebdd7ab` SDK-ready Gate, change a schema version, or raise
 > a maturity row (Runtime Extensions remains L0).
+>
+> **C4 edit sharpness (contract-in-progress only):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) freezes
+> future host-injectable coding-agent ports `HunkReviewer` and `PostEditVerifier` for the stateful `apply_hunk` Tool.
+> Null reviewer is fail-closed (`review_unavailable`); null verifier yields `verification=not_configured` after commit.
+> No Core ports, no session/Trace/headless schema change, and no Tools · write/edit maturity raise until a separate
+> implemented Gate. Production SDK surface changes are **BLOCKED** until independent contract review PASS.
 
 ## 1. What is covered
 

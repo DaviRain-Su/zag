@@ -158,7 +158,19 @@ Merged-main evidence at `ebdd7ab`:
 1. unique anchor replacement succeeds;
 2. ambiguous/missing/stale anchors fail without mutation and are recoverable after reread;
 3. H2 adds the target-preserving `edit-v1` fault matrix above;
-4. C4 adds hashline/apply-patch sharpness, hunk review, post-edit validation, and multi-file policy.
+4. C4 first slice (`edit-sharpness-001`, **contract-in-progress**; impl **BLOCKED** until independent contract PASS) freezes executable fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md):
+   - valid single-hunk `apply_hunk` success with default `verification=not_configured`;
+   - stale `expected_sha256` (precondition + revalidate) non-mutating / no temp;
+   - missing/ambiguous/invalid/oversize/empty-anchor soft failures;
+   - insert/delete/newline/UTF-8 raw-byte exactness;
+   - reject → byte-equal, no temp, no verifier;
+   - ask deny / yolo AutoAccept / remember does not skip review / plan deny;
+   - jail/symlink/retarget recheck + contained final symlink preservation;
+   - reviewer missing → `review_unavailable`; verifier pass/fail/timeout/denied/unavailable with post-commit `target=modified` partial truth;
+   - session/resume/fork no durable proposal; Trace v1 / headless-v1 unchanged;
+   - SDK null reviewer fail-closed; CLI interactive vs headless; no extra provider call for local failures;
+   - std/curl full Gates.
+5. Multi-file policy, multi-hunk apply_patch platform, and maturity L3 raise remain **out of** this first-slice freeze.
 
 ## Maintenance
 

@@ -4,7 +4,8 @@
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
 | Current maturity | **L2** — write/edit after h-edit-integrity-001; read/search after h-read-search-bounds-001 closeout; Phase H closed at `d22ce6e` via fresh 11-sentence integration audit PASS/panel SHIP |
-| Target | L2 H correctness → L3 C4 sharpness |
+| C4 first slice | **contract track in progress** — [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md); production implementation **BLOCKED** until independent contract review **PASS**; **no L3 maturity claim** |
+| Target | L2 H correctness → L3 C4 sharpness (after implemented Gate, not this docs freeze alone) |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
 ## Invariants
@@ -19,9 +20,10 @@
 
 | Tool | Role |
 |------|------|
-| `search_replace` | preferred unique-content-anchor edit |
+| `search_replace` | unique-content-anchor edit (H2; remains supported) |
 | `write_file` | create or explicit full replacement |
-| `read_file` / `list_dir` | file exploration |
+| `apply_hunk` | **C4 first slice (contract freeze)** — single-file single-hunk replace + full-file SHA-256 precondition + mandatory hunk review |
+| `read_file` / `list_dir` | file exploration (`read_file` gains optional digest meta under C4 contract) |
 | `grep` / `glob` | bounded content/path search |
 
 `search_replace` requires exactly one `old_string`; zero → `anchor_not_found`, multiple → `ambiguous_anchor`, oversize → `too_large`.
@@ -110,13 +112,155 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 - [x] lexical remember alias/jail fixtures prove the conservative H boundary (`h-edit-integrity-001`).
 - [x] shell/error integration passes its separate lifecycle contract and independent/main Gate (`h-shell-001`).
 
-## L3 (C4)
+## L3 / C4 first-slice binding contract (`edit-sharpness-001`)
 
-- hashline/apply_patch-grade path;
-- hunk accept/reject;
-- post-edit project verification;
+> **Status:** docs contract freeze for M2/C4. Production code must not land until a
+> **different independent reviewer** returns **PASS** on this contract.
+> Runtime maturity for Tools · write/edit stays **L2** until a separate implemented
+> Gate explicitly raises it. Session v1, Trace v1, `headless-v1`, `project.zig`, and
+> `--no-project` stay unchanged.
+
+Authoritative delivery task: [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md).
+Phase map: [C4-edit-sharpness](../phases/C4-edit-sharpness.md).
+
+### Why this exact first slice
+
+Observed seams that the design must **reconcile**, not overwrite:
+
+- Core gate order is fixed: ToolPolicy → Jail → ShellPolicy → execute ([D-011](../decisions/active/D-011-thin-agent-core-boundary.md)).
+- Product Gate.ask receives full args; CLI `StdinPrompter` intentionally shows only
+  **risk + args_len** and **cannot** be mislabeled as hunk review.
+- Current `read_file` returns **raw bounded text** (≤64 KiB) with **no** hashline/digest.
+- Current `search_replace` is exact unique anchor + same-parent atomic commit at ≤512 KiB.
+- Concrete Tools already support **stateful instances** (D-007); built-ins are mostly null-instance today.
+- `h-edit-integrity-001` preserves prior bytes/absence and contained final symlinks with `edit-v1` cleanup truth.
+- Doctor test-entry detection is **presence-only**, not proof of a safe verification command.
+
+Therefore the first slice is **not** multi-hunk `apply_patch` syntax and **not** a pure
+hashline line-address format. It is a **single-file, single-hunk content-anchor replace**
+with an explicit **full-file SHA-256 precondition**, **mandatory whole-hunk review** on a
+coding-agent-owned port, and **optional host-owned post-commit verification callback**.
+That closes stale mis-edit and missing user gate with minimal new surface while reusing
+the H2 atomic helper.
+
+### Ownership
+
+| Layer | Owns | Must not own |
+|-------|------|--------------|
+| `zag-coding-agent` | All proposal/review/verification behavior; `apply_hunk`; digest-extended `read_file`; soft-result vocabulary | New Core ports; new package |
+| `zag-cli` | Thin interactive `HunkReviewer` adapter; bind AutoAccept under `--yolo` | Patch engine; silent accept when adapter missing |
+| `zag-agent-core` | Existing Tool/loop only | Edit/review/lifecycle ports |
+
+### Mechanism: model-visible Tool `apply_hunk`
+
+Closed JSON (`additionalProperties: false`):
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": { "type": "string" },
+    "expected_sha256": { "type": "string" },
+    "old_string": { "type": "string" },
+    "new_string": { "type": "string" }
+  },
+  "required": ["path", "expected_sha256", "old_string", "new_string"]
+}
+```
+
+- **Descriptor:** `risk=write`, `workspace.path_field="path"`, `shell=none`, `cancellation=none`.
+- **`expected_sha256`:** SHA-256 of the **entire** current file as raw bytes; input exactly 64 ASCII hex digits; compare lowercased.
+- **Match:** unique exact byte substring of `old_string` (same family as `search_replace`). Empty `old_string` → `anchor_not_found`. 0 matches → `anchor_not_found`. ≥2 → `ambiguous_anchor`.
+- **Replace / delete / insert:** replace any unique span; delete with empty `new_string`; insert by replacing unique context with `context+inserted`. No multi-hunk list.
+- **Bytes:** raw match/digest; no CRLF normalization; no Unicode canonicalization.
+- **Parents:** do **not** create parent directories (like `search_replace`).
+- **Compatibility:** `search_replace` / `write_file` remain unchanged; `apply_hunk` is additive.
+
+### Read surface for digest (backward-compatible)
+
+`read_file` today does **not** supply digest metadata. First slice freezes:
+
+- Optional boolean `include_digest` (default/omitted = **false** → exact current raw body).
+- When `true`, success body starts with one line:
+
+```text
+meta: format=fs-meta-v1 sha256=<64 lowercase hex> size=<decimal full-file bytes>
+```
+
+  then the content prefix. Digest/`size` always cover the **whole on-disk file** even if content is truncated. Total body (meta + content + any `fs-v1` marker) ≤ `tool.max_result_bytes` (64 KiB). Required args remain `["path"]` only.
+
+### Budgets (checked arithmetic)
+
+| Item | Limit |
+|------|------:|
+| Target/result file for `apply_hunk` | 512 KiB (compatible with existing mutators) |
+| `old_string` / `new_string` each | 32 KiB |
+| `read_file` body | 64 KiB |
+| Review preview text | 4 KiB |
+| Tool-result first line | ≤ `trace.cap_tool_result_body` (500) |
+
+Soft `too_large` for budget breaches; typed `OutOfMemory` pre-commit. No unbounded diff in Trace/diagnostics.
+
+### Hunk review
+
+- **Whole one-hunk accept/reject only** (explicit first-slice choice).
+- **Port:** coding-agent `HunkReviewer` on a **stateful** `apply_hunk` Tool instance.
+- **Mandatory** for every `apply_hunk` commit path. Missing reviewer → soft `review_unavailable`, **never** accept.
+- **Not** `StdinPrompter` (risk+args_len only).
+- **Mode matrix:** interactive CLI binds InteractiveHunkReviewer; `--yolo` binds AutoAcceptHunkReviewer (instance still required); headless/noninteractive/SDK default null unless host injects; plan uses existing write deny; remember is lexical path for permission only — **review not remembered**.
+- **Reject:** target byte-equal; no temp; no verifier.
+- Preview ≤4 KiB; no new durable session/Trace/headless fields for raw diffs.
+
+### Commit order
+
+```text
+parse → loop(ToolPolicy → Jail → execute) → handler jail/endpoint
+  → read → digest check → unique anchor → in-memory proposal
+  → HunkReviewer → revalidate digest/anchor/containment
+  → preallocate bodies → existing same-parent atomicCommit
+  → optional PostEditVerifier
+```
+
+Preserve H2: contained final symlink; `edit-v1` cleanup; post-commit success path non-failing; no multi-file rollback. Stale detected at precondition and revalidate stages.
+
+### Post-edit verification
+
+- **Only** host-owned `PostEditVerifier` callback (coding-agent port). **No** model-supplied command inside write Tool JSON.
+- Doctor presence-only candidates are **not** auto-executed.
+- Default product binding: **null** → `verification=not_configured` on commit success (not claimed project-verified).
+- Runs **after** commit. Fail/timeout/deny/unavailable → **partial** result with `target=modified`; **no** rollback; edit commit success ≠ overall verified success.
+
+### Result vocabulary (`format=edit-sharp-v1` unless noted)
+
+| code | Mutates |
+|------|---------|
+| `stale_precondition` / `anchor_not_found` / `ambiguous_anchor` / `too_large` / `rejected` / `review_unavailable` / `invalid_arguments` | no |
+| `edit_io_failed` `format=edit-v1` | preserved (+ cleanup truth) |
+| `apply_hunk_success` | yes (`verification=ok|not_configured`) |
+| `verification_failed` (**partial**) | yes already |
+
+### State / security / schemas
+
+- Proposal bytes are **per-invocation** only (not Session-durable). Tool instance holds reviewer/verifier pointers only.
+- Defaults ask + jail + shell protect; missing seams fail closed; redaction before durable diagnostics.
+- Session v1 / Trace v1 / headless-v1 unchanged.
+
+### Deferred beyond this first slice (still L3 direction, not this freeze)
+
+- Multi-hunk apply_patch / hashline line-address formats;
 - multi-file atomic/partial-success policy;
-- optional canonical path/domain permission policy and external-writer compare-and-swap.
+- canonical path/domain permission policy;
+- external-writer compare-and-swap beyond digest revalidate;
+- automatic project-script verification CLI;
+- TUI diff pane.
+
+### C4 first-slice acceptance (implementation later)
+
+- [ ] Independent **contract** review PASS (blocks code).
+- [ ] `apply_hunk` + `read_file` `include_digest` match this freeze.
+- [ ] Fixture matrix in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) §10 green under std+curl Gates.
+- [ ] Reject/stale/review_unavailable never mutate; verification_failed is partial with target modified.
+- [ ] Tools · write/edit maturity raised only by a separate explicit Gate (not automatic).
 
 ## Non-goals for H
 

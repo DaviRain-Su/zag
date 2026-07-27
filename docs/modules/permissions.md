@@ -78,6 +78,20 @@ Plan mode permits read and reserved plan-file writes (`plan.md`, `.zag/plan.md`,
 - persisted policy backend;
 - full Plan UX and ACP mode mapping.
 
+## C4 note — hunk review is not permission prompt
+
+`edit-sharpness-001` (contract-in-progress; [tools-edit](./tools-edit.md)) freezes a
+coding-agent-owned **`HunkReviewer`** separate from this Gate:
+
+- `StdinPrompter` / `formatPermissionPrompt` remain **risk + args_len only** and must
+  **not** be extended or labeled as hunk review.
+- Permission allow does **not** satisfy `apply_hunk` review; missing reviewer is
+  fail-closed (`review_unavailable`), never implicit accept.
+- Lexical path **remember** continues to apply only to write permission; first-slice
+  review decisions are not remembered.
+- Gate order stays ToolPolicy → Jail → ShellPolicy → execute; review runs **inside**
+  the coding-agent `apply_hunk` handler after execute is entered.
+
 ## Non-goals
 
 - Effort/model modes

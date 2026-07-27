@@ -44,6 +44,13 @@ at exact tip `8a93ec6` / run `30273762011` — not a universal future guarantee.
 explicit one-shot/REPL/headless `/skill:`-first then known `/name` expansion via
 the public coding-agent API. Maturity and Runtime Extensions L0 unchanged; no
 TUI/autocomplete claim.
+
+**C4 edit sharpness (contract only):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)
+freezes a future **thin** CLI role — bind `InteractiveHunkReviewer` for interactive
+ask modes and `AutoAcceptHunkReviewer` under `--yolo`; never treat missing adapter as
+accept; never reuse permission `StdinPrompter` as hunk review; headless/noninteractive
+default remains fail-closed for review. Production CLI wiring is **BLOCKED** until
+independent contract review PASS. No headless-v1 schema change.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +
