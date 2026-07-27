@@ -19,11 +19,12 @@ product TUI, does **not** mark C9 implementation acceptance complete, and
 does **not** raise any maturity row.
 
 **Review state:** round-1 independent architecture and safety reviews were
-**BLOCKED**. This revision closes those blockers as unique freezes. Re-review
-is **pending** (do not treat as PASS until re-review records say so).
-Implementation remains **BLOCKED** until architecture/ownership +
-safety/fail-closed contract reviews **PASS** and this contract merges.
-See [task](../plan/tasks/tui-minimal-001.md).
+**BLOCKED**; unique freezes landed at `a38f0ec`. This follow-up fixes
+SIGINT/Guard **init order** vs live `Agent.cancel` and freezes a CLI-implemented
+`SignalHost` port (no `zag-tui` → `zag-cli` import). Re-review is **pending**
+(do not treat as PASS until re-review records say so). Implementation remains
+**BLOCKED** until architecture/ownership + safety/fail-closed contract reviews
+**PASS** and this contract merges. See [task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
@@ -60,13 +61,24 @@ zag-agent-core     thin generic model→tool→model loop
 
 | Layer | Owns | Must not own |
 |-------|------|--------------|
-| **`zag-tui` only** | terminal channel, layout, focus/layering, editor buffer, in-process history, card ring, permission modal UI, host-owned preallocated buffers, reply-worker rendezvous | Agent private fields, Loop, Transcript mutation, Trace schema, permission risk classification, session schema, headless envelopes, process SIGINT install |
-| `zag-cli` | flag parse, mode mutex, SIGINT Guard install, process exit, plain/headless paths; **assembles/imports `zag-tui` only when `-Dtui=true`** | inventing lifecycle facts; silent mode fallback; owning TUI widgets under `zag-cli/src/tui` |
-| `zag-coding-agent` | product policy, Session, Trace, lifecycle adapter, edit/review, Gate | terminal widgets, focus, raw TUI input, any TUI import |
-| `zag-agent-core` | thin loop + ports | any TUI / CLI / terminal import |
+| **`zag-tui` only** | terminal channel, layout, focus/layering, editor buffer, in-process history, card ring, permission modal UI, host-owned preallocated buffers, reply-worker rendezvous, **defines** product-internal `SignalHost` port type | Agent private fields, Loop, Transcript mutation, Trace schema, permission risk classification, session schema, headless envelopes, process SIGINT install, **import of `zag-cli` / `sigint.zig` / CLI Guard type** |
+| `zag-cli` | flag parse, mode mutex, **installs** CLI `sigint.Guard`, **implements** `SignalHost` wrapping Guard, process exit, plain/headless; **assembles/imports `zag-tui` only when `-Dtui=true`** | inventing lifecycle facts; silent mode fallback; owning TUI widgets under `zag-cli/src/tui` |
+| `zag-coding-agent` | product policy, Session, Trace, lifecycle adapter, edit/review, Gate | terminal widgets, focus, raw TUI input, any TUI import, SignalHost |
+| `zag-agent-core` | thin loop + ports | any TUI / CLI / terminal / SignalHost import |
 
 **Forbidden shape (removed):** `packages/zag-cli/src/tui/**` as an alternate
 TUI owner. Product TUI code lives **only** under `packages/zag-tui/`.
+
+**Dependency direction (unique):**
+
+```text
+zag-cli  ──imports──►  zag-tui
+zag-cli  ──implements SignalHost callbacks wrapping sigint.Guard──►  zag-tui App
+zag-tui  ──must not──►  zag-cli / packages/zag-cli/src/sigint.zig
+```
+
+`SignalHost` is product-internal (CLI ↔ TUI only). It must **not** enter
+Core or coding-agent.
 
 ### 1.2 Build wiring (unique freeze)
 
@@ -93,15 +105,45 @@ TUI may call only public roots / documented product APIs, including:
   (§5: `create_new` / `resume_existing`)
 - `Session.enqueueSteering` / `enqueueFollowUp` / `steeringPending` /
   `followUpPending` / `clearControlQueues` (idle-only clear)
-- `Session.activeRedactor` (must be non-null before first worker; §7.5)
+- `Session.activeRedactor` (must be non-null before first worker; §7.3)
 - `LifecycleObserver` + `LifecycleEvent` (`lifecycle.zig`)
 - `Observer` + `Event` (`observer.zig`) — optional progressive text only
 - `permissions.Gate` / `AskFn` / `Mode` / `SessionKind` / remember policy
-- Existing CLI SIGINT `Guard` from [cli-interaction](./cli-interaction.md)
+- Product-internal **`SignalHost`** port **defined by `zag-tui`**,
+  **constructed/implemented by `zag-cli`** over the existing `sigint.Guard`
+  ([cli-interaction](./cli-interaction.md)) — see §1.4
 
 **Forbidden:** reading `Agent` private fields, Core private loop state,
-`Transcript` internals for UI cards, Trace file as live UI truth, or any
-private memory peek that is not a public callback or public method.
+`Transcript` internals for UI cards, Trace file as live UI truth, any private
+memory peek that is not a public callback or public method, or
+`@import("zag-cli")` / `@import` of `sigint.zig` from `zag-tui`.
+
+### 1.4 `SignalHost` port (product-internal; CLI implements)
+
+`zag-tui` **defines** a narrow host port. Exact Zig shape is implementation
+detail as long as it is a **borrowed `ptr` + vtable** (or equivalent concrete
+struct of function pointers) with at least:
+
+| Method | Role |
+|--------|------|
+| `wake_readiness` / poll integration | expose the CLI Guard **self-pipe read end** (or equivalent readiness) so the UI thread can poll it **with** the app callback-wake pipe; TUI **drains** via host adapter; **does not** install a second SIGINT handler |
+| `pending_interrupt` (optional but required if UI shows pending chrome) | query whether Guard state is `pending` (maps to `Guard.pendingInterrupt`) |
+| `acknowledge_cancel` | maps to `Guard.acknowledgeCancel` — reset Guard `pending` → `idle` after a run consumed the interrupt |
+
+Rules:
+
+1. **CLI constructs** the port wrapping the live `sigint.Guard` after
+   `Guard.install(&agent.cancel)` succeeds (§7.3).
+2. Port, Guard, and `Agent` lifetimes last until worker join and TUI exit;
+   address-stable while TUI is entered.
+3. Port callbacks: **no allocation**, **no render**, **no read of user/model
+   content**, async-signal-safe where they touch Guard state.
+4. TUI may request cooperative cancel by setting the **Agent cancel flag**
+   already bound into Guard at install (programmatic close). TUI **must not**
+   forge Guard `pending` / second-interrupt / `escaped` state.
+5. **Missing `SignalHost`:** TUI **must not start** — fixed stderr, exit **1**.
+   Not a silent degrade to unprotected input.
+6. `SignalHost` is **not** a Core/coding-agent seam and is **not** public SDK.
 
 ## 2. Dual-thread host concurrency (unique freeze)
 
@@ -119,12 +161,15 @@ Rules:
 
 1. **Single-flight:** at most one reply worker exists. While `state=busy`,
    root prompt submit is **ignored** (status `busy_locked`).
-2. `Agent`, `Session`, `TuiPermissionAdapter`, and all shared host slots are
-   allocated and **address-stable** before the worker starts.
+2. `Agent`, `Session`, `TuiPermissionAdapter`, `SignalHost`, and all shared
+   host slots are allocated and **address-stable** before the worker starts
+   (full order §7.3).
 3. Until the UI thread **joins** the worker, no thread may move/deinit/clear
-   `Agent` / `Session` / adapter / preallocated rings.
-4. After join only: idle `clearControlQueues`, session teardown, adapter
-   reset for the next run.
+   `Agent` / `Session` / adapter / Guard / SignalHost / preallocated rings.
+4. After every worker join (success **or** error), before returning to
+   `idle` / next root submit: UI/CLI **must** call
+   `SignalHost.acknowledge_cancel` once (§2.5). Then idle-only
+   `clearControlQueues` if needed.
 5. `Session.enqueueSteering` / `enqueueFollowUp` / pending counts are called
    **from the UI thread** while the worker may be inside `reply`, using the
    already-frozen foreign-thread queue safety
@@ -146,10 +191,22 @@ host **must**:
 5. Under a **short** card-publish lock: write slot + advance a monotonic
    `ui_seq`, then **release the lock**.
 6. Signal a **bounded non-blocking** UI wake (self-pipe / eventfd / equivalent
-   with drop-on-full). Never block the worker forever on a full wake queue.
+   with **drop-on-full**). Never block the worker forever on a full wake
+   queue. Drop is allowed because the pipe remains **readable** if any byte
+   was written earlier, and the UI loop also uses a **bounded poll timeout**
+   (§2.2.1).
 
-UI thread: drain wake → snapshot cards under the same short lock → render
-outside the lock.
+#### 2.2.1 UI thread event loop (wake + timeout)
+
+UI thread poll set includes at least: stdin, **app callback-wake** fd, and
+**SignalHost** Guard self-pipe readiness (via port; not a second handler).
+
+| Rule | Binding |
+|------|---------|
+| Callback wake write full | **drop** the write; do not block worker; do not allocate |
+| Poll timeout | **≤ 250 ms** (same order as existing CLI interruptible-read polling) so lost/coalesced wakes cannot leave terminal cards or permission modals unrendered for unbounded time |
+| After wake or timeout | drain wake (and SignalHost drain adapter if needed) → snapshot cards under short lock → render outside lock; if permission slot pending, show modal even when wake was dropped |
+| Permission pending + wake pipe full | still observed via **readable residual** and/or **timeout** path |
 
 **Lock order (unique):**
 
@@ -198,11 +255,28 @@ directly.
 
 | Step | Binding |
 |------|---------|
-| TUI entry | **must successfully install** the existing CLI SIGINT `Guard` before raw mode / worker; install failure → fixed stderr, exit **1**, no TUI |
-| Busy close / host fatal | set `closing=true`; **deny** any pending permission slot and signal; request cooperative cancel via Guard-bound flag; enter **visible waiting** state (status `closing`); keep two-phase Ctrl+C escape |
+| TUI entry | CLI must successfully `Guard.install(&agent.cancel)` **after** `Agent.init` and **before** raw mode / worker (§7.3); install failure → fixed stderr, exit **1**, no TUI. One-shot Guard: **no** reinstall attempt on later Session fail |
+| Missing SignalHost | exit **1** before raw; no degrade |
+| Busy close / host fatal | set `closing=true`; **deny** any pending permission slot and signal; request cooperative cancel via **Agent cancel flag** (already Guard-bound); enter **visible waiting** (`closing`); keep two-phase Ctrl+C escape via Guard state (not forged by TUI) |
 | Wait honesty | UI waits for worker join. **std HTTP backend may block** in DNS/connect/TLS/response-head; there is **no** automatic graceful host timeout. Documented as **user-visible wait** + second Ctrl+C hard escape `130`. **Forbidden:** “silent unbounded wait” without visible closing chrome |
-| After worker ends | join → restore tty/raw/alt-screen when possible (§9.4) → deinit order: worker resources, then Session/Agent only when idle |
+| After worker ends | join → `SignalHost.acknowledge_cancel` (§2.5) → restore tty when possible (§9.4) on final exit path; deinit only when idle: App/Session/Agent, then Guard |
 | Success invent | **forbidden** — no completed chrome on close/fatal |
+
+### 2.5 Guard acknowledge after every worker join
+
+After **each** reply worker finishes (lifecycle success **or** reply error)
+and the UI thread has **joined** it, **before** `state=idle` and before the
+next root submit / next run:
+
+1. Call **`SignalHost.acknowledge_cancel`** exactly once (CLI maps to
+   `Guard.acknowledgeCancel`).
+2. This resets Guard **`pending` → `idle`** so the **next** first Ctrl+C is
+   cooperative again, not a mistaken second-interrupt hard `130`.
+3. Also required after reply-error paths that never emit a pretty terminal.
+4. **Do not confuse** with Agent cancel-flag cleanup: the Agent clears its
+   own cancel flag on reply completion (existing product behavior). Guard
+   pending state is **independent** and **must** be acknowledged via
+   SignalHost. Programmatic cancel must not forge Guard pending.
 
 ## 3. Data-source matrix
 
@@ -312,7 +386,7 @@ TuiApp
 │   └─ CardSlot[]
 ├─ EditorPane            preallocated buffer + history
 ├─ PermissionModal?      single-slot rendezvous view
-└─ HostServices          redactor borrow · wake · SIGINT Guard hooks
+└─ HostServices          redactor borrow · app wake · SignalHost port (CLI-impl)
 ```
 
 ### 4.3 Focus and layering
@@ -454,24 +528,35 @@ treat that as allow/yolo.
 
 No hunk modal in TUI v1. Remember never skips hunk review (product law).
 
-### 7.3 Adapter init order (unique)
+### 7.3 Adapter / signal init order (unique; source-aligned)
+
+`sigint.Guard.install` requires a stable `*CancelFlag` from a live `Agent`.
+Order is therefore **Agent before Guard** (not Guard-before-Agent).
 
 ```text
-1. Preallocate TUI host state (editor/history/cards/permission/wake) — OOM→exit 1
-2. Install SIGINT Guard successfully — fail→exit 1
-3. Construct address-stable TuiPermissionAdapter + card host (ptrs fixed)
-4. Agent.init(..., .{
-     .permission_mode = ask|yolo,
-     .permission_gate = Gate.ask(...) | Gate.yolo(),
+1. Preallocate address-stable zag_tui.App + adapters + callback/card/permission
+   / app-wake state  — OOM → fixed stderr, exit 1  (no raw mode)
+2. CLI Agent.init(gpa, io, provider, .{
+     .permission_mode / .permission_gate = Gate.ask(TuiAdapter) | Gate.yolo(),
      .hunk_reviewer = null | AutoAccept,   // §7.2
-     .lifecycle = ...,
-     .observer = ...,                      // optional
+     .lifecycle / .observer = App callbacks (stable ptrs from step 1),
+     ...
    })
-5. Session.start with create_new|resume_existing|ephemeral only
-6. Require Session.activeRedactor() non-null; bind adapter.redactor =
-   that pointer (Session-owned). If null → fixed error, exit 1, no worker
-7. Enter raw/alt-screen only after 1–6 succeed
-8. On root submit: history push + start single reply worker
+3. CLI Guard.install(&agent.cancel)
+     - failure → fixed stderr, exit 1; deinit Agent; **no** Guard reinstall
+       attempt (one-shot install latch — [cli-interaction](./cli-interaction.md))
+4. CLI Session.start (create_new | resume_existing | ephemeral only)
+     - failure → CLI deinit Guard, deinit Agent, fixed redacted/generic stderr,
+       exit 1; **no** one-shot Guard reinstall
+5. Bind into App (still before raw mode):
+     - Session-owned non-null activeRedactor() into adapter
+     - Agent* / Session* (borrowed for TUI session lifetime)
+     - SignalHost port wrapping the live Guard (CLI-implemented)
+     - missing redactor or missing SignalHost → deinit Session/Guard/Agent,
+       exit 1
+6. Enter raw / alt-screen only after 1–5 succeed
+7. On accepted root submit: history push + start single reply worker
+8. After every worker join: SignalHost.acknowledge_cancel (§2.5) then idle
 ```
 
 Any missing bind / null ctx → deny (permissions) or drop-marker
@@ -495,12 +580,15 @@ status `control_too_long` (keep buffer; no truncate-enqueue).
 
 | Path | Binding |
 |------|---------|
-| First Ctrl+C busy | cooperative cancel via Guard → Agent flag |
+| First Ctrl+C busy | Guard handler → pending + Agent cancel flag (install-bound) |
 | Observed cancel | show truthful `run_terminal` / `cancelled` |
-| Second pending Ctrl+C | hard exit **130**; no promised lifecycle terminal; **tty restore not guaranteed** (§9.4) |
+| After join | `SignalHost.acknowledge_cancel` so next first Ctrl+C is not second |
+| Second **unacknowledged** Ctrl+C | hard exit **130**; no promised lifecycle terminal; **tty restore not guaranteed** (§9.4) |
 | Idle first Ctrl+C | clean exit **0** per cli-interaction |
+| Programmatic close cancel | set Agent cancel flag only; **never** forge Guard pending |
 
-TUI must **not** install a second SIGINT handler.
+TUI must **not** install a second SIGINT handler and must **not** import
+CLI Guard types. All Guard ops go through **SignalHost** (§1.4).
 
 ## 8. Redaction and trust (all outward arbitrary bytes)
 
@@ -619,7 +707,7 @@ Product TUI v1 is an **interactive shell only**: **no positional prompt**.
 | Idle EOF (Ctrl+D empty buffer) / clean interactive quit | **0** |
 | Idle first Ctrl+C | **0** |
 | Arg / mode / build-unavailable / non-TTY | **2** |
-| Preallocate OOM, Guard install fail, Session.start fail (before raw), terminal &lt; 20×5 | **1** |
+| Preallocate OOM, Agent init fail, Guard install fail, Session.start fail, missing SignalHost/redactor (before raw), terminal &lt; 20×5 | **1** |
 | Runtime init / unrecoverable host after start (non-signal) | **1** |
 | Second pending SIGINT | **130** |
 
@@ -694,34 +782,39 @@ injection is required where noted.
 | # | Fixture | Expect |
 |---|---------|--------|
 | 1 | `-Dtui=false` default build/test | no TUI resolve; plain/headless green |
-| 2 | `-Dtui=true` compile + import scan | `zag-tui` links; core/coding-agent have no TUI import |
-| 3 | Editor byte/line caps | reject oversize; valid UTF-8 submit |
-| 4 | History 64×8 KiB | ring behavior; no durable file; push only on accepted dispatch |
-| 5 | Lifecycle ordering | `run_start`→…→one `run_terminal` |
-| 6 | End-only tool_end cancelled/steered | no fake `tool_start` card |
-| 7 | Hard mid-call gap | start without end + truthful terminal |
-| 8 | Permission fail-closed | EOF/render/read/null ctx → deny; missing AskFn ≠ allow |
-| 9 | Permission rendezvous concurrency | single slot; worker wait; UI decide; no worker stdin |
-| 10 | Worker busy controls | Alt+S/F from UI thread; root submit locked; single-flight |
-| 11 | Callback/UI concurrency | no TTY I/O in callback; short lock publish; wake; no deadlock |
-| 12 | Host close + blocked provider | closing chrome; deny modal; cancel; wait; **no** silent unbounded wait; SIGINT escape |
-| 13 | Join/deinit order | no clear/deinit before join; after join idle clear ok |
-| 14 | Session create/resume only | `create_new`/`resume_existing`; **no** product `open_or_create`; no false resumed |
-| 15 | Configured secret in **every** lifecycle/observer arbitrary field | rendered output contains marker / redacted form; **never** raw secret |
-| 16 | Redaction OOM | fixed `redaction_failed`; no raw fallback |
-| 17 | Missing redactor / null ask_ctx | `redaction_unavailable` / deny; no `redactOptional(null)` path |
-| 18 | Exact trunc cap | body/title ≤ cap; ends with exact `...[truncated]` when truncated |
-| 19 | Full ring + simultaneous terminal + OOM/drop | terminal reserve retained; drop note non-recursive; saturating count |
-| 20 | TUI ask hunk null | `review_unavailable`; never InteractiveHunkReviewer/stdin |
-| 21 | TUI yolo AutoAccept | no interactive review; jail/shell still apply |
-| 22 | Non-TTY stdin or stdout | exit **2**, stdout empty, fixed stderr |
-| 23 | Mode matrix | tui+json/stream/doctor/prompt/verbose → exit **2**; help+tui → 0 no TUI init |
-| 24 | Geometry &lt; 20×5 | exit **1** before raw |
-| 25 | Session.start fail | exit **1** before raw; generic/redacted stderr |
-| 26 | Ctrl+C | idle 0; active cancel; second 130; hard path **no false restore claim** |
-| 27 | Cooperative restore | clean/closing-after-join restores tty |
-| 28 | plain + headless std **and** curl | unchanged green |
-| 29 | Docs/diff | contract consistency |
+| 2 | `-Dtui=true` compile + import scan | `zag-tui` links; core/coding-agent have no TUI import; **`zag-tui` has no `zag-cli` / `sigint` import** |
+| 3 | Init order | App prealloc → Agent.init → Guard.install(&agent.cancel) → Session.start → bind redactor/SignalHost → raw; Guard never before Agent |
+| 4 | Missing SignalHost | exit **1** before raw; no TUI degrade |
+| 5 | Session.start fail after Guard | exit **1**; deinit Guard+Agent; **no** Guard reinstall |
+| 6 | Worker join success **and** error | each path calls `SignalHost.acknowledge_cancel` before idle |
+| 7 | Two successive runs | each run’s **first** Ctrl+C is cooperative cancel, not accidental hard **130** (ack between runs) |
+| 8 | Wake coalescing / pipe full | drop write ok; ≤250 ms poll timeout still surfaces terminal card + permission modal |
+| 9 | Editor byte/line caps | reject oversize; valid UTF-8 submit |
+| 10 | History 64×8 KiB | ring behavior; no durable file; push only on accepted dispatch |
+| 11 | Lifecycle ordering | `run_start`→…→one `run_terminal` |
+| 12 | End-only tool_end cancelled/steered | no fake `tool_start` card |
+| 13 | Hard mid-call gap | start without end + truthful terminal |
+| 14 | Permission fail-closed | EOF/render/read/null ctx → deny; missing AskFn ≠ allow |
+| 15 | Permission rendezvous concurrency | single slot; worker wait; UI decide; no worker stdin |
+| 16 | Worker busy controls | Alt+S/F from UI thread; root submit locked; single-flight |
+| 17 | Callback/UI concurrency | no TTY I/O in callback; short lock publish; wake; no deadlock |
+| 18 | Host close + blocked provider | closing chrome; deny modal; cancel; wait; **no** silent unbounded wait; SIGINT escape |
+| 19 | Join/deinit order | no clear/deinit before join; ack then idle clear ok |
+| 20 | Session create/resume only | `create_new`/`resume_existing`; **no** product `open_or_create`; no false resumed |
+| 21 | Configured secret in **every** lifecycle/observer arbitrary field | rendered output contains marker / redacted form; **never** raw secret |
+| 22 | Redaction OOM | fixed `redaction_failed`; no raw fallback |
+| 23 | Missing redactor / null ask_ctx | `redaction_unavailable` / deny; no `redactOptional(null)` path |
+| 24 | Exact trunc cap | body/title ≤ cap; ends with exact `...[truncated]` when truncated |
+| 25 | Full ring + simultaneous terminal + OOM/drop | terminal reserve retained; drop note non-recursive; saturating count |
+| 26 | TUI ask hunk null | `review_unavailable`; never InteractiveHunkReviewer/stdin |
+| 27 | TUI yolo AutoAccept | no interactive review; jail/shell still apply |
+| 28 | Non-TTY stdin or stdout | exit **2**, stdout empty, fixed stderr |
+| 29 | Mode matrix | tui+json/stream/doctor/prompt/verbose → exit **2**; help+tui → 0 no TUI init |
+| 30 | Geometry &lt; 20×5 | exit **1** before raw |
+| 31 | Ctrl+C | idle 0; active cancel; second unacked 130; hard path **no false restore claim** |
+| 32 | Cooperative restore | clean/closing-after-join restores tty |
+| 33 | plain + headless std **and** curl | unchanged green |
+| 34 | Docs/diff | contract consistency |
 
 ## 12. Non-goals
 

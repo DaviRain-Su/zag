@@ -29,7 +29,7 @@ done, and does **not** claim maturity or Linux tip evidence.
 
 | Track | Status |
 |-------|--------|
-| Contract freeze (this node) | **candidate** — round-1 reviews **BLOCKED**; blockers fixed in follow-up; **re-review pending** |
+| Contract freeze (this node) | **candidate** — round-1 BLOCKED fixed @ `a38f0ec`; signal-host/order follow-up; **re-review pending** |
 | Overall product task | **`ready`** for re-review; **implementation BLOCKED** |
 | Production TUI implementation | **not started** — blocked (see split below) |
 | Maturity / C9 product acceptance | **unchanged / not claimed** |
@@ -68,7 +68,10 @@ results and merge.
 - Closed C4 first slice: [edit-sharpness-001](./edit-sharpness-001.md) @
   `7be5151` — hunk review ≠ permission; TUI ask v1 hunk_reviewer **null**
 - Round-1 architecture A1–A5 (+ A6–A10) and safety B-S1–B-S9 **BLOCKED**;
-  unique freezes landed in binding module revision
+  unique freezes landed @ `a38f0ec`
+- Follow-up: Guard install **after** `Agent.init`; `SignalHost` defined by
+  `zag-tui`, implemented by CLI over `sigint.Guard`; post-join
+  `acknowledge_cancel`; ≤250 ms poll timeout for coalesced wakes
 
 # path
 
@@ -105,17 +108,20 @@ Do not restate conflicting rules here.
 | Topic | Freeze |
 |-------|--------|
 | Package owner | **only** `packages/zag-tui/` (`zag-tui`); CLI wires when `-Dtui=true`; no `zag-cli/src/tui` |
-| Concurrency | UI thread + single reply worker; callback publish under short locks; permission single-slot rendezvous; no worker TTY I/O |
-| Session | product TUI: `create_new`/`resume_existing` only; `resumed` only resume+start success; no `open_or_create` product path |
-| Bind matrix | ask→`Gate.ask(TuiPermissionAdapter)` never StdinPrompter; yolo explicit; TUI ask hunk **null**; yolo AutoAccept |
-| Redaction | `redactAlloc` full input first; no `redactOptional(null)`; markers `redaction_failed` / `redaction_unavailable` / `invalid_utf8`; trunc `...[truncated]` (14 ASCII bytes) |
-| Resources | preallocate before raw/Session run; 125+1+1+1 card split; terminal reserve always; no “if possible” |
-| Mode/exit | interactive no prompt; both stdin+stdout TTY; conflicts exit 2; init fail exit 1; idle EOF 0; SIGINT 130; restore honesty |
+| Dep direction | CLI → `zag-tui` only; **no** TUI import of CLI/`sigint`; `SignalHost` defined by TUI, implemented by CLI over Guard |
+| Init order | App prealloc → `Agent.init` → `Guard.install(&agent.cancel)` → `Session.start` → bind redactor/SignalHost → raw |
+| Post-join | every worker join success/error → `SignalHost.acknowledge_cancel` before idle (avoid false second SIGINT) |
+| Wake | bounded nonblocking drop-on-full + poll timeout ≤250 ms |
+| Concurrency | UI + single reply worker; short locks; permission single-slot rendezvous; no worker TTY I/O |
+| Session | product `create_new`/`resume_existing` only; no `open_or_create` product path |
+| Bind matrix | ask→`Gate.ask(TuiPermissionAdapter)`; yolo explicit; TUI ask hunk **null**; yolo AutoAccept |
+| Redaction / reserves / mode matrix | unchanged from `a38f0ec` freezes (no rollback) |
 | Non-goals | theme/dashboard/RPC/ACP/E2–E3/schema/maturity/Pi parity/wholesale vaxis |
 
 # verification (contract track — this node)
 
-- [x] Round-1 architecture + safety **BLOCKED** findings closed in docs freeze
+- [x] Round-1 architecture + safety **BLOCKED** findings closed @ `a38f0ec`
+- [x] Signal host / Guard-after-Agent order follow-up recorded (still not PASS)
 - [ ] Independent **architecture / ownership** contract **re-review** PASS
 - [ ] Independent **safety / fail-closed** contract **re-review** PASS
 - [ ] `python3 scripts/lint_docs.py`
@@ -150,7 +156,8 @@ Do not restate conflicting rules here.
 | Stage | Tip |
 |-------|-----|
 | Contract candidate (initial freeze) | `d01d70b7d02566f0354f976775dab020399d0df5` |
-| Blocker-close follow-up | task tip with message `docs: close minimal TUI contract blockers` |
+| Blocker-close follow-up | `a38f0ecde46d9f0c948f3a36dd8f46b1a7aad66f` |
+| Signal-host / Guard order follow-up | tip with message `docs: fix TUI signal host ordering` |
 | Contract PASS record | pending re-review |
 | Implementation | blocked |
 | Closeout | blocked |
