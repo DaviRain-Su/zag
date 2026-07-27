@@ -32,9 +32,14 @@ direct exit 0 + stderr/leak assertions) and active std **130** / curl **11**
 retained inside the 2-test fixture. Fuses were configured but **did not fire**
 (run completed normally — not claimed exercised). Current Linux idle status is
 **PASS** at that exact tip/run only — not a universal future guarantee. Final
-merged-path Linux dual-backend Gate remains a **separate open next docs node**
-(not claimed closed by this residual; same run is at most candidate evidence)
-and is still required before prompt-templates work.
+merged-path Linux dual-backend Gate
+[linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md) is
+**done** (docs-only) on the same tip/run (OpenAPI **287/287**, catalog **40**,
+docs **91/73**). Broader M0 Linux dual-backend reliability is **closed only**
+at exact tip `8a93ec6` / run `30273762011` — not a universal future guarantee.
+`prompt-templates-001` is **unblocked** for later docs-first planning (task
+file not authored; not implemented). Maturity and Runtime Extensions L0
+unchanged.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +
@@ -224,8 +229,10 @@ Every raw Linux result that is classified by errno today must use kernel decode:
 5. **Docs** — docs lint + score readability **91** / security **72**; committed-range `git diff --check` clean; no
    maturity inflation.
 6. **Not claimed by errno node** — process-idle residual (closed later via separate Phase B evidence); final
-   merged-path Linux dual-backend Gate; fuse exercise. CI fuses (`ci-hang-ci-fuses-001`) are separate host rails
-   and do not prove product SIGINT/errno/idle correctness.
+   merged-path Linux dual-backend Gate (later closed by
+   [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md) at exact tip/run only); fuse
+   exercise. CI fuses (`ci-hang-ci-fuses-001`) are separate host rails and do not prove product SIGINT/errno/idle
+   correctness.
 
 ## Verification
 

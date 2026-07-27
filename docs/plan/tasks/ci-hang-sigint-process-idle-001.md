@@ -33,9 +33,10 @@ Depends on:
 | [ci-hang-sigint-linux-errno-001](./ci-hang-sigint-linux-errno-001.md) | **done** @ `bc737025` | Raw Linux errno decode so curl-linked `drainWake` terminates |
 | [ci-hang-ci-fuses-001](./ci-hang-ci-fuses-001.md) | **done/closed** @ `97f43de` | Host concurrency + 30m/job rails (not product proof) |
 
-Does **not** own Core boundary, prompt templates, maturity raise, final
-merged-path Linux dual-backend Gate as a whole, or push without fresh
-authorization.
+Does **not** own Core boundary, prompt templates, maturity raise, or push
+without fresh authorization. Final merged-path Linux dual-backend Gate is
+owned by [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md)
+(**done** on the same tip/run; exact tip/run scope only).
 
 # context
 
@@ -57,8 +58,8 @@ authorization.
 
 | Node | Relationship |
 |------|--------------|
-| final merged-path Linux dual-backend Gate | **Still open / separate next docs node** — full remote Linux dual-backend Gate remains required before prompt-templates; **not** claimed closed by this residual even when the same Actions run is candidate evidence |
-| prompt-templates-001 | **Still blocked** until that final Linux Gate node closes |
+| [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md) | **done** (docs-only) on the same tip/run — final merged-path Linux dual-backend Gate; M0 dual-backend reliability closed **only** at exact tip/run; **not** claimed closed by this residual alone |
+| prompt-templates-001 | **Unblocked** for later docs-first planning after that Gate; task file not authored here |
 | Core ownership / D-011 | Unchanged; CLI owns SIGINT |
 
 ## References
@@ -99,7 +100,7 @@ evidence. No product or fixture edit authorized or performed.
 | Process fixture (`sigint_process_fixture.zig`) | Host-native spawn/wait/kill, idle oracle, leak checks | Product Linux non-libc claim; CI workflow knobs |
 | `zag-agent-core` | atomic `CancelFlag` only | signal handlers, exit codes, fixtures |
 | CI workflow / fuses | Host timeout + concurrency (already closed) | Product correctness claims |
-| This task | Evidence protocol + residual close criteria | Final full monorepo Linux Gate; prompt-templates |
+| This task | Evidence protocol + residual close criteria | Final full monorepo Linux Gate (owned by `linux-dual-backend-gate-001`); prompt-templates implementation |
 
 ## 2. Preserved idle oracle (binding)
 
@@ -169,8 +170,10 @@ fixture where retained):
 1. Made **no** product or fixture change.
 2. Recorded host / backend / tip / run citation in delivery evidence.
 3. Residual marked **closed** (status → `done`).
-4. Left the **final merged-path Linux dual-backend Gate** as a **separate
-   open next docs node** — not claimed closed by this residual.
+4. Left the **final merged-path Linux dual-backend Gate** to
+   [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md) — not
+   claimed closed by this residual alone (that Gate later closed on the same
+   tip/run as docs-only).
 
 ### Phase C — Fail path — **not taken**
 
@@ -212,9 +215,10 @@ No unique failure root; no product/fixture edit.
 - Claiming timeout/cancel was exercised (this run completed normally).
 - Changing Core ownership (D-011).
 - **Final remote Linux dual-backend Gate** as this node’s sole closeout —
-  remains a **separate next docs node**, not closed here even if the same
-  Actions run is candidate evidence for that later node.
-- Prompt templates; maturity raise; quality generated body hand-edits.
+  owned by [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md)
+  (later **done** on the same tip/run as docs-only; not claimed closed by this
+  residual alone).
+- Prompt templates implementation; maturity raise; quality generated body hand-edits.
 - Push without fresh authorization.
 - Unrelated `.gitignore` or secrets/external services.
 - Treating local macOS-only gates as Linux proof (this closeout uses remote
@@ -252,7 +256,7 @@ No unique failure root; no product/fixture edit.
 |---|-------|-------------------|
 | F2a | No code change | Product/fixture untouched for residual close |
 | F2b | Evidence table | host, backend(s), tip, run citation filled |
-| F2c | Residual closed | This task `done`; final Linux Gate still separate |
+| F2c | Residual closed | This task `done`; final Linux Gate owned by `linux-dual-backend-gate-001` |
 
 ### F3 — Phase C closeout — **N/A**
 
@@ -276,7 +280,7 @@ No unique failure root; no product/fixture edit.
 - [x] Phase B path followed (no product/fixture change)
 - [x] Idle oracle preserved (`waitBounded(4000)`); active std 130 / curl 11 retained
 - [x] Fuses exact; timeout/cancel not used as pass; fuses did not fire this run
-- [x] Final merged-path Linux Gate still tracked separately (not claimed closed)
+- [x] Final merged-path Linux Gate tracked as [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md) (not claimed closed by this residual alone)
 
 # delivery evidence
 
@@ -308,15 +312,16 @@ No unique failure root; no product/fixture edit.
 | Product/fixture/build/CI-YAML change | **none** for this residual closeout |
 | Maturity | **unchanged** |
 | Current Linux idle status | **PASS** at exact tip `8a93ec6` / run `30273762011` — **not** a universal future guarantee |
-| Final merged-path Linux dual-backend Gate | **Still open** as separate next docs node — **not** claimed closed by this task (same run may be **candidate** evidence for that later node only) |
-| prompt-templates-001 | **Still blocked** until that final Linux Gate node closes |
+| Final merged-path Linux dual-backend Gate | Owned by [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md) — later **done** on same tip/run as docs-only; **not** claimed closed by this residual alone |
+| prompt-templates-001 | **Unblocked** for later docs-first planning after that Gate; task file not authored here |
 
 ## Non-claims
 
 - Universal/permanent Linux idle reliability beyond this tip/run.
 - Timeout or cancel fuse exercise (neither fired).
-- Final merged-path Linux dual-backend Gate closed.
-- prompt-templates unblocked.
+- Final merged-path Linux dual-backend Gate closed **by this residual alone**
+  (that Gate is [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md)).
+- prompt-templates implemented or task file authored by this residual.
 - Maturity raise.
 - Product/fixture code change as part of residual close.
 - Historical hang co-root invention.
@@ -346,11 +351,14 @@ also success. No product or fixture change.
 - `ci-hang-sigint-linux-errno-001` @ `bc737025`
 - `ci-hang-ci-fuses-001` @ `97f43de` (host rails only)
 
-**Still open after this residual (not claimed closed here):**
+**Adjacent (not claimed closed by this residual alone):**
 
-- **final merged-path remote Linux dual-backend Gate** (separate next docs
-  node; this Actions run is at most **candidate** evidence for that node)
-- then `prompt-templates-001` may unstall only after that Gate closes
+- **final merged-path remote Linux dual-backend Gate** —
+  [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md) (**done**
+  docs-only on the same tip/run; M0 dual-backend reliability closed only at
+  exact tip/run scope)
+- `prompt-templates-001` unblocked for later docs-first planning after that
+  Gate (task file not authored here)
 
 **Current Linux idle status:** **PASS** at exact tip `8a93ec6` / run
 `30273762011` — not a universal future guarantee.

@@ -26,17 +26,23 @@ Also: `zig build docs-lint` / `zig build test`
 **Status:** **done/closed** at reviewed tip `97f43de` (workflow fuses landed
 in `.github/workflows/ci.yml`; independent review + ff-only local merge
 complete; **no push**; process-idle residual later **done** via separate
-Phase B; final remote Linux Gate still open; maturity unchanged).
+Phase B; final remote Linux Gate later **done** via
+[linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md)
+at exact tip/run only; maturity unchanged).
 
 **Depends on:** [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 (done @ `bc737025`).
 
-**Does not close:** final merged-path Linux dual-backend Gate, remote GitHub
-Actions fuse-enforcement evidence, or any maturity row. Process-idle residual
+**Does not close (by fuses alone):** remote GitHub Actions fuse-enforcement
+evidence, or any maturity row. Process-idle residual
 [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
 is **done** separately via Phase B on Actions
 [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) at
-tip `8a93ec6` (not by fuses alone; fuses did **not** fire on that run).
+tip `8a93ec6` (not by fuses alone; fuses did **not** fire on that run). Final
+merged-path Linux dual-backend Gate
+[linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md) is
+**done** on that same tip/run (docs-only; exact tip/run scope only — not a
+universal future guarantee).
 
 Target workflow: `.github/workflows/ci.yml` — exact fuses:
 `concurrency.group: ${{ github.workflow }}-${{ github.ref }}`,
@@ -139,8 +145,11 @@ Forbidden masking:
   [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) —
   not by fuses; that run completed normally so fuses did **not** fire).
 - No push required for the docs contract node; implementation node also
-  must not claim a fresh remote Linux Gate unless that Gate task runs it.
-  Final merged-path Linux dual-backend Gate remains a separate open node.
+  must not claim a fresh remote Linux Gate unless that Gate task records it.
+  Final merged-path Linux dual-backend Gate
+  [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md)
+  is **done** on that same tip/run (exact tip/run only; fuses still not product
+  proof).
 
 ## Budgets
 
@@ -164,9 +173,11 @@ Forbidden masking:
 - Process-idle fixture reliability
   ([ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md);
   closed separately via Phase B evidence — not a fuses claim).
-- Final merged-path remote Linux dual-backend Gate (still open; separate node).
+- Final merged-path remote Linux dual-backend Gate
+  ([linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md);
+  closed separately as docs-only Gate at exact tip/run — not a fuses claim).
 - Product SIGINT/errno or fixture bound changes.
-- Prompt templates; maturity raise; secrets/permissions/trigger changes.
+- Prompt templates implementation; maturity raise; secrets/permissions/trigger changes.
 - Soft success via timeout/cancel; reduced matrix; `continue-on-error`.
 - Push from the task worktree as part of docs-first.
 
@@ -203,9 +214,12 @@ Forbidden masking:
    ([ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
    **done** @ tip `8a93ec6` / run
    [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011);
-   fuses did **not** fire on that success run) + final remote Linux Gate still
-   pending as a separate node; timeout/cancel not used as product correctness
-   evidence; remote Actions fuse enforcement **not** claimed exercised.
+   fuses did **not** fire on that success run) + final remote Linux Gate later
+   closed by
+   [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md)
+   on the same tip/run (exact tip/run only); timeout/cancel not used as product
+   correctness evidence; remote Actions fuse enforcement **not** claimed
+   exercised.
 
 Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
 `97f43de`.
@@ -215,6 +229,7 @@ Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
 - Task: [ci-hang-ci-fuses-001](../plan/tasks/ci-hang-ci-fuses-001.md)
 - Predecessor: [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 - Process-idle residual (**done** Phase B): [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
+- Final Linux dual-backend Gate (**done**, exact tip/run only): [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md)
 - Product CLI (unchanged by fuses): [cli-interaction](../modules/cli-interaction.md)
 - Provider contracts: [contracts.md](./contracts.md)
 - Dual-backend bake-off: [http-backend-bakeoff.md](./http-backend-bakeoff.md)
