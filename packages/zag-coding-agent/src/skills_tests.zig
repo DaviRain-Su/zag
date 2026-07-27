@@ -387,14 +387,15 @@ test "skills §11.6: manual-only summary deny + activation" {
 
 // ── §11.7 Aggregate bounds ──────────────────────────────────────────────────
 
-test "skills §11.7: summary and body aggregate exclude later entries" {
+test "skills §11.7: summary aggregate exclude later entries (header/footer accounted)" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
 
-    // Create many skills with large descriptions to exceed 4096 summary.
+    // Create many skills with large descriptions to exceed 4096 summary
+    // including fixed header/footer overhead (skills.md §3.3 / §4.3).
     var i: usize = 0;
     while (i < 40) : (i += 1) {
         var name_buf: [16]u8 = undefined;
@@ -414,6 +415,10 @@ test "skills §11.7: summary and body aggregate exclude later entries" {
     defer s.deinit();
 
     try std.testing.expect(s.skills_catalog.summary.len <= skills.max_summary_bytes);
+    try std.testing.expect(s.skills_catalog.summary.len > 0);
+    // Whole-candidate exclusion: no mid-string hard clamp; header intact.
+    try std.testing.expect(std.mem.startsWith(u8, s.skills_catalog.summary, skills.summary_header));
+    try std.testing.expect(std.mem.endsWith(u8, s.skills_catalog.summary, skills.summary_footer));
     try std.testing.expect(s.skills_catalog.entries.len < 40);
     var saw_summary_budget = false;
     for (s.skills_catalog.diags) |d| {
@@ -423,6 +428,193 @@ test "skills §11.7: summary and body aggregate exclude later entries" {
     // Remaining still work
     try std.testing.expect(s.skills_catalog.entries.len > 0);
     try std.testing.expect(s.skills_catalog.find("s00") != null);
+}
+
+test "skills §11.7: body aggregate exclude later entries" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // 12 × ~24 KiB bodies ≈ 288 KiB > 256 KiB max_body_aggregate; each file
+    // stays under max_file_bytes so exclusion is aggregate-driven, not per-file.
+    const body_chunk: usize = 22 * 1024;
+    var body_buf: [22 * 1024]u8 = undefined;
+    @memset(&body_buf, 'B');
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        var name_buf: [16]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "b{d:0>2}", .{i});
+        try writeSkill(io, tmp.dir, name, "body-budget desc", body_buf[0..body_chunk], false);
+    }
+    const user_root = try absPathOf(io, tmp.dir, gpa);
+    defer gpa.free(user_root);
+
+    var s = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .user_skills_root = user_root,
+    });
+    defer s.deinit();
+
+    var body_sum: usize = 0;
+    for (s.skills_catalog.entries) |e| body_sum += e.body.len;
+    try std.testing.expect(body_sum <= skills.max_body_aggregate);
+    try std.testing.expect(s.skills_catalog.entries.len < 12);
+    var saw_body_budget = false;
+    for (s.skills_catalog.diags) |d| {
+        if (d == .body_budget) saw_body_budget = true;
+    }
+    try std.testing.expect(saw_body_budget);
+    // Earlier (byte-sorted) entries remain usable.
+    try std.testing.expect(s.skills_catalog.find("b00") != null);
+    const rs = skills.readSkillTool(&s.skills_catalog);
+    const ok = try rs.handler(.{ .allocator = gpa, .io = io, .cwd = Io.Dir.cwd() }, rs.instance, "{\"name\":\"b00\"}");
+    defer gpa.free(ok);
+    try std.testing.expect(ok.len > 0);
+}
+
+// ── Project-override net budget (skills.md §3.1 project-wins-by-name) ───────
+
+test "skills: project override net-fits when current+new would exceed summary" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // Pack user summary to capacity with "shared" + fillers (200-byte descs).
+    // Checking current+new *before* subtracting the superseded user entry
+    // soft-skips project "shared" (summary_budget) while the user skill
+    // remains — violating project-wins-by-name. Net-of-supersede must win.
+    var desc: [200]u8 = undefined;
+    @memset(&desc, 'd');
+    const entry_cost = 8 + "shared".len + 1 + 15 + desc.len + 1; // name len 6 for shared
+    const filler_cost = 8 + 3 + 1 + 15 + desc.len + 1; // "u00" len 3
+    // shared sorts before u*; fill with shared + N fillers until near cap.
+    try writeSkill(io, tmp.dir, "shared", desc[0..], "USER_SHARED_BODY", false);
+    var n_fillers: usize = 0;
+    var running: usize = skills.summary_fixed_overhead + entry_cost;
+    while (running + filler_cost <= skills.max_summary_bytes) : (n_fillers += 1) {
+        var name_buf: [8]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "u{d:0>2}", .{n_fillers});
+        try writeSkill(io, tmp.dir, name, desc[0..], "filler-body", false);
+        running += filler_cost;
+    }
+    // Prove double-count of shared would exceed once catalog is full.
+    try std.testing.expect(running + entry_cost > skills.max_summary_bytes);
+    try std.testing.expect(n_fillers >= 1);
+
+    const user_root = try absPathOf(io, tmp.dir, gpa);
+    defer gpa.free(user_root);
+
+    const proj_name = "shared";
+    Io.Dir.cwd().createDirPath(io, ".agents/skills/" ++ proj_name) catch {};
+    defer Io.Dir.cwd().deleteTree(io, ".agents/skills/" ++ proj_name) catch {};
+    {
+        var agents = try Io.Dir.cwd().openDir(io, ".agents/skills", .{ .iterate = true });
+        defer agents.close(io);
+        try writeSkill(io, agents, proj_name, desc[0..], "PROJ_SHARED_BODY", false);
+    }
+
+    var s = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .user_skills_root = user_root,
+        .project_skills_trust = .trusted,
+    });
+    defer s.deinit();
+
+    const e = s.skills_catalog.find("shared") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(e.origin == .project);
+    try std.testing.expect(std.mem.indexOf(u8, e.body, "PROJ_SHARED_BODY") != null);
+    try std.testing.expect(std.mem.indexOf(u8, e.body, "USER_SHARED_BODY") == null);
+    var saw_override = false;
+    var saw_summary_budget = false;
+    for (s.skills_catalog.diags) |d| {
+        if (d == .project_override) saw_override = true;
+        if (d == .summary_budget) saw_summary_budget = true;
+    }
+    try std.testing.expect(saw_override);
+    try std.testing.expect(!saw_summary_budget);
+    try std.testing.expect(s.skills_catalog.summary.len <= skills.max_summary_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, s.skills_catalog.summary, "shared") != null);
+}
+
+// ── Entry cap: sort-then-cap dirs; files must not starve (skills.md §3.1) ────
+
+test "skills: entry cap is sort-then-cap of directories; non-dirs do not starve" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // 70 non-directory files first (readdir-order bait) + 2 valid skill dirs
+    // with names that sort after many file names. Old bug stopped after 64
+    // children of any kind before sort, so files could starve skill dirs.
+    var f: usize = 0;
+    while (f < 70) : (f += 1) {
+        var fname: [32]u8 = undefined;
+        const path = try std.fmt.bufPrint(&fname, "aaa-file-{d:0>3}.txt", .{f});
+        try tmp.dir.writeFile(io, .{ .sub_path = path, .data = "noise" });
+    }
+    try writeSkill(io, tmp.dir, "zzz-late-a", "late a", "LATE_A", false);
+    try writeSkill(io, tmp.dir, "zzz-late-b", "late b", "LATE_B", false);
+
+    const user_root = try absPathOf(io, tmp.dir, gpa);
+    defer gpa.free(user_root);
+
+    var s = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .user_skills_root = user_root,
+    });
+    defer s.deinit();
+
+    try std.testing.expect(s.skills_catalog.find("zzz-late-a") != null);
+    try std.testing.expect(s.skills_catalog.find("zzz-late-b") != null);
+    try std.testing.expectEqual(@as(usize, 2), s.skills_catalog.entries.len);
+}
+
+test "skills: >64 skill directories: byte-sort then first 64; entry_limit diag" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // 70 skill dirs; after byte-sort only first 64 names are considered.
+    var i: usize = 0;
+    while (i < 70) : (i += 1) {
+        var name_buf: [16]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "d{d:0>2}", .{i});
+        try writeSkill(io, tmp.dir, name, "d", "BODY", false);
+    }
+    const user_root = try absPathOf(io, tmp.dir, gpa);
+    defer gpa.free(user_root);
+
+    var s = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .user_skills_root = user_root,
+    });
+    defer s.deinit();
+
+    // d00..d63 are the first 64 in byte-sort ("d00".."d63"; "d64".."d69" dropped).
+    // Note: "d00".."d09","d10".."d63" = 64; "d64"+"d65"+"d66"+"d67"+"d68"+"d69" excluded.
+    try std.testing.expect(s.skills_catalog.find("d00") != null);
+    try std.testing.expect(s.skills_catalog.find("d63") != null);
+    try std.testing.expect(s.skills_catalog.find("d64") == null);
+    try std.testing.expect(s.skills_catalog.find("d69") == null);
+    // Cap may also hit summary_budget before 64 bodies; at most 64 considered.
+    try std.testing.expect(s.skills_catalog.entries.len <= skills.max_entries_per_root);
+    var saw_entry_limit = false;
+    for (s.skills_catalog.diags) |d| {
+        if (d == .entry_limit) saw_entry_limit = true;
+    }
+    try std.testing.expect(saw_entry_limit);
 }
 
 // ── §11.8 Start OOM before create ───────────────────────────────────────────

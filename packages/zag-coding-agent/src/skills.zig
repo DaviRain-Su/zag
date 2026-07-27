@@ -112,7 +112,10 @@ pub fn discover(
     defer accepted.deinit(gpa);
 
     var body_total: usize = 0;
-    var summary_total: usize = 0;
+    // Tracks only per-entry invocable summary costs (excludes fixed header/footer).
+    // Budget checks add summary_fixed_overhead so the rendered summary never exceeds
+    // max_summary_bytes (skills.md §3.3 / §4.3 whole-candidate exclusion).
+    var summary_entry_total: usize = 0;
 
     // Resolve workspace realpath once for project containment.
     const workspace_real: ?[]u8 = workspace.resolveCwdReal(gpa, io, opts.workspace_cwd) catch null;
@@ -130,7 +133,7 @@ pub fn discover(
             &accepted,
             &diags,
             &body_total,
-            &summary_total,
+            &summary_entry_total,
         );
     }
 
@@ -152,7 +155,7 @@ pub fn discover(
                 &accepted,
                 &diags,
                 &body_total,
-                &summary_total,
+                &summary_entry_total,
             );
         } else |_| {
             // Missing or unreadable project root is soft-skip.
@@ -196,7 +199,7 @@ fn discoverRoot(
     accepted: *std.ArrayListUnmanaged(SkillEntry),
     diags: *std.ArrayListUnmanaged(DiagCode),
     body_total: *usize,
-    summary_total: *usize,
+    summary_entry_total: *usize,
 ) error{OutOfMemory}!void {
     // Resolve root realpath.
     var root_real_buf: [Io.Dir.max_path_bytes]u8 = undefined;
@@ -226,7 +229,9 @@ fn discoverRoot(
     };
     defer dir.close(io);
 
-    // Collect direct child directory names (gpa-owned for sort).
+    // Collect *all* direct child directory names, then byte-sort and cap at 64.
+    // Non-directory files must not count toward the cap or starve skill dirs
+    // (skills.md §3.1: list dirs → sort → cap; readdir-order independent).
     var names: std.ArrayListUnmanaged([]const u8) = .empty;
     defer {
         for (names.items) |n| gpa.free(n);
@@ -234,19 +239,11 @@ fn discoverRoot(
     }
 
     var it = dir.iterate();
-    var total_children: usize = 0;
     while (true) {
         const entry = it.next(io) catch {
             try diags.append(gpa, .candidate_io);
             break;
         } orelse break;
-        total_children += 1;
-        if (total_children > max_entries_per_root) {
-            try diags.append(gpa, .entry_limit);
-            // Soft-skip remaining; stop collecting more names but keep first 64.
-            // We already may have collected 64; break collection.
-            break;
-        }
         if (entry.kind != .directory and entry.kind != .sym_link) continue;
         // Direct children only — store name for later SKILL.md check.
         const owned = gpa.dupe(u8, entry.name) catch return error.OutOfMemory;
@@ -256,34 +253,17 @@ fn discoverRoot(
         };
     }
 
-    // Cap names to 64 (if we over-collected due to symlink/file mix before break).
-    if (names.items.len > max_entries_per_root) {
-        // Free extras; keep first max_entries_per_root after sort? Contract: cap at 64
-        // direct entries per root with deterministic order. Byte-sort first then take 64.
-        // Actually: "cap at 64 direct entries per root (extra entries soft-skip)".
-        // Sort all collected then process only first 64 by sorted order of *all* dirs?
-        // Safer: sort all, process up to 64 valid candidates, soft-skip rest via entry_limit.
-    }
-
     std.mem.sortUnstable([]const u8, names.items, {}, struct {
         fn less(_: void, a: []const u8, b: []const u8) bool {
             return std.mem.order(u8, a, b) == .lt;
         }
     }.less);
 
-    // Process in sorted order; when more than 64 names, only first 64 (sorted).
-    const limit = @min(names.items.len, max_entries_per_root);
+    // Process first 64 in sorted order; extra directory entries soft-skip.
     if (names.items.len > max_entries_per_root) {
-        // Ensure entry_limit was recorded.
-        var has_limit = false;
-        for (diags.items) |d| {
-            if (d == .entry_limit) {
-                has_limit = true;
-                break;
-            }
-        }
-        if (!has_limit) try diags.append(gpa, .entry_limit);
+        try diags.append(gpa, .entry_limit);
     }
+    const limit = @min(names.items.len, max_entries_per_root);
 
     var i: usize = 0;
     while (i < limit) : (i += 1) {
@@ -300,7 +280,7 @@ fn discoverRoot(
             accepted,
             diags,
             body_total,
-            summary_total,
+            summary_entry_total,
         );
     }
 }
@@ -317,7 +297,7 @@ fn tryAcceptCandidate(
     accepted: *std.ArrayListUnmanaged(SkillEntry),
     diags: *std.ArrayListUnmanaged(DiagCode),
     body_total: *usize,
-    summary_total: *usize,
+    summary_entry_total: *usize,
 ) error{OutOfMemory}!void {
     // Build candidate path: root/child/SKILL.md
     const skill_rel = try std.fmt.allocPrint(gpa, "{s}{c}SKILL.md", .{ child_name, std.fs.path.sep });
@@ -388,55 +368,15 @@ fn tryAcceptCandidate(
         return;
     };
 
-    // Body aggregate budget: exclude later candidates.
-    if (body_total.* +| parsed.body.len > max_body_aggregate) {
-        try diags.append(gpa, .body_budget);
-        return;
-    }
-
-    // Summary budget only for model-invocable entries (deterministic exclude).
-    if (!parsed.disable_model_invocation) {
-        const entry_summary_cost = summaryEntryCost(parsed.name, parsed.description);
-        if (summary_total.* +| entry_summary_cost > max_summary_bytes) {
-            try diags.append(gpa, .summary_budget);
-            return;
-        }
-        summary_total.* += entry_summary_cost;
-    }
-
-    // Project overrides user by exact name.
+    // Project overrides user by exact name: find superseded entry *before* budgets
+    // so a net-fitting project skill can replace the user skill (skills.md §3.1).
+    var replace_idx: ?usize = null;
     if (origin == .project) {
-        var idx: ?usize = null;
         for (accepted.items, 0..) |e, i| {
             if (std.mem.eql(u8, e.name, parsed.name)) {
-                idx = i;
+                replace_idx = i;
                 break;
             }
-        }
-        if (idx) |i| {
-            // Drop user entry bytes from aggregates carefully: body always counted;
-            // summary only if prior was invocable.
-            const old = accepted.items[i];
-            body_total.* -|= old.body.len;
-            if (!old.disable_model_invocation) {
-                summary_total.* -|= summaryEntryCost(old.name, old.description);
-                // re-check: we already added new summary cost above; if old was
-                // invocable we subtracted its cost so net is new only. OK.
-            }
-            try diags.append(gpa, .project_override);
-            // Replace in place after arena-duping new fields.
-            const name_a = try arena.dupe(u8, parsed.name);
-            const desc_a = try arena.dupe(u8, parsed.description);
-            const body_a = try arena.dupe(u8, parsed.body);
-            accepted.items[i] = .{
-                .name = name_a,
-                .description = desc_a,
-                .disable_model_invocation = parsed.disable_model_invocation,
-                .body = body_a,
-                .origin = .project,
-            };
-            body_total.* += body_a.len;
-            return;
         }
     } else {
         // User root: skip if name already present (should not happen within one root).
@@ -446,6 +386,65 @@ fn tryAcceptCandidate(
                 return;
             }
         }
+    }
+
+    // Net aggregates after dropping the same-name user entry (if any).
+    var body_base = body_total.*;
+    var summary_base = summary_entry_total.*;
+    if (replace_idx) |i| {
+        const old = accepted.items[i];
+        body_base -|= old.body.len;
+        if (!old.disable_model_invocation) {
+            summary_base -|= summaryEntryCost(old.name, old.description);
+        }
+    }
+
+    // Body aggregate budget: exclude later candidates (net of same-name supersede).
+    if (body_base +| parsed.body.len > max_body_aggregate) {
+        try diags.append(gpa, .body_budget);
+        return;
+    }
+
+    // Summary budget for model-invocable entries includes fixed header/footer so
+    // discovery never accepts a set that renders > max_summary_bytes.
+    const new_entry_summary: usize = if (!parsed.disable_model_invocation)
+        summaryEntryCost(parsed.name, parsed.description)
+    else
+        0;
+    if (new_entry_summary > 0 or summary_base > 0) {
+        // When any invocable remains after this accept, rendered size includes overhead.
+        const next_entry_total = summary_base +| new_entry_summary;
+        if (next_entry_total > 0) {
+            if (summary_fixed_overhead +| next_entry_total > max_summary_bytes) {
+                try diags.append(gpa, .summary_budget);
+                return;
+            }
+        }
+    }
+
+    // Commit: replace or append.
+    if (replace_idx) |i| {
+        const old = accepted.items[i];
+        body_total.* -|= old.body.len;
+        if (!old.disable_model_invocation) {
+            summary_entry_total.* -|= summaryEntryCost(old.name, old.description);
+        }
+        try diags.append(gpa, .project_override);
+        const name_a = try arena.dupe(u8, parsed.name);
+        const desc_a = try arena.dupe(u8, parsed.description);
+        const body_a = try arena.dupe(u8, parsed.body);
+        accepted.items[i] = .{
+            .name = name_a,
+            .description = desc_a,
+            .disable_model_invocation = parsed.disable_model_invocation,
+            .body = body_a,
+            .origin = .project,
+        };
+        body_total.* += body_a.len;
+        if (!parsed.disable_model_invocation) {
+            summary_entry_total.* += new_entry_summary;
+        }
+        return;
     }
 
     const name_a = try arena.dupe(u8, parsed.name);
@@ -459,12 +458,20 @@ fn tryAcceptCandidate(
         .origin = origin,
     });
     body_total.* += body_a.len;
+    if (!parsed.disable_model_invocation) {
+        summary_entry_total.* += new_entry_summary;
+    }
 }
 
+/// Fixed header + footer bytes always present when ≥1 invocable skill is rendered.
+pub const summary_header = "# Skills\n";
+pub const summary_footer = "Use read_skill with {\"name\":\"<name>\"} to load a skill body when needed.\n";
+pub const summary_fixed_overhead: usize = summary_header.len + summary_footer.len;
+
 fn summaryEntryCost(name: []const u8, description: []const u8) usize {
-    // Approximate per-entry line cost matching buildSummary format.
-    // "- name: " + name + "\n  description: " + description + "\n"
-    return 8 + name.len + 16 + description.len + 2;
+    // Exact per-entry line cost matching buildSummary format:
+    // "- name: " (8) + name + "\n" (1) + "  description: " (15) + description + "\n" (1)
+    return 8 + name.len + 1 + 15 + description.len + 1;
 }
 
 fn buildSummary(arena: std.mem.Allocator, entries: []const SkillEntry) error{OutOfMemory}![]const u8 {
@@ -477,7 +484,7 @@ fn buildSummary(arena: std.mem.Allocator, entries: []const SkillEntry) error{Out
     var list: std.ArrayListUnmanaged(u8) = .empty;
     errdefer list.deinit(arena);
 
-    try list.appendSlice(arena, "# Skills\n");
+    try list.appendSlice(arena, summary_header);
     for (entries) |e| {
         if (e.disable_model_invocation) continue;
         try list.print(arena,
@@ -486,12 +493,11 @@ fn buildSummary(arena: std.mem.Allocator, entries: []const SkillEntry) error{Out
             \\
         , .{ e.name, e.description });
     }
-    try list.appendSlice(arena, "Use read_skill with {\"name\":\"<name>\"} to load a skill body when needed.\n");
+    try list.appendSlice(arena, summary_footer);
 
-    // Hard clamp (discovery already budgeted; defensive).
-    if (list.items.len > max_summary_bytes) {
-        list.shrinkRetainingCapacity(max_summary_bytes);
-    }
+    // Discovery whole-candidate exclusion guarantees ≤ max_summary_bytes.
+    // Never mid-buffer clamp (UTF-8 unsafe); assert contract in tests.
+    std.debug.assert(list.items.len <= max_summary_bytes);
     return try list.toOwnedSlice(arena);
 }
 
