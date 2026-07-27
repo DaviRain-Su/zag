@@ -25,16 +25,18 @@ Also: `zig build docs-lint` / `zig build test`
 
 **Status:** **done/closed** at reviewed tip `97f43de` (workflow fuses landed
 in `.github/workflows/ci.yml`; independent review + ff-only local merge
-complete; **no push**; process-idle residual + final remote Linux Gate still
-open; maturity unchanged).
+complete; **no push**; process-idle residual later **done** via separate
+Phase B; final remote Linux Gate still open; maturity unchanged).
 
 **Depends on:** [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 (done @ `bc737025`).
 
-**Does not close:** [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
-(**blocked** on fresh explicitly approved Linux runner/remote action evidence;
-not implementation authorization), final merged-path Linux dual-backend Gate,
-remote GitHub Actions fuse-enforcement evidence, or any maturity row.
+**Does not close:** final merged-path Linux dual-backend Gate, remote GitHub
+Actions fuse-enforcement evidence, or any maturity row. Process-idle residual
+[ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
+is **done** separately via Phase B on Actions
+[30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) at
+tip `8a93ec6` (not by fuses alone; fuses did **not** fire on that run).
 
 Target workflow: `.github/workflows/ci.yml` — exact fuses:
 `concurrency.group: ${{ github.workflow }}-${{ github.ref }}`,
@@ -133,9 +135,12 @@ Forbidden masking:
 - Fuses are host bounds only; product fixes remain product tasks
   (errno done; process-idle residual
   [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
-  **blocked** on Linux runner authorization/evidence).
+  **done** via Phase B Pass path on tip `8a93ec6` / run
+  [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) —
+  not by fuses; that run completed normally so fuses did **not** fire).
 - No push required for the docs contract node; implementation node also
   must not claim a fresh remote Linux Gate unless that Gate task runs it.
+  Final merged-path Linux dual-backend Gate remains a separate open node.
 
 ## Budgets
 
@@ -158,8 +163,8 @@ Forbidden masking:
 
 - Process-idle fixture reliability
   ([ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md);
-  **blocked** on runner authorization/evidence).
-- Final merged-path remote Linux dual-backend Gate.
+  closed separately via Phase B evidence — not a fuses claim).
+- Final merged-path remote Linux dual-backend Gate (still open; separate node).
 - Product SIGINT/errno or fixture bound changes.
 - Prompt templates; maturity raise; secrets/permissions/trigger changes.
 - Soft success via timeout/cancel; reduced matrix; `continue-on-error`.
@@ -194,11 +199,13 @@ Forbidden masking:
 3. Independent review (`zag-task-delivery-4` → `candidate_for_coordinator`);
    coordinator ff-only local main `af293b0` → `97f43de` preserving unrelated
    canonical `.gitignore`; **no push**.
-4. Explicit record: process-idle residual
+4. Explicit record: process-idle residual later closed separately via Phase B
    ([ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
-   **blocked** on Linux runner authorization/evidence) + final remote Linux Gate
-   still pending; timeout/cancel not used as product correctness evidence;
-   remote Actions fuse enforcement **not** claimed exercised.
+   **done** @ tip `8a93ec6` / run
+   [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011);
+   fuses did **not** fire on that success run) + final remote Linux Gate still
+   pending as a separate node; timeout/cancel not used as product correctness
+   evidence; remote Actions fuse enforcement **not** claimed exercised.
 
 Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
 `97f43de`.
@@ -207,7 +214,7 @@ Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
 
 - Task: [ci-hang-ci-fuses-001](../plan/tasks/ci-hang-ci-fuses-001.md)
 - Predecessor: [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
-- Residual (blocked): [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
+- Process-idle residual (**done** Phase B): [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
 - Product CLI (unchanged by fuses): [cli-interaction](../modules/cli-interaction.md)
 - Provider contracts: [contracts.md](./contracts.md)
 - Dual-backend bake-off: [http-backend-bakeoff.md](./http-backend-bakeoff.md)
