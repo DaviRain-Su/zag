@@ -93,7 +93,7 @@ timeout/concurrency knobs.
 - status truth only: `docs/plan/README.md`, `docs/modules/README.md`,
   `docs/roadmap.md` (M0 follow-on note; no maturity raise)
 
-## Implementation (later code node — not this commit)
+## Implementation (`packages/zag-cli/src/sigint.zig`)
 
 - `packages/zag-cli/src/sigint.zig` only for product errno decode + comment fix
   and unit regressions under `builtin.is_test` (or adjacent focused test
@@ -247,15 +247,15 @@ F5 is full suite honesty without hiding fixture debt.
 - [x] Explicit `git add` of intended docs files only
 - [ ] One local docs commit on `task/ci-hang-001` (filled at commit)
 
-## Implementation Gate (later; not this commit)
+## Implementation Gate (this commit)
 
-- [ ] F1 pure raw-Linux errno regression green under std **and** curl test artifacts
-- [ ] F2 empty nonblocking drain terminates
-- [ ] F3–F4 pending-interrupt + focused SIGINT suite green
-- [ ] F5 full std + curl `zig build test --summary all` with honest reporting of any pre-existing idle process-fixture failure
-- [ ] False `posix.errno` normalization comment removed/corrected
-- [ ] Every audited Linux raw site uses `std.os.linux.errno` (or local alias of that function) only
-- [ ] No Linux product path switched to libc; no CI workflow edit; no maturity raise
+- [x] F1 pure raw-Linux errno regression green under std **and** curl test artifacts
+- [x] F2 empty nonblocking drain terminates
+- [x] F3–F4 pending-interrupt + focused SIGINT suite green
+- [x] F5 full std + curl `zig build test --summary all` (host run: both green; idle process-fixture not red on this host — still tracked separate if it reappears)
+- [x] False `posix.errno` normalization comment removed/corrected
+- [x] Every audited Linux raw site uses `std.os.linux.errno` via `linuxRawErrno` only
+- [x] No Linux product path switched to libc; no CI workflow edit; no maturity raise
 - [ ] Independent code review + ff-only merge + merged-main Gate before `done`
 
 # delivery evidence
@@ -263,17 +263,17 @@ F5 is full suite honesty without hiding fixture debt.
 | Item | Evidence |
 |------|----------|
 | Contract | `docs/modules/cli-interaction.md` |
-| Task | this file (`in-progress` at docs commit) |
-| Implementation | pending — `packages/zag-cli/src/sigint.zig` |
-| Fixtures F1–F4 | pending unit evidence in zag-cli tests |
-| Dual-backend Gate | pending implementation closeout |
+| Task | this file (`in-progress` — implementation commit; review pending) |
+| Implementation | `packages/zag-cli/src/sigint.zig` — `linuxRawErrno` on pipe2/read/fcntl sites |
+| Fixtures F1–F4 | F1 + F2 unit tests in `sigint.zig`; F3–F4 retained suite green |
+| Dual-backend Gate | `zig build test -Dhttp_backend=std --summary all` and `-Dhttp_backend=curl --summary all` |
 | Maturity | **unchanged** — no L2/L3 claim added |
 
 # non-goals (task boundary)
 
-See §9. This docs commit does not change production code, CI, or maturity.
+See §9. No CI workflow, process-fixture bound softening, or maturity raise.
 
 # closeout
 
-Pending implementation and independent verification. Docs-contract track only
-at task open.
+Implementation landed; independent contract/code review + merged-main Gate
+remain before `done`.

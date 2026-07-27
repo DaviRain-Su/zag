@@ -64,12 +64,13 @@
 //! NONBLOCK + CLOEXEC are set on both pipe ends so exec and blocking never
 //! interact.
 //!
-//! # Linux non-libc (review item 1)
+//! # Linux non-libc (review item 1 + ci-hang-sigint-linux-errno-001)
 //!
-//! No `std.c.*` libc dependency is introduced on Linux. Raw fd syscalls go
-//! through `std.posix.system` (=`std.os.linux` without libc, =`std.c` on
-//! macOS/BSD). The product executable is therefore never forced to `link_libc`
-//! by this module. macOS always has libc available (it is the platform ABI).
+//! No `std.c.*` libc dependency is introduced on Linux. Product Linux path uses
+//! raw `std.os.linux` syscalls so this module never forces `link_libc`. Raw
+//! kernel returns are decoded with `std.os.linux.errno` / `linuxRawErrno` only
+//! — never `std.posix.errno` (libc-shaped when `link_libc`, e.g. curl builds).
+//! macOS/BSD uses libc (`std.c`) return conventions (platform ABI).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -90,14 +91,26 @@ const supported = builtin.os.tag == .linux or
     builtin.os.tag == .openbsd;
 
 // ---------------------------------------------------------------------------
-// Raw, libc-free syscall shims (review item 1).
+// Raw syscall shims (review item 1 + ci-hang-sigint-linux-errno-001).
 //
-// `std.posix.system` resolves to `std.os.linux` (no libc) on Linux and to
-// `std.c` (libc) on macOS/BSD. The two return-type conventions differ
-// (linux raw syscalls return usize with errno encoded; libc returns c_int and
-// sets errno), but `std.posix.errno(rc)` normalises both. Each shim returns a
-// simple ok/err so callers stay platform-agnostic.
+// Linux product path: raw `std.os.linux.*` returning kernel `usize`. Errors are
+// encoded as negative errno in the signed window `(-4096, 0)` — **not** as
+// libc's `-1` + thread errno. Decode those results with `linuxRawErrno` /
+// `std.os.linux.errno` only. Do **not** pass them to `std.posix.errno` /
+// `std.c.errno`: when `builtin.link_libc` is true (curl-linked builds),
+// `posix.errno` is libc-shaped and misclassifies raw `-EAGAIN` as `.SUCCESS`,
+// which makes `sys.read` return a huge "byte count" and hangs `drainWake`.
+//
+// macOS/BSD product path: libc (`std.c`) return conventions (`-1` + thread
+// errno / existing c patterns). Never mix libc decode onto raw Linux results.
 // ---------------------------------------------------------------------------
+
+/// Kernel signed-window errno decode for raw Linux `usize` syscall results.
+/// Product path for every audited `std.os.linux` site below. Independent of
+/// `builtin.link_libc` — always kernel semantics.
+fn linuxRawErrno(rc: usize) std.os.linux.E {
+    return std.os.linux.errno(rc);
+}
 
 const sys = struct {
     /// Create a self-pipe with both ends NONBLOCK + CLOEXEC. Returns the fds.
@@ -109,7 +122,7 @@ const sys = struct {
             flags.NONBLOCK = true;
             flags.CLOEXEC = true;
             const rc = std.os.linux.pipe2(&fds, flags);
-            switch (posix.errno(rc)) {
+            switch (linuxRawErrno(rc)) {
                 .SUCCESS => return .{ fds[0], fds[1] },
                 else => return error.PipeFailed,
             }
@@ -166,15 +179,23 @@ const sys = struct {
     /// errors (P2 hygiene: not masqueraded as success).
     fn read(fd: fd_t, buf: []u8) error{ReadFailed}!usize {
         while (true) {
-            const rc = if (builtin.os.tag == .linux)
-                std.os.linux.read(fd, buf.ptr, buf.len)
-            else
-                std.c.read(fd, buf.ptr, buf.len);
-            switch (posix.errno(rc)) {
-                .SUCCESS => return @intCast(rc),
-                .INTR => continue,
-                .AGAIN => return 0,
-                else => return error.ReadFailed,
+            if (builtin.os.tag == .linux) {
+                const rc = std.os.linux.read(fd, buf.ptr, buf.len);
+                switch (linuxRawErrno(rc)) {
+                    .SUCCESS => return @intCast(rc),
+                    .INTR => continue,
+                    .AGAIN => return 0,
+                    else => return error.ReadFailed,
+                }
+            } else {
+                // Libc: success is byte count; errors are `-1` + thread errno.
+                const rc = std.c.read(fd, buf.ptr, buf.len);
+                switch (posix.errno(rc)) {
+                    .SUCCESS => return @intCast(rc),
+                    .INTR => continue,
+                    .AGAIN => return 0,
+                    else => return error.ReadFailed,
+                }
             }
         }
     }
@@ -186,9 +207,9 @@ const sys = struct {
     fn setCloexec(fd: fd_t) bool {
         if (builtin.os.tag == .linux) {
             const cur = std.os.linux.fcntl(fd, std.os.linux.F.GETFD, 0);
-            if (posix.errno(cur) != .SUCCESS) return true;
+            if (linuxRawErrno(cur) != .SUCCESS) return true;
             const rc = std.os.linux.fcntl(fd, std.os.linux.F.SETFD, std.os.linux.FD_CLOEXEC);
-            return posix.errno(rc) != .SUCCESS;
+            return linuxRawErrno(rc) != .SUCCESS;
         }
         const cur = std.c.fcntl(fd, std.c.F.GETFD);
         if (cur < 0) return true;
@@ -201,12 +222,12 @@ const sys = struct {
     fn setFlagStatus(fd: fd_t, nonblock: bool) bool {
         if (builtin.os.tag == .linux) {
             const cur = std.os.linux.fcntl(fd, std.os.linux.F.GETFL, 0);
-            if (posix.errno(cur) != .SUCCESS) return true;
+            if (linuxRawErrno(cur) != .SUCCESS) return true;
             const cur_u: u32 = @intCast(cur);
             const nonblock_bit: u32 = O_NONBLOCK_LINUX;
             const new_u: u32 = if (nonblock) (cur_u | nonblock_bit) else (cur_u & ~nonblock_bit);
             const rc = std.os.linux.fcntl(fd, std.os.linux.F.SETFL, new_u);
-            return posix.errno(rc) != .SUCCESS;
+            return linuxRawErrno(rc) != .SUCCESS;
         }
         // macOS: O_NONBLOCK is a plain integer flag on libc.
         const cur = std.c.fcntl(fd, std.c.F.GETFL);
@@ -907,4 +928,50 @@ test "readInterruptibleLine retains same-batch bytes across two calls (review it
         .line => |l| try std.testing.expectEqualStrings("second", l),
         else => return error.TestUnexpectedResult,
     }
+}
+
+// ---------------------------------------------------------------------------
+// ci-hang-sigint-linux-errno-001 fixtures (F1 / F2)
+// ---------------------------------------------------------------------------
+
+/// Kernel raw encoding of a negative Linux errno as `usize` (signed-window).
+fn syntheticLinuxRc(err: std.os.linux.E) usize {
+    const neg: isize = -@as(isize, @intFromEnum(err));
+    return @bitCast(neg);
+}
+
+test "F1: raw Linux -EAGAIN decodes via linuxRawErrno independent of link_libc" {
+    // Pure unit: no host thread errno, no real syscall. Exercises the same
+    // helper every audited Linux product site uses (pipe2/read/fcntl).
+    const again_rc = syntheticLinuxRc(.AGAIN);
+    const intr_rc = syntheticLinuxRc(.INTR);
+    try std.testing.expectEqual(std.os.linux.E.AGAIN, linuxRawErrno(again_rc));
+    try std.testing.expectEqual(std.os.linux.E.INTR, linuxRawErrno(intr_rc));
+    try std.testing.expect(linuxRawErrno(again_rc) != .SUCCESS);
+    try std.testing.expectEqual(std.os.linux.E.SUCCESS, linuxRawErrno(0));
+    try std.testing.expectEqual(std.os.linux.E.SUCCESS, linuxRawErrno(64));
+
+    // Under link_libc, libc-shaped posix.errno only treats rc == -1 as error.
+    // Kernel -EAGAIN is a large unsigned value, not -1 — so posix.errno would
+    // falsely report SUCCESS (the hang class this fixture locks out).
+    if (builtin.link_libc) {
+        try std.testing.expect(posix.errno(again_rc) == .SUCCESS);
+    }
+    // Record link_libc so dual-backend Gate (std vs curl) both exercise this.
+    _ = builtin.link_libc;
+}
+
+test "F2: empty nonblocking wake-pipe drain terminates" {
+    if (!supported) return;
+    // NONBLOCK pipe with no data: sys.read must return 0 (would-block), and
+    // drainWake must not spin. Bounded by the syscall itself — no sleeps.
+    const fds = try sys.pipe();
+    defer sys.close(fds[0]);
+    defer sys.close(fds[1]);
+    var buf: [8]u8 = undefined;
+    const got = try sys.read(fds[0], &buf);
+    try std.testing.expectEqual(@as(usize, 0), got);
+    drainWake(fds[0]);
+    const got2 = try sys.read(fds[0], &buf);
+    try std.testing.expectEqual(@as(usize, 0), got2);
 }

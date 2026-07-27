@@ -11,9 +11,11 @@ This module owns plain CLI and REPL behavior. Machine output remains defined by
 remain defined by [sdk-contract.md](./sdk-contract.md).
 
 **Lifecycle status:** M0 Ctrl+C contract closed by `cli-sigint-001` at `d542332`.
-**Active follow-on:** `ci-hang-sigint-linux-errno-001` (**in-progress**, docs-first)
-binds raw-Linux errno decoding so self-pipe drains terminate under curl-linked
-`link_libc` without switching product Linux paths to libc or raising maturity.
+**Active follow-on:** `ci-hang-sigint-linux-errno-001` (**in-progress**, implementation
+landed in `packages/zag-cli/src/sigint.zig` via `linuxRawErrno` /
+`std.os.linux.errno`; independent review + merge Gate pending) binds raw-Linux
+errno decoding so self-pipe drains terminate under curl-linked `link_libc`
+without switching product Linux paths to libc or raising maturity.
 
 ## Ownership boundary
 
