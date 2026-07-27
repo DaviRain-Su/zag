@@ -1,7 +1,7 @@
 ---
 id: ci-hang-ci-fuses-001
 scope: quality/ci-fuses
-status: in-progress
+status: done
 priority: P0
 depends-on:
   - ci-hang-sigint-linux-errno-001
@@ -13,8 +13,7 @@ Add **bounded GitHub Actions safety fuses** to the existing mandatory
 `ubuntu-latest` + `macos-latest` std+curl CI matrix so runaway or
 superseded runs cannot hang indefinitely and stack on the same ref.
 
-Exact implementation shape (implementation node only; this commit is
-**docs-first** and does **not** edit `.github`):
+Exact implementation shape:
 
 1. Top-level `concurrency` on `.github/workflows/ci.yml`:
    - `group: ${{ github.workflow }}-${{ github.ref }}`
@@ -32,7 +31,7 @@ Binding quality contract: [CI safety fuses](../../quality/README.md).
 Depends on completed `ci-hang-sigint-linux-errno-001` (done @ `bc737025`).
 Does **not** close process-idle fixture work or the final merged-path
 Linux dual-backend Gate. No remote Linux run and **no push** in this
-docs node. Maturity unchanged.
+node. Maturity unchanged.
 
 # context
 
@@ -54,7 +53,7 @@ errno decode, or idle fixtures are correct.
 |------|--------|--------------|
 | [ci-hang-sigint-linux-errno-001](./ci-hang-sigint-linux-errno-001.md) | **done** @ `bc737025` | Required predecessor; raw Linux errno decode under `link_libc` |
 | `ci-hang-sigint-process-idle-001` | planned (no task file yet) | Separate idle process-fixture reliability; **not** this node |
-| **ci-hang-ci-fuses-001** (this) | **in-progress** (docs contract) | Workflow concurrency + per-job timeout only |
+| **ci-hang-ci-fuses-001** (this) | **done** (workflow fuses) | Workflow concurrency + per-job timeout only |
 | final merged-path Linux dual-backend Gate | planned | Fresh remote Linux runner after idle + fuses; still required before prompt-templates |
 
 ## Out of path (hard)
@@ -65,12 +64,12 @@ errno decode, or idle fixtures are correct.
 - Secrets, permissions, branch trigger changes
 - Softening coverage via reduced matrix, `continue-on-error`, or
   treating timeout as green product evidence
-- Remote Linux runner execution or `git push` in this docs node
+- Remote Linux runner execution or `git push` in this node
 
 ## References
 
 - Binding: [docs/quality/README.md](../../quality/README.md) (CI safety fuses)
-- Workflow target: `.github/workflows/ci.yml` (implementation node only)
+- Workflow target: `.github/workflows/ci.yml`
 - Predecessor: [ci-hang-sigint-linux-errno-001](./ci-hang-sigint-linux-errno-001.md)
 - CLI product contract (unchanged by fuses): [cli-interaction](../../modules/cli-interaction.md)
 - Dual-backend truth: [zag-ai-provider](../../modules/zag-ai-provider.md),
@@ -78,15 +77,14 @@ errno decode, or idle fixtures are correct.
 
 # path
 
-## Docs (this node — contract + status truth)
+## Docs (contract + status truth)
 
 - `docs/plan/tasks/ci-hang-ci-fuses-001.md` — this task
 - `docs/quality/README.md` — binding CI-quality contract (safety fuses)
-- status truth only: `docs/plan/README.md`, `docs/roadmap.md`
-  (optional light cross-links in modules/cli-interaction if needed for
-  “task file authored” honesty; **no** maturity change)
+- status truth: `docs/plan/README.md`, `docs/roadmap.md`, module index /
+  cli-interaction cross-links; **no** maturity change
 
-## Implementation (later node — not this commit)
+## Implementation
 
 - `.github/workflows/ci.yml` **only** for:
   - top-level `concurrency` block
@@ -200,7 +198,7 @@ success from cancellation.
 | Concurrency | One active in-progress run per `workflow+ref` group (older canceled) |
 | Matrix size | Exactly two OS entries; no reduction |
 | Dual-backend steps | Both full `zig build test` paths mandatory with `--summary all` |
-| Docs Gate (this node) | `zig build docs-lint` + `git diff --check`; no full product suite required for docs-only commit |
+| Docs Gate | `zig build docs-lint` + `git diff --check` |
 
 ## 8. Compatibility
 
@@ -226,17 +224,17 @@ success from cancellation.
 
 ## 10. Executable fixtures / verification (Gates)
 
-### F0 — Docs contract Gate (this node)
+### F0 — Docs contract Gate (complete)
 
 | # | Check | Binding assertion |
 |---|-------|-------------------|
 | F0a | Task + quality contract authored | This file + [quality/README.md](../../quality/README.md) define ownership, shape, non-goals, fixtures |
-| F0b | Status truth | plan/roadmap list `ci-hang-ci-fuses-001` as **in-progress** with task link; process-idle + final Linux Gate remain pending |
+| F0b | Status truth | plan/roadmap list this task with task link; process-idle + final Linux Gate remain pending |
 | F0c | `zig build docs-lint` | Pass from task worktree |
-| F0d | `git diff --check` | Clean on intended docs range |
-| F0e | Scope | No `.github` edit, no product Zig, no maturity raise, no push |
+| F0d | `git diff --check` | Clean on intended range |
+| F0e | Scope | No product Zig, no maturity raise, no push |
 
-### F1 — Static workflow shape (implementation node)
+### F1 — Static workflow shape (implementation)
 
 | # | Check | Binding assertion |
 |---|-------|-------------------|
@@ -268,47 +266,59 @@ or documented checklist — but F1 keys are **mandatory** before `done`.
 |------|--------|
 | Remote `ubuntu-latest` GitHub Actions run after merge | **Pending** final Linux dual-backend Gate |
 | `ci-hang-sigint-process-idle-001` | **Pending** (separate task file not yet authored) |
-| Push to origin | **Forbidden** in this docs node; not required for fuses docs |
+| Push to origin | **Forbidden** in this node; not required for fuses |
 
 # verification
 
-## Docs Gate (this commit)
+## Docs Gate (complete)
 
 - [x] Binding quality contract + task authored before `.github` edit
-- [x] Status truth → in-progress for `ci-hang-ci-fuses-001`
+- [x] Status truth for docs-first contract node
 - [x] `zig build docs-lint` / `python3 scripts/lint_docs.py`
 - [x] `git diff --check`
-- [x] Explicit `git add` of intended docs/quality/plan files only
+- [x] Explicit `git add` of intended docs/quality/plan files only (docs node)
 - [x] One local docs commit on `task/ci-hang-ci-fuses-001`
-- [x] No `.github` change; no product Zig; no maturity raise; no push
+- [x] Docs node: no product Zig; no maturity raise; no push
 
-## Implementation Gate (later)
+## Implementation Gate
 
-- [ ] F1a–F1h static shape pass
-- [ ] F2a–F2e local std/curl/docs/diff pass
+- [x] F1a–F1h static shape pass (workflow concurrency + job timeout; matrix/steps/triggers preserved; no continue-on-error)
+- [x] F2a–F2e local std/curl/docs/diff pass (host gates; timeout/cancel not product proof)
 - [ ] Independent review; ff-only merge path; no soft-success masking
-- [ ] Record that process-idle + final remote Linux Gate remain open
+- [x] Record that process-idle + final remote Linux Gate remain open
 
 # delivery evidence
 
 | Item | Evidence |
 |------|----------|
-| Contract | `docs/quality/README.md` (CI safety fuses section) |
-| Task | this file `in-progress` (docs-first) |
-| Implementation | **not yet** — `.github/workflows/ci.yml` reserved for implementer |
-| Fixtures F0 | this docs commit |
-| Fixtures F1–F2 | pending implementation node |
+| Contract | `docs/quality/README.md` (CI safety fuses section); docs-first @ `f0ccca6` |
+| Task | this file `done` (implementation) |
+| Implementation | `.github/workflows/ci.yml` — top-level `concurrency` + `jobs.test.timeout-minutes: 30` |
+| Fixtures F0 | docs-first commit `f0ccca6` |
+| Fixtures F1–F2 | F1 static shape PASS; local std **611/611**, curl **610/610**; docs-lint readability **91** / security **73**; `git diff --check` clean |
 | Maturity | **unchanged** |
-| Not claimed | remote Linux runner; process-idle; product hang closed by timeout alone; push |
+| Not claimed | remote Linux runner; process-idle; product hang closed by timeout alone; push; independent review/ff-merge |
 
 # non-goals (task boundary)
 
-See §9. Docs node only: no workflow YAML, no product code, no remote run,
-no push. Broader Linux reliability still requires process-idle + final
-merged-path Linux dual-backend Gate before prompt-templates.
+See §9. No product code, no remote run, no push. Broader Linux reliability
+still requires process-idle + final merged-path Linux dual-backend Gate
+before prompt-templates.
 
 # closeout
 
-_Not closed._ Docs-first contract open for implementation. Predecessor
-`ci-hang-sigint-linux-errno-001` remains done @ `bc737025`. Maturity
-unchanged.
+Implementation landed: top-level concurrency
+`group: ${{ github.workflow }}-${{ github.ref }}` with
+`cancel-in-progress: true`, and `jobs.test.timeout-minutes: 30` on the
+mandatory dual-OS dual-backend matrix. All prior steps/triggers preserved;
+no `continue-on-error`; no product Zig; maturity unchanged; **no push**.
+
+Predecessor `ci-hang-sigint-linux-errno-001` remains done @ `bc737025`.
+
+**Still open (explicit):**
+- `ci-hang-sigint-process-idle-001` (planned; no task file yet)
+- final merged-path Linux dual-backend Gate (fresh remote Linux runner)
+- independent review + ff-only merge for this branch
+
+Timeouts and concurrency cancellations remain **visible failures/cancellations**
+only — never product SIGINT/errno/idle correctness evidence.

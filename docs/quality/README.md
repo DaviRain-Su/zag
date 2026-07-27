@@ -23,8 +23,8 @@ Also: `zig build docs-lint` / `zig build test`
 
 **Task:** [ci-hang-ci-fuses-001](../plan/tasks/ci-hang-ci-fuses-001.md)
 
-**Status:** in-progress (docs-first contract; `.github` edit is the
-implementation node).
+**Status:** done (workflow fuses landed in `.github/workflows/ci.yml`;
+process-idle + final remote Linux Gate still open; maturity unchanged).
 
 **Depends on:** [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 (done @ `bc737025`).
@@ -33,8 +33,8 @@ implementation node).
 yet), final merged-path Linux dual-backend Gate, remote Linux runner evidence,
 or any maturity row.
 
-Target workflow: `.github/workflows/ci.yml` (implementation only after this
-contract).
+Target workflow: `.github/workflows/ci.yml` (top-level concurrency +
+`jobs.test.timeout-minutes: 30`).
 
 ## Ownership
 
@@ -158,14 +158,14 @@ Forbidden masking:
 
 ## Executable fixtures
 
-### Docs Gate (contract node)
+### Docs Gate (contract node) — complete @ `f0ccca6`
 
 1. Task file + this contract define exact keys/placement/non-goals.
-2. Status truth marks `ci-hang-ci-fuses-001` **in-progress**.
+2. Status truth marks fuses task with binding links.
 3. `zig build docs-lint` and `git diff --check` pass.
-4. No `.github` edit in the docs-only commit.
+4. Docs-only commit had no `.github` edit (implementation is separate).
 
-### Static workflow Gate (implementation node)
+### Static workflow Gate (implementation) — required shape
 
 1. Top-level `concurrency.group` is exactly
    `${{ github.workflow }}-${{ github.ref }}`.

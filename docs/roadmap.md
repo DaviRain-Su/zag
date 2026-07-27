@@ -61,7 +61,7 @@ M0 — interaction reliability
         │
         └─► ci-hang-sigint-linux-errno-001 ✅ bc737025
               │
-              ├─► ci-hang-ci-fuses-001 (in-progress; docs contract)
+              ├─► ci-hang-ci-fuses-001 ✅ (host concurrency + 30m timeout)
               ├─► ci-hang-sigint-process-idle-001 (planned; no task file yet)
               └─► final merged-path Linux dual-backend Gate (planned)
         │
@@ -112,10 +112,11 @@ both std and curl-linked test artifacts; local host gates passed. Does not raise
 separately tracked idle process-fixture timeout; does not change CI workflows. **No push.**
 
 **Broader Linux reliability is not closed:** no fresh post-fix remote Linux runner ran in the closeout session.
-Separately planned `ci-hang-sigint-process-idle-001` (task file not yet authored),
-[ci-hang-ci-fuses-001](./plan/tasks/ci-hang-ci-fuses-001.md) (**in-progress**, docs-first; binding
-[quality/README](./quality/README.md); `.github` not yet edited; no push), and the final merged-path Linux
+Separately planned `ci-hang-sigint-process-idle-001` (task file not yet authored) and the final merged-path Linux
 dual-backend Gate remain required before prompt-templates work.
+[ci-hang-ci-fuses-001](./plan/tasks/ci-hang-ci-fuses-001.md) is **done** as host rails only (binding
+[quality/README](./quality/README.md); top-level concurrency + 30m job timeout; **no push**; timeout/cancel ≠
+product hang proof).
 
 Contract: [CLI interaction](./modules/cli-interaction.md). CI fuses quality contract:
 [quality/README](./quality/README.md).

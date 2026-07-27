@@ -318,8 +318,8 @@ Broader Linux reliability and prompt-templates remain outside this node.
   artifacts; local host gates passed.
 - **Not closed by this node:** no fresh post-fix remote Linux runner was run
   in the closeout session. Separately planned `ci-hang-sigint-process-idle-001`,
-  `ci-hang-ci-fuses-001` (idle fixture and CI fuses remain unimplemented /
-  planned; task files not yet authored — no links), and the final merged-path
-  Linux dual-backend Gate remain **required** before prompt-templates work.
+  `ci-hang-ci-fuses-001` (later done as host concurrency + 30m timeout rails;
+  timeout/cancel ≠ product hang proof), and the final merged-path Linux
+  dual-backend Gate remain **required** before prompt-templates work.
 - Maturity unchanged. No `.github`, source, `.gitignore`, quality-score body,
   or prompt-template edits in this closeout.
