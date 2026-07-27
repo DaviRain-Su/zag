@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **23/23** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **contract PASS** @ `07b8dab` (implementation **not started**; Tools write/edit stays L2); then minimal TUI |
+| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **contract PASS** @ `07b8dab` (first-slice on branch, task **in-progress**/L2; no L3 claim); then minimal TUI |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -86,7 +86,7 @@ M2 — selected daily UX
   skills-001 ✅ caafef5 → prompt-templates-001 ✅ 61326ae
         │
         ├──────────────┐
-        │       edit-sharpness-001 (contract PASS @ 07b8dab; impl not started)
+        │       edit-sharpness-001 (contract PASS @ 07b8dab; branch impl; in-progress/L2)
         └──────────────┬──────────────┘
                        ▼
                  tui-minimal-001
@@ -171,7 +171,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 |------|-----------|------------------|
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
-| [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **contract PASS** @ `07b8dab`: freeze `apply_hunk` + digest `read_file` + mandatory hunk review + optional post-commit verifier ([tools-edit](./modules/tools-edit.md)); overall **in-progress**, implementation **not started** (later separately dispatched node) | no AST/LSP; no multi-file txn; no Core/schema change; Tools write/edit stays L2 |
+| [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **contract PASS** @ `07b8dab`: freeze + first-slice branch impl of `apply_hunk` + digest `read_file` + mandatory hunk review + optional post-commit verifier ([tools-edit](./modules/tools-edit.md)); overall **in-progress**/L2 (merged-main closeout pending) | no AST/LSP; no multi-file txn; no Core/schema change; Tools write/edit stays L2 |
 | `tui-minimal-001` | streaming text, multiline input, Tool/permission/error cards | no dashboard/theme/image/plugin platform |
 
 Minimal TUI depends on the event/control contracts; it must only assemble Kernel APIs and keep plain/headless Gates green.
@@ -213,7 +213,7 @@ E3 is a formal direction, not current implementation. The first WASM host is com
 
 | Domain | Near-term slice | Deferred |
 |--------|-----------------|----------|
-| C4 Edit | `edit-sharpness-001` in M2 — **contract PASS** @ `07b8dab` ([task](./plan/tasks/edit-sharpness-001.md), [C4](./phases/C4-edit-sharpness.md)); implementation **not started** | multi-file transactions, AST/LSP, multi-hunk apply_patch platform |
+| C4 Edit | `edit-sharpness-001` in M2 — **contract PASS** @ `07b8dab` ([task](./plan/tasks/edit-sharpness-001.md), [C4](./phases/C4-edit-sharpness.md)); first-slice on branch, task **in-progress**/L2 | multi-file transactions, AST/LSP, multi-hunk apply_patch platform |
 | C5 Context | idle-only durable session fork closed in M1 | full tree/journal and repo map deferred; LLM summary optional; Memory default-off |
 | C6 Control/Orchestration | steering/follow-up in M1 | Oracle, executable subagents, Graph |
 | C7 Process/Sandbox | none | process supervisor only when executable/background use appears; OS enforcement after that |

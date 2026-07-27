@@ -37,6 +37,7 @@ pub const read_file_def: tool.Definition = .{
     .description =
     \\Read a UTF-8 text file relative to the working directory.
     \\Large files are truncated. Returns the file contents as text.
+    \\Optional include_digest=true prefixes a full-file SHA-256 meta line (files ≤512 KiB).
     ,
     .parameters_json =
     \\{
@@ -45,6 +46,10 @@ pub const read_file_def: tool.Definition = .{
     \\    "path": {
     \\      "type": "string",
     \\      "description": "File path relative to the working directory."
+    \\    },
+    \\    "include_digest": {
+    \\      "type": "boolean",
+    \\      "description": "When true, prefix body with full-file SHA-256 meta (files ≤512 KiB only)."
     \\    }
     \\  },
     \\  "required": ["path"],
@@ -116,6 +121,10 @@ const max_walk_depth: u32 = 32;
 const max_dir_entries: u32 = 4096;
 const glob_frame_stack_max: u32 = 128;
 const binary_probe_bytes: usize = 4096;
+/// C4 B3: full-file digest input hard cap (same as mutator write budget).
+const max_digest_file_bytes: u32 = 512 * 1024;
+const fs_meta_v1_prefix = "meta: format=fs-meta-v1 sha256=";
+const body_limit_marker = "... incomplete: format=fs-v1 reason=body_limit\n";
 
 const FsLimitReason = enum {
     body_limit,
@@ -331,6 +340,9 @@ pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []cons
 
     if (path.len == 0) return error.InvalidArguments;
 
+    // B3: include_digest must be JSON boolean when present; omitted/false → byte-identical.
+    const include_digest = try parseIncludeDigest(ctx.allocator, arguments_json);
+
     var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
     defer guard.deinit(ctx.allocator);
 
@@ -339,7 +351,90 @@ pub fn readFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []cons
     };
 
     const limits = activeLimits();
-    return readFileBounded(ctx, path, limits);
+    if (!include_digest) {
+        return readFileBounded(ctx, path, limits);
+    }
+    return readFileWithDigest(ctx, path, limits);
+}
+
+/// Parse optional `include_digest`. Missing/false → false; true → true; non-bool → InvalidArguments.
+fn parseIncludeDigest(gpa: std.mem.Allocator, arguments_json: []const u8) tool.HandlerError!bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, arguments_json, .{}) catch
+        return error.InvalidArguments;
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.InvalidArguments;
+    const val = parsed.value.object.get("include_digest") orelse return false;
+    return switch (val) {
+        .bool => |b| b,
+        else => error.InvalidArguments,
+    };
+}
+
+fn readFileWithDigest(ctx: tool.Context, path: []const u8, limits: FsLimits) tool.HandlerError![]u8 {
+    const digest_cap: usize = max_digest_file_bytes;
+    const sentinel_len = std.math.add(usize, digest_cap, 1) catch return error.OutOfMemory;
+    const bytes = try readFilePrefixAlloc(ctx, path, sentinel_len);
+    defer ctx.allocator.free(bytes);
+
+    if (bytes.len > digest_cap) {
+        // Soft too_large — no meta line and no partial meta/content digest body (B3).
+        return std.fmt.allocPrint(
+            ctx.allocator,
+            "error: code=too_large path={s}: file exceeds {d} bytes for include_digest",
+            .{ path, digest_cap },
+        ) catch return error.OutOfMemory;
+    }
+
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    var hex_buf: [64]u8 = undefined;
+    const hex = "0123456789abcdef";
+    for (digest, 0..) |byte, i| {
+        hex_buf[i * 2] = hex[byte >> 4];
+        hex_buf[i * 2 + 1] = hex[byte & 0xf];
+    }
+
+    // meta: format=fs-meta-v1 sha256=<64 lowercase hex> size=<unpadded decimal>\n
+    var meta_buf: [128]u8 = undefined;
+    const meta = std.fmt.bufPrint(
+        &meta_buf,
+        "{s}{s} size={d}\n",
+        .{ fs_meta_v1_prefix, hex_buf[0..], bytes.len },
+    ) catch return error.ToolFailed;
+    const meta_len = meta.len;
+    const body_cap = limits.body_bytes;
+    const file_size = bytes.len;
+
+    const full_with_meta = std.math.add(usize, meta_len, file_size) catch return error.OutOfMemory;
+    if (full_with_meta <= body_cap) {
+        const out = ctx.allocator.alloc(u8, full_with_meta) catch return error.OutOfMemory;
+        @memcpy(out[0..meta_len], meta);
+        @memcpy(out[meta_len..][0..file_size], bytes);
+        return out;
+    }
+
+    // Reserve full marker first; maximal content prefix under checked arithmetic (B4).
+    const marker_len = body_limit_marker.len;
+    const reserved = std.math.add(usize, meta_len, marker_len) catch return error.OutOfMemory;
+    if (reserved > body_cap) return error.ToolFailed;
+    const content_prefix_len = body_cap - reserved;
+    const total = std.math.add(usize, reserved, content_prefix_len) catch return error.OutOfMemory;
+    std.debug.assert(total == body_cap);
+    std.debug.assert(total <= body_cap);
+
+    const out = ctx.allocator.alloc(u8, total) catch return error.OutOfMemory;
+    @memcpy(out[0..meta_len], meta);
+    const take = @min(content_prefix_len, file_size);
+    @memcpy(out[meta_len..][0..take], bytes[0..take]);
+    // If take < content_prefix_len, still emit exact one marker at the reserved slot.
+    // Body formula: meta + content_prefix + marker; pad content to content_prefix_len only when file has it.
+    // When file_size > content_prefix_len, take == content_prefix_len.
+    std.debug.assert(take == content_prefix_len or file_size <= content_prefix_len);
+    // If full_with_meta > body_cap then file_size > body_cap - meta_len >= content_prefix_len,
+    // so take == content_prefix_len.
+    std.debug.assert(take == content_prefix_len);
+    @memcpy(out[meta_len + content_prefix_len ..][0..marker_len], body_limit_marker);
+    return out;
 }
 
 pub fn grep(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
@@ -1902,5 +1997,117 @@ test "walker nested resolve failures emit bounded io_skip while exclusions remai
         try std.testing.expect(faults.observed);
         try std.testing.expect(body.len <= limit);
         try expectFsMarker(body, "io_skip");
+    }
+}
+
+// ── edit-sharpness-001 include_digest (B3/B4) ───────────────────────────────
+
+test "edit-sharp §10.10 include_digest omitted false true caps and boundaries" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const content = "hello digest world\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = content });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    // omitted → byte-identical to raw
+    const raw = try readFile(ctx, null, "{\"path\":\"t.txt\"}");
+    defer gpa.free(raw);
+    try std.testing.expectEqualStrings(content, raw);
+
+    // false → byte-identical
+    const raw_false = try readFile(ctx, null, "{\"path\":\"t.txt\",\"include_digest\":false}");
+    defer gpa.free(raw_false);
+    try std.testing.expectEqualStrings(content, raw_false);
+    try std.testing.expectEqualStrings(raw, raw_false);
+
+    // non-boolean → invalid_arguments
+    try std.testing.expectError(
+        error.InvalidArguments,
+        readFile(ctx, null, "{\"path\":\"t.txt\",\"include_digest\":\"yes\"}"),
+    );
+    try std.testing.expectError(
+        error.InvalidArguments,
+        readFile(ctx, null, "{\"path\":\"t.txt\",\"include_digest\":1}"),
+    );
+    try std.testing.expectError(
+        error.InvalidArguments,
+        readFile(ctx, null, "{\"path\":\"t.txt\",\"include_digest\":null}"),
+    );
+
+    // true → meta + content
+    const with = try readFile(ctx, null, "{\"path\":\"t.txt\",\"include_digest\":true}");
+    defer gpa.free(with);
+    try std.testing.expect(std.mem.startsWith(u8, with, "meta: format=fs-meta-v1 sha256="));
+    try std.testing.expect(std.mem.indexOf(u8, with, " size=19\n") != null);
+    // content after first newline of meta
+    const nl = std.mem.indexOfScalar(u8, with, '\n').?;
+    try std.testing.expectEqualStrings(content, with[nl + 1 ..]);
+    // verify sha matches
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(content, &digest, .{});
+    var hex: [64]u8 = undefined;
+    const hexchars = "0123456789abcdef";
+    for (digest, 0..) |byte, i| {
+        hex[i * 2] = hexchars[byte >> 4];
+        hex[i * 2 + 1] = hexchars[byte & 0xf];
+    }
+    try std.testing.expect(std.mem.indexOf(u8, with, hex[0..]) != null);
+    try std.testing.expect(std.mem.indexOf(u8, with, body_limit_marker) == null);
+
+    // > 512 KiB → too_large, no meta
+    {
+        const over = try gpa.alloc(u8, @as(usize, max_digest_file_bytes) + 1);
+        defer gpa.free(over);
+        @memset(over, 'X');
+        try tmp.dir.writeFile(io, .{ .sub_path = "big.txt", .data = over });
+        const body = try readFile(ctx, null, "{\"path\":\"big.txt\",\"include_digest\":true}");
+        defer gpa.free(body);
+        try std.testing.expect(std.mem.indexOf(u8, body, "too_large") != null);
+        try std.testing.expect(std.mem.indexOf(u8, body, "fs-meta-v1") == null);
+        try std.testing.expect(std.mem.indexOf(u8, body, "meta:") == null);
+    }
+
+    // N/N+1 meta boundary: meta + content exactly at body_cap has no marker;
+    // meta + content + 1 has marker.
+    {
+        // Compute meta length for a known size.
+        // meta: format=fs-meta-v1 sha256=<64> size=<digits>\n
+        // We'll craft content so meta_len + content_len == body_cap and == body_cap+1.
+        const body_cap = tool.max_result_bytes;
+        // First get meta_len for size with known digit count via trial.
+        // Use size with fixed digits: pick content_len so size decimal length is stable.
+        // meta base without size digits: "meta: format=fs-meta-v1 sha256=" + 64 + " size=" + "\n"
+        const meta_base_without_digits = fs_meta_v1_prefix.len + 64 + " size=".len + 1; // +1 for \n
+        // For content_len in 10000..99999 → 5 digits
+        // content_len = body_cap - meta_base_without_digits - 5
+        const digits: usize = 5;
+        const content_exact = body_cap - meta_base_without_digits - digits;
+        try std.testing.expect(content_exact >= 10000 and content_exact <= 99999);
+
+        const exact_bytes = try gpa.alloc(u8, content_exact);
+        defer gpa.free(exact_bytes);
+        @memset(exact_bytes, 'E');
+        try tmp.dir.writeFile(io, .{ .sub_path = "exact_meta.txt", .data = exact_bytes });
+        const exact_body = try readFile(ctx, null, "{\"path\":\"exact_meta.txt\",\"include_digest\":true}");
+        defer gpa.free(exact_body);
+        try std.testing.expect(exact_body.len <= body_cap);
+        try std.testing.expect(std.mem.startsWith(u8, exact_body, "meta: format=fs-meta-v1"));
+        try std.testing.expect(std.mem.indexOf(u8, exact_body, body_limit_marker) == null);
+        try std.testing.expectEqual(body_cap, exact_body.len);
+
+        const over_bytes = try gpa.alloc(u8, content_exact + 1);
+        defer gpa.free(over_bytes);
+        @memset(over_bytes, 'O');
+        try tmp.dir.writeFile(io, .{ .sub_path = "over_meta.txt", .data = over_bytes });
+        const over_body = try readFile(ctx, null, "{\"path\":\"over_meta.txt\",\"include_digest\":true}");
+        defer gpa.free(over_body);
+        try std.testing.expect(over_body.len <= body_cap);
+        try std.testing.expect(std.mem.startsWith(u8, over_body, "meta: format=fs-meta-v1"));
+        try std.testing.expect(std.mem.endsWith(u8, over_body, body_limit_marker));
+        // exactly one marker
+        const first = std.mem.indexOf(u8, over_body, body_limit_marker).?;
+        try std.testing.expect(std.mem.indexOfPos(u8, over_body, first + 1, body_limit_marker) == null);
     }
 }

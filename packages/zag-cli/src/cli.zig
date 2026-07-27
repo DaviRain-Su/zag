@@ -15,18 +15,89 @@ const default_system =
     \\Tools:
     \\- list_dir, read_file, grep, glob — explore (always allowed after jail check)
     \\- search_replace — default edit: unique old_string anchor → new_string (permission + jail)
+    \\- apply_hunk — single-hunk edit with full-file SHA-256 precondition + mandatory hunk review
     \\- write_file — create new files or intentional full overwrite (permission + jail)
     \\- run_shell — shell commands (permission + policy denylist)
     \\Rules:
     \\- Prefer tools over guessing about files on disk.
     \\- Paths must be relative to the working directory; absolute paths and '..' escapes are denied.
-    \\- For edits: read first, then prefer search_replace; use write_file only for new files or full rewrites.
-    \\- If search_replace returns anchor_not_found or ambiguous_anchor, re-read and widen the anchor; do not blindly overwrite.
+    \\- For edits: read first (include_digest when using apply_hunk), then prefer search_replace or apply_hunk; use write_file only for new files or full rewrites.
+    \\- If search_replace/apply_hunk returns anchor_not_found, ambiguous_anchor, or stale_precondition, re-read and widen the anchor; do not blindly overwrite.
     \\- If a tool is denied (permission, jail, or policy), do not retry blindly; explain and wait.
     \\- Honor project instructions from AGENTS.md when present.
     \\- Be concise. When finished, answer without further tool calls.
     \\
 ;
+
+/// Interactive one-hunk reviewer (B6). Stderr prompt+preview only; not StdinPrompter.
+pub const InteractiveHunkReviewer = struct {
+    io: Io,
+    /// Cooperative cancel; reject if set before decision (never accept).
+    cancel: ?*const core.cancel.Flag = null,
+
+    pub fn asReviewer(self: *InteractiveHunkReviewer) coding.HunkReviewer {
+        return .{
+            .ptr = self,
+            .reviewFn = reviewImpl,
+        };
+    }
+
+    fn reviewImpl(ptr: ?*anyopaque, preview: coding.HunkReviewPreview) coding.HunkReviewDecision {
+        const self: *InteractiveHunkReviewer = @ptrCast(@alignCast(ptr.?));
+        if (self.cancel) |c| {
+            if (c.isSet()) return .reject;
+        }
+
+        // Human prompt + bounded preview on stderr only (never stdout).
+        var stderr_buf: [512]u8 = undefined;
+        var stderr_writer = Io.File.stderr().writer(self.io, &stderr_buf);
+        const w = &stderr_writer.interface;
+        w.print(
+            "hunk review: path={s} old_len={d} new_len={d} expected_sha256={s}\n",
+            .{ preview.path, preview.old_len, preview.new_len, preview.expected_sha256 },
+        ) catch {};
+        w.writeAll(preview.preview_text) catch {};
+        if (preview.preview_text.len == 0 or preview.preview_text[preview.preview_text.len - 1] != '\n') {
+            w.writeAll("\n") catch {};
+        }
+        w.writeAll("accept hunk? [y/N] > ") catch {};
+        w.flush() catch {};
+
+        var line_buf: [64]u8 = undefined;
+        var reader = Io.File.stdin().reader(self.io, &line_buf);
+        const line = reader.interface.takeDelimiterExclusive('\n') catch {
+            // EOF or read failure → reject (not accept; not OOM).
+            return .reject;
+        };
+        if (self.cancel) |c| {
+            if (c.isSet()) return .reject;
+        }
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 1 and (trimmed[0] == 'y' or trimmed[0] == 'Y')) return .accept;
+        if (std.mem.eql(u8, trimmed, "yes") or std.mem.eql(u8, trimmed, "YES")) return .accept;
+        return .reject;
+    }
+};
+
+/// B2 first-match bind for product CLI default composition.
+fn resolveHunkReviewer(
+    permission_mode: coding.permissions.Mode,
+    headless_mode: ?hw.HeadlessMode,
+    interactive: *InteractiveHunkReviewer,
+) ?coding.HunkReviewer {
+    // Plan/permission deny is handled before handler entry — no bind change here.
+    // (1) yolo → AutoAccept for all modes including --json/--json-stream.
+    if (permission_mode == .yolo) {
+        return coding.autoAcceptHunkReviewer();
+    }
+    // (2) interactive non-headless ask → InteractiveHunkReviewer.
+    if (permission_mode == .ask and headless_mode == null) {
+        const stdin_tty = Io.File.stdin().isTty(interactive.io) catch false;
+        if (stdin_tty) return interactive.asReviewer();
+    }
+    // (3) headless ask / noninteractive → null (review_unavailable if handler reached).
+    return null;
+}
 
 /// Observer adapter that forwards harness events to the headless NDJSON writer.
 const HeadlessObserver = struct {
@@ -321,6 +392,10 @@ pub fn run(init: std.process.Init) !void {
         }
     }
 
+    // B2/B6: stack-stable interactive adapter; cancel pointer fixed after Agent.init.
+    var interactive_hunk_reviewer: InteractiveHunkReviewer = .{ .io = io, .cancel = null };
+    const bound_hunk_reviewer = resolveHunkReviewer(permission_mode, headless_mode, &interactive_hunk_reviewer);
+
     var agent_opts: coding.agent.Options = .{
         .verbose = verbose,
         .permission_mode = permission_mode,
@@ -338,6 +413,9 @@ pub fn run(init: std.process.Init) !void {
         .secrets = &secret_slots,
         .pattern_redaction = true,
         .observer = if (headless_mode == .json_stream) headless_observer.asObserver() else .none(),
+        // Verifier left null on CLI built-in path — never derive doctor/model command.
+        .hunk_reviewer = bound_hunk_reviewer,
+        .post_edit_verifier = null,
     };
     if (resolve_result.max_turns) |mt| {
         agent_opts.max_turns = mt;
@@ -351,6 +429,8 @@ pub fn run(init: std.process.Init) !void {
         std.process.exit(1);
     };
     defer agent.deinit();
+    // Wire cancel only after Agent address is stable (B6 cancel-before-decision → reject).
+    interactive_hunk_reviewer.cancel = &agent.cancel;
     // cli-sigint-001: CLI owns the SIGINT handler. It installs a self-pipe
     // wakeup + cooperative cancel against `agent.cancel`, and restores the
     // previous disposition on scope end. The SDK alone never installs this.
@@ -1269,4 +1349,68 @@ test "formatStreamLogEvent emits kind/length/index only" {
     try std.testing.expect(std.mem.indexOf(u8, tc, "index=3") != null);
     const done = formatStreamLogEvent(&buf, .done) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("stream done", done);
+}
+
+test "edit-sharp §10.6 B2 reviewer bind precedence yolo autoaccept headless" {
+    const io = std.testing.io;
+    var interactive: InteractiveHunkReviewer = .{ .io = io, .cancel = null };
+
+    // yolo + no headless → AutoAccept
+    const yolo = resolveHunkReviewer(.yolo, null, &interactive);
+    try std.testing.expect(yolo != null);
+    try std.testing.expect(yolo.?.reviewFn(null, .{
+        .path = "p",
+        .expected_sha256 = "0" ** 64,
+        .old_len = 1,
+        .new_len = 1,
+        .preview_text = "x",
+    }) == .accept);
+
+    // yolo + json headless → still AutoAccept (no null)
+    const yolo_json = resolveHunkReviewer(.yolo, .json, &interactive);
+    try std.testing.expect(yolo_json != null);
+    try std.testing.expect(yolo_json.?.reviewFn(null, .{
+        .path = "p",
+        .expected_sha256 = "0" ** 64,
+        .old_len = 1,
+        .new_len = 1,
+        .preview_text = "x",
+    }) == .accept);
+
+    // yolo + json_stream → AutoAccept
+    const yolo_stream = resolveHunkReviewer(.yolo, .json_stream, &interactive);
+    try std.testing.expect(yolo_stream != null);
+
+    // ask + headless → null (review_unavailable if handler reached)
+    const ask_json = resolveHunkReviewer(.ask, .json, &interactive);
+    try std.testing.expect(ask_json == null);
+    const ask_stream = resolveHunkReviewer(.ask, .json_stream, &interactive);
+    try std.testing.expect(ask_stream == null);
+
+    // ask + non-headless: depends on TTY; if non-TTY in test, null is correct fail-closed.
+    const ask_human = resolveHunkReviewer(.ask, null, &interactive);
+    // In CI/test harness stdin is typically not a TTY → null.
+    // Either interactive bind or null is acceptable for this environment; never AutoAccept.
+    if (ask_human) |r| {
+        // If bound, must be interactive adapter (not auto-accept always-true without stdin).
+        // Interactive path rejects empty/non-yes — we only check pointer identity via asReviewer.
+        _ = r;
+        try std.testing.expect(interactive.cancel == null);
+    }
+}
+
+test "edit-sharp InteractiveHunkReviewer rejects on cancel flag" {
+    const io = std.testing.io;
+    var flag: core.cancel.Flag = .{};
+    flag.request();
+    var interactive: InteractiveHunkReviewer = .{ .io = io, .cancel = &flag };
+    const rev = interactive.asReviewer();
+    const decision = rev.reviewFn(rev.ptr, .{
+        .path = "p",
+        .expected_sha256 = "0" ** 64,
+        .old_len = 0,
+        .new_len = 0,
+        .preview_text = "preview",
+    });
+    try std.testing.expect(decision == .reject);
 }

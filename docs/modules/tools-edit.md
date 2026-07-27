@@ -4,7 +4,7 @@
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
 | Current maturity | **L2** — write/edit after h-edit-integrity-001; read/search after h-read-search-bounds-001 closeout; Phase H closed at `d22ce6e` via fresh 11-sentence integration audit PASS/panel SHIP |
-| C4 first slice | **contract PASS** at `07b8dab` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)); implementation **not started** (later separately dispatched node only); **no L3 maturity claim** |
+| C4 first slice | **contract PASS** at `07b8dab` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)); first-slice implementation on branch (merged-main closeout pending); Tools · write/edit remains **L2**; **no L3 maturity claim** |
 | Target | L2 H correctness → L3 C4 sharpness (after implemented Gate, not this docs freeze alone) |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -116,11 +116,12 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 
 > **Status:** docs contract freeze for M2/C4 — independent architecture/API,
 > safety/transaction, and final adjudication all **PASS** on candidate `07b8dab`
-> (zero blockers after B1–B8). Contract PASS authorizes **only** a later separately
-> dispatched implementation node; **implementation not started**; no product code
-> in the contract lineage. Runtime maturity for Tools · write/edit stays **L2**
-> until a separate implemented Gate explicitly raises it. Session v1, Trace v1,
-> `headless-v1`, `project.zig`, and `--no-project` stay unchanged.
+> (zero blockers after B1–B8). First-slice production code (`apply_hunk`,
+> `include_digest`, reviewer/verifier ports, CLI bind, §10 fixtures) is on the
+> implementation branch under that freeze; **task remains `in-progress`** until
+> coordinator merged-main closeout. Runtime maturity for Tools · write/edit stays
+> **L2** until a separate implemented Gate explicitly raises it. Session v1, Trace
+> v1, `headless-v1`, `project.zig`, and `--no-project` stay unchanged.
 
 Authoritative delivery task: [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md).
 Phase map: [C4-edit-sharpness](../phases/C4-edit-sharpness.md).
@@ -290,11 +291,11 @@ Options reviewer/verifier are **not** auto-spliced. Null reviewer on `apply_hunk
 
 - [x] Independent **contract** review PASS on `07b8dab` (architecture/API + safety + adjudication; zero blockers after B1–B8).
 
-**Implementation track (later; not started)**
+**Implementation track (branch evidence; closeout pending)**
 
-- [ ] `apply_hunk` + `read_file` `include_digest` match this freeze (B1–B8).
-- [ ] Fixture matrix in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) §10 green under std+curl Gates, including fail-next post-replace verifier partial and digest N/N+1/meta boundaries.
-- [ ] Reject/stale/review_unavailable never mutate; bound-verifier non-ok is partial `target=modified`; no typed OOM after replace.
+- [x] `apply_hunk` + `read_file` `include_digest` match this freeze (B1–B8) on implementation branch.
+- [x] Fixture matrix in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) §10 covered under focused package/root std Gates (incl. fail-next post-replace verifier partial and digest N/N+1/meta boundaries); coordinator full dual-backend/curl + code review pending.
+- [x] Reject/stale/review_unavailable never mutate; bound-verifier non-ok is partial `target=modified`; no typed OOM after replace (B1 preallocated bodies).
 - [ ] Tools · write/edit maturity raised only by a separate explicit Gate (not automatic).
 
 ## Non-goals for H

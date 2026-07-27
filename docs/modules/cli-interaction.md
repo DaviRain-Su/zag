@@ -59,10 +59,11 @@ freezes a future **thin** CLI role with **exact first-match bind precedence** (B
    `review_unavailable` if the handler is reached.
 
 Never treat missing/null as accept; never reuse permission `StdinPrompter`
-(risk+args_len) as hunk review; remember never skips review. Production CLI wiring
-is **not started** (contract PASS at `07b8dab` authorizes only a later separately
-dispatched implementation node). No headless-v1 schema change. Executable CLI
-fixture (later): stdout purity under interactive reject; no-temp byte-equal rejection.
+(risk+args_len) as hunk review; remember never skips review. Production CLI thin
+bind (`InteractiveHunkReviewer` / `autoAcceptHunkReviewer` via B2) is on the
+implementation branch; verifier remains null on CLI built-in path (no doctor/model
+command). No headless-v1 schema change. Task stays `in-progress` until coordinator
+merged-main closeout.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +

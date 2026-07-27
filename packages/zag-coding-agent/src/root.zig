@@ -110,6 +110,15 @@ pub const ReplyError = agent.ReplyError;
 pub const OwnedResult = agent.OwnedResult;
 pub const ForkError = agent.ForkError;
 
+// edit-sharpness-001 (C4 first slice): public review/verify ports (B7).
+pub const HunkReviewer = edit_tools.HunkReviewer;
+pub const HunkReviewPreview = edit_tools.HunkReviewPreview;
+pub const HunkReviewDecision = edit_tools.HunkReviewDecision;
+pub const PostEditVerifier = edit_tools.PostEditVerifier;
+pub const PostEditVerifyResult = edit_tools.PostEditVerifyResult;
+pub const ApplyHunkState = edit_tools.ApplyHunkState;
+pub const autoAcceptHunkReviewer = edit_tools.autoAcceptHunkReviewer;
+
 // session-fork-001: Gate fixtures (module §8 items 1–29)
 test {
     _ = @import("session_fork_tests.zig");

@@ -1,8 +1,12 @@
-//! Write / edit / shell tools: `search_replace`, `write_file`, `run_shell`.
+//! Write / edit / shell tools: `search_replace`, `write_file`, `apply_hunk`, `run_shell`.
 //!
 //! File mutators enforce symlink-aware workspace containment (h-workspace-001)
 //! so raw `Registry.execute` cannot bypass the jail. Shell remains a separate
 //! boundary (not contained by the path jail).
+//!
+//! C4 first slice (`edit-sharpness-001`): `apply_hunk` is single-file one-hunk
+//! content-anchor replace with full-file SHA-256 precondition, mandatory
+//! `HunkReviewer`, and optional host `PostEditVerifier` (B1–B8).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -70,6 +74,41 @@ pub const write_file_def: tool.Definition = .{
     ,
 };
 
+pub const apply_hunk_def: tool.Definition = .{
+    .name = "apply_hunk",
+    .description =
+    \\Apply one unique content-anchor hunk to a single file with a full-file SHA-256 stale check.
+    \\Provide expected_sha256 of the entire current file (64 hex), old_string that appears exactly once,
+    \\and new_string replacement (empty deletes). Prefer re-reading with include_digest=true when available.
+    \\Mandatory host hunk review runs before any commit temporary. Subject to permission checks and workspace jail.
+    ,
+    .parameters_json =
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "path": {
+    \\      "type": "string",
+    \\      "description": "File path relative to the working directory (required path_field)."
+    \\    },
+    \\    "expected_sha256": {
+    \\      "type": "string",
+    \\      "description": "SHA-256 of the entire current file as raw bytes; 64 hex digits."
+    \\    },
+    \\    "old_string": {
+    \\      "type": "string",
+    \\      "description": "Exact unique byte-substring anchor (must appear once)."
+    \\    },
+    \\    "new_string": {
+    \\      "type": "string",
+    \\      "description": "Replacement bytes for that unique anchor (empty = delete)."
+    \\    }
+    \\  },
+    \\  "required": ["path", "expected_sha256", "old_string", "new_string"],
+    \\  "additionalProperties": false
+    \\}
+    ,
+};
+
 pub const run_shell_def: tool.Definition = .{
     .name = "run_shell",
     .description =
@@ -94,12 +133,71 @@ pub const run_shell_def: tool.Definition = .{
 
 const max_write_bytes: u32 = 512 * 1024;
 const max_read_for_edit: u32 = max_write_bytes + 1;
+const max_hunk_string_bytes: u32 = 32 * 1024;
+const max_preview_text_bytes: usize = 4 * 1024;
+const preview_truncation_marker = "...[preview_truncated]";
+comptime {
+    std.debug.assert(preview_truncation_marker.len == 22);
+}
 const production_shell_path = "/bin/sh";
 const production_git_executable = "git";
 const shell_capture_timeout_ms: u32 = 30_000;
 const max_shell_stream_bytes: usize = 30 * 1024;
 const max_shell_envelope_bytes: usize = 4 * 1024;
 const max_diff_bytes: u32 = 4 * 1024;
+
+// ── C4 apply_hunk public ports (root-reexported) ───────────────────────────
+
+/// Whole one-hunk accept/reject decision. ReviewFn is infallible (B5).
+pub const HunkReviewDecision = enum { accept, reject };
+
+/// Borrowed preview valid only for the duration of `reviewFn` (B8).
+pub const HunkReviewPreview = struct {
+    path: []const u8,
+    expected_sha256: []const u8,
+    old_len: usize,
+    new_len: usize,
+    preview_text: []const u8,
+};
+
+/// Host/product hunk reviewer. Null on an apply_hunk instance → soft review_unavailable.
+pub const HunkReviewer = struct {
+    ptr: ?*anyopaque = null,
+    reviewFn: *const fn (ptr: ?*anyopaque, preview: HunkReviewPreview) HunkReviewDecision,
+};
+
+/// Post-commit project verification outcome (B1 selection key).
+pub const PostEditVerifyResult = enum {
+    ok,
+    failed,
+    timeout,
+    denied,
+    unavailable,
+};
+
+/// Host-owned verifier. Null → verification=not_configured after commit.
+pub const PostEditVerifier = struct {
+    ptr: ?*anyopaque = null,
+    verifyFn: *const fn (ptr: ?*anyopaque, path: []const u8) PostEditVerifyResult,
+};
+
+/// Agent-owned heap-stable state for the default `apply_hunk` Tool instance (B7).
+pub const ApplyHunkState = struct {
+    reviewer: ?HunkReviewer = null,
+    verifier: ?PostEditVerifier = null,
+};
+
+/// Explicit AutoAccept reviewer (bound, not missing). Used by CLI `--yolo` and SDK hosts.
+pub fn autoAcceptHunkReviewer() HunkReviewer {
+    return .{
+        .ptr = null,
+        .reviewFn = autoAcceptReviewFn,
+    };
+}
+
+fn autoAcceptReviewFn(_: ?*anyopaque, _: HunkReviewPreview) HunkReviewDecision {
+    return .accept;
+}
 
 const ShellConfig = struct {
     shell_path: []const u8 = production_shell_path,
@@ -416,9 +514,359 @@ pub fn writeFile(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
     return maybeAppendGitDiff(ctx, path, base);
 }
 
+/// Model-visible single-file one-hunk edit (C4 first slice).
+pub fn applyHunk(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    const path = try tool.requireStringField(ctx.allocator, arguments_json, "path");
+    defer ctx.allocator.free(path);
+    const expected_sha256 = try tool.requireStringField(ctx.allocator, arguments_json, "expected_sha256");
+    defer ctx.allocator.free(expected_sha256);
+    const old_string = try tool.requireStringField(ctx.allocator, arguments_json, "old_string");
+    defer ctx.allocator.free(old_string);
+    const new_string = try tool.requireStringField(ctx.allocator, arguments_json, "new_string");
+    defer ctx.allocator.free(new_string);
+
+    if (path.len == 0) return error.InvalidArguments;
+
+    // expected_sha256 parse before any digest compare (invalid → invalid_arguments, not stale).
+    const expected_digest = parseSha256Hex(expected_sha256) orelse {
+        return softSharp(ctx.allocator, "invalid_arguments", null);
+    };
+
+    if (old_string.len > max_hunk_string_bytes or new_string.len > max_hunk_string_bytes) {
+        return softSharp(ctx.allocator, "too_large", null);
+    }
+
+    workspace.checkToolPath(path) catch |err| return lexicalJail(ctx, path, err);
+    try validateFileEndpointShape(path);
+
+    var guard = obtainGuard(ctx) catch |err| return jailOrFail(ctx, path, err);
+    defer guard.deinit(ctx.allocator);
+
+    guard.checkExisting(ctx.io, ctx.cwd, path) catch |err| {
+        if (err == error.NotFound) return softSharp(ctx.allocator, "not_found", null);
+        return jailOrFail(ctx, path, err);
+    };
+    validateMutationEndpoint(ctx, guard, path, false) catch |err| {
+        return mutationEndpointFailureForApplyHunk(ctx, path, err);
+    };
+
+    const contents = readEditTarget(ctx, path) catch |err| switch (err) {
+        error.FileTooLarge => return softSharp(ctx.allocator, "too_large", null),
+        else => |e| return e,
+    };
+    defer ctx.allocator.free(contents);
+
+    var actual_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(contents, &actual_digest, .{});
+    if (!std.mem.eql(u8, &actual_digest, &expected_digest)) {
+        return softSharp(ctx.allocator, "stale_precondition", "stage=precondition");
+    }
+
+    if (old_string.len == 0) {
+        return softSharp(ctx.allocator, "anchor_not_found", null);
+    }
+    const match_count = countOccurrences(contents, old_string);
+    if (match_count == 0) return softSharp(ctx.allocator, "anchor_not_found", null);
+    if (match_count > 1) return softSharp(ctx.allocator, "ambiguous_anchor", null);
+
+    const replaced = applyUniqueReplace(ctx.allocator, contents, old_string, new_string) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.AnchorNotFound => softSharp(ctx.allocator, "anchor_not_found", null),
+            error.AmbiguousAnchor => softSharp(ctx.allocator, "ambiguous_anchor", null),
+        };
+    };
+    defer ctx.allocator.free(replaced);
+
+    if (replaced.len > max_write_bytes) {
+        return softSharp(ctx.allocator, "too_large", null);
+    }
+
+    // Proposal + preview allocated before reviewFn (B5). OOM → typed pre-commit.
+    const preview_owned = try buildPreviewText(ctx.allocator, path, expected_sha256, old_string, new_string);
+    defer ctx.allocator.free(preview_owned);
+
+    const state: ?*ApplyHunkState = if (instance) |ptr|
+        @ptrCast(@alignCast(ptr))
+    else
+        null;
+    const reviewer: ?HunkReviewer = if (state) |s| s.reviewer else null;
+    const verifier: ?PostEditVerifier = if (state) |s| s.verifier else null;
+
+    if (reviewer == null) {
+        return softSharp(ctx.allocator, "review_unavailable", null);
+    }
+
+    const decision = reviewer.?.reviewFn(reviewer.?.ptr, .{
+        .path = path,
+        .expected_sha256 = expected_sha256,
+        .old_len = old_string.len,
+        .new_len = new_string.len,
+        .preview_text = preview_owned,
+    });
+    // preview_owned remains owned by us; never persist; free on return via defer.
+
+    if (decision == .reject) {
+        return softSharp(ctx.allocator, "rejected", null);
+    }
+
+    // Revalidate: re-read, digest, unique anchor, Guard containment (stage=revalidate).
+    guard.checkExisting(ctx.io, ctx.cwd, path) catch |err| {
+        if (err == error.NotFound) return softSharp(ctx.allocator, "not_found", null);
+        return jailOrFail(ctx, path, err);
+    };
+    validateMutationEndpoint(ctx, guard, path, false) catch |err| {
+        return mutationEndpointFailureForApplyHunk(ctx, path, err);
+    };
+
+    const contents2 = readEditTarget(ctx, path) catch |err| switch (err) {
+        error.FileTooLarge => return softSharp(ctx.allocator, "too_large", null),
+        else => |e| return e,
+    };
+    defer ctx.allocator.free(contents2);
+
+    var actual2: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(contents2, &actual2, .{});
+    if (!std.mem.eql(u8, &actual2, &expected_digest)) {
+        return softSharp(ctx.allocator, "stale_precondition", "stage=revalidate");
+    }
+    const match_count2 = countOccurrences(contents2, old_string);
+    if (match_count2 == 0) return softSharp(ctx.allocator, "stale_precondition", "stage=revalidate");
+    if (match_count2 > 1) return softSharp(ctx.allocator, "stale_precondition", "stage=revalidate");
+
+    const replaced2 = applyUniqueReplace(ctx.allocator, contents2, old_string, new_string) catch |err| {
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.AnchorNotFound, error.AmbiguousAnchor => softSharp(ctx.allocator, "stale_precondition", "stage=revalidate"),
+        };
+    };
+    defer ctx.allocator.free(replaced2);
+    if (replaced2.len > max_write_bytes) {
+        return softSharp(ctx.allocator, "too_large", null);
+    }
+
+    // B1: preallocate all reachable post-commit first-line bodies before any temp.
+    var post = try PreparedPostCommitBodies.init(ctx.allocator, verifier != null);
+    defer post.deinit();
+
+    if (try atomicCommit(ctx, guard, .apply_hunk, path, replaced2)) |failure_body| {
+        return failure_body;
+    }
+
+    // Successful replace: select preallocated body allocation-free; never typed OOM.
+    if (verifier) |v| {
+        const outcome = v.verifyFn(v.ptr, path);
+        return post.takeBound(outcome);
+    }
+    return post.takeNotConfigured();
+}
+
+fn mutationEndpointFailureForApplyHunk(
+    ctx: tool.Context,
+    path: []const u8,
+    err: MutationEndpointError,
+) tool.HandlerError![]u8 {
+    return switch (err) {
+        error.InvalidFileEndpoint => error.InvalidArguments,
+        error.OutsideWorkspace => jailOrFail(ctx, path, error.OutsideWorkspace),
+        error.InvalidPath => jailOrFail(ctx, path, error.InvalidPath),
+        error.NotFound => softSharp(ctx.allocator, "not_found", null),
+        error.ResolveFailed => jailOrFail(ctx, path, error.ResolveFailed),
+        error.OutOfMemory => error.OutOfMemory,
+    };
+}
+
+fn softSharp(
+    gpa: std.mem.Allocator,
+    code: []const u8,
+    stage_field: ?[]const u8,
+) tool.HandlerError![]u8 {
+    var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const line = if (stage_field) |stage|
+        std.fmt.bufPrint(
+            &line_buf,
+            "error: code={s} format=edit-sharp-v1 operation=apply_hunk {s} target=preserved temp_artifact=absent",
+            .{ code, stage },
+        ) catch return error.ToolFailed
+    else
+        std.fmt.bufPrint(
+            &line_buf,
+            "error: code={s} format=edit-sharp-v1 operation=apply_hunk target=preserved temp_artifact=absent",
+            .{code},
+        ) catch return error.ToolFailed;
+    std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+    return gpa.dupe(u8, line) catch return error.OutOfMemory;
+}
+
+fn parseSha256Hex(s: []const u8) ?[32]u8 {
+    if (s.len != 64) return null;
+    var out: [32]u8 = undefined;
+    _ = std.fmt.hexToBytes(&out, s) catch return null;
+    return out;
+}
+
+fn formatSha256Lower(digest: *const [32]u8, buf: *[64]u8) void {
+    const hex = "0123456789abcdef";
+    for (digest.*, 0..) |byte, i| {
+        buf[i * 2] = hex[byte >> 4];
+        buf[i * 2 + 1] = hex[byte & 0xf];
+    }
+}
+
+/// Lossy UTF-8 display for preview only; invalid sequences → U+FFFD.
+fn appendLossyUtf8(list: *std.ArrayList(u8), gpa: std.mem.Allocator, bytes: []const u8) error{OutOfMemory}!void {
+    var i: usize = 0;
+    while (i < bytes.len) {
+        const seq_len = std.unicode.utf8ByteSequenceLength(bytes[i]) catch {
+            try list.appendSlice(gpa, "\u{FFFD}");
+            i += 1;
+            continue;
+        };
+        if (i + seq_len > bytes.len) {
+            try list.appendSlice(gpa, "\u{FFFD}");
+            break;
+        }
+        _ = std.unicode.utf8Decode(bytes[i..][0..seq_len]) catch {
+            try list.appendSlice(gpa, "\u{FFFD}");
+            i += 1;
+            continue;
+        };
+        try list.appendSlice(gpa, bytes[i..][0..seq_len]);
+        i += seq_len;
+    }
+}
+
+fn truncatePreviewUtf8(gpa: std.mem.Allocator, full: []const u8) error{OutOfMemory}![]u8 {
+    if (full.len <= max_preview_text_bytes) {
+        return gpa.dupe(u8, full);
+    }
+    const marker = preview_truncation_marker;
+    const content_budget = max_preview_text_bytes - marker.len;
+    // Cut on a valid UTF-8 boundary at or before content_budget.
+    var cut = content_budget;
+    while (cut > 0 and (full[cut] & 0xC0) == 0x80) cut -= 1;
+    if (cut == 0 and content_budget > 0 and (full[0] & 0xC0) == 0x80) cut = 0;
+    const out = try gpa.alloc(u8, cut + marker.len);
+    @memcpy(out[0..cut], full[0..cut]);
+    @memcpy(out[cut..][0..marker.len], marker);
+    return out;
+}
+
+fn buildPreviewText(
+    gpa: std.mem.Allocator,
+    path: []const u8,
+    expected_sha256: []const u8,
+    old_string: []const u8,
+    new_string: []const u8,
+) error{OutOfMemory}![]u8 {
+    var body: std.ArrayList(u8) = .empty;
+    errdefer body.deinit(gpa);
+
+    try body.appendSlice(gpa, "apply_hunk review\npath: ");
+    try body.appendSlice(gpa, path);
+    try body.appendSlice(gpa, "\nexpected_sha256: ");
+    try body.appendSlice(gpa, expected_sha256);
+    try body.print(gpa, "\nold_len={d} new_len={d}\n--- old ---\n", .{ old_string.len, new_string.len });
+    try appendLossyUtf8(&body, gpa, old_string);
+    try body.appendSlice(gpa, "\n--- new ---\n");
+    try appendLossyUtf8(&body, gpa, new_string);
+    try body.append(gpa, '\n');
+
+    const full = try body.toOwnedSlice(gpa);
+    errdefer gpa.free(full);
+    // truncatePreviewUtf8 owns its return; free the intermediate full always.
+    const truncated = try truncatePreviewUtf8(gpa, full);
+    gpa.free(full);
+    return truncated;
+}
+
+/// B1: all reachable post-commit first-line bodies, prepared before any temp.
+const PreparedPostCommitBodies = struct {
+    allocator: std.mem.Allocator,
+    not_configured: ?[]u8 = null,
+    ok: ?[]u8 = null,
+    failed: ?[]u8 = null,
+    timeout: ?[]u8 = null,
+    denied: ?[]u8 = null,
+    unavailable: ?[]u8 = null,
+
+    fn init(gpa: std.mem.Allocator, verifier_bound: bool) tool.HandlerError!PreparedPostCommitBodies {
+        var self: PreparedPostCommitBodies = .{ .allocator = gpa };
+        errdefer self.deinit();
+        if (!verifier_bound) {
+            self.not_configured = try successBody(gpa, "not_configured");
+            return self;
+        }
+        self.ok = try successBody(gpa, "ok");
+        self.failed = try partialVerifyBody(gpa, "failed");
+        self.timeout = try partialVerifyBody(gpa, "timeout");
+        self.denied = try partialVerifyBody(gpa, "denied");
+        self.unavailable = try partialVerifyBody(gpa, "unavailable");
+        return self;
+    }
+
+    fn deinit(self: *PreparedPostCommitBodies) void {
+        self.freeSlot(&self.not_configured);
+        self.freeSlot(&self.ok);
+        self.freeSlot(&self.failed);
+        self.freeSlot(&self.timeout);
+        self.freeSlot(&self.denied);
+        self.freeSlot(&self.unavailable);
+    }
+
+    fn takeNotConfigured(self: *PreparedPostCommitBodies) []u8 {
+        return takeSlot(&self.not_configured);
+    }
+
+    fn takeBound(self: *PreparedPostCommitBodies, outcome: PostEditVerifyResult) []u8 {
+        return switch (outcome) {
+            .ok => takeSlot(&self.ok),
+            .failed => takeSlot(&self.failed),
+            .timeout => takeSlot(&self.timeout),
+            .denied => takeSlot(&self.denied),
+            .unavailable => takeSlot(&self.unavailable),
+        };
+    }
+
+    fn freeSlot(self: *PreparedPostCommitBodies, slot: *?[]u8) void {
+        if (slot.*) |body| self.allocator.free(body);
+        slot.* = null;
+    }
+
+    fn takeSlot(slot: *?[]u8) []u8 {
+        std.debug.assert(slot.* != null);
+        const body = slot.*.?;
+        slot.* = null;
+        return body;
+    }
+
+    fn successBody(gpa: std.mem.Allocator, verification: []const u8) tool.HandlerError![]u8 {
+        var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+        const line = std.fmt.bufPrint(
+            &line_buf,
+            "ok: code=apply_hunk_success format=edit-sharp-v1 operation=apply_hunk target=modified verification={s} temp_artifact=absent",
+            .{verification},
+        ) catch return error.ToolFailed;
+        std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+        return gpa.dupe(u8, line) catch return error.OutOfMemory;
+    }
+
+    fn partialVerifyBody(gpa: std.mem.Allocator, verification: []const u8) tool.HandlerError![]u8 {
+        var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+        const line = std.fmt.bufPrint(
+            &line_buf,
+            "partial: code=verification_failed format=edit-sharp-v1 operation=apply_hunk target=modified verification={s} temp_artifact=absent",
+            .{verification},
+        ) catch return error.ToolFailed;
+        std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+        return gpa.dupe(u8, line) catch return error.OutOfMemory;
+    }
+};
+
 const EditOperation = enum {
     write_file,
     search_replace,
+    apply_hunk,
 
     fn name(self: EditOperation) []const u8 {
         return @tagName(self);
@@ -857,7 +1305,7 @@ fn selectCommitPath(
         return existing;
     } else |err| switch (err) {
         error.NotFound => {
-            if (operation == .search_replace) return error.NotFound;
+            if (operation == .search_replace or operation == .apply_hunk) return error.NotFound;
         },
         else => return err,
     }
@@ -927,7 +1375,7 @@ fn recheckForCommit(
 ) workspace.ContainError!void {
     switch (operation) {
         .write_file => try guard.checkCreate(ctx.allocator, ctx.io, ctx.cwd, request_path),
-        .search_replace => try guard.checkExisting(ctx.io, ctx.cwd, request_path),
+        .search_replace, .apply_hunk => try guard.checkExisting(ctx.io, ctx.cwd, request_path),
     }
     if (takeEditFault(.containment)) return error.OutsideWorkspace;
 }
@@ -1531,6 +1979,18 @@ pub fn phase1ExtraTools() [3]tool.Tool {
     };
 }
 
+/// Default toolset `apply_hunk` with Agent-owned instance pointer (B7).
+pub fn makeApplyHunkTool(state: *ApplyHunkState) tool.Tool {
+    return .{
+        .descriptor = .{
+            .definition = apply_hunk_def,
+            .capabilities = path_write_caps,
+        },
+        .instance = state,
+        .handler = applyHunk,
+    };
+}
+
 test "applyUniqueReplace happy path" {
     // Goal: single unique anchor is replaced exactly once.
     const gpa = std.testing.allocator;
@@ -1654,11 +2114,13 @@ fn invokeEditFixture(
             "{{\"path\":{f},\"old_string\":\"OLD\",\"new_string\":\"NEW\"}}",
             .{std.json.fmt(path, .{})},
         ) catch return error.OutOfMemory,
+        .apply_hunk => unreachable,
     };
     defer ctx.allocator.free(arguments);
     return switch (operation) {
         .write_file => writeFile(ctx, null, arguments),
         .search_replace => searchReplace(ctx, null, arguments),
+        .apply_hunk => unreachable,
     };
 }
 
@@ -1910,6 +2372,7 @@ test "edit endpoints reject contained directory and root aliases for both handle
                     "{{\"path\":{f},\"old_string\":\"OLD\",\"new_string\":\"NEW\"}}",
                     .{std.json.fmt(endpoint, .{})},
                 ),
+                .apply_hunk => unreachable,
             };
             defer gpa.free(arguments);
             const body = try executePublicEdit(ctx, operation, arguments);
@@ -2266,6 +2729,7 @@ test "atomic edit success commits through contained final symlink without replac
         const expected = switch (operation) {
             .write_file => "complete replacement bytes\n",
             .search_replace => "alpha NEW omega\n",
+            .apply_hunk => unreachable,
         };
         try expectFileBytes(gpa, io, tmp.dir, "real.txt", expected);
         try expectSymlink(tmp.dir, io, "link.txt", "real.txt");
@@ -2430,6 +2894,7 @@ test "post-commit enrichment failure remains successful with complete target byt
         const expected = switch (operation) {
             .write_file => "complete replacement bytes\n",
             .search_replace => "alpha NEW omega\n",
+            .apply_hunk => unreachable,
         };
         try expectFileBytes(gpa, io, tmp.dir, "target.txt", expected);
         try expectDirEntries(io, tmp.dir, &.{"target.txt"});
@@ -3126,4 +3591,592 @@ test "contained directory symlink write and nested create" {
     const a_after = try ws.readFileAlloc(io, "inside_dir/a.txt", gpa, .limited(64));
     defer gpa.free(a_after);
     try std.testing.expectEqualStrings("HELLO world\n", a_after);
+}
+
+// ── edit-sharpness-001 §10 fixture matrix ───────────────────────────────────
+
+fn sha256HexOf(bytes: []const u8, out: *[64]u8) void {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+    formatSha256Lower(&digest, out);
+}
+
+fn applyHunkArgs(
+    gpa: std.mem.Allocator,
+    path: []const u8,
+    expected_sha: []const u8,
+    old_s: []const u8,
+    new_s: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(
+        gpa,
+        "{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":{f},\"new_string\":{f}}}",
+        .{
+            std.json.fmt(path, .{}),
+            std.json.fmt(expected_sha, .{}),
+            std.json.fmt(old_s, .{}),
+            std.json.fmt(new_s, .{}),
+        },
+    );
+}
+
+fn expectSharpError(body: []const u8, code: []const u8) !void {
+    try std.testing.expect(std.mem.startsWith(u8, body, "error: code="));
+    try std.testing.expect(std.mem.indexOf(u8, body, code) != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "format=edit-sharp-v1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "operation=apply_hunk") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "target=preserved") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "temp_artifact=absent") != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, body, '\n') == null);
+}
+
+fn expectSharpOk(body: []const u8, verification: []const u8) !void {
+    var expect_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const expected = try std.fmt.bufPrint(
+        &expect_buf,
+        "ok: code=apply_hunk_success format=edit-sharp-v1 operation=apply_hunk target=modified verification={s} temp_artifact=absent",
+        .{verification},
+    );
+    try std.testing.expectEqualStrings(expected, body);
+}
+
+fn expectSharpPartial(body: []const u8, verification: []const u8) !void {
+    var expect_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const expected = try std.fmt.bufPrint(
+        &expect_buf,
+        "partial: code=verification_failed format=edit-sharp-v1 operation=apply_hunk target=modified verification={s} temp_artifact=absent",
+        .{verification},
+    );
+    try std.testing.expectEqualStrings(expected, body);
+}
+
+const FixedReviewer = struct {
+    decision: HunkReviewDecision,
+    calls: *u32 = undefined,
+    calls_owned: u32 = 0,
+    mutate_path: ?[]const u8 = null,
+    mutate_bytes: ?[]const u8 = null,
+    cwd: ?Io.Dir = null,
+    io: ?Io = null,
+
+    fn init(decision: HunkReviewDecision) FixedReviewer {
+        return .{ .decision = decision };
+    }
+
+    fn asReviewer(self: *FixedReviewer) HunkReviewer {
+        return .{ .ptr = self, .reviewFn = reviewFn };
+    }
+
+    fn reviewFn(ptr: ?*anyopaque, _: HunkReviewPreview) HunkReviewDecision {
+        const self: *FixedReviewer = @ptrCast(@alignCast(ptr.?));
+        self.calls_owned += 1;
+        if (self.mutate_path) |p| {
+            const dir = self.cwd.?;
+            const io = self.io.?;
+            dir.writeFile(io, .{ .sub_path = p, .data = self.mutate_bytes.? }) catch {};
+        }
+        return self.decision;
+    }
+};
+
+const FixedVerifier = struct {
+    result: PostEditVerifyResult,
+    calls: u32 = 0,
+    last_path: ?[]const u8 = null,
+    path_buf: [256]u8 = undefined,
+    path_len: usize = 0,
+
+    fn asVerifier(self: *FixedVerifier) PostEditVerifier {
+        return .{ .ptr = self, .verifyFn = verifyFn };
+    }
+
+    fn verifyFn(ptr: ?*anyopaque, path: []const u8) PostEditVerifyResult {
+        const self: *FixedVerifier = @ptrCast(@alignCast(ptr.?));
+        self.calls += 1;
+        const n = @min(path.len, self.path_buf.len);
+        @memcpy(self.path_buf[0..n], path[0..n]);
+        self.path_len = n;
+        return self.result;
+    }
+
+    fn pathSeen(self: *const FixedVerifier) []const u8 {
+        return self.path_buf[0..self.path_len];
+    }
+};
+
+test "edit-sharp §10.1 valid single-hunk success not_configured" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf(original, &hex);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer(), .verifier = null };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+    defer gpa.free(args);
+    const body = try applyHunk(ctx, &state, args);
+    defer gpa.free(body);
+    try expectSharpOk(body, "not_configured");
+    try expectFileBytes(gpa, io, tmp.dir, "t.txt", "alpha NEW omega\n");
+    try std.testing.expectEqual(@as(u32, 1), reviewer.calls_owned);
+}
+
+test "edit-sharp §10.2 stale precondition and revalidate non-mutate" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf("wrong-bytes", &hex);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    // Precondition stale
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "stale_precondition");
+        try std.testing.expect(std.mem.indexOf(u8, body, "stage=precondition") != null);
+        try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
+        try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
+    }
+
+    // Revalidate stale: reviewer mutates file after accept decision path starts
+    {
+        sha256HexOf(original, &hex);
+        reviewer = FixedReviewer.init(.accept);
+        reviewer.mutate_path = "t.txt";
+        reviewer.mutate_bytes = "alpha OLD omega CHANGED\n";
+        reviewer.cwd = tmp.dir;
+        reviewer.io = io;
+        state.reviewer = reviewer.asReviewer();
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "stale_precondition");
+        try std.testing.expect(std.mem.indexOf(u8, body, "stage=revalidate") != null);
+        // File is whatever reviewer wrote; no apply_hunk commit temp; target not replaced by NEW.
+        const after = try tmp.dir.readFileAlloc(io, "t.txt", gpa, .limited(128));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings("alpha OLD omega CHANGED\n", after);
+        try std.testing.expect(std.mem.indexOf(u8, after, "NEW") == null);
+    }
+}
+
+test "edit-sharp §10.3 missing ambiguous empty invalid hex oversize not_found" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = "aa aa\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf(original, &hex);
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    // empty old_string
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "", "x");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "anchor_not_found");
+    }
+    // missing anchor
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "zz", "x");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "anchor_not_found");
+    }
+    // ambiguous
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "aa", "b");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "ambiguous_anchor");
+    }
+    // invalid hex length
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", "abcd", "aa", "b");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "invalid_arguments");
+        try std.testing.expect(std.mem.indexOf(u8, body, "stale") == null);
+    }
+    // invalid hex charset
+    {
+        const bad = "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg";
+        const args = try applyHunkArgs(gpa, "t.txt", bad, "aa", "b");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "invalid_arguments");
+    }
+    // oversize old_string
+    {
+        const big = try gpa.alloc(u8, @as(usize, max_hunk_string_bytes) + 1);
+        defer gpa.free(big);
+        @memset(big, 'Z');
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], big, "x");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "too_large");
+    }
+    // ordinary not_found
+    {
+        const args = try applyHunkArgs(gpa, "missing.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "not_found");
+    }
+    try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
+}
+
+test "edit-sharp §10.4 insert delete exact newline and utf8 bytes" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // CRLF + multi-byte UTF-8; invalid UTF-8 in file is digested/matched as raw bytes
+    // (JSON tool args stay valid UTF-8; anchor is a valid unique substring).
+    const original = "line1\r\ncafé OLD here\r\nline3\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf(original, &hex);
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    // insert via context replace (CRLF + UTF-8 preserved outside anchor)
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "café OLD here", "café OLD hereINSERTED");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpOk(body, "not_configured");
+        const after = try tmp.dir.readFileAlloc(io, "t.txt", gpa, .limited(128));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings("line1\r\ncafé OLD hereINSERTED\r\nline3\n", after);
+        sha256HexOf(after, &hex);
+    }
+    // delete
+    {
+        const cur = try tmp.dir.readFileAlloc(io, "t.txt", gpa, .limited(128));
+        defer gpa.free(cur);
+        sha256HexOf(cur, &hex);
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "INSERTED", "");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpOk(body, "not_configured");
+        try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
+    }
+    // invalid UTF-8 in file: digest covers raw bytes; unique valid anchor still applies once
+    {
+        const with_invalid = "pre\xFFpost UNIQUE_ANCHOR tail\n";
+        try tmp.dir.writeFile(io, .{ .sub_path = "bin.txt", .data = with_invalid });
+        sha256HexOf(with_invalid, &hex);
+        const args = try applyHunkArgs(gpa, "bin.txt", hex[0..], "UNIQUE_ANCHOR", "REPLACED");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpOk(body, "not_configured");
+        const after = try tmp.dir.readFileAlloc(io, "bin.txt", gpa, .limited(128));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings("pre\xFFpost REPLACED tail\n", after);
+    }
+}
+
+test "edit-sharp §10.5 reject byte-equal no temp verifier not called" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf(original, &hex);
+
+    var reviewer = FixedReviewer.init(.reject);
+    var verifier: FixedVerifier = .{ .result = .ok };
+    var state: ApplyHunkState = .{
+        .reviewer = reviewer.asReviewer(),
+        .verifier = verifier.asVerifier(),
+    };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+    defer gpa.free(args);
+    const body = try applyHunk(ctx, &state, args);
+    defer gpa.free(body);
+    try expectSharpError(body, "rejected");
+    try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
+    try std.testing.expectEqual(@as(u32, 0), verifier.calls);
+    try expectDirEntries(io, tmp.dir, &.{"t.txt"});
+}
+
+test "edit-sharp §10.8 missing reviewer and pre-review OOM" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf(original, &hex);
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    // null reviewer on instance
+    {
+        var state: ApplyHunkState = .{ .reviewer = null };
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "review_unavailable");
+        try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
+    }
+    // null instance
+    {
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, null, args);
+        defer gpa.free(body);
+        try expectSharpError(body, "review_unavailable");
+    }
+    // pre-review OOM: fail allocations during preview build
+    {
+        var reviewer = FixedReviewer.init(.accept);
+        var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+        // Measure allocation count to preview with a counting path is hard;
+        // use FailingAllocator fail_index=0 on a dedicated call that still needs allocs after parse.
+        // Use fail_index high enough that string fields parse but preview alloc fails.
+        // Simpler: wrap apply after fields are free by using fail_index from a probing run.
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+        // First allocations are path/sha/old/new dupe from requireStringField (4 parses × internal).
+        // Instead invoke with fail_index that hits after those: empirically search.
+        // Build args once on gpa; only handler uses failing allocator.
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        // Probe for first OOM that preserves file.
+        var found_oom = false;
+        var idx: usize = 0;
+        while (idx < 64) : (idx += 1) {
+            failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+            const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
+            const result = applyHunk(fctx, &state, args);
+            if (result) |body| {
+                gpa.free(body);
+            } else |err| {
+                if (err == error.OutOfMemory) {
+                    found_oom = true;
+                    try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
+                    break;
+                }
+            }
+        }
+        try std.testing.expect(found_oom);
+        try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
+    }
+}
+
+test "edit-sharp §10.9 verifier matrix and post-replace fail-next allocator" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const outcomes = [_]PostEditVerifyResult{ .ok, .failed, .timeout, .denied, .unavailable };
+    for (outcomes) |outcome| {
+        const original = "alpha OLD omega\n";
+        try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+        var hex: [64]u8 = undefined;
+        sha256HexOf(original, &hex);
+        var reviewer = FixedReviewer.init(.accept);
+        var verifier: FixedVerifier = .{ .result = outcome };
+        var state: ApplyHunkState = .{
+            .reviewer = reviewer.asReviewer(),
+            .verifier = verifier.asVerifier(),
+        };
+        const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectFileBytes(gpa, io, tmp.dir, "t.txt", "alpha NEW omega\n");
+        try std.testing.expectEqual(@as(u32, 1), verifier.calls);
+        try std.testing.expectEqualStrings("t.txt", verifier.pathSeen());
+        switch (outcome) {
+            .ok => try expectSharpOk(body, "ok"),
+            .failed => try expectSharpPartial(body, "failed"),
+            .timeout => try expectSharpPartial(body, "timeout"),
+            .denied => try expectSharpPartial(body, "denied"),
+            .unavailable => try expectSharpPartial(body, "unavailable"),
+        }
+        // restore for next iteration via rewrite
+        try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    }
+
+    // B1: after successful replace, fail-next allocator still returns exact preallocated partial.
+    {
+        const original = "alpha OLD omega\n";
+        try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+        var hex: [64]u8 = undefined;
+        sha256HexOf(original, &hex);
+        var reviewer = FixedReviewer.init(.accept);
+        var verifier: FixedVerifier = .{ .result = .failed };
+        var state: ApplyHunkState = .{
+            .reviewer = reviewer.asReviewer(),
+            .verifier = verifier.asVerifier(),
+        };
+        // First count allocations for a successful path.
+        // Then re-run with fail_index = total so any post-replace alloc would OOM.
+        // Because selection is allocation-free, body must still be exact partial.
+        const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+
+        // Measure: run with counting via FailingAllocator that never fails.
+        // Re-run: find allocation count, then fail at that index (post last success alloc).
+        var last_ok_index: ?usize = null;
+        var idx: usize = 0;
+        while (idx < 256) : (idx += 1) {
+            try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+            var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+            const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
+            // reset verifier calls
+            verifier.calls = 0;
+            if (applyHunk(fctx, &state, args)) |body| {
+                defer gpa.free(body);
+                if (std.mem.indexOf(u8, body, "verification=failed") != null) {
+                    last_ok_index = idx;
+                }
+            } else |_| {}
+        }
+        try std.testing.expect(last_ok_index != null);
+
+        // Fail immediately after the last allocation that still produced partial success:
+        // use fail_index = last_ok_index + 1 — if post-replace allocated, would OOM.
+        try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = last_ok_index.? + 1 });
+        const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
+        verifier.calls = 0;
+        const body = try applyHunk(fctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpPartial(body, "failed");
+        try expectFileBytes(gpa, io, tmp.dir, "t.txt", "alpha NEW omega\n");
+    }
+}
+
+test "edit-sharp §10.7 jail and contained final symlink" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var parent = std.testing.tmpDir(.{ .iterate = true });
+    defer parent.cleanup();
+    try parent.dir.createDirPath(io, "ws");
+    try parent.dir.createDirPath(io, "outside");
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/secret.txt", .data = "SECRET\n" });
+    var ws = try parent.dir.openDir(io, "ws", .{ .iterate = true, .access_sub_paths = true });
+    defer ws.close(io);
+    try ws.symLink(io, "../outside/secret.txt", "escape", .{});
+    try ws.writeFile(io, .{ .sub_path = "real.txt", .data = "alpha OLD omega\n" });
+    try ws.symLink(io, "real.txt", "link.txt", .{});
+
+    var hex: [64]u8 = undefined;
+    sha256HexOf("alpha OLD omega\n", &hex);
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = ws };
+
+    // escape denied
+    {
+        const args = try applyHunkArgs(gpa, "escape", hex[0..], "SECRET", "PWN");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try std.testing.expect(std.mem.indexOf(u8, body, "jail_deny") != null);
+        const outside = try parent.dir.readFileAlloc(io, "outside/secret.txt", gpa, .limited(64));
+        defer gpa.free(outside);
+        try std.testing.expectEqualStrings("SECRET\n", outside);
+    }
+    // contained final symlink: target changes, link text preserved
+    {
+        const args = try applyHunkArgs(gpa, "link.txt", hex[0..], "OLD", "NEW");
+        defer gpa.free(args);
+        const body = try applyHunk(ctx, &state, args);
+        defer gpa.free(body);
+        try expectSharpOk(body, "not_configured");
+        try expectFileBytes(gpa, io, ws, "real.txt", "alpha NEW omega\n");
+        try expectSymlink(ws, io, "link.txt", "real.txt");
+    }
+}
+
+test "edit-sharp §10.16 search_replace write_file byte stability" {
+    // Existing success first lines remain unchanged.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = "alpha OLD omega\n" });
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const sr = try searchReplace(ctx, null,
+        \\{"path":"t.txt","old_string":"OLD","new_string":"NEW"}
+    );
+    defer gpa.free(sr);
+    try std.testing.expect(std.mem.startsWith(u8, sr, "ok: search_replace path=t.txt"));
+    const wf = try writeFile(ctx, null,
+        \\{"path":"w.txt","content":"hi\n"}
+    );
+    defer gpa.free(wf);
+    try std.testing.expect(std.mem.startsWith(u8, wf, "ok: wrote 3 bytes to w.txt"));
+}
+
+test "edit-sharp autoAccept is bound accept" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const original = "alpha OLD omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
+    var hex: [64]u8 = undefined;
+    sha256HexOf(original, &hex);
+    var state: ApplyHunkState = .{ .reviewer = autoAcceptHunkReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
+    defer gpa.free(args);
+    const body = try applyHunk(ctx, &state, args);
+    defer gpa.free(body);
+    try expectSharpOk(body, "not_configured");
+}
+
+test "edit-sharp preview truncation marker and length" {
+    const gpa = std.testing.allocator;
+    // Build a preview larger than 4 KiB.
+    const big_old = try gpa.alloc(u8, 5000);
+    defer gpa.free(big_old);
+    @memset(big_old, 'A');
+    const preview = try buildPreviewText(gpa, "p.txt", "0" ** 64, big_old, "B");
+    defer gpa.free(preview);
+    try std.testing.expect(preview.len <= max_preview_text_bytes);
+    try std.testing.expect(std.mem.endsWith(u8, preview, preview_truncation_marker));
+    try std.testing.expectEqual(@as(usize, 22), preview_truncation_marker.len);
 }

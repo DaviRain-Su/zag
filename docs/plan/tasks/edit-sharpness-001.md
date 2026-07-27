@@ -1,7 +1,7 @@
 ---
 id: edit-sharpness-001
 scope: coding-agent/edit-sharpness (M2 / C4 first slice)
-status: in-progress # contract PASS; implementation not started
+status: in-progress # contract PASS; implementation landed on this branch (not merged-main closeout)
 priority: P1
 depends-on:
   - prompt-templates-001
@@ -33,8 +33,8 @@ slice + [C4-edit-sharpness.md](../../phases/C4-edit-sharpness.md).
 | Track | Status |
 |-------|--------|
 | Contract freeze | **PASS** at candidate tip `07b8dab2158d100642abf5bd61dbc64366f1aba4` after B1–B8: independent architecture/API **PASS**, independent safety/transaction **PASS**, final adjudication **PASS**, zero blockers |
-| Overall product task | **`in-progress` — contract PASS; implementation not started** |
-| Production implementation | **not started** — contract PASS **authorizes only** a later separately dispatched implementation Goal/node under this freeze; no code landed here; not preselected as done |
+| Overall product task | **`in-progress` — contract PASS; first-slice implementation on branch (coordinator merged-main closeout pending)** |
+| Production implementation | **landed on implementation branch** under frozen B1–B8 (`apply_hunk`, `include_digest`, reviewer/verifier ports, CLI bind, §10 fixtures). **Not** preselected done; Tools · write/edit remains **L2** until separate L3 Gate; no remote/Linux claim |
 | Tools · write/edit maturity | remains **L2** (no L3 claim or row raise; no current-tip Linux claim) |
 | Session v1 / Trace v1 / headless-v1 / `project.zig` / `--no-project` | **unchanged** |
 
@@ -71,13 +71,13 @@ slice + [C4-edit-sharpness.md](../../phases/C4-edit-sharpness.md).
   `docs/quality/evals.md`, and permissions/CLI/SDK notes when their **future**
   contract surface is frozen here
 
-## Implementation (later node; not started)
+## Implementation (this branch; merged-main closeout pending)
 
-- `packages/zag-coding-agent/src/runtime/edit_tools.zig` (or adjacent coding-agent module) — `apply_hunk` + shared commit
-- `packages/zag-coding-agent/src/runtime/fs_tools.zig` — optional `include_digest` on `read_file`
-- `packages/zag-coding-agent/src/toolset.zig` / `agent.zig` — stateful default `apply_hunk` + `Agent.Options` ports
+- `packages/zag-coding-agent/src/runtime/edit_tools.zig` — `apply_hunk` + B1 post-commit bodies + shared `atomicCommit` (`operation=apply_hunk`)
+- `packages/zag-coding-agent/src/runtime/fs_tools.zig` — optional `include_digest` on `read_file` (B3/B4)
+- `packages/zag-coding-agent/src/toolset.zig` / `agent.zig` — heap-stable `ApplyHunkState` + `Agent.Options` ports
 - `packages/zag-coding-agent/src/root.zig` — public re-exports listed in §7
-- coding-agent tests covering §10 fixture matrix
+- coding-agent tests covering §10 fixture matrix (see verification)
 - `packages/zag-cli/src/cli.zig` — thin Interactive/AutoAccept bind per §4 precedence + interactive protocol §4.1
 - **no** Core edit/review ports; **no** session/Trace/headless schema fields; **no** new package
 
@@ -535,11 +535,11 @@ No false success: committed+verify-non-ok is **partial**. Existing
 - [x] `/usr/bin/git diff --check` on committed range from base tip
 - [x] Docs-only contract lineage; no `packages/**` / tests / build / schema changes
 
-# verification (implementation track — later; **not started**)
+# verification (implementation track — branch evidence; closeout pending)
 
-- [ ] Full §10 fixture matrix in coding-agent tests
-- [ ] Dual-backend std/curl Gates; docs lint/score; independent **code** review PASS
-- [ ] Maturity row Tools · write/edit remains L2 unless a **separate** L3 Gate is
-  explicitly scheduled and closed
-- [ ] Later Goal/delivery decision to dispatch the implementation node under this
-  frozen contract (not preselected as done here)
+- [x] Full §10 fixture matrix in coding-agent / CLI tests (groups 1–16 as unit/Agent/CLI fixtures; private deterministic seams only)
+- [x] Focused package Gates: `packages/zag-coding-agent` **371/371**, `packages/zag-cli` **35/35**, SDK consumer **23/23**; root default `zig build test` **649/649** (std backend; curl dual-backend left to coordinator full Gates)
+- [x] `zig build docs-lint`
+- [ ] Independent **code** review PASS + coordinator merged-main dual-backend Gates
+- [x] Maturity row Tools · write/edit remains **L2** (no L3 claim; no current-tip Linux claim)
+- [ ] Coordinator closeout / delivery decision after review (task stays `in-progress` here)

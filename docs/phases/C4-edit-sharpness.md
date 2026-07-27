@@ -7,7 +7,7 @@
 | 失败模式 | stale/whitespace 锚点导致误改；用户无法审阅将落盘的变化 |
 | 模块 | [tools-edit](../modules/tools-edit.md) L2 runtime + **C4 first-slice contract freeze** |
 | Task | [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) |
-| 合同状态 | **contract PASS** at `07b8dab` (arch/API + safety + adjudication; zero blockers after B1–B8); implementation **not started** |
+| 合同状态 | **contract PASS** at `07b8dab` (arch/API + safety + adjudication; zero blockers after B1–B8); first-slice implementation on branch (merged-main closeout pending); Tools · write/edit remains **L2** |
 | 成熟度 | Tools · write/edit remains **L2** (no L3 row raise from docs alone; no current-tip Linux claim) |
 
 ## 目标
@@ -58,16 +58,16 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 - [x] Maturity text still claims Tools · write/edit **L2** only;
 - [x] Contract PASS authorizes **only** a later separately dispatched implementation node; no product code in this contract lineage.
 
-### Implementation track (later; **not started**)
+### Implementation track (branch evidence; closeout pending)
 
-- [ ] stale digest precondition + **revalidate** non-mutating deterministic evals；
-- [ ] 拒绝单个 hunk 后磁盘 byte-equal 且无 temp；interactive EOF/cancel never accepts；
-- [ ] 接受后仍满足 atomic/jail/redaction/`edit-v1`（`operation=apply_hunk` `parent_dirs=unchanged`）；
-- [ ] B1: post-replace fail-next allocator keeps exact partial `target=modified`；bound verifier non-ok never `apply_hunk_success`；
-- [ ] B3/B4 digest type/cap/body formula fixtures；
-- [ ] 默认 Tool 描述不引导整文件覆写大文件；
-- [ ] std/curl full Gates + §10 fixtures；
-- [ ] Later Goal/delivery decision dispatches the implementation node (not preselected done).
+- [x] stale digest precondition + **revalidate** non-mutating deterministic fixtures；
+- [x] 拒绝单个 hunk 后磁盘 byte-equal 且无 temp；interactive cancel flag never accepts；
+- [x] 接受后仍满足 atomic/jail/`edit-v1`（`operation=apply_hunk` `parent_dirs=unchanged`）；
+- [x] B1: post-replace fail-next allocator keeps exact partial `target=modified`；bound verifier non-ok never `apply_hunk_success`；
+- [x] B3/B4 digest type/cap/body formula fixtures；
+- [x] 默认 Tool 描述仍优先 search_replace / apply_hunk over whole-file overwrite；
+- [x] focused std package/root Gates + §10 fixtures (curl dual-backend + independent code review = coordinator)；
+- [ ] Coordinator merged-main closeout / delivery decision (task stays `in-progress`；no L3 claim).
 
 ## 对标
 

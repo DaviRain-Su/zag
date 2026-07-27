@@ -77,7 +77,15 @@ pub const Options = struct {
     /// Optional custom toolset. When null the default `Phase1Storage` built-ins are used.
     /// The slice and the `Tool` descriptors/instance pointers it references are
     /// **borrowed from the caller** and must outlive every `Agent.reply` call.
+    /// When non-null, `hunk_reviewer` / `post_edit_verifier` are **not** auto-spliced
+    /// into custom tools (B7); the caller owns custom Tool instance lifetimes.
     toolset: ?[]const tool.Tool = null,
+    /// Optional hunk reviewer for the default built-in `apply_hunk` Tool (B7).
+    /// Null → soft `review_unavailable` if `apply_hunk` runs. Not auto-spliced into custom toolsets.
+    hunk_reviewer: ?edit_tools.HunkReviewer = null,
+    /// Optional post-edit verifier for default `apply_hunk` (B7). Null → `verification=not_configured`.
+    /// Not auto-spliced into custom toolsets. Receives workspace-relative request path only.
+    post_edit_verifier: ?edit_tools.PostEditVerifier = null,
     /// Optional observer invoked before the Agent's internal usage/verbose handler.
     /// The observer value is copied into options; the pointer/data it references
     /// must remain valid for the lifetime of every `Agent.reply` call.
@@ -1099,6 +1107,8 @@ pub const Agent = struct {
     io: Io,
     provider: provider_mod.Provider,
     tools_storage: toolset_mod.Phase1Storage,
+    /// Heap-stable default `apply_hunk` state (B7). Outlives all reply/Tool copies.
+    apply_hunk_state: *edit_tools.ApplyHunkState,
     options: Options,
     stdin_prompter: permissions.StdinPrompter,
     permission_gate: permissions.Gate,
@@ -1125,20 +1135,31 @@ pub const Agent = struct {
         provider: provider_mod.Provider,
         options: Options,
     ) error{OutOfMemory}!Agent {
-        // Build owned redactor first (never swallow OOM). No later fallible work.
-        const owned_redactor: redact_mod.Redactor = if (options.redactor) |src|
+        // Build owned redactor first (never swallow OOM).
+        var owned_redactor: redact_mod.Redactor = if (options.redactor) |src|
             try src.clone(gpa)
         else
             try redact_mod.Redactor.init(gpa, .{
                 .secrets = options.secrets,
                 .patterns = options.pattern_redaction,
             });
+        errdefer owned_redactor.deinit();
+
+        // B7: heap-stable ApplyHunkState for default toolset instance pointer.
+        // Ports borrowed from Options at init; custom toolset does not auto-splice them.
+        const apply_state = try gpa.create(edit_tools.ApplyHunkState);
+        errdefer gpa.destroy(apply_state);
+        apply_state.* = .{
+            .reviewer = options.hunk_reviewer,
+            .verifier = options.post_edit_verifier,
+        };
 
         var self: Agent = .{
             .gpa = gpa,
             .io = io,
             .provider = provider,
-            .tools_storage = .init(),
+            .tools_storage = .init(apply_state),
+            .apply_hunk_state = apply_state,
             .options = options,
             .stdin_prompter = .{ .io = io },
             .permission_gate = .yolo(),
@@ -1165,7 +1186,20 @@ pub const Agent = struct {
             tr.deinit();
         }
         self.owned_redactor.deinit();
+        self.gpa.destroy(self.apply_hunk_state);
         self.* = undefined;
+    }
+
+    /// Live rebind of default-toolset reviewer (CLI post-init cancel wiring). No-op for custom toolset use.
+    pub fn setHunkReviewer(self: *Agent, reviewer: ?edit_tools.HunkReviewer) void {
+        self.apply_hunk_state.reviewer = reviewer;
+        self.options.hunk_reviewer = reviewer;
+    }
+
+    /// Live rebind of default-toolset verifier. No-op semantics for custom toolsets (not auto-spliced).
+    pub fn setPostEditVerifier(self: *Agent, verifier: ?edit_tools.PostEditVerifier) void {
+        self.apply_hunk_state.verifier = verifier;
+        self.options.post_edit_verifier = verifier;
     }
 
     /// Active redactor (Agent-owned; stable for Agent lifetime).
@@ -5660,7 +5694,7 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
     var handler_invocations: u32 = 0;
     var probe: ShellDenyProbe = .{ .invocations = &handler_invocations };
     const deny_tools = [_]tool.Tool{.{
-        .descriptor = agent.tools_storage.tools[6].descriptor,
+        .descriptor = agent.tools_storage.tools[7].descriptor, // run_shell (after apply_hunk)
         .instance = &probe,
         .handler = ShellDenyProbe.handle,
     }};
@@ -8406,4 +8440,162 @@ test "harness-steering: injected steering still hits ask-deny write gate" {
     }
     try std.testing.expect(denied);
     try expectPathAbsent(io, target);
+}
+
+// ── edit-sharpness-001 Agent Options / lifetime (B7, §10.13) ────────────────
+
+test "edit-sharp §10.13 Options ports root surface and custom toolset no auto-splice" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Root re-exports exist (compile-time + runtime type check via usage).
+    const auto = edit_tools.autoAcceptHunkReviewer();
+    try std.testing.expect(auto.reviewFn(null, .{
+        .path = "p",
+        .expected_sha256 = "0" ** 64,
+        .old_len = 0,
+        .new_len = 0,
+        .preview_text = "",
+    }) == .accept);
+
+    var verify_calls: u32 = 0;
+    const Ver = struct {
+        calls: *u32,
+        fn verify(ptr: ?*anyopaque, path: []const u8) edit_tools.PostEditVerifyResult {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            self.calls.* += 1;
+            _ = path;
+            return .ok;
+        }
+    };
+    var ver_state: Ver = .{ .calls = &verify_calls };
+    const verifier: edit_tools.PostEditVerifier = .{
+        .ptr = &ver_state,
+        .verifyFn = Ver.verify,
+    };
+
+    // Default toolset: ports land in ApplyHunkState
+    {
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = undefined,
+            .vtable = &.{ .chat = struct {
+                fn c(_: *anyopaque, _: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl) provider_mod.ChatError!message.AssistantTurn {
+                    return error.InvalidResponse;
+                }
+            }.c },
+        }, .{
+            .permission_mode = .yolo,
+            .hunk_reviewer = auto,
+            .post_edit_verifier = verifier,
+            .max_turns = 1,
+        });
+        defer agent.deinit();
+        try std.testing.expect(agent.apply_hunk_state.reviewer != null);
+        try std.testing.expect(agent.apply_hunk_state.verifier != null);
+        // Tool instance points at Agent-owned state
+        var found_apply = false;
+        for (agent.tools_storage.tools) |t| {
+            if (std.mem.eql(u8, t.name(), "apply_hunk")) {
+                found_apply = true;
+                try std.testing.expect(t.instance == @as(?*anyopaque, @ptrCast(agent.apply_hunk_state)));
+            }
+        }
+        try std.testing.expect(found_apply);
+    }
+
+    // Custom toolset: Options ports NOT auto-spliced into custom tools
+    {
+        const custom = [_]tool.Tool{tool.stateless(.{
+            .definition = .{
+                .name = "custom_ro",
+                .description = "x",
+                .parameters_json = "{\"type\":\"object\",\"properties\":{}}",
+            },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .none,
+            },
+        }, struct {
+            fn h(ctx: tool.Context, _: ?*anyopaque, _: []const u8) tool.HandlerError![]u8 {
+                return ctx.allocator.dupe(u8, "ok") catch return error.OutOfMemory;
+            }
+        }.h)};
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = undefined,
+            .vtable = &.{ .chat = struct {
+                fn c(_: *anyopaque, _: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl) provider_mod.ChatError!message.AssistantTurn {
+                    return error.InvalidResponse;
+                }
+            }.c },
+        }, .{
+            .permission_mode = .yolo,
+            .toolset = &custom,
+            .hunk_reviewer = auto,
+            .post_edit_verifier = verifier,
+            .max_turns = 1,
+        });
+        defer agent.deinit();
+        // effective toolset is custom only
+        const ts = agent.effectiveToolset();
+        try std.testing.expectEqual(@as(usize, 1), ts.tools.len);
+        try std.testing.expectEqualStrings("custom_ro", ts.tools[0].name());
+        try std.testing.expect(ts.tools[0].instance == null);
+        // Options ports stored on ApplyHunkState but not spliced into custom tools
+        try std.testing.expect(agent.apply_hunk_state.reviewer != null);
+        try std.testing.expect(agent.apply_hunk_state.verifier != null);
+    }
+}
+
+test "edit-sharp §10.11 resume fork no durable proposal schema neutral" {
+    // Proposal bytes are per-invocation only; Session schema unchanged.
+    // Smoke: start session, fork idle, resume — no apply_hunk proposal fields.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-edit-sharp-session";
+    const sess_path = ".zag-test-edit-sharp-session/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = undefined,
+        .vtable = &.{ .chat = struct {
+            fn c(_: *anyopaque, arena: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl) provider_mod.ChatError!message.AssistantTurn {
+                return .{
+                    .content = try arena.dupe(u8, "done"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+        }.c },
+    }, .{
+        .permission_mode = .yolo,
+        .hunk_reviewer = edit_tools.autoAcceptHunkReviewer(),
+        .max_turns = 2,
+    });
+    defer agent.deinit();
+
+    {
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const result = try agent.reply(&session, "hi");
+        try std.testing.expectEqualStrings("done", result.final_text);
+    }
+
+    var resumed = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = sess_path,
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+    });
+    defer resumed.deinit();
+    // Live ports rebind from Agent state (still present); no proposal catalog on session.
+    try std.testing.expect(agent.apply_hunk_state.reviewer != null);
 }

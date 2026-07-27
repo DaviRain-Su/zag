@@ -21,11 +21,12 @@ pub const Phase0Storage = struct {
     }
 };
 
-/// Default coding toolset: explore + search + edit + shell.
+/// Default coding toolset: explore + search + edit + apply_hunk + shell.
+/// `apply_hunk` instance points at Agent-owned `ApplyHunkState` (B7).
 pub const Phase1Storage = struct {
-    tools: [7]tool.Tool,
+    tools: [8]tool.Tool,
 
-    pub fn init() Phase1Storage {
+    pub fn init(apply_hunk_state: *edit_tools.ApplyHunkState) Phase1Storage {
         const ro = fs_tools.phase0Tools();
         const search = fs_tools.searchTools();
         const rw = edit_tools.phase1ExtraTools();
@@ -37,6 +38,7 @@ pub const Phase1Storage = struct {
                 search[1], // glob
                 rw[0], // search_replace (preferred edit)
                 rw[1], // write_file
+                edit_tools.makeApplyHunkTool(apply_hunk_state),
                 rw[2], // run_shell
             },
         };
@@ -49,7 +51,8 @@ pub const Phase1Storage = struct {
 
 test "every built-in declares complete descriptor capabilities" {
     const gpa = std.testing.allocator;
-    const storage = Phase1Storage.init();
+    var apply_state: edit_tools.ApplyHunkState = .{};
+    const storage = Phase1Storage.init(&apply_state);
     const tools = storage.tools;
     try tool.validateTools(gpa, &tools);
 
@@ -59,6 +62,7 @@ test "every built-in declares complete descriptor capabilities" {
         uses_path: bool,
         shell: tool.ShellPolicyKind,
         default_path: ?[]const u8 = null,
+        stateful: bool = false,
     }{
         .{ .name = "list_dir", .risk = .read, .uses_path = true, .shell = .none },
         .{ .name = "read_file", .risk = .read, .uses_path = true, .shell = .none },
@@ -66,6 +70,7 @@ test "every built-in declares complete descriptor capabilities" {
         .{ .name = "glob", .risk = .read, .uses_path = true, .shell = .none, .default_path = "." },
         .{ .name = "search_replace", .risk = .write, .uses_path = true, .shell = .none },
         .{ .name = "write_file", .risk = .write, .uses_path = true, .shell = .none },
+        .{ .name = "apply_hunk", .risk = .write, .uses_path = true, .shell = .none, .stateful = true },
         .{ .name = "run_shell", .risk = .execute, .uses_path = false, .shell = .command_argument },
     };
 
@@ -81,7 +86,11 @@ test "every built-in declares complete descriptor capabilities" {
         }
         try std.testing.expect(t.descriptor.capabilities.shell == exp.shell);
         try std.testing.expect(t.descriptor.capabilities.cancellation == .none);
-        try std.testing.expect(t.instance == null);
+        if (exp.stateful) {
+            try std.testing.expect(t.instance == @as(?*anyopaque, @ptrCast(&apply_state)));
+        } else {
+            try std.testing.expect(t.instance == null);
+        }
         // Name never substitutes for risk: each capability field is set explicitly.
         try std.testing.expect(t.descriptor.definition.name.len > 0);
         try std.testing.expect(t.descriptor.definition.parameters_json.len > 0);
