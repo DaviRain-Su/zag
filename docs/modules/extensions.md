@@ -30,7 +30,7 @@ A feature may use several carriers. A Package is a bundle above E1/E2/E3, not an
 | Pi surface | Zag outcome | Carrier / state |
 |------------|-------------|-----------------|
 | Extension | selected Tools/events/commands/flags/shortcuts/providers/session/UI through a common vocabulary | E0 available in part; E2/E3 planned incrementally |
-| Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 planned `skills-001` |
+| Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 **in-progress** `skills-001` — binding [skills.md](./skills.md) |
 | Prompt Template | deterministic `/name` prompt expansion with explicit non-recursive substitution | E1 planned after shared resource loader |
 | Theme | passive theme data rendered by the host product shell | after minimal TUI |
 | Package | local manifest bundling E1 resources and optional E2/E3 artifacts | package schema/trust Gates planned |
@@ -48,7 +48,7 @@ This is functional correspondence, not Pi API/schema/CLI/package-manager parity.
 | Tier | Surface | Current |
 |------|---------|---------|
 | E0 trusted static Zig | compile-time Provider/Toolset/Observer/policy and later native host UI | **available in part** through SDK-ready contract |
-| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` next; other resources need contracts |
+| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` docs contract in-progress ([skills.md](./skills.md)); Prompt Templates later |
 | E2 process adapter | `zag-ext-v1` semantics over NDJSON | planned after C7.1 + real process consumer |
 | E3 WASM Component | `zag-ext-v1` semantics over Zag WIT | **planned preferred portable third-party executable tier** |
 
@@ -104,21 +104,22 @@ E0 is not installed by a runtime extension package.
 
 ### Skills
 
-The first runtime-discoverable resource is `SKILL.md`:
+The first runtime-discoverable resource is `SKILL.md`. Binding product contract:
+**[skills.md](./skills.md)** (`skills-001`, docs in-progress). Summary:
 
-- documented global/project roots and deterministic precedence;
-- project resources gated by explicit project trust;
-- lexical + realpath/symlink-aware containment at discovery;
-- validated frontmatter/name/description;
-- per-file and aggregate prompt budget;
-- deterministic conflict diagnostics;
-- explicit disable and manual-only behavior;
-- disabled/no-Skill mode behavior-neutral;
-- no loader-provided executable/environment/provider/hook/UI/network privilege.
+- Agent Skills v1 roots: user `$HOME/.agents/skills/<name>/SKILL.md` (CLI HOME /
+  SDK host-owned user-root) and project `<workspace>/.agents/skills/...` only with
+  explicit trust; default skills on, project untrusted; `--no-skills` disables both;
+- project resources gated by explicit project trust (independent of `--no-project`);
+- realpath/symlink-aware containment at discovery; no recursive walk; byte-sorted
+  direct children; project overrides user by exact name;
+- line-oriented frontmatter subset; per-file and aggregate budgets; path-free soft
+  diagnostics; OOM hard-fail before durable create;
+- Session-owned in-memory catalog (never persisted); resume re-discovers; fork
+  deep-copies; model-invocable summaries only in a view-only Skills system layer;
+- `read_skill` + manual `/skill:<name>` activation; no loader execute privilege.
 
 A passive Skill can still instruct the model to invoke shell/edit/read Tools against bundled scripts or assets. Those calls use the ordinary permission, workspace containment, shell-policy, and redaction path. Content review is a trust concern; the resource loader is not a sandbox.
-
-`skills-001` must decide Agent Skills interoperability, `.agents/skills` roots, `/skill:name`, and `disable-model-invocation` explicitly.
 
 ### Prompt Templates
 
@@ -318,10 +319,14 @@ Runtime extension UI may project over TUI and future RPC, but it never changes `
 
 ### E1 Skills
 
-- discovery/budget/conflict/disable/manual-only/symlink fixtures;
-- project trust ordering;
-- no loader execution path;
-- downstream Tool calls still pass permission/containment/shell/redaction.
+Binding checklist lives in [skills.md §11](./skills.md#11-verification--exact-fixture-matrix-14).
+Contract authored; implementation fixtures open:
+
+- [ ] discovery/budget/conflict/disable/manual-only/symlink fixtures;
+- [ ] project trust ordering;
+- [ ] no loader execution path;
+- [ ] downstream Tool calls still pass permission/containment/shell/redaction;
+- [ ] catalog lifetimes (start OOM, fork, resume) + `read_skill` + activation.
 
 ### E1 Prompt Templates
 

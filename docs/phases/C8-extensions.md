@@ -6,7 +6,7 @@
 | Near-term slice | M2 `skills-001`, then Prompt Templates — E1 passive resources |
 | Long-term target | E3 WASM Component extension platform |
 | Decision | [D-010](../decisions/active/D-010-extension-tiers-and-process-protocol.md) |
-| Module | [extensions](../modules/extensions.md) |
+| Module | [extensions](../modules/extensions.md) · E1 Skills binding [skills](../modules/skills.md) |
 | Feature map | [Pi feature correspondence](../plan/analysis/2026-07-26-pi-feature-correspondence.md) |
 
 ## Feature surface vs. carrier
@@ -39,11 +39,14 @@ No dynamic Zig shared-library ABI and no embedded Lua/QuickJS/Bun runtime.
 
 ### Skills
 
-- jailed `SKILL.md` discovery;
-- project-trust ordering;
-- frontmatter/name/description validation;
-- bounded prompt injection;
-- deterministic precedence/conflicts;
+Binding contract: [skills.md](../modules/skills.md) (`skills-001` docs
+**in-progress**). Product rules in short:
+
+- jailed `SKILL.md` discovery (user + optional trusted project `.agents/skills`);
+- project-trust ordering (default untrusted; independent of `--no-project`);
+- frontmatter/name/description validation and hard budgets;
+- Session-owned catalog + model-visible summary / on-demand `read_skill`;
+- deterministic precedence/conflicts; manual `/skill:<name>` activation;
 - explicit disable/manual-only/no-execute neutrality.
 
 "No execute" applies to the loader. Skill text can still direct the model to invoke ordinary Tools against bundled scripts/assets; permission, containment, shell policy, and redaction remain mandatory.
@@ -137,13 +140,16 @@ Raw terminal bytes, arbitrary ANSI, Host pointers, and untrusted native componen
 
 ### E1 Skills
 
+Exact matrix: [skills.md §11](../modules/skills.md#11-verification--exact-fixture-matrix-14).
+
 - [ ] roots/order/conflicts deterministic;
 - [ ] project trust precedes project-resource discovery;
 - [ ] symlink/escape invalid;
 - [ ] invalid/oversized content bounded;
 - [ ] disabled/manual-only behavior deterministic;
 - [ ] no loader execution path;
-- [ ] induced Tool calls still pass ordinary security Gates.
+- [ ] induced Tool calls still pass ordinary security Gates;
+- [ ] start OOM / fork catalog / resume rediscovery / activation routes.
 
 ### E1 Prompt Templates
 

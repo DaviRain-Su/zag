@@ -47,7 +47,7 @@ These axes are orthogonal:
 | Pi feature | Pi user outcome | Zag functional target | Carrier | Current truth / Gate | Deliberate difference |
 |------------|-----------------|-----------------------|---------|----------------------|-----------------------|
 | Extension | Register Tools, lifecycle handlers, commands, flags, shortcuts, providers, session actions, messages, and UI | A common feature vocabulary delivered incrementally; host policy/session/trace authority remains mandatory | E0, E2, E3 | E0 Tool/Provider/Observer composition L2; runtime extensions L0 | No `jiti`, arbitrary TS execution, dynamic Zig ABI, or host-memory mutation |
-| Skill | Discover reusable instructions, expose summaries, load `SKILL.md` on demand, optionally invoke manually | Bounded E1 discovery, precedence, trust, budget, disable/manual-only behavior, and downstream Tool enforcement | E1 + host Tool gates | `skills-001` planned | The loader never executes code, but Skill content may induce normal Tool/shell execution |
+| Skill | Discover reusable instructions, expose summaries, load `SKILL.md` on demand, optionally invoke manually | Bounded E1 discovery, precedence, trust, budget, disable/manual-only behavior, and downstream Tool enforcement | E1 + host Tool gates | `skills-001` docs **in-progress** ([skills.md](../../modules/skills.md)) | The loader never executes code, but Skill content may induce normal Tool/shell execution |
 | Prompt Template | Expand `/name args` into reusable prompts | Explicit passive prompt resource with deterministic discovery, collision, and non-recursive substitution | E1 + host command router | Missing binding task; planned after shared E1 loader | Syntax may be smaller than Pi, but cannot be accidental or recursively substituted |
 | Theme | Install/select presentation data, adapt to terminal capabilities, reload | Passive theme data plus host-owned terminal renderer | E1-style data + host shell | After minimal TUI | No ANSI/renderer capability crosses E2/E3 |
 | Package | Install one bundle containing several extension resources and enable/disable them | Local runtime bundle manifest declaring E1 resources and optional E2/E3 artifacts; digest/provenance/trust/quarantine | Bundle layer above E1/E2/E3 | Schema/package Gates not started | E0 Zig source dependencies are build-time and never runtime-installed; no npm parity/marketplace |
@@ -211,7 +211,7 @@ cli-sigint-001 ✅
   → harness-events-001 ✅
       ├→ harness-steering-001 ✅
       └→ session-fork-001 ✅ at 0a3087f
-  → skills-001 (planned) → prompt-templates-001
+  → skills-001 (docs in-progress) → prompt-templates-001
   → edit-sharpness-001 + tui-minimal-001
 ```
 
@@ -253,7 +253,7 @@ These are capability placeholders. They become binding only after their own anal
 
 ## Remaining blind spots
 
-- Exact Agent Skills interoperability and global/project discovery roots remain a task-level product decision.
+- Exact Agent Skills interoperability and global/project discovery roots are fixed by the `skills-001` binding contract ([skills.md](../../modules/skills.md)); implementation remains open.
 - `rpc-v1` command vocabulary is not specified; only its boundary and dependencies are fixed.
 - Stateful extension UI schema is not designed; only its safety/ownership boundary is fixed.
 - No WASM engine or WIT shape is selected beyond the staged contract constraints.

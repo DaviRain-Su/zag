@@ -23,7 +23,7 @@ docs/plan/
 | Product SDK lifecycle | **done** at `aecf402` — coding-agent `LifecycleObserver` over Core source facts plus facade run facts; no Core lifecycle channel |
 | Bounded steering/follow-up | **done** at `a5ff2b7` — Session-owned queues + explicit Core `ControlInput`; SDK/Loop enrichment with no maturity change |
 | Session fork | **done** at `0a3087f` — idle-only durable child, parent immutability, schema v1, SDK 21/21; Session remains L2 |
-| Next code task | `skills-001` planned — task file not yet authored |
+| Next code task | `skills-001` **in-progress** (docs contract) — [task](./tasks/skills-001.md) · [module](../modules/skills.md) |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -73,7 +73,7 @@ completed foundation
            └────► session-fork-001 (done @ 0a3087f) ✅
                            │
                            ▼
-          skills-001 (planned) → prompt-templates-001
+          skills-001 (docs in-progress) → prompt-templates-001
                     + edit-sharpness-001 (M2)
                            │
                            ▼
@@ -85,9 +85,9 @@ completed foundation
 it would add a third Core event channel while leaving product policy/state in the kernel; the replacement coding-agent
 adapter closed at `aecf402`. Bounded steering/follow-up then closed at `a5ff2b7` with Session-owned queues and a thin
 Core insertion seam. The safe idle-only durable fork closed at `0a3087f` after independent reviews and merged-main
-Gates, without changing session schema v1 or the Session L2 row. `skills-001` is the next planned node; its task file has
-not yet been authored. Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery
-order.
+Gates, without changing session schema v1 or the Session L2 row. `skills-001` is the active node: binding module and
+task are authored (docs-first); implementation and Runtime Extensions maturity raise are not claimed. Task priorities
+express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -97,7 +97,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| `skills-001` | planned | Passive `SKILL.md` discovery + bounded prompt injection; task file not yet authored |
+| [skills-001](./tasks/skills-001.md) | **in-progress** (docs contract) | E1 passive `SKILL.md` discovery, trust, summary/`read_skill`, manual activation; binding [skills.md](../modules/skills.md); no maturity raise |
 
 ### Completed foundation
 

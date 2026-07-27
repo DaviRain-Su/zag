@@ -1,0 +1,161 @@
+---
+id: skills-001
+scope: coding-agent/skills (E1 passive)
+status: in-progress
+priority: P1
+depends-on:
+  - session-fork-001
+---
+
+# objective
+
+Deliver the first **Zig-native E1 passive Agent Skills** slice:
+
+- bounded, deterministic `SKILL.md` discovery;
+- explicit project trust;
+- model-visible summaries with on-demand body loading;
+- manual activation;
+- ordinary downstream safety Gates (ask + workspace jail + shell protect + redaction).
+
+**Owner:** `zag-coding-agent` only. Do **not** change Core, session schema v1,
+Trace v1, `headless-v1`, `project.zig`, or `--no-project` semantics.
+
+Binding specification: [Agent Skills (E1 passive)](../../modules/skills.md).
+
+This task file is the **docs-first contract track**. Production code is a later
+commit series on the same task; Runtime Extensions maturity remains **L0**.
+
+# context
+
+- `docs/decisions/active/D-009-pi-semantics-not-parity-fork.md`
+- `docs/decisions/active/D-010-extension-tiers-and-process-protocol.md`
+- `docs/decisions/active/D-011-thin-agent-core-boundary.md`
+- `docs/modules/skills.md` (**binding truth**)
+- `docs/modules/extensions.md`
+- `docs/modules/session-store.md`
+- `docs/modules/session-fork.md`
+- `docs/modules/context-compaction.md`
+- `docs/modules/tool-runtime.md`
+- `docs/modules/permissions.md`
+- `docs/modules/workspace-sandbox.md`
+- `docs/modules/tools-shell.md`
+- `docs/modules/sdk-contract.md`
+- `docs/modules/cli-interaction.md`
+- `docs/modules/headless-contract.md`
+- `docs/phases/C8-extensions.md`
+- `docs/plan/analysis/2026-07-26-pi-feature-correspondence.md`
+- `docs/roadmap.md` · `docs/maturity.md`
+- Live sources (read for seams; do not invent Core Skill APIs):
+  - `packages/zag-coding-agent/src/agent.zig` (`Session.start`, `fork`, `layers`, `Agent.reply`, toolset)
+  - `packages/zag-coding-agent/src/project.zig` (unchanged AGENTS.md only)
+  - `packages/zag-coding-agent/src/toolset.zig` / `context.zig`
+  - `packages/zag-agent-core/src/tool.zig` (`validateTools`, `buildTool`)
+  - `packages/zag-cli/src/cli.zig` (flags, one-shot/REPL/headless)
+  - `tests/sdk-consumer-fixture/` (public surface smoke when implementing)
+
+# path
+
+## Docs (this commit track)
+
+- `docs/modules/skills.md` — binding contract
+- `docs/plan/tasks/skills-001.md` — this task
+- status links only: `docs/plan/README.md`, `docs/modules/README.md`,
+  `docs/modules/extensions.md`, `docs/phases/C8-extensions.md`,
+  `docs/roadmap.md`, `docs/maturity.md`, `docs/INDEX.md` if discoverability needs it,
+  `docs/plan/backlog.md` note resolution as appropriate
+
+## Implementation (later; not this docs commit)
+
+- `packages/zag-coding-agent/src/skills.zig` (or split modules) — discovery, parse, catalog
+- `packages/zag-coding-agent/src/agent.zig` — start/fork/deinit catalog; reply tool append; layers
+- `packages/zag-coding-agent/src/root.zig` — public activation export
+- coding-agent skill tests covering module §11 fixtures **1–14**
+- `packages/zag-cli/src/cli.zig` — `--no-skills`, `--trust-project-skills`, HOME → user root, `/skill:` routing
+- `tests/sdk-consumer-fixture/` — public options + activation smoke (no implicit reply parse)
+- **no** Core Skill module; **no** schema/Trace/headless field additions
+
+# contract
+
+The module doc is authoritative. Summary of binding rules:
+
+1. **Ownership:** coding-agent only. Core, session v1, Trace v1, headless-v1,
+   `project.zig`, `--no-project` unchanged.
+2. **Roots:** user `$HOME/.agents/skills/<name>/SKILL.md` when skills enabled;
+   project `<workspace>/.agents/skills/<name>/SKILL.md` only with
+   `--trust-project-skills` / SDK trusted enum. Default: skills **on**, project
+   **untrusted**. `--no-skills` disables both. CLI resolves HOME; SDK takes
+   explicit host-owned user-root (never implicit env).
+3. **Containment:** each root/candidate realpath-contained under its authority;
+   project also inside workspace. Symlink escape soft-skips; no outside catalog
+   bytes. User-root bytes only via host loader; File Tools stay workspace-jailed.
+4. **Walk:** direct children only; byte-sorted names; max 64 entries/root; no
+   recursion. Project overrides user by exact name.
+5. **Frontmatter subset:** required `name` + non-empty `description`; optional
+   exact boolean `disable-model-invocation`; ignore unknown well-formed keys;
+   soft-skip duplicates/malformed/invalid UTF-8/name≠dir/empty body/unsupported
+   structure with **path-free** diagnostics.
+6. **Budgets:** name ≤64 lower-kebab; description ≤1024; file ≤24 KiB; summary
+   aggregate ≤4096; body aggregate ≤256 KiB; OOM hard-fail.
+7. **Lifecycle:** discover in `Session.start` before durable create; store full
+   bodies in Session catalog; no invocation-time FS; catalog never persisted;
+   resume re-discovers; fork deep-copies catalog/summary with parent immutability;
+   create OOM commits no file and holds no lease.
+8. **Model surface:** invocable name+description only in view-only Skills system
+   layer; never transcript/compaction. Disabled/no-skill → no Skills block, no
+   `read_skill`.
+9. **`read_skill`:** risk read, workspace none, shell none, cancel none; catalog
+   only; no paths; manual-only denied. Per reply dynamically append to default or
+   custom toolset (no fixed `[8]`); Session address stable; duplicate reserved
+   name → `validateTools` fail-closed before provider.
+10. **Activation:** public parse/expand API; CLI one-shot/REPL/headless route exact
+    `/skill:<name> [rest]`; manual-only allowed; expands once to ordinary user
+    message on existing transcript/session/trace paths; unknown name stable local
+    error, no provider; unrelated slash text raw; `Agent.reply` never implicit-parses.
+11. **Safety:** loader no-execute; induced write/shell/path still ask+jail+protect+redact.
+12. **Non-goals:** full YAML, Pi/npm marketplace parity, Prompt Templates, E2/E3/WASM,
+    remote install, auto-trust project, Core Skill types, new schemas, recursive
+    expansion, TUI/autocomplete, OS sandbox/DLP, maturity raise.
+13. **Verification:** module §11 fixtures **1–14** + SDK public-surface smoke +
+    focused tests and root std/curl Gates on implementation.
+
+# verification
+
+## Docs Gate (contract track — this commit)
+
+- [x] Binding module + task authored before implementation
+- [ ] Independent review of contract (when scheduled)
+- [ ] `zig build docs-lint`
+- [ ] `git diff --check`
+- [ ] Explicit `git add` of intended docs files only
+- [ ] One local docs commit on `task/skills-001`
+
+## Implementation Gate (later)
+
+Must pass every fixture in
+[skills.md §11](../../modules/skills.md#11-verification--exact-fixture-matrix-14)
+items **1–14**, plus:
+
+- [ ] Focused coding-agent tests green
+- [ ] External SDK public-surface smoke
+- [ ] Root std + curl candidate Gates as required by plan closeout
+- [ ] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
+- [ ] Runtime Extensions maturity remains **L0**
+- [ ] Independent code review + ff-only merge + merged-main Gate before `done`
+
+# delivery evidence
+
+| Item | Evidence |
+|------|----------|
+| Contract | `docs/modules/skills.md` |
+| Task | this file `in-progress` |
+| Implementation | _pending_ |
+| Fixtures 1–14 | _pending_ |
+| SDK smoke | _pending_ |
+| Review / merge / Gate | _pending_ |
+| Maturity | Runtime Extensions **L0** (E1 Skills slice specified only) |
+
+# non-goals (task boundary)
+
+See module §10. Additionally out of scope for this task's implementation PR series:
+raising maturity, Prompt Templates, shared generic “resource loader” package
+extraction beyond what Skills needs, and CLI TUI autocomplete.
