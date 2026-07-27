@@ -482,8 +482,8 @@ executes it.
 
 - Focused coding-agent tests for §11 rows 1–17 (`prompt_templates_tests.zig`;
   rows 7–8 combined) + unit tests in `prompt_templates.zig`
-- External SDK public-surface smoke (`tests/sdk-consumer-fixture`; fixture
-  source **23** tests including `prompt-templates-001`)
+- External SDK public-surface smoke (`tests/sdk-consumer-fixture`; current
+  fixture **23/23** including `prompt-templates-001`)
 - Root std + curl candidate Gates: std **40/40 · 633/633**, curl
   **42/42 · 632/632**
 - No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change

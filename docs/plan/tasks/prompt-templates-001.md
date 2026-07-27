@@ -150,7 +150,7 @@ items **1–17**, plus:
       1–17; rows 7–8 combined in one test; plus unit tests in
       `prompt_templates.zig`)
 - [x] External SDK public-surface smoke (`tests/sdk-consumer-fixture`
-      `prompt-templates-001` test; fixture source currently **23** tests)
+      `prompt-templates-001` test; current fixture **23/23**)
 - [x] Root std + curl candidate Gates (at tip `61326ae`: std **40/40 steps,
       633/633 tests**; curl **42/42 steps, 632/632 tests**; docs lint/score;
       `git diff --check`; clean worktree)
@@ -170,7 +170,7 @@ items **1–17**, plus:
 | Implementation | `5487c4be3e17b2fa49fe718ac2c9b97f7c9e574f` — `packages/zag-coding-agent/src/prompt_templates.zig` + Session/CLI/SDK wiring + §11 fixtures |
 | Review fix / candidate | `61326ae7ae8f7bbef3de99377a8c9975d239d6df` — exact 24 KiB files under limited read |
 | Fixtures 1–17 | `packages/zag-coding-agent/src/prompt_templates_tests.zig` (16 focused tests covering matrix rows 1–17; §11.7–8 combined) + unit tests in `prompt_templates.zig` |
-| SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` `prompt-templates-001` public options + expand + no implicit reply parse; fixture source **23** tests |
+| SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` `prompt-templates-001` public options + expand + no implicit reply parse; current fixture **23/23** |
 | Review | independent correctness/boundary review **PASS**, zero remaining blockers, at candidate `61326ae` |
 | Merge | coordinator ff-only advanced local main `4fcfb31e992e268b3481e8fd9a752fd5a80741f3` → `61326ae7ae8f7bbef3de99377a8c9975d239d6df` while preserving an unrelated existing canonical `.gitignore` edit; **no push** |
 | Candidate Gate @ `61326ae` | std **40/40 steps, 633/633 tests**; curl **42/42 steps, 632/632 tests**; docs lint/score; `git diff --check`; clean state |

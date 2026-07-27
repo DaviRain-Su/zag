@@ -8,7 +8,7 @@
 |-------|--------|---------|
 | Teaching 0–3 | ✅ tutorial-complete | 教程可学习/演示；不等于 production claim |
 | Production Floor H | ✅ **L2** | single-user trusted-host；11/11 audit PASS；panel SHIP |
-| Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **22/22** |
+| Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **23/23** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
 | Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); next edit、minimal TUI |
@@ -34,7 +34,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
-| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合，idle-only durable fork 已在 `0a3087f` 闭合（[session-fork](./modules/session-fork.md)）；E1 Skills 已在 `caafef5` 闭合；E1 Prompt Templates 已在 `61326ae` 闭合；current fixture source **23** tests，不升成熟度 |
+| SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合，idle-only durable fork 已在 `0a3087f` 闭合（[session-fork](./modules/session-fork.md)）；E1 Skills 已在 `caafef5` 闭合；E1 Prompt Templates 已在 `61326ae` 闭合；current fixture **23/23**，不升成熟度 |
 | JSON | ✅ `headless-v1` L2 |
 | RPC | 正式后置 `rpc-v1`，独立于 `headless-v1`，不追 Pi command/schema parity |
 | TUI/UI | minimal host TUI；E2/E3 host-rendered intents，stateful view/action 另过 Gate |

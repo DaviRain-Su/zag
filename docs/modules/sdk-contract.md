@@ -11,10 +11,11 @@
 > policy/session/Trace/redaction/context/lifecycle-adapter ownership lives in `zag-coding-agent`. No semver publication
 > promise freezes the current source layout. See [core-boundary](./core-boundary.md).
 >
-> **Control, Session, and Skills enrichment:** `harness-steering-001` closed at `a5ff2b7` with Session-owned bounded
+> **Control, Session, Skills, and Prompt Templates enrichment:** `harness-steering-001` closed at `a5ff2b7` with Session-owned bounded
 > queues, required Core `ControlInput`, and lifecycle `control_applied`. Idle-only durable `Session.fork` closed at
-> `0a3087f`. E1 passive Skills public options/activation closed at `caafef5` (`skills-001`). The current external
-> fixture is **22/22**. None of these enrichments reopen the `ebdd7ab` SDK-ready Gate, change a schema version, or raise
+> `0a3087f`. E1 passive Skills public options/activation closed at `caafef5` (`skills-001`). E1 passive Prompt Templates
+> public options/parse/expand closed at `61326ae` (`prompt-templates-001`). The current external
+> fixture is **23/23**. None of these enrichments reopen the `ebdd7ab` SDK-ready Gate, change a schema version, or raise
 > a maturity row (Runtime Extensions remains L0).
 
 ## 1. What is covered
@@ -266,7 +267,8 @@ owned durable child through exclusive `createNewWithRedactor`. Binding rules:
   create step; failed create commits no child JSONL and holds no lock FD;
 - this section’s create/resume/save table remains the durable baseline;
 - the external SDK consumer fork API + durable smoke passed in fixture **21/21** at
-  session-fork closeout; current fixture is **22/22** after `skills-001`;
+  session-fork closeout; Skills closeout was **22/22** at `caafef5`; current fixture
+  is **23/23** after `skills-001` + `prompt-templates-001`;
 - Session remains **L2**; no tree/journal/`parent_id` or maturity elevation is
   claimed.
 

@@ -16,7 +16,7 @@ docs/plan/
 | Area | Status |
 |------|--------|
 | Phase H | **done/L2** — single-user trusted-host; fresh 11-sentence audit PASS; panel SHIP |
-| Zig SDK | **done/L2** at `ebdd7ab` — Gate fixture 7/7; current external consumer **22/22** |
+| Zig SDK | **done/L2** at `ebdd7ab` — Gate fixture 7/7; current external consumer **23/23** |
 | Headless/Process | **done/L2** at `a1a1e0f` — `headless-v1`, fixture 4/4 |
 | Product direction | **done** — `pi-alignment-001`; D-009/D-010 + 11-dimension feature map |
 | Core responsibility correction | **done** through `aecf402` — [D-011](../decisions/active/D-011-thin-agent-core-boundary.md); ownership migration plus the product lifecycle adapter are closed without changing existing L2 rows |
