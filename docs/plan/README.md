@@ -27,7 +27,8 @@ docs/plan/
 | Linux SIGINT raw errno | **done** at `bc737025` — `ci-hang-sigint-linux-errno-001`; candidate Gate std 611/611, curl 610/610; merged-main local macOS std 611/611, curl 610/610; maturity unchanged |
 | CI safety fuses | **done/closed** at `97f43de` — [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md); binding [quality/README](../quality/README.md); exact fuses `${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress: true` + 30m/job; full dual-OS dual-backend retained; independent review + ff-only local merge; **no push**; maturity unchanged |
 | Process-idle residual | **done** (Phase B Pass path): [ci-hang-sigint-process-idle-001](./tasks/ci-hang-sigint-process-idle-001.md) — existing idle oracle PASS on fresh remote Linux at tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **611/611** + process fixture **2/2**; curl **610/610** + **2/2**; macOS job success; no product/fixture change; fuses did **not** fire). Current Linux idle status is PASS at that exact tip/run only — not a universal future guarantee. CI fuses remain host rails only. |
-| Final Linux dual-backend Gate | **done** (docs-only): [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) — full remote dual-OS dual-backend Gate closed at exact product tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **40/40 · 611/611** + process fixture **2/2** `126ms`; curl **42/42 · 610/610** + **2/2** `126ms`; libcurl install success; macOS job + both std/curl success; OpenAPI **287/287**; catalog **40**; docs **91/73**; fuses configured but **did not fire**). M0 Linux dual-backend reliability closed **only** at that tip/run — not a universal future guarantee. No product/build/`.github` changes after the remote run (base `b953e0b` is two later docs evidence commits only). `prompt-templates-001` is **unblocked** for later docs-first planning (task file not authored). |
+| Final Linux dual-backend Gate | **done** (docs-only): [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) — full remote dual-OS dual-backend Gate closed at exact product tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **40/40 · 611/611** + process fixture **2/2** `126ms`; curl **42/42 · 610/610** + **2/2** `126ms`; libcurl install success; macOS job + both std/curl success; OpenAPI **287/287**; catalog **40**; docs **91/73**; fuses configured but **did not fire**). M0 Linux dual-backend reliability closed **only** at that tip/run — not a universal future guarantee. No product/build/`.github` changes after the remote run (base `b953e0b` is two later docs evidence commits only). |
+| Prompt Templates (E1) | **in-progress** (docs contract): [prompt-templates-001](./tasks/prompt-templates-001.md) + binding [prompt-templates.md](../modules/prompt-templates.md); independent contract PASS required before production code; Runtime Extensions remains L0 |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -76,7 +77,7 @@ Linux dual-backend Gate
 green (OpenAPI **287/287**, catalog **40**, docs **91/73**); M0 Linux
 dual-backend reliability closed **only** at exact tip `8a93ec6` / run
 `30273762011` — not a universal future guarantee. `prompt-templates-001` is
-**unblocked** for later docs-first planning (task file not authored).
+**in-progress** (docs contract freeze; not implemented).
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -122,7 +123,7 @@ completed foundation
            └────► session-fork-001 (done @ 0a3087f) ✅
                            │
                            ▼
-          skills-001 (done @ caafef5) ✅ → prompt-templates-001 (unblocked for later docs-first planning)
+          skills-001 (done @ caafef5) ✅ → prompt-templates-001 (in-progress: docs contract)
                     + edit-sharpness-001 (M2)
                            │
                            ▼
@@ -152,8 +153,9 @@ Final merged-path Linux dual-backend Gate
 (Ubuntu std **40/40 · 611/611** + fixture **2/2** `126ms`; curl **42/42 · 610/610** + **2/2** `126ms`; macOS
 success; OpenAPI **287/287**; catalog **40**; docs **91/73**). M0 Linux dual-backend reliability is **closed only
 at exact tip `8a93ec6` / run `30273762011`** — not a universal future guarantee. `prompt-templates-001` is
-**unblocked** for later docs-first planning (task file not authored; not implemented). Task priorities express safety
-impact; the dependency chain, not priority labels, fixes delivery order.
+**in-progress** on the docs-first contract track ([task](./tasks/prompt-templates-001.md), binding
+[module](../modules/prompt-templates.md)); production implementation is blocked until independent contract PASS.
+Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -163,7 +165,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| `prompt-templates-001` | planned (unblocked) | E1 passive Prompt Templates over Skills loader foundations; task file not yet authored; **unblocked** for later docs-first planning after [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) |
+| [prompt-templates-001](./tasks/prompt-templates-001.md) | **in-progress** (docs contract) | E1 passive Prompt Templates; binding [prompt-templates.md](../modules/prompt-templates.md); independent contract PASS before production code; no Core ports; maturity stays L0 |
 
 ### Completed foundation
 

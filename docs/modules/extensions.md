@@ -31,7 +31,7 @@ A feature may use several carriers. A Package is a bundle above E1/E2/E3, not an
 |------------|-------------|-----------------|
 | Extension | selected Tools/events/commands/flags/shortcuts/providers/session/UI through a common vocabulary | E0 available in part; E2/E3 planned incrementally |
 | Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 **done** `skills-001` @ `caafef5` — binding [skills.md](./skills.md); maturity still L0 |
-| Prompt Template | deterministic `/name` prompt expansion with explicit non-recursive substitution | E1 planned after shared resource loader |
+| Prompt Template | deterministic `/name` prompt expansion with explicit non-recursive substitution | E1 **in-progress** docs contract `prompt-templates-001` — binding [prompt-templates.md](./prompt-templates.md); not implemented; maturity still L0 |
 | Theme | passive theme data rendered by the host product shell | after minimal TUI |
 | Package | local manifest bundling E1 resources and optional E2/E3 artifacts | package schema/trust Gates planned |
 | Custom Model | validated model metadata/configuration without executable behavior | static catalog exists; runtime catalog unplanned |
@@ -48,7 +48,7 @@ This is functional correspondence, not Pi API/schema/CLI/package-manager parity.
 | Tier | Surface | Current |
 |------|---------|---------|
 | E0 trusted static Zig | compile-time Provider/Toolset/Observer/policy and later native host UI | **available in part** through SDK-ready contract |
-| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` E1 Skills slice done @ `caafef5` ([skills.md](./skills.md)); Prompt Templates later |
+| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` E1 Skills slice done @ `caafef5` ([skills.md](./skills.md)); Prompt Templates docs contract **in-progress** ([prompt-templates.md](./prompt-templates.md)) |
 | E2 process adapter | `zag-ext-v1` semantics over NDJSON | planned after C7.1 + real process consumer |
 | E3 WASM Component | `zag-ext-v1` semantics over Zag WIT | **planned preferred portable third-party executable tier** |
 
@@ -123,15 +123,22 @@ A passive Skill can still instruct the model to invoke shell/edit/read Tools aga
 
 ### Prompt Templates
 
-Prompt Templates are a separate E1 resource, not a synonym for Skills:
+Prompt Templates are a separate E1 resource, not a synonym for Skills.
+Binding product contract: **[prompt-templates.md](./prompt-templates.md)**
+(`prompt-templates-001`, **in-progress** docs track; Runtime Extensions L0).
+Summary:
 
-- deterministic non-recursive discovery;
-- first-wins name collision diagnostics;
-- explicit, non-recursive argument substitution;
-- `/name` expansion and autocomplete owned by the product command/input layer;
-- no execution privilege.
+- deterministic non-recursive discovery of direct `*.md` files under user and
+  optional trusted project `.agents/prompts/`;
+- after valid parse, **project overrides user** by exact command name (replaces
+  any earlier first-wins sketch across roots);
+- explicit one-pass non-recursive substitution (`$ARGUMENTS` / `$$` only);
+- `/name` expansion owned by the product command/input layer via public coding-agent
+  API; CLI is thin explicit routing only; no TUI/autocomplete in this slice;
+- no execution privilege; no model summary; no catalog/read Tool.
 
-The exact substitution language belongs to `prompt-templates-001`; it may be smaller than Pi's, but cannot be accidental.
+Exact budgets, routing precedence with `/skill:`, and fixtures are binding in
+the module doc — not accidental.
 
 ### Theme and model data
 
@@ -330,9 +337,14 @@ Implementation fixtures green (`skills_tests.zig` + SDK smoke); maturity still L
 
 ### E1 Prompt Templates
 
-- non-recursive discovery and substitution;
-- deterministic conflict behavior;
-- command/input integration and no-execute neutrality.
+Exact matrix: [prompt-templates.md §11](./prompt-templates.md#11-verification--exact-fixture-matrix).
+Docs contract **in-progress**; implementation not landed; maturity still L0:
+
+- [ ] non-recursive discovery and one-pass substitution (`$ARGUMENTS` / `$$`);
+- [ ] project-override collision (not first-wins across roots);
+- [ ] `/skill:` precedence + known `/name` expand + unknown slash raw;
+- [ ] no-execute neutrality; induced Tools still gated;
+- [ ] start OOM / fork catalog / resume rediscovery / CLI+SDK routes.
 
 ### E2
 

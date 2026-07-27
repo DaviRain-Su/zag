@@ -6,7 +6,7 @@
 | Near-term slice | M2 `skills-001`, then Prompt Templates — E1 passive resources |
 | Long-term target | E3 WASM Component extension platform |
 | Decision | [D-010](../decisions/active/D-010-extension-tiers-and-process-protocol.md) |
-| Module | [extensions](../modules/extensions.md) · E1 Skills binding [skills](../modules/skills.md) |
+| Module | [extensions](../modules/extensions.md) · E1 Skills binding [skills](../modules/skills.md) · E1 Prompt Templates binding [prompt-templates](../modules/prompt-templates.md) |
 | Feature map | [Pi feature correspondence](../plan/analysis/2026-07-26-pi-feature-correspondence.md) |
 
 ## Feature surface vs. carrier
@@ -53,11 +53,14 @@ Binding contract: [skills.md](../modules/skills.md) (`skills-001` **done** at
 
 ### Prompt Templates
 
-- deterministic non-recursive discovery;
-- explicit non-recursive substitution contract;
-- first-wins collision diagnostics;
-- `/name` expansion owned by the command/input layer;
-- no execution privilege.
+Binding contract: [prompt-templates.md](../modules/prompt-templates.md)
+(`prompt-templates-001` **in-progress** docs track; Runtime Extensions L0):
+
+- deterministic non-recursive discovery of direct `*.md` files;
+- explicit one-pass non-recursive substitution (`$ARGUMENTS` / `$$`);
+- **project overrides user** collision diagnostics (replaces earlier first-wins sketch);
+- `/name` expansion owned by coding-agent public API; thin CLI routing only;
+- no execution privilege; no model summary; no catalog Tool.
 
 ## Common extension semantics
 
@@ -154,9 +157,13 @@ Implementation closed at `caafef5` (`skills_tests.zig` + SDK smoke); maturity st
 
 ### E1 Prompt Templates
 
-- [ ] non-recursive discovery/substitution;
-- [ ] collision and command expansion deterministic;
-- [ ] no-execute neutrality.
+Exact matrix: [prompt-templates.md §11](../modules/prompt-templates.md#11-verification--exact-fixture-matrix).
+Docs contract in-progress; not implemented:
+
+- [ ] non-recursive discovery/one-pass substitution;
+- [ ] project-override collision and `/name` expansion deterministic;
+- [ ] `/skill:` precedence + unknown slash raw compatibility;
+- [ ] no-execute neutrality; induced Tools still gated.
 
 ### E2
 

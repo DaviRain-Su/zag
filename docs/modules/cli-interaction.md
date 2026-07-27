@@ -37,9 +37,11 @@ merged-path Linux dual-backend Gate
 **done** (docs-only) on the same tip/run (OpenAPI **287/287**, catalog **40**,
 docs **91/73**). Broader M0 Linux dual-backend reliability is **closed only**
 at exact tip `8a93ec6` / run `30273762011` — not a universal future guarantee.
-`prompt-templates-001` is **unblocked** for later docs-first planning (task
-file not authored; not implemented). Maturity and Runtime Extensions L0
-unchanged.
+`prompt-templates-001` is **in-progress** on the docs-first contract track
+([task](../plan/tasks/prompt-templates-001.md), binding
+[prompt-templates.md](./prompt-templates.md)); production implementation and
+CLI slash-routing changes for templates are blocked until independent contract
+PASS. Maturity and Runtime Extensions L0 unchanged.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +

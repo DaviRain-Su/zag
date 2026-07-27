@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **22/22** |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); next Prompt Templates、edit、minimal TUI |
+| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates **docs contract in-progress** (`prompt-templates-001`); next implementation after contract PASS、edit、minimal TUI |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -29,7 +29,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 |---------|----------|
 | Extension | E0 静态组合；E2 process；E3 WASM，按 Tool/events/commands/UI 分 Gate |
 | Skill | M2 E1 `skills-001` ✅ at `caafef5`（Runtime Extensions 仍 L0） |
-| Prompt Template | E1 `prompt-templates-001`，复用资源发现基础 |
+| Prompt Template | E1 `prompt-templates-001` docs contract **in-progress** — binding [prompt-templates](./modules/prompt-templates.md) |
 | Theme | `tui-minimal-001` 之后的 host-shell data/renderer task |
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
@@ -83,7 +83,7 @@ M1 — product Harness controls
                        │
                        ▼
 M2 — selected daily UX
-  skills-001 ✅ caafef5 → prompt-templates-001 (unblocked for later docs-first planning)
+  skills-001 ✅ caafef5 → prompt-templates-001 (in-progress: docs contract)
         │
         ├──────────────┐
         │       edit-sharpness-001
@@ -134,8 +134,9 @@ tip/run: Ubuntu std **40/40 · 611/611** + process-level SIGINT **2/2** `126ms`;
 docs **91/73**; `waitBounded(4000)`, idle exit **0**, active std **130** / curl **11**, `linuxRawErrno`, and exact
 fuses/full matrix/no `continue-on-error` preserved; fuses configured but **did not fire**. Broader M0 Linux
 dual-backend reliability is **closed only** at exact tip `8a93ec6` / run `30273762011` — not a universal future
-guarantee. `prompt-templates-001` is **unblocked** for later docs-first planning (task file not authored; not
-implemented). Maturity and Runtime Extensions L0 unchanged. **No push.**
+guarantee. `prompt-templates-001` is **in-progress** on the docs-first contract track
+([task](./plan/tasks/prompt-templates-001.md), binding [module](./modules/prompt-templates.md)); production
+implementation is blocked until independent contract PASS. Maturity and Runtime Extensions L0 unchanged. **No push.**
 
 Contract: [CLI interaction](./modules/cli-interaction.md). CI fuses quality contract:
 [quality/README](./quality/README.md).
@@ -168,7 +169,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | Task | Objective | Deliberate limit |
 |------|-----------|------------------|
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
-| `prompt-templates-001` | reusable slash-expanded prompts over the shared E1 loader; **unblocked** for later docs-first planning after [linux-dual-backend-gate-001](./plan/tasks/linux-dual-backend-gate-001.md) (task file not yet authored) | explicit non-recursive substitution; no script runtime |
+| [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **in-progress** docs contract ([prompt-templates.md](./modules/prompt-templates.md)); implementation blocked on independent contract PASS | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | `edit-sharpness-001` | patch-grade edit + review/verification | no AST/LSP suite or multi-tool expansion |
 | `tui-minimal-001` | streaming text, multiline input, Tool/permission/error cards | no dashboard/theme/image/plugin platform |
 
