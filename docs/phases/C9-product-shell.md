@@ -41,8 +41,11 @@ Prerequisites `harness-events-001` and `harness-steering-001` are closed. The
 **implementation done** @ `f8f7f55`). Package `packages/zag-tui/` (lazy `-Dtui`,
 CLI wire, §11 fixtures) closed after dual independent final reviews (**PASS**,
 zero blockers), local ff-only merge, and local macOS task/main Gates. **No**
-maturity row raise; **no** current-tip Linux/remote claim; **no push**. This is
-the **minimal** host-shell slice only — not theme/RPC/ACP/extension UI.
+maturity row raise; **no** current-tip Linux/remote Gate. Local remote-tracking
+reflog records an external/other push of `f8f7f55` to `origin/main`; this
+closeout did not execute or authorize that push. Docs closeout remains local;
+remote branch presence is not a Linux/remote Gate. This is the **minimal**
+host-shell slice only — not theme/RPC/ACP/extension UI.
 
 Contract freezes (detail in the module — do not fork):
 

@@ -28,10 +28,11 @@ headless stdout, or placing UI logic in Kernel packages.
 | Contract freeze | **PASS** @ `c7a8f3a` — independent arch + safety re-reviews, **zero blockers** |
 | Implementation tip | **`f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5`** — two independent final code reviews **PASS**, **zero blockers** |
 | Overall product task | **`done`** — local ff-only merge of impl tip to canonical main; task-worktree + merged-main Gates green (local macOS only) |
-| Docs closeout tip | this commit (`docs(tui-minimal-001): close implementation delivery`) |
+| Docs closeout tips | `9d69574` (delivery closeout) → `8694fbb` (feature-correspondence sync) → this push-truth follow-up; **remain local / not on `origin/main`** |
 | Maturity / C9 broader shell | **unchanged** — no new maturity row; not theme/RPC/ACP/extension-UI/dashboard/Pi parity |
 | Session v1 / Trace v1 / headless-v1 / Core | **unchanged** |
-| Linux / remote / push | **not claimed** for this tip; **no push** |
+| Linux / remote Gate | **not claimed** for tip `f8f7f55` (or docs tips) — branch presence ≠ validation |
+| `origin/main` presence | Local remote-tracking reflog records an **external/other push** of implementation tip `f8f7f55` to `origin/main` (`update by push` @ `2026-07-28 06:17:02 +0800`); **this closeout did not execute or authorize that push**. Docs closeout tips remain local. Remote branch presence is **not** a Linux/remote Gate. Unrelated canonical `.gitignore` retained on local merge. |
 
 ## Contract vs implementation (history)
 
@@ -46,8 +47,11 @@ IMPLEMENTATION NODE (product package + wire + fixtures)
   paths: packages/zag-tui/** + zag-cli / root -Dtui wire + §11 tests
   independent dual final reviews: PASS, zero blockers
   local ff-only onto canonical main at same tip (canonical .gitignore retained)
+  later: local origin/main reflog shows external/other push of f8f7f55
+         (not executed/authorized by this closeout; not a remote Gate)
 
-DOCS CLOSEOUT NODE (this tip)
+DOCS CLOSEOUT NODE (local only; not on origin/main at f8f7f55)
+  9d69574 → 8694fbb → this tip
   paths: docs only — status truth + indexes; no product code
 ```
 
@@ -122,7 +126,8 @@ unchanged by implementation or this docs closeout.
 - [x] PTY process fixtures (macOS product path): geometry; idle Ctrl+C; blocked busy first/second SIGINT; Ctrl+D / termios restore — **no** current-tip Linux/remote claim
 - [x] gate21 write isolation: run-unique exclusive owned workspace (`f8f7f55`); no bare cwd pollution
 - [x] Independent final code reviews (**two paths**) **PASS**, **zero blockers** @ `f8f7f55`
-- [x] Local ff-only merge of impl tip onto canonical main (same tip); unrelated canonical `.gitignore` retained; **no push**
+- [x] Local ff-only merge of impl tip onto canonical main (same tip); unrelated canonical `.gitignore` retained
+- [x] Local remote-tracking reflog later recorded an **external/other push** of `f8f7f55` to `origin/main`; **this closeout did not execute or authorize that push**. Docs closeout remains local. Remote branch presence is **not** a Linux/remote Gate
 - [x] Task-worktree **and** merged canonical main — same serial matrix (local macOS):
 
 | Matrix | Steps · tests |
@@ -137,7 +142,7 @@ unchanged by implementation or this docs closeout.
 | docs lint + committed-range diff | clean |
 
 - [x] Kernel import scan / plain+headless paths retained; Core / session-v1 / Trace-v1 / headless-v1 schemas **unchanged**
-- [x] No maturity row raise; no Linux/remote claim for this tip; no production-default weaken
+- [x] No maturity row raise; no Linux/remote Gate claim for this tip; no production-default weaken
 
 # non-goals
 
@@ -148,7 +153,7 @@ unchanged by implementation or this docs closeout.
 - Core or session-v1 / Trace-v1 / headless-v1 schema changes
 - Maturity promotion or a new “TUI L2” row
 - Pi API or TUI parity; wholesale vaxis port
-- Claiming remote CI or Linux Gates for tip `f8f7f55`
+- Claiming remote CI or Linux Gates for tip `f8f7f55` (branch presence ≠ Gate)
 
 # lineage (tips)
 
@@ -161,5 +166,7 @@ unchanged by implementation or this docs closeout.
 | Dual-review product fix | `adf3097` |
 | Strict PTY Gates #30–32/#18 | `ab610ce` |
 | gate21 hygiene (scoped write) | `a97efa6` |
-| gate21 exclusive run-unique workspace (**impl final tip**) | `f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5` |
-| Docs closeout (this tip) | post-`f8f7f55` docs-only commit on this branch |
+| gate21 exclusive run-unique workspace (**impl final tip**; later on `origin/main` via external/other push) | `f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5` |
+| Docs closeout delivery | `9d69574` (local only) |
+| Docs feature-correspondence sync | `8694fbb` (local only) |
+| Docs remote-tip truth follow-up | this tip (local only) |

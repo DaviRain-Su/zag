@@ -31,9 +31,12 @@ order `c7a8f3a` (contract PASS tip).
 CLI wire, §11 unit/integration/PTY fixtures). Two independent final code
 reviews **PASS** (**zero blockers**). Local ff-only merge to canonical main at
 the same tip; task-worktree and merged-main Gates green on **local macOS only**
-— **no** current-tip Linux/remote claim; **no push**. Defaults remain ask +
-workspace jail + shell protect; `-Dtui` default **false**/lazy. See
-[task](../plan/tasks/tui-minimal-001.md).
+— **no** current-tip Linux/remote Gate claim. Local remote-tracking reflog
+records an external/other push of implementation tip `f8f7f55` to
+`origin/main`; this closeout did not execute or authorize that push. The docs
+closeout remains local. Remote branch presence is not a Linux/remote Gate.
+Defaults remain ask + workspace jail + shell protect; `-Dtui` default
+**false**/lazy. See [task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
@@ -931,7 +934,8 @@ Summary only — do not fork Gate numbers elsewhere.
 | PTY (macOS product path) | geometry; idle Ctrl+C; busy first/second SIGINT; Ctrl+D/termios restore |
 | Pollution fix | run-unique exclusive owned workspace for gate21 @ `f8f7f55` |
 | Schemas / defaults | Core · session-v1 · Trace-v1 · headless-v1 unchanged; ask + jail + shell protect; `-Dtui` default false |
-| Not claimed | Linux/remote for this tip; maturity raise; theme/RPC/ACP/Pi parity |
+| Not claimed | Linux/remote Gate for this tip (branch presence ≠ validation); maturity raise; theme/RPC/ACP/Pi parity |
+| `origin/main` | Local reflog: external/other push of `f8f7f55`; docs closeout tips local-only; this closeout did not push |
 
 ## Related
 
