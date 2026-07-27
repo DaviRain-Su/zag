@@ -22,6 +22,8 @@ const MockChat = struct {
     calls: u32 = 0,
     mode: enum { text, text_with_secret, tool_write_then_text, fail } = .text,
     secret: []const u8 = "",
+    /// Workspace-relative write path for tool_write_then_text (must stay under cwd jail).
+    write_path: []const u8 = "gate21_payload.txt",
 
     fn chat(
         ptr: *anyopaque,
@@ -52,10 +54,11 @@ const MockChat = struct {
                 if (self.calls == 1) {
                     const calls = try arena.alloc(message.ToolCall, 1);
                     const secret = self.secret;
+                    const path = self.write_path;
                     const args = if (secret.len > 0)
-                        try std.fmt.allocPrint(arena, "{{\"path\":\"x.txt\",\"content\":\"{s}\"}}", .{secret})
+                        try std.fmt.allocPrint(arena, "{{\"path\":\"{s}\",\"content\":\"{s}\"}}", .{ path, secret })
                     else
-                        try arena.dupe(u8, "{\"path\":\"x.txt\",\"content\":\"y\"}");
+                        try std.fmt.allocPrint(arena, "{{\"path\":\"{s}\",\"content\":\"y\"}}", .{path});
                     calls[0] = .{
                         .id = try std.fmt.allocPrint(arena, "call-{s}", .{if (secret.len > 0) secret else "c1"}),
                         .name = try arena.dupe(u8, "write_file"),
@@ -68,7 +71,7 @@ const MockChat = struct {
                     };
                 }
                 return .{
-                    .content = try arena.dupe(u8, "after-tool"),
+                    .content = try std.fmt.allocPrint(arena, "after-tool {s}", .{self.secret}),
                     .tool_calls = &.{},
                     .finish_reason = "stop",
                 };
@@ -529,13 +532,31 @@ test "gate19_control_queue_retained_after_error_join" {
 }
 
 test "gate21_all_field_secret_redaction" {
+    // Real Agent + write_file (yolo/AutoAccept) + lifecycle redaction coverage.
+    // Agent tools always use Io.Dir.cwd() (no workspace-root override on product
+    // Options). Isolate the real write under a test-owned relative directory
+    // (unique name, never bare "x.txt") and deleteTree on exit — no global chdir.
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     const secret = coding.redact.testing.fake_api_key;
+    const Io = std.Io;
+
+    // Unique relative workspace under caller cwd; cleaned even on failure.
+    const ws_dir = ".zag-test-tui-gate21-ws";
+    const payload_name = "gate21_payload.txt";
+    const write_rel = ws_dir ++ "/" ++ payload_name;
+    Io.Dir.cwd().deleteTree(io, ws_dir) catch {};
+    try Io.Dir.cwd().createDirPath(io, ws_dir);
+    defer Io.Dir.cwd().deleteTree(io, ws_dir) catch {};
+
     var host = FakeHost{};
     const app = try app_mod.App.create(gpa);
     defer app.destroy();
-    var mock: MockChat = .{ .mode = .tool_write_then_text, .secret = secret };
+    var mock: MockChat = .{
+        .mode = .tool_write_then_text,
+        .secret = secret,
+        .write_path = write_rel,
+    };
     var agent = try coding.Agent.init(gpa, io, mockProvider(&mock), .{
         .permission_mode = .yolo,
         .secrets = &.{secret},
@@ -555,14 +576,26 @@ test "gate21_all_field_secret_redaction" {
     app.setIdentity(gpa, session.activeRedactor(), "path-" ++ secret, .create_new, "yolo", "protect");
     try std.testing.expect(std.mem.indexOf(u8, app.idDisplay(), secret) == null);
 
-    // Tool path + assistant path via real reply.
+    // Tool path + assistant path via real reply (write_file into test workspace).
     _ = try agent.reply(&session, "do it");
+
+    // Isolation: never bare x.txt at caller cwd; payload only under test ws.
+    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, "x.txt", .{}));
+    try Io.Dir.cwd().access(io, write_rel, .{});
+
     var snap: [c.card_slots]cards.CardSlot = undefined;
     const n = app.card_ring.snapshot(&snap);
+    try std.testing.expect(n > 0);
+    var saw_tool = false;
+    var saw_assistant = false;
     for (snap[0..n]) |slot| {
         try std.testing.expect(std.mem.indexOf(u8, slot.titleSlice(), secret) == null);
         try std.testing.expect(std.mem.indexOf(u8, slot.bodySlice(), secret) == null);
+        if (std.mem.startsWith(u8, slot.titleSlice(), "tool ")) saw_tool = true;
+        if (std.mem.startsWith(u8, slot.titleSlice(), "assistant")) saw_assistant = true;
     }
+    try std.testing.expect(saw_tool);
+    try std.testing.expect(saw_assistant);
 }
 
 test "gate26_ask_hunk_reviewer_null_option" {
