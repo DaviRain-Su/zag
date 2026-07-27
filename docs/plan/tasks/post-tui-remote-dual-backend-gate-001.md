@@ -24,8 +24,20 @@ cross-platform TUI maturity Gate and **not** a claim that remote CI runs
 
 | Phase | What it is | What it is not |
 |-------|------------|----------------|
-| **A (current)** | Docs contract + cross-links only; status **`in-progress`** | Push; run id; Gate green; product/CI edit |
-| **B (not started)** | Live remote/Actions evidence only after a **fresh user Phase B grant** of type `observation_grant` **or** `push_grant` (§authorization) | Implied by Phase A review/merge; vague “go ahead”; Goal run alone; old session authz |
+| **A (current)** | Docs contract + cross-links; status **`in-progress`**; **contract freeze PASS** @ `69c1ec3` (see below) | Push; run id; Gate green; product/CI edit; Phase B grant |
+| **B (not started)** | Live remote/Actions evidence only after a **fresh user Phase B grant** of type `observation_grant` **or** `push_grant` (§authorization) | Implied by Phase A review/merge/PASS; vague “go ahead”; Goal run alone; old session authz |
+
+### Phase A contract freeze PASS (review of prior tip only)
+
+Hardened contract tip
+**`69c1ec39528c819ed045cf4d0de1d1c3fb6bedaa`** received **two independent final
+re-reviews** (facts/CI path + safety/ops path) with **PASS, zero blockers**.
+
+| Claimed | Not claimed |
+|---------|-------------|
+| Phase A **contract text** at tip `69c1ec3` is review-PASS | Any `observation_grant` / `push_grant` |
+| Local docs protocol freeze may proceed to coordinator ff-only when scheduled | Gate green; remote run id; TARGET rebind |
+| This **PASS-record** commit only **records** that prior-tip review | That **this** PASS-record tip itself was re-reviewed |
 
 **This contract document does not authorize Phase B.** No user
 `observation_grant` or `push_grant` is claimed here. Template commands below
@@ -119,11 +131,12 @@ done deps (both point into this task)
   linux-dual-backend-gate-001 ✅ ──────┤
                                        ▼
 Phase A (CURRENT) — docs contract only
-  ├─ status: in-progress
-  ├─ author contract + cross-links + local docs commit
-  ├─ independent review of THIS contract still required (not PASS yet)
-  ├─ after review PASS: ff-only local merge allowed
-  ├─ NO push · NO run id · Gate NOT green
+  ├─ status: in-progress (task not done)
+  ├─ author contract + cross-links + local docs commits
+  ├─ independent dual final re-review PASS @ 69c1ec3 (zero blockers)
+  ├─ this tip: PASS-record docs only (not itself claimed re-reviewed)
+  ├─ after contract PASS: ff-only local merge allowed when scheduled
+  ├─ NO push · NO run id · Gate NOT green · NO Phase B grant
   └─ this task remains docs-only forever
 
         │  fresh user Phase B grant:
@@ -520,12 +533,14 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 
 | Field | Value |
 |-------|--------|
-| Status | **`in-progress`** |
+| Status | **`in-progress`** (task not done; Gate not green) |
 | TARGET | `b1513073190089bd2dc2473a466373c8a1702f1f` |
+| Contract freeze tip (reviewed) | `69c1ec39528c819ed045cf4d0de1d1c3fb6bedaa` |
+| Dual final re-review | **PASS**, zero blockers (facts/CI + safety/ops) on that tip |
+| This PASS-record tip | records prior-tip PASS only; **not** claimed re-reviewed |
 | Phase B grants | **none claimed** (`observation_grant` / `push_grant` absent) |
 | Run id / URL | **none** |
 | Gate green | **No** |
-| Independent review | **not claimed PASS this round** |
 
 ---
 
@@ -564,8 +579,8 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 - [x] Explicit: no remote `-Dtui`; no maturity raise; no historical run as PASS
 - [x] Local docs commits for contract (incl. harden + auth-path clarify); **no push**
 - [x] Docs lint + score check + `git diff --check` + scope on contract commits
-- [ ] **Independent review PASS** (out of band) — **not yet; not claimed this round**
-- [ ] Status remains **`in-progress`** until Phase B evidence; Gate **not** green
+- [x] **Independent dual final re-review PASS** on contract tip `69c1ec3` (facts/CI + safety/ops; zero blockers) — **not** a Phase B grant; **not** Gate green
+- [x] Status remains **`in-progress`** until Phase B evidence; Gate **not** green; grants **none**
 
 ## Phase B — not started
 
@@ -614,28 +629,32 @@ git diff --name-only
 | Historical M0 Gate | `8a93ec6` / run `30273762011` | prior only |
 | TUI contract PASS | `c7a8f3a` | docs freeze |
 | TUI impl final | `f8f7f55` | local macOS; cache push ≠ Gate |
-| Docs closeout → TARGET | `9d69574` → `8694fbb` → **TARGET** | Gate tip |
-| Phase A contract | `2c9babc`… | does not rebind TARGET |
-| Phase A harden | `81b9355`… | original adversarial review findings F1–F8 covered by hardened sections (not separate F1–F8 body headings as claims) |
-| Phase A auth-path clarify | this follow-up | dual grants; class×grant; API `path` |
-| Phase B run | *pending valid Phase B grant* | real run only |
+| Docs closeout → TARGET | `9d69574` → `8694fbb` → **TARGET** | Gate tip (remote Gate headSha) |
+| Phase A initial contract | `2c9babcb789f767c15ca17fbe49ce3a793cdc477` | define Gate; does not rebind TARGET |
+| Phase A safety harden | `81b93554942e55d1bae975a8b7b3ba2318c068fe` | original review F1–F8 covered by hardened sections |
+| Phase A auth clarify / **contract review PASS** | `69c1ec39528c819ed045cf4d0de1d1c3fb6bedaa` | dual grants; dual final re-review PASS, zero blockers |
+| Phase A PASS-record (this tip) | local docs after `69c1ec3` | records prior-tip PASS only; **this tip not claimed re-reviewed** |
+| Phase B run | *pending valid Phase B grant* | real run only; not started |
 
 # delivery evidence (Phase A)
 
 | Field | Value |
 |-------|--------|
-| Path | Docs-only Phase A (contract + harden + auth clarify) |
+| Path | Docs-only Phase A (contract + harden + auth clarify + PASS-record) |
 | Status | **`in-progress`** |
 | TARGET | `b1513073190089bd2dc2473a466373c8a1702f1f` |
+| Contract PASS tip | `69c1ec39528c819ed045cf4d0de1d1c3fb6bedaa` |
+| Dual re-review | **PASS**, zero blockers (facts/CI + safety/ops) on `69c1ec3` |
 | Phase B grants | **not present / not claimed** |
 | Run id | **none** |
 | Maturity | unchanged |
 | Remote `-Dtui` | not claimed |
-| Independent review | **not PASS claimed** |
+| Gate green | **No** |
 
 # closeout
 
-**Not closed.** Phase A freezes executable Phase B protocol with dual entry
-grants only. Task stays **`in-progress`** until Path OBSERVE or Path PUSH
-records valid evidence. Independent review PASS is **not** claimed by this
-commit.
+**Phase A contract freeze is review-PASS** at tip `69c1ec3` (dual final
+re-reviews, zero blockers). Task remains **`in-progress`** until Path OBSERVE
+or Path PUSH records valid remote evidence under a fresh user grant. This
+PASS-record commit does **not** authorize Phase B, invent a run id, or mark
+the Gate green. Templates remain non-executable without a fresh grant.
