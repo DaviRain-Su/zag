@@ -25,7 +25,8 @@ docs/plan/
 | Session fork | **done** at `0a3087f` — idle-only durable child, parent immutability, schema v1, SDK 21/21; Session remains L2 |
 | E1 Skills | **done** at `caafef5` — passive discovery/catalog/`read_skill`/activation; SDK 22/22; Runtime Extensions remains L0 |
 | Linux SIGINT raw errno | **done** at `bc737025` — `ci-hang-sigint-linux-errno-001`; candidate Gate std 611/611, curl 610/610; merged-main local macOS std 611/611, curl 610/610; maturity unchanged |
-| Next code task | **Planned (not yet task-authored):** process-idle fixture + CI fuses + final merged-path Linux dual-backend Gate before `prompt-templates-001` (E1 passive templates after Skills). Broader Linux reliability is **not** closed by the errno node alone. |
+| CI safety fuses | **in-progress** (docs-first) — [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md); binding [quality/README](../quality/README.md); concurrency + 30m job timeout; no `.github` edit yet; no push |
+| Next code task | **Planned:** process-idle fixture + final merged-path Linux dual-backend Gate remain before `prompt-templates-001`. CI fuses contract is open (implementation still pending). Broader Linux reliability is **not** closed by the errno node alone. |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -66,8 +67,11 @@ completed foundation
           cli-sigint-001 (M0, done) ✅
                   │
                   ├─► ci-hang-sigint-linux-errno-001 (P0, done @ bc737025) ✅
-                  │     remaining before prompt-templates: process-idle + CI fuses
-                  │     + final merged-path Linux dual-backend Gate (planned, no task files yet)
+                  │     ├─► ci-hang-ci-fuses-001 (in-progress, docs contract)
+                  │     ├─► ci-hang-sigint-process-idle-001 (planned; no task file yet)
+                  │     └─► final merged-path Linux dual-backend Gate (planned)
+                  │     remaining before prompt-templates: process-idle + fuses implement
+                  │     + final merged-path Linux dual-backend Gate
                   │
                   ▼
         core-boundary-001 (docs, done) ✅
@@ -110,8 +114,9 @@ passive Skills closed at `caafef5` (coding-agent only; Runtime Extensions remain
 hotfix closed at `bc737025` after independent review-fix PASS and merged-main local macOS dual-backend Gate; pure
 raw-Linux decoder regressions ran in both std and curl-linked test artifacts. It does not reopen M0 lifecycle design
 and does not raise maturity. **Broader Linux reliability remains open:** no fresh post-fix remote Linux runner ran in
-the closeout session; planned `ci-hang-sigint-process-idle-001`, `ci-hang-ci-fuses-001` (task files not yet authored —
-no links), and a final merged-path Linux dual-backend Gate remain required before `prompt-templates-001`.
+the closeout session; planned `ci-hang-sigint-process-idle-001` (task file not yet authored),
+[ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) (**in-progress**, docs-first contract; `.github` not yet
+edited), and a final merged-path Linux dual-backend Gate remain required before `prompt-templates-001`.
 Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
@@ -122,8 +127,8 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
+| [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) | **in-progress** | M0 follow-on: CI concurrency + 30m job timeout fuses; docs contract open; `.github` implement pending |
 | `ci-hang-sigint-process-idle-001` | planned | M0 follow-on: idle process-fixture reliability; task file not yet authored |
-| `ci-hang-ci-fuses-001` | planned | M0 follow-on: CI timeout/concurrency fuses; task file not yet authored |
 | final merged-path Linux dual-backend Gate | planned | Fresh remote Linux runner after idle + fuses; required before prompt-templates |
 | `prompt-templates-001` | planned | E1 passive Prompt Templates over Skills loader foundations; task file not yet authored |
 

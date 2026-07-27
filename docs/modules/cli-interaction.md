@@ -19,9 +19,11 @@ Independent review-fix PASS (zero blockers); candidate + merged-main local
 macOS dual-backend Gates green (std **611/611**, curl **610/610**). Pure
 raw-Linux decoder regression ran in both std and curl-linked test artifacts.
 **Broader Linux reliability is not closed:** no fresh post-fix remote Linux
-runner in the closeout session; planned process-idle fixture work, CI fuses,
-and a final merged-path Linux dual-backend Gate remain required before
-prompt-templates work (task files not yet authored — no links).
+runner in the closeout session; planned process-idle fixture work (task file
+not yet authored), [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md)
+(**in-progress**, docs-first; binding [quality/README](../quality/README.md);
+`.github` not yet edited), and a final merged-path Linux dual-backend Gate
+remain required before prompt-templates work.
 
 ## Ownership boundary
 
@@ -200,7 +202,9 @@ Every raw Linux result that is classified by errno today must use kernel decode:
    planned (not claimed fixed by this node).
 5. **Docs** — docs lint + score readability **91** / security **72**; committed-range `git diff --check` clean; no
    maturity inflation.
-6. **Not claimed** — fresh post-fix remote Linux runner; process-idle fixture; CI fuses; broader Linux reliability.
+6. **Not claimed** — fresh post-fix remote Linux runner; process-idle fixture;
+   CI fuses implementation (docs contract only under `ci-hang-ci-fuses-001`);
+   broader Linux reliability.
 
 ## Verification
 

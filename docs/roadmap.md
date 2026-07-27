@@ -61,8 +61,8 @@ M0 — interaction reliability
         │
         └─► ci-hang-sigint-linux-errno-001 ✅ bc737025
               │
+              ├─► ci-hang-ci-fuses-001 (in-progress; docs contract)
               ├─► ci-hang-sigint-process-idle-001 (planned; no task file yet)
-              ├─► ci-hang-ci-fuses-001 (planned; no task file yet)
               └─► final merged-path Linux dual-backend Gate (planned)
         │
         ▼
@@ -112,11 +112,13 @@ both std and curl-linked test artifacts; local host gates passed. Does not raise
 separately tracked idle process-fixture timeout; does not change CI workflows. **No push.**
 
 **Broader Linux reliability is not closed:** no fresh post-fix remote Linux runner ran in the closeout session.
-Separately planned `ci-hang-sigint-process-idle-001`, `ci-hang-ci-fuses-001` (idle fixture and CI fuses remain
-unimplemented/planned; task files not yet authored — no links), and the final merged-path Linux dual-backend Gate
-remain required before prompt-templates work.
+Separately planned `ci-hang-sigint-process-idle-001` (task file not yet authored),
+[ci-hang-ci-fuses-001](./plan/tasks/ci-hang-ci-fuses-001.md) (**in-progress**, docs-first; binding
+[quality/README](./quality/README.md); `.github` not yet edited; no push), and the final merged-path Linux
+dual-backend Gate remain required before prompt-templates work.
 
-Contract: [CLI interaction](./modules/cli-interaction.md).
+Contract: [CLI interaction](./modules/cli-interaction.md). CI fuses quality contract:
+[quality/README](./quality/README.md).
 
 ### M0.5 — Thin Core responsibility migration
 
