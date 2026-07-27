@@ -118,7 +118,12 @@ pub fn discover(
     var summary_entry_total: usize = 0;
 
     // Resolve workspace realpath once for project containment.
-    const workspace_real: ?[]u8 = workspace.resolveCwdReal(gpa, io, opts.workspace_cwd) catch null;
+    // OOM is hard-fail (skills.md §3.3–3.4 / §4.1); other resolve errors soft-null
+    // so project containment falls through to root_escape when trust is on.
+    const workspace_real: ?[]u8 = workspace.resolveCwdReal(gpa, io, opts.workspace_cwd) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        else => null,
+    };
     defer if (workspace_real) |w| gpa.free(w);
 
     // 1) User root
@@ -244,7 +249,10 @@ fn discoverRoot(
             try diags.append(gpa, .candidate_io);
             break;
         } orelse break;
-        if (entry.kind != .directory and entry.kind != .sym_link) continue;
+        // Direct child directories only (skills.md §3.1). Symlinks count only
+        // when the follow-once target is a directory — non-directory symlink
+        // noise must not starve legitimate skill dirs under the 64 cap.
+        if (!isDirectChildDirectory(dir, io, entry.name, entry.kind)) continue;
         // Direct children only — store name for later SKILL.md check.
         const owned = gpa.dupe(u8, entry.name) catch return error.OutOfMemory;
         names.append(gpa, owned) catch {
@@ -758,9 +766,12 @@ fn readSkillHandler(
     arguments_json: []const u8,
 ) tool.HandlerError![]u8 {
     const catalog: *const Catalog = @ptrCast(@alignCast(instance.?));
-    const name = tool_args.requireStringArgument(ctx.allocator, arguments_json, "name") catch {
-        return tool_error.format(ctx.allocator, .invalid_arguments, "read_skill requires string name") catch
-            return error.OutOfMemory;
+    const name = tool_args.requireStringArgument(ctx.allocator, arguments_json, "name") catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidArguments => {
+            return tool_error.format(ctx.allocator, .invalid_arguments, "read_skill requires string name") catch
+                return error.OutOfMemory;
+        },
     };
     defer ctx.allocator.free(name);
 
@@ -837,6 +848,20 @@ pub fn deepCopyCatalog(arena: std.mem.Allocator, src: Catalog) error{OutOfMemory
 }
 
 // ── FS helpers ──────────────────────────────────────────────────────────────
+
+/// True when a readdir child is a directory for the §3.1 cap.
+/// `.directory` is accepted; `.sym_link` only after proving the follow-once
+/// target is a directory (broken/non-dir links do not count toward the 64 cap).
+fn isDirectChildDirectory(dir: Io.Dir, io: Io, name: []const u8, kind: Io.File.Kind) bool {
+    return switch (kind) {
+        .directory => true,
+        .sym_link => blk: {
+            const st = dir.statFile(io, name, .{ .follow_symlinks = true }) catch break :blk false;
+            break :blk st.kind == .directory;
+        },
+        else => false,
+    };
+}
 
 fn openRootDir(io: Io, root_path: []const u8) !Io.Dir {
     if (std.fs.path.isAbsolute(root_path)) {

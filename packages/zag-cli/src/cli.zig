@@ -363,10 +363,12 @@ pub fn run(init: std.process.Init) !void {
     const open_mode = selectOpenMode(continue_session);
 
     // skills-001: CLI resolves HOME → user skills root; SDK never getenv.
+    // Configured user-root construction OOM fails closed (does not silently
+    // disable user skills while skills_enabled remains true).
     const skills_enabled = !no_skills;
     const project_skills_trust: coding.ProjectSkillsTrust = if (trust_project_skills) .trusted else .untrusted;
     const user_skills_root: ?[]const u8 = if (skills_enabled)
-        resolveUserSkillsRoot(arena, init.environ_map)
+        try resolveUserSkillsRoot(arena, init.environ_map)
     else
         null;
 
@@ -402,10 +404,12 @@ const SkillHostOptions = struct {
 };
 
 /// CLI-only: `$HOME/.agents/skills` when HOME is set; missing HOME → no user root.
-fn resolveUserSkillsRoot(arena: std.mem.Allocator, env: *const std.process.Environ.Map) ?[]const u8 {
+/// Allocation failure is hard `error.OutOfMemory` (fail closed/visible), not a
+/// silent null that leaves skills_enabled true without a user root.
+fn resolveUserSkillsRoot(arena: std.mem.Allocator, env: *const std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
     const home = env.get("HOME") orelse return null;
     if (home.len == 0) return null;
-    return std.fmt.allocPrint(arena, "{s}/.agents/skills", .{home}) catch null;
+    return try std.fmt.allocPrint(arena, "{s}/.agents/skills", .{home});
 }
 
 /// Pure open-mode decision for CLI flags.
@@ -455,6 +459,27 @@ test "doctorOptionsFromFlags reports explicit selections without side effects" {
     try std.testing.expectEqual(coding.permissions.Mode.yolo, expl.permission);
     try std.testing.expectEqual(coding.shell_policy.Mode.off, expl.shell_policy);
     try std.testing.expect(!expl.load_project_instructions);
+}
+
+test "resolveUserSkillsRoot: HOME path; empty/missing null; alloc OOM hard-fails" {
+    const gpa = std.testing.allocator;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+
+    // Missing HOME → no user root (not an error).
+    try std.testing.expect((try resolveUserSkillsRoot(gpa, &env)) == null);
+
+    try env.put("HOME", "");
+    try std.testing.expect((try resolveUserSkillsRoot(gpa, &env)) == null);
+
+    try env.put("HOME", "/tmp/home-test");
+    const root = (try resolveUserSkillsRoot(gpa, &env)).?;
+    defer gpa.free(root);
+    try std.testing.expectEqualStrings("/tmp/home-test/.agents/skills", root);
+
+    // Configured user-root construction OOM must fail closed, not silent null.
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, resolveUserSkillsRoot(failing.allocator(), &env));
 }
 
 fn runOneShot(

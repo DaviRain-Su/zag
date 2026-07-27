@@ -617,6 +617,136 @@ test "skills: >64 skill directories: byte-sort then first 64; entry_limit diag" 
     try std.testing.expect(saw_entry_limit);
 }
 
+// ── OOM: resolveCwdReal must hard-fail (not soft root_escape) ───────────────
+
+test "skills: resolveCwdReal OOM hard-fails discovery before durable create" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // fail_index 0 hits the first gpa alloc in discover = resolveCwdReal dupe.
+    // Pre-fix: catch-null mapped OOM → null workspace_real → soft root_escape
+    // with project trust, then Session.start durable-created. Must hard-fail.
+    {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+        var arena_impl = std.heap.ArenaAllocator.init(gpa);
+        defer arena_impl.deinit();
+        try std.testing.expectError(error.OutOfMemory, skills.discover(failing.allocator(), io, arena_impl.allocator(), .{
+            .project_skills_trust = .trusted,
+            .workspace_cwd = Io.Dir.cwd(),
+        }));
+    }
+
+    const dir = ".zag-test-skills-cwd-oom";
+    const path = ".zag-test-skills-cwd-oom/s.jsonl";
+    Io.Dir.cwd().deleteTree(io, dir) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir);
+    defer Io.Dir.cwd().deleteTree(io, dir) catch {};
+
+    // Fresh failing allocator: Session.start must not create on OOM either.
+    var failing_start = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    const start_err = Session.start(failing_start.allocator(), io, .{
+        .base_system = "sys",
+        .path = path,
+        .open_mode = .create_new,
+        .load_project_instructions = false,
+        .project_skills_trust = .trusted,
+    });
+    try std.testing.expectError(error.OutOfMemory, start_err);
+    Io.Dir.cwd().access(io, path, .{}) catch {
+        // missing is expected — no durable create on OOM
+        return;
+    };
+    return error.TestUnexpectedResult;
+}
+
+// ── read_skill: ExtractError.OutOfMemory must not soft invalid_arguments ────
+
+test "skills: read_skill requireStringArgument OOM propagates HandlerError.OutOfMemory" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try writeSkill(io, tmp.dir, "oom-rs", "desc", "BODY", false);
+    const user_root = try absPathOf(io, tmp.dir, gpa);
+    defer gpa.free(user_root);
+
+    var s = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .user_skills_root = user_root,
+    });
+    defer s.deinit();
+
+    const rs = skills.readSkillTool(&s.skills_catalog);
+    const args = "{\"name\":\"oom-rs\"}";
+    // Sweep fail indices covering parse + name dupe inside requireStringArgument.
+    // Bare-catch pre-fix mapped ExtractError.OutOfMemory → soft invalid_arguments
+    // when format succeeded; OOM must remain hard HandlerError.OutOfMemory.
+    var saw_oom = false;
+    var idx: usize = 0;
+    while (idx < 40) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        const result = rs.handler(.{
+            .allocator = failing.allocator(),
+            .io = io,
+            .cwd = Io.Dir.cwd(),
+        }, rs.instance, args);
+        if (result) |body| {
+            defer failing.allocator().free(body);
+            // Soft invalid_arguments body would be a regression.
+            try std.testing.expect(std.mem.indexOf(u8, body, "invalid_arguments") == null);
+            break;
+        } else |err| {
+            if (err == error.OutOfMemory) {
+                saw_oom = true;
+            }
+        }
+    }
+    try std.testing.expect(saw_oom);
+}
+
+// ── §3.1: non-directory symlink noise must not starve skill dirs ────────────
+
+test "skills: non-directory symlinks do not count toward 64-entry cap" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    // 64 file-symlink names that sort before the real skill directory.
+    // Pre-fix counted bare .sym_link toward the cap, starving "zz-real".
+    try tmp.dir.writeFile(io, .{ .sub_path = "target.txt", .data = "noise" });
+    var i: usize = 0;
+    while (i < skills.max_entries_per_root) : (i += 1) {
+        var name_buf: [16]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "a{d:0>2}", .{i});
+        tmp.dir.symLink(io, "target.txt", name, .{}) catch |err| switch (err) {
+            error.AccessDenied, error.ReadOnlyFileSystem => return error.SkipZigTest,
+            else => |e| return e,
+        };
+    }
+    try writeSkill(io, tmp.dir, "zz-real", "real skill", "REAL_BODY", false);
+
+    const user_root = try absPathOf(io, tmp.dir, gpa);
+    defer gpa.free(user_root);
+
+    var s = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .user_skills_root = user_root,
+    });
+    defer s.deinit();
+
+    const e = s.skills_catalog.find("zz-real") orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, e.body, "REAL_BODY") != null);
+    // File-symlink noise must not emit entry_limit either.
+    for (s.skills_catalog.diags) |d| {
+        try std.testing.expect(d != .entry_limit);
+    }
+}
+
 // ── §11.8 Start OOM before create ───────────────────────────────────────────
 
 test "skills §11.8: discovery OOM before create leaves no file/lease" {
