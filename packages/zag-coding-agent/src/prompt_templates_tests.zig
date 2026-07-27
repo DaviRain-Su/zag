@@ -397,6 +397,59 @@ test "templates §11.9: file size, entry cap, aggregate, args/expansion budgets"
         try std.testing.expect(saw_file_too_large);
     }
 
+    // Exact max_file_bytes (24 KiB) must be accepted — contract ≤24 KiB
+    // (Zig 0.16 .limited(N) StreamTooLong-at-N regression guard).
+    {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        const exact = try gpa.alloc(u8, templates.max_file_bytes);
+        defer gpa.free(exact);
+        @memset(exact, 'E');
+        try writeTemplate(io, tmp.dir, "exact-max", exact);
+        try writeTemplate(io, tmp.dir, "peer", "P");
+        const user_root = try absPathOf(io, tmp.dir, gpa);
+        defer gpa.free(user_root);
+        var s = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .user_templates_root = user_root,
+        });
+        defer s.deinit();
+        const entry = s.templates_catalog.find("exact-max");
+        try std.testing.expect(entry != null);
+        try std.testing.expectEqual(@as(usize, templates.max_file_bytes), entry.?.body.len);
+        try std.testing.expect(s.templates_catalog.find("peer") != null);
+        for (s.templates_catalog.diags) |d| {
+            try std.testing.expect(d != .file_too_large);
+        }
+    }
+
+    // max_file_bytes + 1 must soft-skip (strictly greater than 24 KiB)
+    {
+        var tmp = std.testing.tmpDir(.{ .iterate = true });
+        defer tmp.cleanup();
+        const one_over = try gpa.alloc(u8, templates.max_file_bytes + 1);
+        defer gpa.free(one_over);
+        @memset(one_over, 'O');
+        try writeTemplate(io, tmp.dir, "one-over", one_over);
+        try writeTemplate(io, tmp.dir, "ok-two", "OK");
+        const user_root = try absPathOf(io, tmp.dir, gpa);
+        defer gpa.free(user_root);
+        var s = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .user_templates_root = user_root,
+        });
+        defer s.deinit();
+        try std.testing.expect(s.templates_catalog.find("one-over") == null);
+        try std.testing.expect(s.templates_catalog.find("ok-two") != null);
+        var saw_file_too_large = false;
+        for (s.templates_catalog.diags) |d| {
+            if (d == .file_too_large) saw_file_too_large = true;
+        }
+        try std.testing.expect(saw_file_too_large);
+    }
+
     // >64 direct children → entry_limit; first 64 byte-sorted considered
     {
         var tmp = std.testing.tmpDir(.{ .iterate = true });

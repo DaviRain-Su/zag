@@ -580,13 +580,22 @@ fn readFileLimited(
     path: []const u8,
     limit: usize,
 ) ReadLimitedError![]u8 {
-    return Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(limit)) catch |err| switch (err) {
+    // Zig 0.16 readFileAlloc(.limited(N)) returns StreamTooLong when size *reaches*
+    // N (effective max N-1). Contract §3.3/§11.9 allows ≤ max_file_bytes and only
+    // soft-skips > max. Request limit+1, then reject any successful read longer
+    // than limit (covers backends that accept exactly limit+1 before erroring).
+    const raw = Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(limit + 1)) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         else => {
             if (isTooLargeError(err)) return error.FileTooLarge;
             return error.IoFailed;
         },
     };
+    if (raw.len > limit) {
+        gpa.free(raw);
+        return error.FileTooLarge;
+    }
+    return raw;
 }
 
 fn isTooLargeError(err: anyerror) bool {
