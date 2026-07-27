@@ -49,14 +49,14 @@ These axes are orthogonal:
 | Extension | Register Tools, lifecycle handlers, commands, flags, shortcuts, providers, session actions, messages, and UI | A common feature vocabulary delivered incrementally; host policy/session/trace authority remains mandatory | E0, E2, E3 | E0 Tool/Provider/Observer composition L2; runtime extensions L0 | No `jiti`, arbitrary TS execution, dynamic Zig ABI, or host-memory mutation |
 | Skill | Discover reusable instructions, expose summaries, load `SKILL.md` on demand, optionally invoke manually | Bounded E1 discovery, precedence, trust, budget, disable/manual-only behavior, and downstream Tool enforcement | E1 + host Tool gates | `skills-001` **done** at `caafef5` ([skills.md](../../modules/skills.md)); Runtime Extensions L0 | The loader never executes code, but Skill content may induce normal Tool/shell execution |
 | Prompt Template | Expand `/name args` into reusable prompts | Explicit passive prompt resource with deterministic discovery, project-override collision, and one-pass `$ARGUMENTS`/`$$` substitution | E1 + host command router | `prompt-templates-001` **done** at `61326ae` ([prompt-templates.md](../../modules/prompt-templates.md)); Runtime Extensions L0 | Syntax smaller than Pi is fine if binding; not accidental or recursively substituted |
-| Theme | Install/select presentation data, adapt to terminal capabilities, reload | Passive theme data plus host-owned terminal renderer | E1-style data + host shell | After minimal TUI | No ANSI/renderer capability crosses E2/E3 |
+| Theme | Install/select presentation data, adapt to terminal capabilities, reload | Passive theme data plus host-owned terminal renderer | E1-style data + host shell | Minimal TUI **done** @ `f8f7f55`; theme still needs a **fresh Goal** + independent contract — **not** auto-ready/selected | No ANSI/renderer capability crosses E2/E3 |
 | Package | Install one bundle containing several extension resources and enable/disable them | Local runtime bundle manifest declaring E1 resources and optional E2/E3 artifacts; digest/provenance/trust/quarantine | Bundle layer above E1/E2/E3 | Schema/package Gates not started | E0 Zig source dependencies are build-time and never runtime-installed; no npm parity/marketplace |
 | Custom Model | Add/override model metadata for a known API shape without code | Validated runtime model catalog/configuration, with auth stored separately | Host configuration / passive data | Current catalog is static E0; runtime catalog unplanned | Pure data does not require WASM; shell-command secret lookup may be omitted or isolated |
 | Custom Provider | Add transport, streaming, auth, model discovery, and normalization | E0 custom Zig Provider; later runtime registration for portable/system integrations | E0; E2; E3 with narrow host imports | E0 custom Provider L2; runtime registration L0 | OAuth browser/keychain/ambient cloud credentials stay host/E2; E3 never gets broad raw OS access |
 | SDK | Embed the Harness in-process and compose tools/providers/events/session/control | Zig source-composition SDK enriched by public lifecycle/control contracts | E0 | SDK-ready L2; events and steering closed; idle-only durable fork closed at `0a3087f`; E1 Skills closed at `caafef5`; E1 Prompt Templates closed at `61326ae`; current fixture **24/24** (was **23/23** at `61326ae`) | Functional composition, not Node API or semver parity |
 | RPC mode | Drive a long-lived child with correlated commands, responses, and events | Independent Zag-native `rpc-v1` after public events/control/session contracts | Product process protocol | Planned capability, not part of `headless-v1` | Minimal command set first; no Pi/TS-RPC byte or command parity |
 | JSON mode | Run one prompt and consume structured result/events | Existing `headless-v1` `--json` and `--json-stream` | Product process output | Headless/Process L2 at `a1a1e0f` | Independent public schema; internal Observer/Trace unions are not serialized |
-| TUI + extension UI | Reuse terminal components; show dialogs/status/widgets/tool views; build richer interactive views | Host TUI plus staged extension UI: basic intents, render descriptors, then optional stateful declarative view/action protocol | Host/E0; E2/E3 requests | Minimal TUI planned; extension UI L0 | No raw terminal, arbitrary ANSI, renderer pointer, or untrusted native component factory across E2/E3 |
+| TUI + extension UI | Reuse terminal components; show dialogs/status/widgets/tool views; build richer interactive views | Host TUI plus staged extension UI: basic intents, render descriptors, then optional stateful declarative view/action protocol | Host/E0; E2/E3 requests | Minimal TUI **done** @ `f8f7f55` (contract PASS @ `c7a8f3a`); extension UI L0 | No raw terminal, arbitrary ANSI, renderer pointer, or untrusted native component factory across E2/E3 |
 
 ## What Pi implements, and what transfers
 
@@ -212,10 +212,11 @@ cli-sigint-001 ✅
       ├→ harness-steering-001 ✅
       └→ session-fork-001 ✅ at 0a3087f
   → skills-001 ✅ caafef5 → prompt-templates-001 ✅ 61326ae
-  → edit-sharpness-001 + tui-minimal-001
+  → edit-sharpness-001 ✅ 7be5151
+  → tui-minimal-001 ✅ f8f7f55 (contract PASS @ c7a8f3a)
 ```
 
-Later programmatic and extension tracks:
+Later programmatic and extension tracks (placeholders only — **not** selected/ready):
 
 ```text
 public events/control/session
@@ -229,8 +230,8 @@ public events/control/session
   ├→ runtime-model-catalog-001 (data-only; independent from E2/E3)
   └→ extension-ui-schema-001 (basic intents first; stateful views later)
 
-host shell
-  tui-minimal-001 → theme-001
+host shell (optional follow-on; needs fresh Goal)
+  theme-001   # after closed tui-minimal-001 @ f8f7f55; not auto-selected
 ```
 
 These are capability placeholders. They become binding only after their own analysis/task contracts exist.
