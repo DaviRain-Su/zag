@@ -35,15 +35,25 @@ Contract: [headless](../modules/headless-contract.md).
 
 ## Scheduled minimal TUI
 
-Only after `harness-events-001` and `harness-steering-001` (both now closed; a TUI still requires its own task and Gate):
+Prerequisites `harness-events-001` and `harness-steering-001` are closed. The
+**docs-only binding contract** is [tui-minimal.md](../modules/tui-minimal.md)
+([task](../plan/tasks/tui-minimal-001.md), status `ready` for contract review).
+Implementation remains **BLOCKED** until independent architecture/ownership and
+safety/fail-closed contract PASS and the contract merges. This phase does **not**
+claim a shipped TUI or maturity raise.
 
-1. streaming assistant text;
-2. multiline input/history;
-3. Tool call/result cards;
-4. permission/cancel/error state;
-5. basic session identity/resume indication.
+Contract freezes (detail in the module — do not fork):
 
-This task establishes the host component/render/input boundary. It does not include a theme platform, arbitrary extension UI, package manager, or dashboard.
+1. progressive text only via existing `Observer.assistant_text` (today: complete
+   assistant body, **not** invented `message_delta` / token lifecycle);
+2. multiline editor + **in-process** history (not durable Session transcript);
+3. Tool call/result cards from public `LifecycleObserver` (end-only / hard mid-call gaps);
+4. permission/cancel/error via Gate `AskFn` + [cli-interaction](../modules/cli-interaction.md);
+5. session identity from CLI path/open mode + `run_start.session_configured` only.
+
+Host owns all UI state; Kernel packages must not import TUI. `-Dtui` stays
+optional default false. No theme platform, extension UI host, package manager,
+or dashboard in this slice.
 
 ## Extension UI host
 
@@ -98,11 +108,22 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 
 ## Acceptance for `tui-minimal-001`
 
+### Contract track (docs candidate)
+
+- [x] binding module [tui-minimal.md](../modules/tui-minimal.md) authored
+- [x] task [tui-minimal-001](../plan/tasks/tui-minimal-001.md) authored (`status: ready`)
+- [ ] independent architecture/ownership contract review PASS
+- [ ] independent safety/fail-closed contract review PASS
+- [ ] docs lint / score / diff green on candidate; no product code in contract node
+
+### Product implementation track (later — do not check from contract node)
+
 - [ ] core prompt→Tool→result flow works without losing permission/error/session semantics;
 - [ ] Ctrl+C behavior follows [CLI interaction](../modules/cli-interaction.md);
 - [ ] lifecycle rendering comes from events, not private Agent memory;
 - [ ] plain/headless dual-backend Gates remain green;
-- [ ] Kernel packages do not import TUI.
+- [ ] Kernel packages do not import TUI;
+- [ ] fixture matrix in tui-minimal.md §10 green on the implementation tip.
 
 ## Acceptance for later extension UI host
 

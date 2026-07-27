@@ -143,7 +143,7 @@ completed foundation
                     + edit-sharpness-001 (done @ 7be5151; Tools write/edit L2)
                            │
                            ▼
-                     tui-minimal-001 (planned; task file not yet authored)
+                     tui-minimal-001 (contract candidate ready; impl BLOCKED)
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
@@ -153,7 +153,12 @@ completed foundation
 `7be5151` (contract PASS @ `07b8dab`/`f13b0f8` → impl `cfdc81b` → fix `241374a` →
 docs/closeout `7be5151`; candidate + merged-main local macOS std **655/655**, curl
 **654/654**; Tools · write/edit stays **L2**; no push / no fresh remote Linux for
-this tip). Source
+this tip).
+[tui-minimal-001](./tasks/tui-minimal-001.md) is a **docs contract candidate**
+(`status: ready`) with binding [tui-minimal.md](../modules/tui-minimal.md); product
+TUI implementation is **BLOCKED** until independent architecture/ownership and
+safety/fail-closed contract PASS and the contract merges. No C9 product acceptance
+or maturity claim. Source
 review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product
 policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then
 closed at `a5ff2b7` with Session-owned queues and a thin Core insertion seam. The safe idle-only durable fork closed at
@@ -189,7 +194,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| `tui-minimal-001` | planned (after M2 edit; task file not yet authored) | minimal host TUI; depends on event/control contracts — **not** claimed ready by edit-sharpness closeout |
+| [tui-minimal-001](./tasks/tui-minimal-001.md) | **ready** (contract candidate; impl BLOCKED) | docs-only minimal host TUI binding ([tui-minimal.md](../modules/tui-minimal.md)); depends on events/control/SIGINT/headless/edit-sharpness; **no** product TUI / maturity claim |
 
 ### Completed foundation
 

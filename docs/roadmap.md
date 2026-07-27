@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **done** @ `7be5151` (Tools write/edit **L2**; no L3 claim; local macOS only; no push/no fresh remote Linux for tip); then minimal TUI (planned; no task file yet) |
+| Pi-inspired daily Harness | **next** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **done** @ `7be5151` (Tools write/edit **L2**; no L3 claim; local macOS only; no push/no fresh remote Linux for tip); minimal TUI **contract candidate** [tui-minimal-001](./plan/tasks/tui-minimal-001.md) / [tui-minimal.md](./modules/tui-minimal.md) (impl BLOCKED; no product TUI claim) |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -89,7 +89,7 @@ M2 — selected daily UX
         │       edit-sharpness-001 (done @ 7be5151; Tools write/edit L2)
         └──────────────┬──────────────┘
                        ▼
-                 tui-minimal-001
+                 tui-minimal-001 (contract candidate ready; impl BLOCKED)
 ```
 
 ### M0 — Interaction reliability
@@ -172,9 +172,9 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest `read_file` + mandatory hunk review + optional post-commit verifier ([tools-edit](./modules/tools-edit.md)); candidate + merged-main local macOS std **655/655**, curl **654/654**; no push / no fresh remote Linux for tip | no AST/LSP; no multi-file txn; no Core/schema change; Tools write/edit stays L2 |
-| `tui-minimal-001` | streaming text, multiline input, Tool/permission/error cards | no dashboard/theme/image/plugin platform |
+| [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **contract candidate** ([tui-minimal.md](./modules/tui-minimal.md)): host UI over public lifecycle/control/permission; docs-only freeze | no product TUI yet; no dashboard/theme/image/plugin; impl BLOCKED until contract PASS |
 
-Minimal TUI depends on the event/control contracts; it must only assemble Kernel APIs and keep plain/headless Gates green.
+Minimal TUI depends on the closed event/control/SIGINT/headless/edit contracts; it must only assemble public coding-agent APIs, keep plain/headless Gates green, and never place UI in Kernel packages.
 
 ## Extension release ladder (D-010)
 
@@ -218,7 +218,7 @@ E3 is a formal direction, not current implementation. The first WASM host is com
 | C6 Control/Orchestration | steering/follow-up in M1 | Oracle, executable subagents, Graph |
 | C7 Process/Sandbox | none | process supervisor only when executable/background use appears; OS enforcement after that |
 | C8 Extensions | E0 static SDK already; E1 Skills + Prompt Templates in M2 | E2 after C7.1; E3 WASM portable executable tier; bundle/model/UI worlds separately gated |
-| C9 Product shell | minimal TUI in M2 | `rpc-v1`, themes, extension UI host, ACP, dashboard/images/full configuration UX |
+| C9 Product shell | minimal TUI **contract** in M2 ([tui-minimal-001](./plan/tasks/tui-minimal-001.md); impl later) | `rpc-v1`, themes, extension UI host, ACP, dashboard/images/full configuration UX |
 
 The detailed phase docs describe domain constraints. A deferred item is not an implied future commitment.
 
