@@ -186,8 +186,11 @@ validation). **OOM is hard fail.**
 | **Out of memory** during discovery/catalog allocation | **Hard fail** `error.OutOfMemory`; no durable create; no held lease |
 
 Diagnostics are process-local (doctor/log/test hooks as product chooses) and
-must not leak absolute paths or skill bodies into Trace, session JSONL,
-headless envelopes, or compaction metadata.
+must not leak absolute paths or skill bodies. Soft-skip diagnostics never
+emit body bytes or absolute paths into Trace, session JSONL, headless
+envelopes, or compaction metadata. (Intentional body exposure after
+successful `read_skill` or manual activation uses ordinary content paths
+only — see §4.3, §5, §6.)
 
 ## 4. Session-owned catalog and lifetimes
 
@@ -211,8 +214,10 @@ holds **no** lease — same transaction honesty as control-queue prealloc.
   description, disable-model-invocation, body bytes, origin user|project).
 - Session owns a derived **model summary** of model-invocable entries only
   (`disable-model-invocation != true`).
-- Catalog is **never persisted** (not session schema v1, not Trace, not
-  compaction meta, not headless).
+- Catalog structure is **never persisted as skill fields** (not session schema
+  v1 skill/catalog keys, not Trace skill fields, not compaction meta, not
+  headless skill events). Body bytes may still appear later only via ordinary
+  user-message / `tool_result` content paths (§4.3 / §5 / §6).
 - **Resume re-discovers** from live roots with current trust/enable options;
   prior process catalog is discarded.
 - **`Session.fork`** deep-copies the live catalog and summary into the child
@@ -221,11 +226,26 @@ holds **no** lease — same transaction honesty as control-queue prealloc.
 - Invocation-time filesystem re-read is **forbidden** (eliminates TOCTOU for
   catalog bodies).
 
-### 4.3 Model-visible summary
+### 4.3 Model-visible summary and intentional body paths
 
 - Only model-invocable `name` + `description` enter a **view-only Skills
   system layer** (assembled into the model view; not a transcript system row).
-- No skill summary or body is written to transcript rows or compaction metadata.
+- The Skills **summary** (name + description) is never written as a transcript
+  row, never compaction metadata, and never a first-class session/Trace/headless
+  skill field.
+- The in-memory **catalog** (including full bodies) is process memory only and
+  is never serialized as skill-catalog fields (schema v1 freeze, §4.2 / §8).
+- Skill **bodies** enter durable or observable surfaces **only** when product
+  code deliberately places them on **existing ordinary content paths**:
+  - **Manual activation (§6):** expansion once → ordinary **user** message text →
+    existing transcript append / session save / Trace / headless user-turn paths
+    (no new schema or event kinds).
+  - **`read_skill` success (§5):** bounded catalog body → ordinary
+    **`tool_result` body** → existing transcript / session save / Trace
+    `tool_result` / headless `tool_result` paths (existing redaction and body
+    caps apply; no skill-specific fields).
+- Soft-skip / deny paths and discovery diagnostics remain **body-free** and
+  **path-free** (stable errors without body bytes).
 - Disabled skills / `--no-skills` / empty invocable set → **no Skills block** and
   **no `read_skill` Tool**.
 
@@ -261,7 +281,10 @@ user then project merge with project win).
   summary and **denied** to `read_skill` (stable soft tool-result error; no body).
 - Unknown name → stable soft tool-result error; no body; no path echo.
 - Success returns the bounded catalog body for that name (already UTF-8 validated
-  at discovery).
+  at discovery) as an ordinary **`tool_result` body**. That body rides the same
+  transcript / session-save / Trace `tool_result` / headless `tool_result` paths
+  as any other Tool (existing redaction + caps); it is **not** a separate skill
+  payload kind and does **not** add schema fields (§4.3 / §8).
 
 ### 5.2 Dynamic toolset composition (per reply)
 
@@ -344,7 +367,7 @@ mutate the catalog, and does **not** bypass permissions for subsequent Tool use.
 | Project root | Explicit trust; realpath inside workspace |
 | Symlink escape | Soft-skip; zero outside bytes in catalog |
 | Induced Tools | Skill text may tell the model to write/shell/path; those calls still pass **ask** + workspace jail + shell **protect** + redaction |
-| Secrets | Diagnostics/path-free; bodies not in Trace/session/headless |
+| Secrets | Diagnostics path-free **and** body-free; catalog not serialized as skill fields; bodies appear in Trace/session/headless **only** as ordinary user-message text (manual activation) or ordinary `tool_result` body (`read_skill` success), under existing redaction/caps — never as dedicated skill fields or via soft-skip diagnostics |
 | OS sandbox / DLP | **Not claimed** |
 
 ## 8. Compatibility freeze

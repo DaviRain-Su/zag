@@ -101,16 +101,21 @@ The module doc is authoritative. Summary of binding rules:
    resume re-discovers; fork deep-copies catalog/summary with parent immutability;
    create OOM commits no file and holds no lease.
 8. **Model surface:** invocable name+description only in view-only Skills system
-   layer; never transcript/compaction. Disabled/no-skill → no Skills block, no
-   `read_skill`.
+   layer (not a transcript row; not compaction metadata; not skill schema
+   fields). Catalog stays process memory only. Bodies reach transcript/session/
+   Trace/headless **only** via ordinary user-message (manual activation) or
+   ordinary `tool_result` (`read_skill` success) — never dedicated skill fields
+   or soft-skip diagnostics. Disabled/no-skill → no Skills block, no `read_skill`.
 9. **`read_skill`:** risk read, workspace none, shell none, cancel none; catalog
-   only; no paths; manual-only denied. Per reply dynamically append to default or
-   custom toolset (no fixed `[8]`); Session address stable; duplicate reserved
-   name → `validateTools` fail-closed before provider.
+   only; no paths; manual-only denied; success body is ordinary `tool_result`
+   content on existing save/Trace/headless paths. Per reply dynamically append to
+   default or custom toolset (no fixed `[8]`); Session address stable; duplicate
+   reserved name → `validateTools` fail-closed before provider.
 10. **Activation:** public parse/expand API; CLI one-shot/REPL/headless route exact
     `/skill:<name> [rest]`; manual-only allowed; expands once to ordinary user
-    message on existing transcript/session/trace paths; unknown name stable local
-    error, no provider; unrelated slash text raw; `Agent.reply` never implicit-parses.
+    message (body + rest) on existing transcript/session/trace paths; unknown
+    name stable local error, no provider; unrelated slash text raw; `Agent.reply`
+    never implicit-parses.
 11. **Safety:** loader no-execute; induced write/shell/path still ask+jail+protect+redact.
 12. **Non-goals:** full YAML, Pi/npm marketplace parity, Prompt Templates, E2/E3/WASM,
     remote install, auto-trust project, Core Skill types, new schemas, recursive
@@ -124,10 +129,10 @@ The module doc is authoritative. Summary of binding rules:
 
 - [x] Binding module + task authored before implementation
 - [ ] Independent review of contract (when scheduled)
-- [ ] `zig build docs-lint`
-- [ ] `git diff --check`
-- [ ] Explicit `git add` of intended docs files only
-- [ ] One local docs commit on `task/skills-001`
+- [x] `zig build docs-lint`
+- [x] `git diff --check`
+- [x] Explicit `git add` of intended docs files only
+- [x] One local docs commit on `task/skills-001` (body-path contract fix)
 
 ## Implementation Gate (later)
 
