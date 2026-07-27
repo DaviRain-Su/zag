@@ -25,11 +25,12 @@ cross-platform TUI maturity Gate and **not** a claim that remote CI runs
 | Phase | What it is | What it is not |
 |-------|------------|----------------|
 | **A (current)** | Docs contract + cross-links only; status **`in-progress`** | Push; run id; Gate green; product/CI edit |
-| **B (not started)** | Only after **fresh one-shot user push authorization** matching §authorization schema | Implied by Phase A review/merge; vague “go ahead”; old session authz |
+| **B (not started)** | Live remote/Actions evidence only after a **fresh user Phase B grant** of type `observation_grant` **or** `push_grant` (§authorization) | Implied by Phase A review/merge; vague “go ahead”; Goal run alone; old session authz |
 
-**This contract document does not authorize Phase B.** No user push
-authorization is claimed here. Template commands below are **examples for a
-future authorized Phase B agent** and **must not** be executed from Phase A.
+**This contract document does not authorize Phase B.** No user
+`observation_grant` or `push_grant` is claimed here. Template commands below
+are **examples for a future authorized Phase B agent** and **must not** be
+executed from Phase A.
 
 Depends on (both **done**):
 
@@ -39,7 +40,8 @@ Depends on (both **done**):
 | [linux-dual-backend-gate-001](./linux-dual-backend-gate-001.md) | **done** (docs-only) @ tip `8a93ec6` / run `30273762011` | Prior exact-tip remote Gate **pattern** only — tip/run numbers **not** reusable as this Gate’s PASS |
 
 Does **not** own: product/fixture/build/CI-YAML edits; TUI remote maturity;
-theme/RPC/ACP/E2/E3; maturity row raise; any push without valid Phase B authz.
+theme/RPC/ACP/E2/E3; maturity row raise; any remote mutation without valid
+`push_grant`; any Phase B live reads/closeout without a valid Phase B grant.
 
 # context
 
@@ -93,10 +95,10 @@ and does **not** rebind to this contract commit’s SHA.
 
 | Layer | Owns | Must not own |
 |-------|------|--------------|
-| This task (docs only) | TARGET identity; Phase A/B machine; live drift matrix; authz schema; unique push shape; run correlation; command tables; failure isolation | Product/CI edits; inventing run ids; greenwashing; executing push without valid authz |
+| This task (docs only) | TARGET identity; Phase A/B machine; live drift matrix; dual grant schema; unique push shape; run correlation; command tables; failure isolation | Product/CI edits; inventing run ids; greenwashing; Phase B without valid grant; push without `push_grant` |
 | `.github/workflows/ci.yml` | Unchanged host rails + default matrix | TUI steps; product hang proof via timeout |
 | Packages | Behavior under test | Edits from this node |
-| User | **Only** valid Phase B one-shot push authorization (§authorization) | Implied authz via review/merge/“go ahead” |
+| User | Fresh Phase B `observation_grant` **or** `push_grant` (§authorization) | Implied authz via review/merge/“go ahead”/Goal alone |
 
 # exact target identity
 
@@ -112,176 +114,240 @@ and does **not** rebind to this contract commit’s SHA.
 # Phase A / Phase B state machine
 
 ```text
-done deps
-  tui-minimal-001 ✅
-  linux-dual-backend-gate-001 ✅
-        │
-        ▼
+done deps (both point into this task)
+  tui-minimal-001 ✅ ──────────────────┐
+  linux-dual-backend-gate-001 ✅ ──────┤
+                                       ▼
 Phase A (CURRENT) — docs contract only
   ├─ status: in-progress
   ├─ author contract + cross-links + local docs commit
-  ├─ independent review of THIS hardened contract still required (not PASS yet)
+  ├─ independent review of THIS contract still required (not PASS yet)
   ├─ after review PASS: ff-only local merge allowed
   ├─ NO push · NO run id · Gate NOT green
   └─ this task remains docs-only forever
 
-        │  only after FRESH one-shot user push authz (§authorization)
+        │  fresh user Phase B grant:
+        │    observation_grant  OR  push_grant
+        │  (§authorization — not “push-only”)
         ▼
 
-Phase B — two mutually exclusive paths (never both)
-  ├─ Path OBSERVE (drift class A only): remote already at TARGET
-  │    → never re-push
-  │    → observation-only if exactly one pre-existing qualifying run
+Phase B entry (shared preflight under either grant)
+  ├─ live ls-remote only (cache origin/main never decides)
+  ├─ classify A / B / C
+  │
+  ├─ Class A (remote_oid == TARGET)
+  │    → Path OBSERVE only; never push
+  │    → allowed under observation_grant OR push_grant
+  │      (if push_grant: mutation not used; push grant not consumed as push)
+  │    → exactly one pre-existing qualifying run → docs closeout
   │    → else STOP / rebind (new Goal)
   │
-  └─ Path PUSH (drift class B only): remote ancestor of TARGET, local proves it
-       → unique porcelain push of TARGET:refs/heads/main
-       → post-push live OID == TARGET
-       → exactly one correlating CI run in window
-       → record evidence → status done only then
-
-Class C (ahead / diverged / unknown): STOP · rebind · never force
+  ├─ Class B (remote ancestor of TARGET; local proves)
+  │    → Path PUSH only if valid unexhausted push_grant
+  │    → if only observation_grant → STOP; request fresh push_grant
+  │    → unique porcelain push → post live OID == TARGET
+  │    → exactly one correlating CI run → evidence → done
+  │
+  └─ Class C (ahead / diverged / unknown)
+       → STOP · rebind · never force
 ```
 
-| Phase | Allowed | Forbidden |
-|-------|---------|-----------|
-| **A** | Allowed docs paths; local commit; later local ff-only after review PASS | Any push; run id; Gate green; product/CI edits |
-| **B Path OBSERVE** | Live ls-remote; read-only `gh`/API; docs evidence if unique qualifying run already exists | Re-push TARGET; invent run; product/CI fix |
-| **B Path PUSH** | Live drift twice; unique authorized push; post-push live check; unique run correlation; evidence docs | Force; other refspecs; retry without new authz; pull/merge/reset/rebase to “fix” remote |
+| Phase / path | Allowed | Forbidden |
+|--------------|---------|-----------|
+| **A** | Allowed docs; local commit; later local ff-only after review PASS | Any push; run id; Gate green; product/CI edits; Phase B live reads without grant |
+| **B Path OBSERVE** (class A) | Live ls-remote; read-only `gh`/API; docs evidence if unique qualifying run | Re-push TARGET; invent run; product/CI fix |
+| **B Path PUSH** (class B + `push_grant`) | Live drift twice; unique authorized push; post-push live check; unique run correlation; evidence docs | Force; other refspecs; push under observation_grant; retry without new `push_grant` |
 
 ---
 
-# authorization schema (Phase B push) — F1
+# authorization schema (Phase B) — dual grants
 
-## Valid authorization (all required)
+Phase B **prereq live reads**, path selection, and **docs closeout** require a
+**new user message** choosing **exactly one** grant type below. Goal selection,
+Phase A review PASS, local merge, or vague “继续/go ahead” **never** substitute.
 
-A Phase B **push** is authorized only by a **new user message** (not an agent
-summary, not a Goal preamble) that **explicitly names all** of:
+Both grant types may authorize **live preflight read** (`ls-remote`, optional
+read-only fetch for ancestry under Phase B, and Actions read for the allowed
+path). Only `push_grant` may authorize remote mutation.
 
-1. Full target SHA: `b1513073190089bd2dc2473a466373c8a1702f1f`
-2. Destination: `origin` / `refs/heads/main` (or unambiguous `origin/main` as
-   that exact ref)
+## Grant type A — `observation_grant`
+
+### Valid (all required)
+
+A **new user message** that includes an **illocutionary authorize verb**, e.g.:
+
+- Chinese: **「我授权」** observation-only Phase B …
+- English: **「I authorize」** observation-only Phase B …
+
+and explicitly names:
+
+1. Full TARGET: `b1513073190089bd2dc2473a466373c8a1702f1f`
+2. Mode: **observation-only** / **no push**
+3. Scope: live remote tip + Actions read + docs closeout for that TARGET only
+
+Example shape (not executed; not claimed as granted):
+
+> I authorize observation-only Phase B for
+> `b1513073190089bd2dc2473a466373c8a1702f1f` on `origin` `refs/heads/main`:
+> live read and Actions evidence only; **no push**.
+
+### Allows / forbids
+
+| Allows | Forbids |
+|--------|---------|
+| Live `ls-remote`; class A Path OBSERVE; Actions read; docs closeout if evidence PASS | Any `git push`; class B Path PUSH (must STOP and request `push_grant`); force |
+
+### Evidence fields (`observation_grant`)
+
+| Field | Required |
+|-------|----------|
+| `grant_type` | `observation_grant` |
+| `authorized_at` | ISO-8601 of user message |
+| `authorizer` | `user` |
+| `verbatim` | Exact user message (or durable citation) |
+| `scope` | `observe-only TARGET b1513073190089bd2dc2473a466373c8a1702f1f; no push` |
+| `force` | `false` |
+| `mutation` | `none` |
+
+## Grant type B — `push_grant`
+
+### Valid (all required)
+
+A **new user message** that includes an **illocutionary authorize verb**, e.g.:
+
+- Chinese: **「我授权 Path PUSH」** / **「我授权推送」**
+- English: **「I authorize Path PUSH」**
+
+and explicitly names **all** of:
+
+1. Full TARGET SHA: `b1513073190089bd2dc2473a466373c8a1702f1f`
+2. Destination: `origin` / `refs/heads/main`
 3. Push class: **normal non-force**
-4. Scope: **only** that single refspec (TARGET → `refs/heads/main`)
+4. Scope: **only** single refspec `TARGET:refs/heads/main`
 
-## Invalid authorization (non-exhaustive; all fail-closed)
+Example shape (not executed; not claimed as granted):
+
+> I authorize Path PUSH of
+> `b1513073190089bd2dc2473a466373c8a1702f1f` to `origin` `refs/heads/main`
+> as a normal non-force single refspec only.
+
+### Allows / forbids
+
+| Allows | Forbids |
+|--------|---------|
+| Live preflight; class A → Path OBSERVE (**mutation not used**; do **not** treat as push consumption); class B → unique Path PUSH | Class B without this grant; force; multi-refspec; short SHA; `HEAD:main` |
+
+### Evidence fields (`push_grant`)
+
+| Field | Required |
+|-------|----------|
+| `grant_type` | `push_grant` |
+| `authorized_at` | ISO-8601 of user message |
+| `authorizer` | `user` |
+| `verbatim` | Exact user message (or durable citation) |
+| `scope` | `only b1513073190089bd2dc2473a466373c8a1702f1f:refs/heads/main` |
+| `force` | `false` |
+| `attempt` | `one-shot` — **exhausted after one push command attempt** |
+| `mutation_used` | `true` if B7 ran; `false` if class A OBSERVE under this grant |
+
+## Invalid authorization (both types; fail-closed)
 
 | Invalid source | Why |
 |----------------|-----|
-| Prior conversation / prior push grant | Authz is not transferable across sessions or attempts |
-| Phase A author / review / local merge agreement | Review ≠ push |
-| Vague “继续 / continue / go ahead / ship it / LGTM” | Does not name TARGET + ref + non-force + single refspec |
-| Goal run permission / task selection | Goal may open work; it does not authorize remote mutation |
-| Seeing independent review PASS | Review is local contract quality only |
-| Agent self-authorization or tool default | Never |
-
-## Evidence fields (record before any push; Path PUSH only)
-
-| Field | Required value |
-|-------|----------------|
-| `authorized_at` | ISO-8601 timestamp when the user message was received |
-| `authorizer` | `user` |
-| `verbatim` | Exact user message text (or durable citation of it) |
-| `scope` | `only b1513073190089bd2dc2473a466373c8a1702f1f:refs/heads/main` |
-| `force` | `false` |
-| `attempt` | `one-shot` — **this authorization is exhausted after one push attempt** |
+| Prior conversation / prior grant | Not transferable across sessions or attempts |
+| Phase A author / review / local merge | Review ≠ Phase B grant |
+| Vague “继续 / continue / go ahead / ship it / LGTM” | No authorize verb + no full grant body |
+| Only pasting TARGET/refspec without “I authorize…” | No illocutionary force |
+| Goal run permission / task selection alone | Opens work; does not grant Phase B |
+| Technical review body / checklist text | Not a user authorize act |
+| Agent self-authorization | Never |
 
 ## Exhaustion / re-authorization
 
-- After **one** push command attempt (exit 0 or non-zero), the grant is
-  **consumed**.
-- New grant required for: any retry, re-run of Actions, rebind of tip, different
-  ref/refspec, or Path OBSERVE → later Path PUSH switch.
-- Path OBSERVE does **not** consume a push grant (and must not push).
+| Grant | Exhaustion |
+|-------|------------|
+| `push_grant` | Consumed after **one** push command attempt (exit 0 or non-zero). Pure STOP **before** push does **not** consume. Uncertainty whether push started → treat consumed. |
+| `observation_grant` | One-shot for a single OBSERVE closeout attempt chain; new grant if rebind, new tip, or later need for push |
+| Class A under `push_grant` | **Mutation not used** — do not count as push consumption; record `mutation_used=false`. A later Path PUSH still needs an **unexhausted** `push_grant` (same message only if no push attempt yet; otherwise new message) |
+| Class B under `observation_grant` only | **STOP** — request a **new** `push_grant`; do not push |
+| Retry / re-run Actions / rebind / different ref | New grant of the appropriate type |
 
-**Current Phase A status:** no authorization exists; do not claim otherwise.
+**Current Phase A status:** neither grant exists; do not claim otherwise.
+
+### Class × grant predicate (single binding table)
+
+| Live class | `observation_grant` | `push_grant` |
+|------------|---------------------|--------------|
+| **A** (`remote_oid == TARGET`) | Path OBSERVE | Path OBSERVE (`mutation_used=false`; never push) |
+| **B** (remote ancestor of TARGET) | **STOP** — request `push_grant` | Path PUSH if unexhausted |
+| **C** (ahead / diverged / unknown) | **STOP** | **STOP** |
 
 ---
 
-# live-only remote drift matrix (Phase B) — F2
+# live-only remote drift matrix (Phase B)
 
 ## Live OID is the only decision input
 
 | Input | Role |
 |-------|------|
 | Live `git ls-remote` OID of `refs/heads/main` | **Only** remote tip used for drift class |
-| Local `origin/main` / remote-tracking branch | **Cache / history only** — must **not** alone choose Path PUSH/OBSERVE/STOP |
-| Local TARGET object | Must exist and verify as the full commit SHA before push |
+| Local `origin/main` / remote-tracking branch | **Cache / history only** — must **not** alone choose path |
+| Local TARGET object | Must verify as full commit SHA before push |
 
 ### Live read (required; read-only)
+
+Requires a valid Phase B grant (`observation_grant` or `push_grant`).
 
 ```text
 git ls-remote --exit-code origin refs/heads/main
 ```
 
-(Or a review-approved equivalent GitHub API that returns the same single OID.)
-
 | ls-remote outcome | Action |
 |-------------------|--------|
-| Exit 0, **exactly one** line, OID is 40-hex full SHA | Parse `remote_oid`; continue drift class |
-| Non-zero exit, empty, multi-line, non-hex, no permission, network error | **STOP** — no push; record failure; no guess |
+| Exit 0, **exactly one** line, OID is 40-hex full SHA | Parse `remote_oid`; classify |
+| Non-zero, empty, multi-line, non-hex, no permission, network error | **STOP** — no push; no guess |
 
-Record `remote_oid` and `live_read_at` in evidence.
+Record `remote_oid` and `live_read_at`.
 
-### Local ancestry proof (required for class B)
-
-Before Path PUSH:
+### Local ancestry proof (class B / Path PUSH)
 
 1. `git rev-parse --verify 'b1513073190089bd2dc2473a466373c8a1702f1f^{commit}'`
-   must print **exactly** `b1513073190089bd2dc2473a466373c8a1702f1f`.
-2. Local object DB must contain `remote_oid` **and** prove
-   `remote_oid` is an ancestor of TARGET
-   (e.g. `git merge-base --is-ancestor <remote_oid> <TARGET>` exit 0).
-3. If object missing or ancestry unprovable without guesswork: **STOP / rebind**.
-   Do **not** fetch “to make it work” under Phase A. Under Phase B, a
-   **read-only** fetch is allowed **only if** the same fresh push authz (or a
-   separate explicit user grant for read-only fetch) permits network read; if
-   still unknown after allowed read → STOP. **Never force. Never lease-force.**
+   → exact TARGET.
+2. Local DB contains `remote_oid` and
+   `git merge-base --is-ancestor <remote_oid> <TARGET>` exits 0.
+3. If missing/unprovable: **STOP / rebind**. Phase A must not fetch to invent
+   proof. Phase B may use **read-only** fetch only under the active Phase B
+   grant; still unknown → STOP. **Never force / force-with-lease.**
 
-### Immediate pre-push re-read (TOCTOU)
+### Immediate pre-push re-read (TOCTOU; Path PUSH only)
 
-On Path PUSH, **immediately before** the push command, run live ls-remote again.
-If `remote_oid` changed class (no longer B): **STOP** — do not push; grant still
-consumed if a push was attempted; if stopped before push, document whether grant
-remains (default: **consume only after push attempt** — a pure STOP before push
-does **not** consume, but a new live class still requires re-evaluation and may
-need new authz if class changed to non-B).
-
-**Binding rule:** if any uncertainty whether push started → treat grant as
-consumed; require new authz.
+Immediately before push, re-run live ls-remote. If class ≠ B: **STOP** (no
+push). Push attempt → `push_grant` consumed per §authorization.
 
 ## Mutually exclusive drift classes
 
-Let `TARGET = b1513073190089bd2dc2473a466373c8a1702f1f`.
-
-| Class | Predicate (live `remote_oid` only) | Path |
-|-------|-------------------------------------|------|
-| **A** | `remote_oid == TARGET` | **OBSERVE only** — **never re-push**. If exactly one pre-existing run already qualifies under §run correlation (without requiring `createdAt >= push_started_at` from a new push — use observation schema below), may record observation-only amendment. Else **STOP / rebind** (new Goal). |
-| **B** | `remote_oid != TARGET` **and** local proves `remote_oid` is ancestor of TARGET | **PUSH** path only after valid authz + preflight |
-| **C** | TARGET is ancestor of `remote_oid` (remote ahead); **or** histories diverged; **or** `remote_oid`/ancestry unknown; **or** ref missing after live read failure already STOPped | **STOP** — new Goal / rebind tip; **forbid** force, force-with-lease, delete, or any non-ff “repair” |
-
-Classes are exclusive. Do not combine A with push. Do not treat cache
-`origin/main` as live `remote_oid`.
+| Class | Predicate | Path |
+|-------|-----------|------|
+| **A** | `remote_oid == TARGET` | **OBSERVE only** — never re-push; grant table above |
+| **B** | `remote_oid != TARGET` and local proves ancestor | **PUSH** only with valid `push_grant` |
+| **C** | TARGET ancestor of remote; diverged; unknown; live read failed | **STOP** — rebind; no force |
 
 ### Observation-only schema (class A only)
 
 - **Never push.**
-- Search for existing runs with §run correlation filters except
-  `createdAt >= push_started_at` (no new push). Instead require a run whose
-  `headSha == TARGET`, `event=push`, `headBranch=main`, workflow `CI`,
-  `attempt=1`, `conclusion=success`, and is uniquely identifiable as the
-  **push of TARGET to main** (not PR, not dispatch).
-- Matching run count must be **exactly 1** inside the bounded observation
-  query; 0 or >1 → STOP / independent adjudication — do not pick “latest”.
-- Still fill full job/step evidence schema.
-- Status may move to `done` only after observation evidence docs commit;
-  still **no** product/CI edits.
+- Filters: `headSha == TARGET`, `event=push`, `headBranch=main`,
+  workflow **name** `CI`, workflow **path** `.github/workflows/ci.yml`
+  (from Actions run API — see §run correlation), `run_attempt == 1`,
+  `conclusion=success`; uniquely the push of TARGET to main (not PR/dispatch).
+- No `createdAt >= push_started_at` (no new push).
+- Matching count **exactly 1**; 0 or >1 → STOP.
+- Full job/step evidence; status `done` only after evidence docs.
 
 ---
 
-# unique push shape (Path PUSH only) — F3
+# unique push shape (Path PUSH only)
 
-## Sole allowed push command (example; do not run without authz)
+## Sole allowed push command (example; do not run without `push_grant`)
 
 ```bash
 git push --porcelain origin b1513073190089bd2dc2473a466373c8a1702f1f:refs/heads/main
@@ -291,166 +357,147 @@ git push --porcelain origin b1513073190089bd2dc2473a466373c8a1702f1f:refs/heads/
 
 | Check | Binding |
 |-------|---------|
-| Authz | Valid, unexhausted one-shot grant (§authorization) |
-| Drift | Live class **B** on latest ls-remote |
-| Object | `git rev-parse --verify 'b1513073190089bd2dc2473a466373c8a1702f1f^{commit}'` → exact TARGET |
-| Ancestry | Local proof remote_oid ancestor of TARGET |
-| Record | `push_started_at` (ISO-8601) **before** invoking push |
+| Authz | Valid unexhausted **`push_grant`** |
+| Drift | Live class **B** |
+| Object | `rev-parse` → exact TARGET |
+| Ancestry | Local proof |
+| Record | `push_started_at` before push |
 
-### Forbidden push forms (any ⇒ protocol violation)
+### Forbidden
 
-- `git push origin main`
-- `git push origin HEAD:main` / `HEAD:refs/heads/main`
-- Any **shortened** SHA in refspec
-- Multiple refspecs; `--force`, `--force-with-lease`, `--force-if-includes`
-- `--all`, `--mirror`, `--tags`, `--follow-tags`
-- Pushing any other branch/tag/commit (including Phase A/evidence tips)
-- `git pull` / `merge` / `reset` / `rebase` to “fix” remote after mismatch
+`git push origin main`; `HEAD:main`; short SHA; multi-refspec; any `--force*`;
+`--all` / `--mirror` / `--tags` / `--follow-tags`; other commits; pull/merge/
+reset/rebase to “fix” remote.
 
-### Post-push (all required)
+### Post-push
 
-| Check | Binding |
-|-------|---------|
-| Push exit | **Must be 0** |
-| Porcelain stdout | Record full stdout/stderr |
-| `push_completed_at` | ISO-8601 |
-| Immediate live ls-remote | `remote_oid` **exactly** TARGET; else **STOP** — do not claim Gate; do not force-repair |
-| Grant | Consumed |
+Exit **0**; record porcelain stdout/stderr + `push_completed_at`; live
+`remote_oid == TARGET` or STOP (no claim, no force); `push_grant` consumed;
+`mutation_used=true`.
 
 ---
 
-# unique bounded run correlation — F4
+# unique bounded run correlation
 
-## Default accepted run (Path PUSH)
+## Required run fields
 
-All must hold:
+| Field | Required | Source |
+|-------|----------|--------|
+| Workflow **name** | `CI` | `gh run list/view` `workflowName` / API |
+| Workflow **path** | **exactly** `.github/workflows/ci.yml` | Actions Runs API field `path` (see template) |
+| `event` | `push` | API / list |
+| `head_branch` / `headBranch` | `main` | API / list |
+| `head_sha` / `headSha` | TARGET | API / list |
+| `run_attempt` / `attempt` | `1` | API / list |
+| `created_at` (Path PUSH) | `>= push_started_at` | API |
+| `conclusion` | `success` | API / list |
 
-| Field | Required |
-|-------|----------|
-| Workflow **name** | `CI` |
-| Workflow **path** | `.github/workflows/ci.yml` |
-| `event` | `push` |
-| `headBranch` | `main` |
-| `headSha` | TARGET (`b1513073190089bd2dc2473a466373c8a1702f1f`) |
-| `attempt` | `1` |
-| `createdAt` | `>= push_started_at` |
-| `conclusion` | `success` |
+**If workflow `path` cannot be retrieved → STOP** (cannot claim). Do **not**
+invent `path` from `gh run view --json` unless that field is actually present;
+prefer the REST run object.
 
-Different event / attempt / workflow requires a **new contract + new authz**.
+Different event / attempt / workflow / path requires **new contract + new grant**.
 
-## Read-only discovery templates (examples; fail → STOP)
+## Read-only discovery templates (fail → STOP)
 
-Repo assumed `DaviRain-Su/zag` (adjust only if remote URL evidence says otherwise;
-do not guess).
+Repo assumed `DaviRain-Su/zag` only if remote URL evidence agrees; do not guess.
 
 ```bash
-# list candidates after push (read-only)
+# list candidates (name/event/branch filters; path verified per-id below)
 gh run list --repo DaviRain-Su/zag --branch main --event push \
   --workflow CI --limit 20 \
   --json databaseId,url,event,headBranch,headSha,status,conclusion,createdAt,updatedAt,attempt,workflowName
 
-# view one candidate
+# REQUIRED path + authoritative run fields (do not guess missing JSON keys)
+gh api repos/DaviRain-Su/zag/actions/runs/<id> \
+  --jq '{id,html_url,name,path,event,head_branch,head_sha,run_attempt,status,conclusion,created_at,updated_at}'
+
+# jobs (when available)
 gh run view <id> --repo DaviRain-Su/zag \
   --json databaseId,url,event,headBranch,headSha,status,conclusion,createdAt,updatedAt,attempt,workflowName,jobs
 
-# job/step logs (required for summaries)
+# logs for step summaries
 gh run view <id> --repo DaviRain-Su/zag --log
 ```
 
-Equivalent official GitHub REST/GraphQL API is acceptable if it returns the same
-fields. **If `gh`/API fails or logs are unavailable → STOP; do not invent.**
+After list, **each** candidate must pass `gh api …/actions/runs/<id>` with
+`path == ".github/workflows/ci.yml"` and other required fields. Candidates that
+fail path check are non-matches.
 
-## Cardinality in bounded window
+**If `gh`/API fails or logs unavailable → STOP; do not invent.**
 
-| Window | Rule |
-|--------|------|
-| Default observation window | From `push_started_at` through a single bounded wait (e.g. poll until both matrix jobs complete or wall clock exceeds job timeout class × 2, max ~70 minutes wall) — document the bound used |
-| Matching runs in window | Must be **exactly 1** |
-| 0 matches after window | **STOP** — not PASS |
-| >1 matches | **STOP** — independent adjudication; do not pick “newest” |
+## Cardinality
 
-**Rejected:** `pull_request`, `workflow_dispatch`, `schedule`, historical runs,
-re-runs (`attempt != 1`), wrong `headSha`, cancelled/timeout conclusions.
+| Rule | Binding |
+|------|---------|
+| Path PUSH window | From `push_started_at` until both jobs complete or documented wall bound (~70m max) |
+| Path OBSERVE window | Documented bounded query; no invent |
+| Matching count | **Exactly 1** |
+| 0 or >1 | **STOP** — no “pick latest” |
 
-## Job / step evidence (both matrix jobs)
+**Rejected:** `pull_request`, `workflow_dispatch`, `schedule`, historical wrong
+SHA, `run_attempt != 1`, cancelled/timeout, wrong `path`.
 
-Job names (from workflow): `Zig ubuntu-latest`, `Zig macos-latest`.
+## Job / step evidence
 
-For **each** job record: name, OS, conclusion (**must** be `success`).
-
-For **each** of the 13 workflow steps (actual `.github/workflows/ci.yml` order),
-record step conclusion and real log summary where applicable:
+Jobs: `Zig ubuntu-latest`, `Zig macos-latest` — both conclusion `success`.
 
 | # | Step | Notes |
 |---|------|--------|
-| 1 | Checkout | must success |
-| 2 | Install Zig 0.16.0 | must success |
-| 3 | Python (path coverage script) | must success |
-| 4 | Catalog sources in sync | record check result |
-| 5 | Docs score (readability + security) | record scores if printed |
-| 6 | Docs lint (XPlan layout) | must success |
-| 7 | OpenAPI path coverage (openai-zig) | record e.g. **287/287** if logged |
-| 8 | `zig build test --summary all` | record Build Summary steps/tests |
-| 9 | Install libcurl headers (Linux, curl backend) | **Ubuntu:** success required. **macOS:** conditional `if: runner.os == 'Linux'` → **skipped is the only allowed non-success** for this step |
-| 10 | `zig build test -Dhttp_backend=curl --summary all` | record summary |
-| 11 | `zig build` (install zag) | must success |
-| 12 | openai-zig package tests | must success |
-| 13 | openai-zig examples (compile) | must success |
+| 1–8 | Checkout … std `zig build test --summary all` | must success; record summaries |
+| 9 | Install libcurl headers | **Ubuntu** success; **macOS** conditional skip **only** allowed non-success |
+| 10–13 | curl tests; install; openai-zig tests; examples | must success |
 
-| Event | PASS? |
-|-------|-------|
-| Job timeout / cancel / fuse fire | **No** |
-| Core step **skipped** (except macOS step 9 as above) | **No** |
-| Job success but required summary logs missing | **No** |
-| `continue-on-error` soft green | **Forbidden / No** |
+Timeout / cancel / fuse fire / non-excepted skip / missing required logs → **not PASS**.
 
 ---
 
-# Phase B command / decision cookbook — F5
+# Phase B command / decision cookbook
 
-Templates only. **Do not execute push without valid authz.** No force/retry
-recipes exist.
+Templates only. **Do not execute without the matching grant.** No force/retry
+recipes.
 
-| # | Stage | Command / action | Side effect | Authz | On fail |
-|---|-------|------------------|-------------|-------|---------|
-| B0 | Preflight authz | Parse user message against §authorization; fill evidence fields | none | must already have valid grant for Path PUSH | STOP Path PUSH |
-| B1 | Live tip | `git ls-remote --exit-code origin refs/heads/main` | network read | none (read-only) | STOP |
-| B2 | Classify | Apply drift class A/B/C on live OID only | none | — | Class C → STOP/rebind |
-| B3 | Local TARGET | `git rev-parse --verify 'b1513073190089bd2dc2473a466373c8a1702f1f^{commit}'` | none | — | STOP |
-| B4 | Ancestry (B only) | `git merge-base --is-ancestor <remote_oid> b1513073190089bd2dc2473a466373c8a1702f1f` | none | — | STOP/rebind |
-| B5 | TOCTOU re-read | repeat B1; re-classify | network read | — | if not B → STOP (no push) |
-| B6 | Record clock | set `push_started_at` | none | Path PUSH only | — |
-| B7 | **Unique push** | `git push --porcelain origin b1513073190089bd2dc2473a466373c8a1702f1f:refs/heads/main` | **mutates remote main** | **valid one-shot grant** | record; grant consumed; STOP; no force repair |
-| B8 | Post live tip | B1 again; require OID == TARGET | network read | — | STOP no claim |
-| B9 | Run list | `gh run list …` per §run correlation | network read | gh auth available | STOP |
-| B10 | Run filter | exactly one match | none | — | 0 or >1 → STOP |
-| B11 | Run view/log | `gh run view` + `--log` | network read | — | STOP if missing |
-| B12 | Evidence docs | fill schema; status `done` only if all PASS | local docs commit | docs only | stay `in-progress` |
+| # | Stage | Command / action | Side effect | Grant required | On fail |
+|---|-------|------------------|-------------|---------------|---------|
+| B0 | Parse grant | Classify message as `observation_grant` or `push_grant`; fill evidence | none | valid one of two | STOP Phase B |
+| B1 | Live tip | `git ls-remote --exit-code origin refs/heads/main` | network read | either grant | STOP |
+| B2 | Classify | A / B / C on live OID only | none | either | C → STOP/rebind |
+| B2a | Class A | Enter Path OBSERVE; never push; if `push_grant`, set `mutation_used=false` | none | either | — |
+| B2b | Class B + observation only | **STOP**; request fresh `push_grant` | none | observation only | do not push |
+| B2c | Class B + push_grant | continue Path PUSH | none | `push_grant` unexhausted | — |
+| B3 | Local TARGET | `git rev-parse --verify 'b151307…^{commit}'` | none | Path PUSH | STOP |
+| B4 | Ancestry | `git merge-base --is-ancestor <remote_oid> TARGET` | none | Path PUSH | STOP/rebind |
+| B5 | TOCTOU | repeat B1; require class B | network read | Path PUSH | STOP no push |
+| B6 | Clock | `push_started_at` | none | Path PUSH | — |
+| B7 | **Unique push** | `git push --porcelain origin b151307…:refs/heads/main` | **mutates main** | **`push_grant` only** | record; grant consumed; STOP |
+| B8 | Post live | B1; OID == TARGET | network read | after push | STOP no claim |
+| B9 | Run list | `gh run list …` | network read | either path | STOP |
+| B9a | Run path | `gh api repos/…/actions/runs/<id>` require `path` | network read | either path | STOP if no path |
+| B10 | Filter | exactly one full match | none | — | 0/>1 STOP |
+| B11 | Logs | `gh run view … --log` | network read | — | STOP if missing |
+| B12 | Evidence docs | fill schema; `done` only if PASS | local docs | docs only | stay `in-progress` |
 
-| Missing capability | Action |
-|--------------------|--------|
-| No live network / ls-remote | STOP |
-| No `gh`/API access for runs | STOP (cannot claim) |
-| No valid push authz | Do not enter B7 |
+| Missing | Action |
+|---------|--------|
+| No Phase B grant | Do not start B1+ |
+| No live network | STOP |
+| No gh/API | STOP (cannot claim) |
+| Class B without `push_grant` | STOP; request `push_grant` |
+| No unexhausted `push_grant` at B7 | Do not push |
 
-**No force commands. No retry commands.** Retry = new user authz + new attempt
-number in evidence (still `attempt=1` on Actions unless new contract allows
-otherwise — default still requires Actions `attempt=1` for a new push).
+**No force. No retry commands.** New attempt → new grant.
 
 ---
 
-# failure isolation — F6
+# failure isolation
 
 | Situation | Required outcome |
 |-----------|------------------|
-| CI red on TARGET | Task **stays `in-progress`**; **no** docs-greenwash; **no** product/CI edit on this task or tip |
-| Run correlation not unique / missing | STOP; not PASS |
-| Live tip drift / wrong post-push OID | STOP; not PASS; no force |
-| Product or CI bug | **Fresh Goal** → new scoped fix task → new exact tip → **new** Gate contract/run |
-| This task path | **Forever docs-only** under allowed paths |
-
-Do **not** “fix green” by editing `packages/**`, `build.zig*`, or
-`.github/**` inside this Gate node.
+| CI red on TARGET | Stay `in-progress`; no greenwash; no product/CI edit on this task/tip |
+| Run correlation not unique / missing / no path | STOP; not PASS |
+| Live tip drift / wrong post-push OID | STOP; no force |
+| Product or CI bug | **Fresh Goal** → scoped fix task → new exact tip → **new** Gate |
+| This task | **Forever docs-only** |
 
 ---
 
@@ -475,9 +522,10 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 |-------|--------|
 | Status | **`in-progress`** |
 | TARGET | `b1513073190089bd2dc2473a466373c8a1702f1f` |
-| Phase B authz | **none claimed** |
+| Phase B grants | **none claimed** (`observation_grant` / `push_grant` absent) |
 | Run id / URL | **none** |
 | Gate green | **No** |
+| Independent review | **not claimed PASS this round** |
 
 ---
 
@@ -503,28 +551,30 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 
 - `packages/**` · `build.zig*` · `src/**` · fixtures · schemas · `.github/**`
 - Product/CI/build edits; force push; fabricated run ids
-- Executing Phase B push from Phase A
+- Phase B execution from Phase A
 
 # acceptance / checklists
 
 ## Phase A — Docs contract (current)
 
-- [x] Task authored; frontmatter `status: in-progress`; depends-on both done preds
+- [x] Task authored; `status: in-progress`; depends-on both done preds
 - [x] TARGET frozen full SHA `b1513073190089bd2dc2473a466373c8a1702f1f`
-- [x] Phase A/B machine + live drift A/B/C + authz schema + unique push + run correlation + command table
-- [x] Explicit: no remote `-Dtui`; no maturity raise; no copied historical run as PASS
-- [x] Local docs commits for contract authoring (incl. harden follow-up); **no push**
-- [x] Docs lint + score check + `git diff --check` + scope (on each contract commit)
-- [ ] **Independent review PASS** on this hardened contract (out of band) — **not yet**
+- [x] Dual grant schema (`observation_grant` / `push_grant`) + class×grant table
+- [x] Live drift A/B/C; unique push; run correlation with API `path`; command table
+- [x] Explicit: no remote `-Dtui`; no maturity raise; no historical run as PASS
+- [x] Local docs commits for contract (incl. harden + auth-path clarify); **no push**
+- [x] Docs lint + score check + `git diff --check` + scope on contract commits
+- [ ] **Independent review PASS** (out of band) — **not yet; not claimed this round**
 - [ ] Status remains **`in-progress`** until Phase B evidence; Gate **not** green
 
 ## Phase B — not started
 
-- [ ] Valid one-shot user push authz recorded **or** class A observation path chosen
-- [ ] Live ls-remote OID recorded; class A or B only
-- [ ] Path PUSH: unique porcelain push; exit 0; post live OID == TARGET
-- [ ] Exactly one correlating `CI` push run; attempt 1; headSha TARGET; success
-- [ ] Both jobs + step evidence (macOS libcurl skip exception only for step 9)
+- [ ] Fresh user `observation_grant` **or** `push_grant` recorded (authorize verb + body)
+- [ ] Live ls-remote OID; class A or B (C → STOP)
+- [ ] Class A: OBSERVE only; never push; unique qualifying run + `path`
+- [ ] Class B: only with `push_grant`; unique porcelain push; post OID == TARGET
+- [ ] Exactly one correlating run; name `CI`; **path** `.github/workflows/ci.yml`; attempt 1; success
+- [ ] Both jobs + step evidence (macOS step 9 skip exception only)
 - [ ] Real run id/URL + log numbers (no `30273762011` / local TUI copy)
 - [ ] Status → `done` only after evidence docs; still no maturity raise
 
@@ -533,10 +583,11 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 | Failure | Outcome |
 |---------|---------|
 | Job/step fail / timeout / cancel / skip (non-excepted) | not PASS; stay `in-progress` |
-| Class C or unknown live tip | STOP; rebind via new Goal; no force |
-| Product/CI defect | new fix task + new tip + new Gate — not this node |
-| Authz missing/invalid/exhausted | no push |
-| >1 or 0 matching runs | STOP |
+| Class C or unknown live tip | STOP; rebind; no force |
+| Class B with only `observation_grant` | STOP; request `push_grant` |
+| Product/CI defect | new fix task + new tip + new Gate |
+| Grant missing/invalid/exhausted | no push; no false OBSERVE claim |
+| >1 or 0 matching runs / no path | STOP |
 
 # non-goals
 
@@ -544,7 +595,7 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 - Editing packages/build/CI; force push; soft green
 - Reusing `8a93ec6` / `30273762011` as this tip’s PASS
 - Marking `done` in Phase A; selecting theme/RPC/ACP without fresh Goal
-- Claiming current user has authorized Phase B
+- Claiming current user has granted Phase B (`observation_grant` or `push_grant`)
 
 # verification commands (Phase A)
 
@@ -564,25 +615,27 @@ git diff --name-only
 | TUI contract PASS | `c7a8f3a` | docs freeze |
 | TUI impl final | `f8f7f55` | local macOS; cache push ≠ Gate |
 | Docs closeout → TARGET | `9d69574` → `8694fbb` → **TARGET** | Gate tip |
-| Phase A contract | local docs after TARGET | does not rebind TARGET |
-| Phase A harden | this follow-up | closes adversarial F1–F8 protocol gaps |
-| Phase B run | *pending valid authz* | real run only |
+| Phase A contract | `2c9babc`… | does not rebind TARGET |
+| Phase A harden | `81b9355`… | original adversarial review findings F1–F8 covered by hardened sections (not separate F1–F8 body headings as claims) |
+| Phase A auth-path clarify | this follow-up | dual grants; class×grant; API `path` |
+| Phase B run | *pending valid Phase B grant* | real run only |
 
 # delivery evidence (Phase A)
 
 | Field | Value |
 |-------|--------|
-| Path | Docs-only Phase A (+ harden) |
+| Path | Docs-only Phase A (contract + harden + auth clarify) |
 | Status | **`in-progress`** |
 | TARGET | `b1513073190089bd2dc2473a466373c8a1702f1f` |
-| Phase B authz | **not present / not claimed** |
+| Phase B grants | **not present / not claimed** |
 | Run id | **none** |
 | Maturity | unchanged |
 | Remote `-Dtui` | not claimed |
+| Independent review | **not PASS claimed** |
 
 # closeout
 
-**Not closed.** Hardened Phase A freezes executable Phase B protocol only.
-Task stays **`in-progress`** until Path OBSERVE or Path PUSH records valid
-evidence under this document. Independent review of the hardened contract is
-still required before treating protocol freeze as review-PASS.
+**Not closed.** Phase A freezes executable Phase B protocol with dual entry
+grants only. Task stays **`in-progress`** until Path OBSERVE or Path PUSH
+records valid evidence. Independent review PASS is **not** claimed by this
+commit.
