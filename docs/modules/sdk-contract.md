@@ -11,9 +11,10 @@
 > policy/session/Trace/redaction/context/lifecycle-adapter ownership lives in `zag-coding-agent`. No semver publication
 > promise freezes the current source layout. See [core-boundary](./core-boundary.md).
 >
-> **Control enrichment:** `harness-steering-001` closed at `a5ff2b7` with Session-owned bounded queues, required Core
-> `ControlInput`, and lifecycle `control_applied`. The current external fixture is **20/20**. This does not reopen the
-> `ebdd7ab` SDK-ready Gate, change any schema version, or raise a maturity row.
+> **Control and Session enrichment:** `harness-steering-001` closed at `a5ff2b7` with Session-owned bounded queues,
+> required Core `ControlInput`, and lifecycle `control_applied`. Idle-only durable `Session.fork` closed at `0a3087f`.
+> The current external fixture is **21/21**. Neither enrichment reopens the `ebdd7ab` SDK-ready Gate, changes a schema
+> version, or raises a maturity row.
 
 ## 1. What is covered
 
@@ -249,20 +250,23 @@ still has one lifecycle/Trace run and one terminal. Binding details: [harness-st
 
 ## 6. Session persistence
 
-### 6.0 Session fork (docs contract; not implemented)
+### 6.0 Session fork (closed at `0a3087f`)
 
-`session-fork-001` defines idle-only coding-agent
-`Session.fork(self: *const Session, child_path)` that deep-copies live
-transcript state (including live `content_parts`) into a new exclusive
-`create_new` child file via `createNewWithRedactor`. Binding rules:
-[session-fork](./session-fork.md). Until implementation closes its Gate:
+`session-fork-001` delivers idle-only coding-agent
+`Session.fork(self: *const Session, child_path)` with public `ForkError`. It
+leaves the parent unchanged, deep-copies live transcript state (including live
+`content_parts`) and prompt/compaction layers, and creates an independently
+owned durable child through exclusive `createNewWithRedactor`. Binding rules:
+[session-fork](./session-fork.md).
 
 - Core exports no fork API/state;
-- schema v1 / Trace v1 / headless-v1 stay unchanged;
+- schema v1 / Trace v1 / `headless-v1` stay unchanged;
+- all fallible in-memory preparation precedes the sole final durable fallible
+  create step; failed create commits no child JSONL and holds no lock FD;
 - this section’s create/resume/save table remains the durable baseline;
-- Gate requires external SDK consumer fork API **and** durable smoke (no
-  deferred escape hatch);
-- **no maturity elevation** is claimed by the docs contract alone.
+- the external SDK consumer fork API + durable smoke passes in fixture **21/21**;
+- Session remains **L2**; no tree/journal/`parent_id` or maturity elevation is
+  claimed.
 
 `Session.start` semantics:
 
@@ -320,5 +324,5 @@ The following are explicitly **not** covered by this contract:
 - [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md)
 - [D-007](../decisions/active/D-007-tool-runtime-descriptor.md)
 - [Harness steering](./harness-steering.md)
-- [Session fork](./session-fork.md) (docs in-progress; no code claim)
+- [Session fork](./session-fork.md) (closed at `0a3087f`; no L3 claim)
 - Consumer fixture: [`tests/sdk-consumer-fixture/`](../../tests/sdk-consumer-fixture/)

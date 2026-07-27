@@ -44,7 +44,7 @@
 | Level | Meaning | Current |
 |-------|---------|---------|
 | Low-level Zig composition | caller directly assembles Provider/Toolset/Observer/Transcript/loop | 已验证可行 |
-| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — Gate fixture 7/7 at `ebdd7ab`; current external fixture 20/20 after lifecycle/control enrichment; contract in [`modules/sdk-contract.md`](./modules/sdk-contract.md) |
+| Zig SDK-ready | stateful Tool、descriptor、high-level injection、ownership/error/event/cancel/session compatibility | **已闭合** — Gate fixture 7/7 at `ebdd7ab`; current external fixture 21/21 after lifecycle/control/session-fork enrichment; contract in [`modules/sdk-contract.md`](./modules/sdk-contract.md) |
 | Process SDK/headless | versioned JSON/events、stable errors/exit codes、ACP/RPC boundary | **已闭合** — `headless-v1` + exit matrix + process fixture; merged-main Gate passed at `a1a1e0f`; ACP/editor remains follow-on |
 
 Decisions: [D-008](./decisions/active/D-008-sdk-and-process-boundaries.md) and [D-010](./decisions/active/D-010-extension-tiers-and-process-protocol.md). Zag does not promise a stable C ABI or Zig dynamic plugin ABI.
@@ -275,7 +275,7 @@ Expected deny/Tool failures soft-fail 回灌；host registration、persistence�
 | Zig SDK-ready | supported Kernel/product facade | ✅ closed at `ebdd7ab` |
 | Headless/process contract | zag-cli/product shell | ✅ closed at `a1a1e0f` — headless-v1 + fixture + dual-backend Gate |
 | 可靠编辑 | runtime + toolset | H2 correctness → C4 sharpness |
-| Repo map/fork；Memory Repo | context/session backend | C5；Memory later/default-off |
+| Repo map / full session tree；Memory Repo | context/session backend | C5；idle-only durable fork closed at `0a3087f`; full tree and Memory later/default-off |
 | Graph / Subagent / Oracle | optional orchestration | C6；依赖 lifecycle/process safety |
 | OS sandbox/process supervisor | product runtime | C7；不进入 Provider/message ABI |
 | Extension carriers | E0 static SDK / E1 passive / E2 process / E3 WASM | D-010；E2 needs C7.1, untrusted native also C7.2; E3 needs WIT/runtime/capability/package Gates |

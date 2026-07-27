@@ -19,7 +19,7 @@
 | no active-writer conflict contract | concurrent sessions can silently lose updates | P0 `h-session-001` — **closed L2** |
 | second-stage trim is absent from `dropped`/summary | session/trace cannot explain the actual model view | P1 `h-context-001` — **closed L2** (fixed-point final-view accounting) |
 | fault fixtures missing | schema/roundtrip happy paths do not prove durability | session + context + trace P0/P1 fixtures in CI |
-| repo map/fork | medium-repo navigation and side questions | C5 after H contracts |
+| repo map / full fork tree | medium-repo navigation and managed branch history | C5 after H contracts; idle-only durable fork slice closed at `0a3087f` |
 
 ## Non-goals for H
 
@@ -30,4 +30,4 @@
 
 ## Next
 
-Session (D-006) and context accounting (h-context-001) are L2. C5.1 repo map and fork may start; Memory Repo remains later and default-off.
+Session (D-006) and context accounting (h-context-001) are L2. The first idle-only durable fork slice closed at `0a3087f`; repo map and a full tree/journal remain C5 work. Memory Repo remains later and default-off.

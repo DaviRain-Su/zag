@@ -1,16 +1,16 @@
 ---
-status: in-progress
+status: done
 scope: coding-agent session fork (M1 / C5.2)
 task: session-fork-001
+closed-at: 0a3087f
 ---
 
 # Session fork
 
-This module is the **binding contract** for `session-fork-001`. It defines safe,
-idle-only durable fork of a coding-agent `Session` into a **new** child session
-file. Implementation must obey every section below. Local code may land under
-review while status remains **in-progress**; this does **not** claim Gate closeout
-or any maturity raise.
+This module records the **closed binding contract** for `session-fork-001`,
+delivered at `0a3087f`. It defines safe, idle-only durable fork of a coding-agent
+`Session` into a **new** child session file. The closeout adds no schema version,
+Core fork state, tree/journal claim, or maturity increase.
 
 **Create-body fault strategy (implementation):** **A** —
 `session_store.testing.setFailNextCreateBody` (test-only; production-impossible).
@@ -490,7 +490,21 @@ examples. Numbering is stable for task cross-reference.
 - restoring `base_system`/`project_body`/`content_parts` via session-v1 resume
 - **L3 maturity claim** or any elevation of existing L2 rows
 
-## 10. Related
+## 10. Delivery status
+
+`session-fork-001` is **done** at `0a3087f`. Independent contract review and
+independent code review passed; the final review follow-ups added exact child-file
+isolation and durable null-redactor evidence. The ff-only merged-main Gate passed
+std **40/40 steps, 579/579 tests**, curl **42/42 steps, 578/578 tests**, Core
+**89/89**, Coding **309/309**, external SDK **21/21**, OpenAPI **287/287**,
+catalog **40**, readability **91/100**, and security **72/100**.
+
+This is an L2 Session/SDK capability enrichment only. Session/Resume remains
+**L2**; schema v1, Trace v1, `headless-v1`, control-queue persistence, and default
+ask + workspace jail + shell protect remain unchanged. No L3 tree/journal/UI,
+fsync, symlink containment, or mid-reply fork is claimed.
+
+## 11. Related
 
 - Task: [session-fork-001](../plan/tasks/session-fork-001.md)
 - [session-store](./session-store.md) · [context-compaction](./context-compaction.md)

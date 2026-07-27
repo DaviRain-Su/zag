@@ -136,7 +136,11 @@ Specs: [context-compaction](../modules/context-compaction.md), [session-store](.
 
 ### Remaining (capability / C5)
 
-- repo map, session fork/tree, optional LLM summary (not H L2 blockers).
+- repo map, full session tree/journal, optional LLM summary (not H L2 blockers).
+
+### Closed post-H enrichment
+
+- the first idle-only durable fork slice closed at `0a3087f` without changing H4 L2.
 
 ### Closed for H4 L2
 
@@ -144,7 +148,7 @@ Specs: [context-compaction](../modules/context-compaction.md), [session-store](.
 - P1 final-view compaction accounting and summary lineage (h-context-001);
 - session/trace integration fixtures for the same final event.
 
-H4 Context/Compaction is **L2** in [maturity](../maturity.md). Repo map/fork/Memory stay C5.
+H4 Context/Compaction is **L2** in [maturity](../maturity.md). Repo map, full tree/journal, and Memory stay C5; the closed idle-only fork slice is a post-H M1 enrichment.
 
 ## H5 — Safety
 
@@ -236,7 +240,7 @@ h-edit-integrity-001   h-read-search-bounds-001
   ├─► Zig SDK-ready gate
   ├─► headless/process gate
   ├─► C4 edit sharpness
-  ├─► C5.1 repo map/fork
+  ├─► C5 repo map/full session tree
   └─► C7 sandbox/process supervisor
 ```
 

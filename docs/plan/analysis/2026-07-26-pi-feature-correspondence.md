@@ -53,7 +53,7 @@ These axes are orthogonal:
 | Package | Install one bundle containing several extension resources and enable/disable them | Local runtime bundle manifest declaring E1 resources and optional E2/E3 artifacts; digest/provenance/trust/quarantine | Bundle layer above E1/E2/E3 | Schema/package Gates not started | E0 Zig source dependencies are build-time and never runtime-installed; no npm parity/marketplace |
 | Custom Model | Add/override model metadata for a known API shape without code | Validated runtime model catalog/configuration, with auth stored separately | Host configuration / passive data | Current catalog is static E0; runtime catalog unplanned | Pure data does not require WASM; shell-command secret lookup may be omitted or isolated |
 | Custom Provider | Add transport, streaming, auth, model discovery, and normalization | E0 custom Zig Provider; later runtime registration for portable/system integrations | E0; E2; E3 with narrow host imports | E0 custom Provider L2; runtime registration L0 | OAuth browser/keychain/ambient cloud credentials stay host/E2; E3 never gets broad raw OS access |
-| SDK | Embed the Harness in-process and compose tools/providers/events/session/control | Zig source-composition SDK enriched by public lifecycle/control contracts | E0 | SDK-ready L2; events/steering/fork planned | Functional composition, not Node API or semver parity |
+| SDK | Embed the Harness in-process and compose tools/providers/events/session/control | Zig source-composition SDK enriched by public lifecycle/control contracts | E0 | SDK-ready L2; events and steering closed; idle-only durable fork closed at `0a3087f`; current fixture 21/21 | Functional composition, not Node API or semver parity |
 | RPC mode | Drive a long-lived child with correlated commands, responses, and events | Independent Zag-native `rpc-v1` after public events/control/session contracts | Product process protocol | Planned capability, not part of `headless-v1` | Minimal command set first; no Pi/TS-RPC byte or command parity |
 | JSON mode | Run one prompt and consume structured result/events | Existing `headless-v1` `--json` and `--json-stream` | Product process output | Headless/Process L2 at `a1a1e0f` | Independent public schema; internal Observer/Trace unions are not serialized |
 | TUI + extension UI | Reuse terminal components; show dialogs/status/widgets/tool views; build richer interactive views | Host TUI plus staged extension UI: basic intents, render descriptors, then optional stateful declarative view/action protocol | Host/E0; E2/E3 requests | Minimal TUI planned; extension UI L0 | No raw terminal, arbitrary ANSI, renderer pointer, or untrusted native component factory across E2/E3 |
@@ -207,11 +207,11 @@ Provider bindings and stateful UI are later worlds/tasks, not implied by E3.1. E
 The near-term Harness route remains focused:
 
 ```text
-cli-sigint-001
-  → harness-events-001
-      ├→ harness-steering-001
-      └→ session-fork-001
-  → skills-001 → prompt-templates-001
+cli-sigint-001 ✅
+  → harness-events-001 ✅
+      ├→ harness-steering-001 ✅
+      └→ session-fork-001 ✅ at 0a3087f
+  → skills-001 (planned) → prompt-templates-001
   → edit-sharpness-001 + tui-minimal-001
 ```
 

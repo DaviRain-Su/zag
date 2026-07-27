@@ -20,9 +20,9 @@
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
 | [trace-observability.md](./trace-observability.md) | H7 | `packages/zag-coding-agent/src/{trace,redact,observer}.zig`；Core emits source facts via `LoopEventSink` | implementation moved to coding-agent by core-observation-ownership-001 |
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | `packages/zag-cli/src/cli.zig` + core cancel flag | 保持 signal UX 在产品层 |
-| [harness-events.md](./harness-events.md) | M1 events ✅ | coding-agent SDK adapter over Core Loop facts + facade run facts; closed at `aecf402` | no Core `lifecycle.zig`; steering closed separately; fork docs in-progress ([session-fork](./session-fork.md)) |
+| [harness-events.md](./harness-events.md) | M1 events ✅ | coding-agent SDK adapter over Core Loop facts + facade run facts; closed at `aecf402` | no Core `lifecycle.zig`; steering and fork closed separately |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session-owned bounded queues + explicit Core `ControlInput`; closed at `a5ff2b7` | no provider/Tool preemption; Trace/headless schemas unchanged; no maturity change |
-| [session-fork.md](./session-fork.md) | M1 fork **docs in-progress** | binding contract for idle-only durable fork; task [session-fork-001](../plan/tasks/session-fork-001.md) | no code claim; schema v1 unchanged; no maturity change |
+| [session-fork.md](./session-fork.md) | M1 fork ✅ | idle-only durable `Session.fork`; closed at `0a3087f` | schema v1 unchanged; Session remains L2; no tree/journal claim |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1/E2/E3 runtime hosts unimplemented | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
@@ -72,7 +72,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [cli-interaction.md](./cli-interaction.md) | Product CLI → M0 | REPL/one-shot input ownership and Ctrl+C lifecycle |
 | [harness-events.md](./harness-events.md) | M1 events ✅ | product SDK lifecycle adapter closed at `aecf402`; no Core lifecycle channel |
 | [harness-steering.md](./harness-steering.md) | M1 steering ✅ | Session control queues + protocol-safe Core insertion seam; closed at `a5ff2b7` |
-| [session-fork.md](./session-fork.md) | M1 fork docs in-progress | Idle-only durable Session fork contract; [session-fork-001](../plan/tasks/session-fork-001.md); no L3 claim |
+| [session-fork.md](./session-fork.md) | M1 fork ✅ | Idle-only durable `Session.fork`; closed at `0a3087f`; schema v1 and Session L2 unchanged |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |

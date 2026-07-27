@@ -122,7 +122,7 @@ Terminal category for malformed history: `invalid_context` (not `provider_error`
 ## L3 (C5)
 
 - repo map and task-aware file selection;
-- session fork/branch (first durable fork slice contract: [session-fork](./session-fork.md);
+- session fork/branch (first durable fork slice closed at `0a3087f`: [session-fork](./session-fork.md);
   copies live gen/summary into the child; does not change this row’s **L2** status);
 - optional LLM summary with quality fixtures;
 - default-off Memory Repo injection through a defined layer.

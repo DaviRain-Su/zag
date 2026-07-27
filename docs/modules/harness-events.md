@@ -200,8 +200,9 @@ The historical `task/harness-events-001` branch remains ineligible because it im
 boundary. Its replacement `task/harness-events-001-v2` was fast-forwarded and supplies the product adapter over Core
 source facts and facade run facts. The separate [steering contract](./harness-steering.md) closed at `a5ff2b7`; its
 merged-main Gate passed std **567/567**, curl **566/566**, Core **89/89**, Coding **298/298**, and SDK **20/20** while
-preserving the historical lifecycle Gate above and every maturity row. `session-fork-001` remains planned without a
-task file.
+preserving the historical lifecycle Gate above and every maturity row. The separate
+[session-fork contract](./session-fork.md) closed at `0a3087f` with SDK fixture **21/21**, also without changing a
+maturity row.
 
 ## Related
 

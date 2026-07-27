@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |----|------|
 | 前置 | Phase H lifecycle/session + SDK/headless event contracts ✅；executable agents 另依赖 process supervisor |
-| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` ✅ at `a5ff2b7`; `session-fork-001` planned |
+| 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` ✅ at `a5ff2b7`; `session-fork-001` ✅ at `0a3087f` |
 | 状态边界 | bounded steering/follow-up 已闭合；复杂编排仍不得反客为主或暗示 Graph/subagents 已实现 |
 | 模块 | [harness-steering](../modules/harness-steering.md)、[loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
 

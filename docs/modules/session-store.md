@@ -132,12 +132,11 @@ Implementation notes:
 
 ## L3 (C5)
 
-- branch/fork/session tree — first durable idle fork slice is specified in
-  [session-fork](./session-fork.md) / [session-fork-001](../plan/tasks/session-fork-001.md);
-  task-branch implementation landed with independent review PASS; task status
-  remains **in-progress** (root dual-backend + merged-main Gate open). This
-  store module and Session maturity stay **L2**; no L3 tree/journal/`parent_id`
-  claim and no “done” closeout here;
+- branch/fork/session tree — the first durable idle fork slice closed at `0a3087f`:
+  [session-fork](./session-fork.md) / [session-fork-001](../plan/tasks/session-fork-001.md).
+  Independent reviews and root dual-backend merged-main Gates passed. This store
+  module and Session maturity stay **L2**; the closed slice adds no L3
+  tree/journal/`parent_id` claim;
 - append journal or snapshots when justified by measured session size;
 - subagent transcript indexing.
 

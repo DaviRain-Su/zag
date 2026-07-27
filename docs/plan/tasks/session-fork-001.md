@@ -1,7 +1,7 @@
 ---
 id: session-fork-001
 scope: coding-agent/session-fork
-status: in-progress
+status: done
 priority: P1
 depends-on:
   - harness-steering-001
@@ -9,20 +9,19 @@ depends-on:
 
 # objective
 
-Define and later implement **safe idle-only session fork** on coding-agent
-`Session`: parent remains fully unchanged; child is a new durable session at a
-distinct lexical path with independent arena, deep-copied transcript (including
-live `content_parts`), independent redactor, empty control queues, exclusive
+Deliver **safe idle-only session fork** on coding-agent `Session`: parent
+remains fully unchanged; child is a new durable session at a distinct lexical
+path with independent arena, deep-copied transcript (including live
+`content_parts`), independent redactor, empty control queues, exclusive
 `create_new` + redaction, and no Core fork API/state.
 
-Status `in-progress` means the **binding contract is authored** and a **local
-implementation** lands under review; Gate closeout (independent review of code,
-ff-only merge, dual-backend root) remains open. **No maturity row may be raised**
-by docs or by implementation happy paths.
+`session-fork-001` closed at `0a3087f` after independent contract/code review,
+review follow-ups, ff-only merge, and merged-main dual-backend Gates. This is an
+SDK/Session capability enrichment only; **no maturity row is raised**.
 
 Binding specification: [Session fork](../../modules/session-fork.md).
 
-## Implementation evidence (local, not closed)
+## Delivery evidence
 
 | Item | Evidence |
 |------|----------|
@@ -33,8 +32,11 @@ Binding specification: [Session fork](../../modules/session-fork.md).
 | Null redactor | typed `error.OutOfMemory` fail-closed before create (test-constructed) |
 | Same-path | `SessionAlreadyExists` (honest; not Busy) |
 | Fixtures | `packages/zag-coding-agent/src/session_fork_tests.zig` §8.1–29 |
-| SDK | `tests/sdk-consumer-fixture` fork + durable create/resume smoke |
-| Maturity | **L2 unchanged** |
+| SDK | `tests/sdk-consumer-fixture` fork + durable create/resume smoke; current fixture **21/21** |
+| Review | independent contract review PASS; independent code review PASS; review follow-up re-review PASS |
+| Merge | ff-only to local main at `0a3087f` |
+| Merged-main Gate | std **40/40 steps, 579/579 tests**; curl **42/42 steps, 578/578 tests**; Core **89/89**; Coding **309/309**; SDK **21/21**; OpenAPI **287/287**; catalog **40**; readability **91/100**; security **72/100** |
+| Maturity | **L2 unchanged**; no new row |
 
 # context
 
@@ -61,7 +63,7 @@ Binding specification: [Session fork](../../modules/session-fork.md).
 
 # path
 
-## Implementation (future code step — not this docs commit)
+## Implementation (landed at `0a3087f`)
 
 - `packages/zag-coding-agent/src/agent.zig` (`Session.fork(*const Session, …)` +
   const-safe redactor clone; no parent mutation)
@@ -134,13 +136,13 @@ sharpening included):
 
 ## Docs Gate (contract track — complete)
 
-- [x] Binding module + task authored (`status: in-progress`)
+- [x] Binding module + task authored before implementation
 - [x] Independent-review F1–F9 folded into module + task
 - [x] `zig build docs-lint` (docs-only commits)
 - [x] `git diff --check` (docs-only commits)
 - [x] Explicit `git add` of intended docs/quality files only
 
-## Implementation Gate (**local green**, closeout **not** complete)
+## Implementation Gate (**complete**)
 
 Must pass every fixture in
 [session-fork.md §8](../../modules/session-fork.md#8-verification-exact-fixture-list)
@@ -153,11 +155,11 @@ items **1–29**, aligned with failure matrix **F-a…F-f**:
 | 10–13 | Post-compaction child reply; **parent reply after fork**; **ephemeral→durable**; tool-bundle pairing | yes |
 | 14–16 | Queue isolation; redaction; child resume rows+compaction only (no layers/parts claim) | yes |
 | 17–23 | InvalidPath; AlreadyExists; Busy; same-path typed result; prep OOM; **§5.1 create-body**; null redactor | yes |
-| 24–28 | Lifecycle/Trace configured truth; Core no export; **mandatory SDK fork+durable smoke**; dual backend; **no maturity change** | partial† |
+| 24–28 | Lifecycle/Trace configured truth; Core no export; **mandatory SDK fork+durable smoke**; dual backend; **no maturity change** | yes |
 | 29 | JSONL roundtrip is not deep-copy evidence | yes |
 
-† Dual-backend root Gate deferred to coordinator after review. Local: coding-agent
-package tests, Core package tests, SDK fixture, docs-lint, `git diff --check`.
+Merged-main evidence: std **579/579**, curl **578/578**, Coding **309/309**,
+Core **89/89**, SDK **21/21**, with docs/OpenAPI/catalog Gates green.
 
 Additional implementation checklist:
 
@@ -165,7 +167,7 @@ Additional implementation checklist:
 - [x] const-safe redactor clone (`activeRedactorConst` / field path); no `*const` → `*Session` cast
 - [x] intermediate dirs + stale lock honesty documented in test comments
 - [x] SDK consumer fork + durable smoke green
-- [ ] root std + curl Gates green (coordinator after review)
+- [x] root std + curl Gates green on merged main (579/579 and 578/578)
 - [x] maturity rows unchanged at closeout (still L2; no claim raised)
 
 # non-goals
@@ -179,8 +181,15 @@ Additional implementation checklist:
 
 # closeout
 
-- Docs-first contract: **in-progress** (this file + `docs/modules/session-fork.md`).
-- Docs Gate checkboxes above are complete for docs-only commits; **implementation
-  Gate remains open**.
-- Code delivery, independent review of code, ff-only merge, and merged-main Gate
-  remain open. Closeout must reaffirm **no maturity elevation**.
+- Four read-only Workflow planning/review rounds closed ownership and transaction
+  gaps before implementation; the final plan verdict was PASS with no blockers.
+- Docs contract landed at `5c62452`; review sharpening at `eb8a681`; implementation
+  at `4faa930`; final code-review follow-ups closed at `0a3087f`.
+- Independent contract and code reviews passed with all ship-quality follow-ups
+  fixed. The task was fast-forwarded to local main.
+- Merged-main Gate passed std **40/40 · 579/579**, curl **42/42 · 578/578**,
+  Core **89/89**, Coding **309/309**, SDK **21/21**, OpenAPI **287/287**,
+  catalog **40**, readability **91/100**, and security **72/100**.
+- Session schema v1, Trace v1, `headless-v1`, default ask+jail+protect, and every
+  existing L2 row remain unchanged. Tree/journal/UI/RPC/fsync/symlink containment
+  and mid-reply fork remain excluded.
