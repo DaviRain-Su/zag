@@ -1496,3 +1496,112 @@ test "harness-steering: Session enqueue copies caller bytes; low-level none comp
     // Session queue untouched by low-level none composition.
     try std.testing.expectEqual(@as(usize, 1), session.steeringPending());
 }
+
+// ── skills-001: public options + activation surface smoke ───────────────────
+//
+// External consumer uses coding-agent module names only. Proves enable/trust/
+// user-root options, parse/expand activation, and that Agent.reply does not
+// implicit-parse `/skill:`. No schema/event change claims.
+
+test "skills-001: public options + activation + no implicit reply parse" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Compile assertions: public skill surface is reachable.
+    const Trust = coding.ProjectSkillsTrust;
+    _ = Trust;
+    const SE = coding.SkillActivationError;
+    _ = SE;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "sdk-skill");
+    const skill_md =
+        \\---
+        \\name: sdk-skill
+        \\description: sdk smoke skill
+        \\---
+        \\
+        \\SDK_BODY
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "sdk-skill/SKILL.md", .data = skill_md });
+
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_n = try tmp.dir.realPathFile(io, ".", &root_buf);
+    const user_root = root_buf[0..root_n];
+
+    var session = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .load_project_instructions = false,
+        .skills_enabled = true,
+        .project_skills_trust = .untrusted,
+        .user_skills_root = user_root,
+    });
+    defer session.deinit();
+
+    try std.testing.expect(session.skills_catalog.find("sdk-skill") != null);
+
+    const cmd = coding.parseSkillCommand("/skill:sdk-skill more") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("sdk-skill", cmd.name);
+    try std.testing.expectEqualStrings("more", cmd.rest);
+
+    const act = try coding.expandSkillActivation(gpa, &session, cmd.name, cmd.rest);
+    defer gpa.free(act.user_text);
+    try std.testing.expect(std.mem.indexOf(u8, act.user_text, "SDK_BODY") != null);
+    try std.testing.expect(std.mem.indexOf(u8, act.user_text, "more") != null);
+
+    // Unknown skill is local error (no provider).
+    try std.testing.expectError(
+        error.UnknownSkill,
+        coding.expandSkillActivation(gpa, &session, "missing-skill", ""),
+    );
+
+    // Agent.reply never implicit-parses /skill:
+    const MockProvider = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const coding.message.Message,
+            _: []const coding.tool.Definition,
+            _: coding.provider.RequestControl,
+        ) coding.provider.ChatError!coding.message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "reply-ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: MockProvider = .{};
+    const provider = coding.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = MockProvider.chat },
+    };
+    var agent = try coding.Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .toolset = &[_]coding.tool.Tool{},
+        .verbose = false,
+        .max_turns = 2,
+    });
+    defer agent.deinit();
+
+    const raw = "/skill:sdk-skill stays raw in reply";
+    _ = try agent.reply(&session, raw);
+    var saw_raw = false;
+    for (session.transcript.items()) |m| {
+        if (m.role == .user and std.mem.eql(u8, m.content, raw)) saw_raw = true;
+    }
+    try std.testing.expect(saw_raw);
+
+    // Disable skills → empty catalog
+    var disabled = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .load_project_instructions = false,
+        .skills_enabled = false,
+        .user_skills_root = user_root,
+    });
+    defer disabled.deinit();
+    try std.testing.expectEqual(@as(usize, 0), disabled.skills_catalog.entries.len);
+}

@@ -40,11 +40,29 @@ pub const workspace = @import("workspace.zig");
 pub const agent = @import("agent.zig");
 pub const toolset = @import("toolset.zig");
 pub const project = @import("project.zig");
+pub const skills = @import("skills.zig");
 pub const doctor = @import("doctor.zig");
 pub const wire_provider = @import("wire_provider.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
 pub const golden_tests = @import("golden_tests.zig");
+
+// skills-001: public activation + options surface
+pub const ProjectSkillsTrust = skills.ProjectSkillsTrust;
+pub const SkillActivation = skills.SkillActivation;
+pub const SkillActivationError = skills.SkillActivationError;
+pub const parseSkillCommand = skills.parseSkillCommand;
+
+/// Expand a catalog skill into one ordinary user message (manual-only allowed).
+/// `user_text` is gpa-owned (caller frees). Does not call the provider.
+pub fn expandSkillActivation(
+    gpa: std.mem.Allocator,
+    session: *const Session,
+    name: []const u8,
+    rest: []const u8,
+) skills.SkillActivationError!skills.SkillActivation {
+    return skills.expandSkillActivation(gpa, session.skills_catalog, name, rest);
+}
 
 // harness-events-001: public SDK lifecycle observer (product adapter over Core
 // source facts + facade run facts). No Core lifecycle.zig.
@@ -77,6 +95,11 @@ pub const ForkError = agent.ForkError;
 // session-fork-001: Gate fixtures (module §8 items 1–29)
 test {
     _ = @import("session_fork_tests.zig");
+}
+
+// skills-001: Gate fixtures (module §11 items 1–14)
+test {
+    _ = @import("skills_tests.zig");
 }
 
 pub const version = "0.5.0";

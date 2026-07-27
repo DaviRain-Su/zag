@@ -1,7 +1,7 @@
 ---
 id: skills-001
 scope: coding-agent/skills (E1 passive)
-status: in-progress
+status: implemented
 priority: P1
 depends-on:
   - session-fork-001
@@ -22,8 +22,8 @@ Trace v1, `headless-v1`, `project.zig`, or `--no-project` semantics.
 
 Binding specification: [Agent Skills (E1 passive)](../../modules/skills.md).
 
-This task file is the **docs-first contract track**. Production code is a later
-commit series on the same task; Runtime Extensions maturity remains **L0**.
+Binding contract remains [skills.md](../../modules/skills.md). Runtime Extensions
+maturity remains **L0**.
 
 # context
 
@@ -134,17 +134,17 @@ The module doc is authoritative. Summary of binding rules:
 - [x] Explicit `git add` of intended docs files only
 - [x] One local docs commit on `task/skills-001` (body-path contract fix)
 
-## Implementation Gate (later)
+## Implementation Gate
 
 Must pass every fixture in
 [skills.md §11](../../modules/skills.md#11-verification--exact-fixture-matrix-14)
 items **1–14**, plus:
 
-- [ ] Focused coding-agent tests green
-- [ ] External SDK public-surface smoke
+- [x] Focused coding-agent tests green (`skills_tests.zig` §11.1–14)
+- [x] External SDK public-surface smoke (`tests/sdk-consumer-fixture`)
 - [ ] Root std + curl candidate Gates as required by plan closeout
-- [ ] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
-- [ ] Runtime Extensions maturity remains **L0**
+- [x] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
+- [x] Runtime Extensions maturity remains **L0**
 - [ ] Independent code review + ff-only merge + merged-main Gate before `done`
 
 # delivery evidence
@@ -152,12 +152,12 @@ items **1–14**, plus:
 | Item | Evidence |
 |------|----------|
 | Contract | `docs/modules/skills.md` |
-| Task | this file `in-progress` |
-| Implementation | _pending_ |
-| Fixtures 1–14 | _pending_ |
-| SDK smoke | _pending_ |
+| Task | this file `implemented` |
+| Implementation | `packages/zag-coding-agent/src/skills.zig` + `agent.zig` / `root.zig` / `cli.zig` |
+| Fixtures 1–14 | `packages/zag-coding-agent/src/skills_tests.zig` |
+| SDK smoke | `tests/sdk-consumer-fixture/src/root.zig` skills-001 test |
 | Review / merge / Gate | _pending_ |
-| Maturity | Runtime Extensions **L0** (E1 Skills slice specified only) |
+| Maturity | Runtime Extensions **L0** (E1 Skills slice implemented; maturity not raised) |
 
 # non-goals (task boundary)
 

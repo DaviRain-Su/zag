@@ -14,6 +14,7 @@ const core = @import("zag-agent-core");
 const ai = @import("zag-ai");
 const toolset_mod = @import("toolset.zig");
 const project_mod = @import("project.zig");
+const skills_mod = @import("skills.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
 
 const message = core.message;
@@ -114,6 +115,12 @@ pub const SessionStartOptions = struct {
     pattern_redaction: bool = true,
     /// Optional source redactor to **clone** (takes precedence over secrets list).
     redactor: ?*const redact_mod.Redactor = null,
+    /// skills-001: discover Agent Skills (default on). `--no-skills` / SDK false disables both roots.
+    skills_enabled: bool = true,
+    /// Project root scanned only when `.trusted` (default untrusted).
+    project_skills_trust: skills_mod.ProjectSkillsTrust = .untrusted,
+    /// Host-owned user skills root (`$HOME/.agents/skills`). SDK must pass explicitly; never getenv.
+    user_skills_root: ?[]const u8 = null,
 };
 
 pub const StartError = loop.RunError || session_store.Error;
@@ -152,6 +159,10 @@ pub const Session = struct {
     /// harness-steering-001: Session-owned dual control queues (32 KiB backing).
     /// Preallocated before create/resume I/O or writer lease; process-memory only.
     control_queues: control_queue_mod.DualQueues,
+    /// skills-001: process-memory skill catalog (never session/Trace schema fields).
+    skills_catalog: skills_mod.Catalog = .{},
+    /// skills-001: enable flag retained for tool composition (reply-time).
+    skills_enabled: bool = true,
     /// Test-only: next `noteCompaction` returns OOM without mutating gen/summary.
     fail_next_note_compaction: if (builtin.is_test) bool else void =
         if (builtin.is_test) false else {},
@@ -204,6 +215,15 @@ pub const Session = struct {
             });
         }
         const redactor_ref: *const redact_mod.Redactor = &owned_redactor.?;
+
+        // skills-001: discover BEFORE durable create / resume writer lease paths that
+        // follow. OOM here commits no file and holds no lease (errdefer cleans queues).
+        const skills_catalog = try skills_mod.discover(gpa, io, arena, .{
+            .skills_enabled = opts.skills_enabled,
+            .project_skills_trust = opts.project_skills_trust,
+            .user_skills_root = opts.user_skills_root,
+            .workspace_cwd = Io.Dir.cwd(),
+        });
 
         if (opts.path) |p| {
             switch (opts.open_mode) {
@@ -278,6 +298,8 @@ pub const Session = struct {
             compaction_summary,
             moved_redactor,
             moved_queues,
+            skills_catalog,
+            opts.skills_enabled,
         );
     }
 
@@ -295,6 +317,8 @@ pub const Session = struct {
         compaction_summary: ?[]const u8,
         owned_redactor: ?redact_mod.Redactor,
         control_queues: control_queue_mod.DualQueues,
+        skills_catalog: skills_mod.Catalog,
+        skills_enabled: bool,
     ) Session {
         return .{
             .gpa = gpa,
@@ -310,6 +334,8 @@ pub const Session = struct {
             .compaction_summary = compaction_summary,
             .owned_redactor = owned_redactor,
             .control_queues = control_queues,
+            .skills_catalog = skills_catalog,
+            .skills_enabled = skills_enabled,
         };
     }
 
@@ -345,7 +371,8 @@ pub const Session = struct {
             .system = self.base_system,
             .project = self.project_body,
             .session = self.compaction_summary orelse "",
-            .ephemeral = "",
+            // skills-001: view-only Skills block (not a transcript row).
+            .ephemeral = if (self.skills_enabled) self.skills_catalog.summary else "",
         };
     }
 
@@ -493,6 +520,9 @@ pub const Session = struct {
             null;
         // zag_version is borrowed/static; rebind same pointer bytes
         const zag_version = self.zag_version;
+        // skills-001: deep-copy live catalog/summary; no FS re-scan at fork.
+        const skills_catalog = try skills_mod.deepCopyCatalog(arena, self.skills_catalog);
+        const skills_enabled = self.skills_enabled;
 
         // 7. Session.path independent of Writer.path
         const path_owned = gpa.dupe(u8, child_path) catch return error.OutOfMemory;
@@ -533,6 +563,8 @@ pub const Session = struct {
             .zag_version = zag_version,
             .owned_redactor = owned_redactor,
             .control_queues = control_queues,
+            .skills_catalog = skills_catalog,
+            .skills_enabled = skills_enabled,
             .fail_next_note_compaction = if (builtin.is_test) false else {},
         };
     }
@@ -626,6 +658,8 @@ const RunBridge = struct {
     /// bytes cover the entire synchronous `loop.run` and are freed on reply
     /// exit. Null when resolve failed (handlers/jail lazy-resolve or fail closed).
     workspace_root_real: ?[]u8 = null,
+    /// skills-001: per-reply gpa-owned base+read_skill tool slice (null = base only).
+    composed_tools: ?[]tool.Tool = null,
 
     // ── harness-events-001 lifecycle derivation ────────────────────────────
     //
@@ -645,14 +679,41 @@ const RunBridge = struct {
     /// an end-only pending cancellation) advances it after successful fan-out.
     next_call_index: u32 = 0,
 
+    fn deinitComposedTools(self: *RunBridge) void {
+        if (self.composed_tools) |t| {
+            self.agent.gpa.free(t);
+            self.composed_tools = null;
+        }
+    }
+
+    /// skills-001: dynamically append `read_skill` when invocable skills exist.
+    /// Duplicate reserved name → InvalidToolset before provider. No fixed [8].
+    fn prepareToolset(self: *RunBridge) error{ OutOfMemory, InvalidToolset }!tool.Toolset {
+        const base = self.agent.effectiveToolset();
+        if (!self.session.skills_enabled or !self.session.skills_catalog.hasInvocable()) {
+            return base;
+        }
+        const composed = try skills_mod.composeToolsetWithReadSkill(
+            self.agent.gpa,
+            base.tools,
+            &self.session.skills_catalog,
+        );
+        if (composed) |slice| {
+            self.composed_tools = slice;
+            return .{ .tools = slice };
+        }
+        return base;
+    }
+
     /// Build the `loop.Deps` borrowing this bridge's fields. The caller must
     /// keep this `RunBridge` alive and unmoved for the duration of `loop.run`.
-    fn deps(self: *RunBridge) loop.Deps {
+    /// `toolset` must already be prepared via `prepareToolset`.
+    fn deps(self: *RunBridge, toolset: tool.Toolset) loop.Deps {
         const a = self.agent;
         return .{
             .gpa = a.gpa,
             .provider = a.provider,
-            .toolset = a.effectiveToolset(),
+            .toolset = toolset,
             .tool_ctx = .{
                 .allocator = a.gpa,
                 .io = a.io,
@@ -1413,11 +1474,18 @@ pub const Agent = struct {
             .workspace_root_real = workspace.resolveCwdReal(self.gpa, self.io, Io.Dir.cwd()) catch null,
         };
         defer if (bridge.workspace_root_real) |r| self.gpa.free(r);
+        defer bridge.deinitComposedTools();
+
+        // skills-001: per-reply toolset composition (append read_skill when invocable).
+        // Session address remains stable; allocation is bridge-scoped.
+        const reply_toolset = bridge.prepareToolset() catch |err| {
+            return self.failRun(0, stopReasonForRunError(err), err);
+        };
 
         // On loop error, public turns come from the facade-owned bridge turn
         // counter (updated on Core `turn_start`). failRun still maxes with
         // Trace.last_emitted_turn when Trace is present.
-        const result = loop.run(bridge.deps(), &session.transcript) catch |err| {
+        const result = loop.run(bridge.deps(reply_toolset), &session.transcript) catch |err| {
             return self.failRun(bridge.current_turn, stopReasonForRunError(err), err);
         };
 
@@ -1454,6 +1522,9 @@ pub const Agent = struct {
             path: ?[]const u8 = null,
             open_mode: OpenMode = .create_new,
             load_project_instructions: bool = true,
+            skills_enabled: bool = true,
+            project_skills_trust: skills_mod.ProjectSkillsTrust = .untrusted,
+            user_skills_root: ?[]const u8 = null,
         },
     ) ReplyError!OwnedResult {
         var session = try Session.start(self.gpa, self.io, .{
@@ -1462,6 +1533,9 @@ pub const Agent = struct {
             .open_mode = session_opts.open_mode,
             .load_project_instructions = session_opts.load_project_instructions,
             .redactor = self.activeRedactor(),
+            .skills_enabled = session_opts.skills_enabled,
+            .project_skills_trust = session_opts.project_skills_trust,
+            .user_skills_root = session_opts.user_skills_root,
         });
         defer session.deinit();
 

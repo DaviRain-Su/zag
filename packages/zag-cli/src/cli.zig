@@ -67,6 +67,8 @@ pub fn run(init: std.process.Init) !void {
     var session_path: ?[]const u8 = null;
     var continue_session = false;
     var no_project = false;
+    var no_skills = false;
+    var trust_project_skills = false;
     var trace_path: ?[]const u8 = null;
     var enable_trace = false;
     var want_stream = false;
@@ -123,6 +125,10 @@ pub fn run(init: std.process.Init) !void {
             if (session_path == null) session_path = ".zag/sessions/default.jsonl";
         } else if (std.mem.eql(u8, a, "--no-project")) {
             no_project = true;
+        } else if (std.mem.eql(u8, a, "--no-skills")) {
+            no_skills = true;
+        } else if (std.mem.eql(u8, a, "--trust-project-skills")) {
+            trust_project_skills = true;
         } else if (std.mem.startsWith(u8, a, "--trace=")) {
             enable_trace = true;
             const p = a["--trace=".len..];
@@ -356,23 +362,50 @@ pub fn run(init: std.process.Init) !void {
     // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
     const open_mode = selectOpenMode(continue_session);
 
+    // skills-001: CLI resolves HOME → user skills root; SDK never getenv.
+    const skills_enabled = !no_skills;
+    const project_skills_trust: coding.ProjectSkillsTrust = if (trust_project_skills) .trusted else .untrusted;
+    const user_skills_root: ?[]const u8 = if (skills_enabled)
+        resolveUserSkillsRoot(arena, init.environ_map)
+    else
+        null;
+
+    const skill_opts: SkillHostOptions = .{
+        .skills_enabled = skills_enabled,
+        .project_skills_trust = project_skills_trust,
+        .user_skills_root = user_skills_root,
+    };
+
     if (headless_mode) |mode| {
         if (prompt_parts.items.len == 0) {
             std.log.err("headless mode requires a prompt", .{});
             std.process.exit(2);
         }
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShotHeadless(gpa, io, &agent, prompt, session_path, open_mode, !no_project, mode, &headless_writer);
+        try runOneShotHeadless(gpa, io, &agent, prompt, session_path, open_mode, !no_project, skill_opts, mode, &headless_writer);
         return;
     }
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project);
+        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project, skill_opts);
         return;
     }
 
-    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, &sigint_guard);
+    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, skill_opts, &sigint_guard);
+}
+
+const SkillHostOptions = struct {
+    skills_enabled: bool = true,
+    project_skills_trust: coding.ProjectSkillsTrust = .untrusted,
+    user_skills_root: ?[]const u8 = null,
+};
+
+/// CLI-only: `$HOME/.agents/skills` when HOME is set; missing HOME → no user root.
+fn resolveUserSkillsRoot(arena: std.mem.Allocator, env: *const std.process.Environ.Map) ?[]const u8 {
+    const home = env.get("HOME") orelse return null;
+    if (home.len == 0) return null;
+    return std.fmt.allocPrint(arena, "{s}/.agents/skills", .{home}) catch null;
 }
 
 /// Pure open-mode decision for CLI flags.
@@ -431,16 +464,40 @@ fn runOneShot(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
+    skill_opts: SkillHostOptions,
 ) !void {
-    const result = agent.completeWithSession(default_system, prompt, .{
+    // skills-001: expand /skill: before reply; unknown → local error, no provider.
+    var session = coding.Session.start(agent.gpa, agent.io, .{
+        .base_system = default_system,
         .path = session_path,
         .open_mode = open_mode,
         .load_project_instructions = load_project,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = skill_opts.skills_enabled,
+        .project_skills_trust = skill_opts.project_skills_trust,
+        .user_skills_root = skill_opts.user_skills_root,
     }) catch |err| {
+        std.log.err("session failed: {s}", .{@errorName(err)});
+        std.process.exit(1);
+    };
+    defer session.deinit();
+
+    const user_text = resolvePromptWithSkill(agent.gpa, &session, prompt) catch |err| switch (err) {
+        error.UnknownSkill => {
+            std.log.err("unknown skill", .{});
+            std.process.exit(1);
+        },
+        error.OutOfMemory => {
+            std.log.err("skill activation failed: OutOfMemory", .{});
+            std.process.exit(1);
+        },
+    };
+    defer if (user_text.owned) agent.gpa.free(user_text.text);
+
+    const result = agent.reply(&session, user_text.text) catch |err| {
         std.log.err("agent failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
-    defer result.deinit(agent.gpa);
 
     if (verbose) {
         std.log.info("completed in {d} turn(s) stop={s}", .{ result.turns, @tagName(result.stop_reason) });
@@ -459,6 +516,23 @@ fn runOneShot(
     if (result.final_text.len == 0 or result.final_text[result.final_text.len - 1] != '\n') {
         try writeStdout(agent.io, "\n");
     }
+}
+
+const ResolvedPrompt = struct {
+    text: []const u8,
+    owned: bool,
+};
+
+/// Route exact `/skill:<name> [rest]` through the public activation API.
+/// Unknown skill / OOM → typed error (no provider). Unrelated slash text stays raw.
+fn resolvePromptWithSkill(
+    gpa: std.mem.Allocator,
+    session: *const coding.Session,
+    prompt: []const u8,
+) coding.SkillActivationError!ResolvedPrompt {
+    const cmd = coding.parseSkillCommand(prompt) orelse return .{ .text = prompt, .owned = false };
+    const act = try coding.expandSkillActivation(gpa, session, cmd.name, cmd.rest);
+    return .{ .text = act.user_text, .owned = true };
 }
 
 const ReplInput = union(enum) {
@@ -546,6 +620,7 @@ fn runRepl(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
+    skill_opts: SkillHostOptions,
     guard: *sigint.Guard,
 ) !void {
     try writeStdout(io, "zag (jail + policy + trace, permission=");
@@ -562,6 +637,9 @@ fn runRepl(
         .open_mode = open_mode,
         .load_project_instructions = load_project,
         .redactor = agent.activeRedactor(),
+        .skills_enabled = skill_opts.skills_enabled,
+        .project_skills_trust = skill_opts.project_skills_trust,
+        .user_skills_root = skill_opts.user_skills_root,
     }) catch |err| {
         std.log.err("session failed: {s}", .{@errorName(err)});
         std.process.exit(1);
@@ -605,7 +683,20 @@ fn runRepl(
         };
         if (user_text.len == 0) break;
 
-        const result = agent.reply(&session, user_text) catch |err| {
+        // skills-001: /skill: expand before reply (unknown → local error, no provider).
+        const reply_text = resolvePromptWithSkill(agent.gpa, &session, user_text) catch |err| switch (err) {
+            error.UnknownSkill => {
+                try writeStdout(io, "unknown skill\n");
+                continue;
+            },
+            error.OutOfMemory => {
+                std.log.err("skill activation failed: OutOfMemory", .{});
+                continue;
+            },
+        };
+        defer if (reply_text.owned) agent.gpa.free(reply_text.text);
+
+        const result = agent.reply(&session, reply_text.text) catch |err| {
             std.log.err("agent failed: {s}", .{@errorName(err)});
             // Acknowledge any SIGINT-driven cancel so the next Ctrl+C works
             // afresh; the flag was cleared at the reply completion boundary.
@@ -671,10 +762,10 @@ fn runOneShotHeadless(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
+    skill_opts: SkillHostOptions,
     mode: hw.HeadlessMode,
     writer: *hw.HeadlessWriter,
 ) noreturn {
-    _ = gpa;
     _ = io;
     writer.setRedactor(agent.activeRedactor());
 
@@ -685,10 +776,17 @@ fn runOneShotHeadless(
         };
     }
 
-    const result = agent.completeWithSession(default_system, prompt, .{
+    // skills-001: expand /skill: before reply; unknown → local error, no provider.
+    // Headless schemas unchanged — activation becomes ordinary user text.
+    var session = coding.Session.start(gpa, agent.io, .{
+        .base_system = default_system,
         .path = session_path,
         .open_mode = open_mode,
         .load_project_instructions = load_project,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = skill_opts.skills_enabled,
+        .project_skills_trust = skill_opts.project_skills_trust,
+        .user_skills_root = skill_opts.user_skills_root,
     }) catch |err| {
         const he = replyErrorToHeadless(err);
         const code = replyErrorExitCode(err);
@@ -697,6 +795,49 @@ fn runOneShotHeadless(
         }
         writer.flush() catch {};
         std.process.exit(code);
+    };
+    defer session.deinit();
+
+    const user_text = resolvePromptWithSkill(gpa, &session, prompt) catch |err| switch (err) {
+        error.UnknownSkill => {
+            const he = hw.HeadlessError{ .code = .session_invalid, .message = "Unknown skill." };
+            if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
+                writer.writeError(he) catch {};
+            }
+            writer.flush() catch {};
+            std.process.exit(he.code.exitCode());
+        },
+        error.OutOfMemory => {
+            const he = hw.HeadlessError{ .code = .out_of_memory, .message = "Out of memory." };
+            if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
+                writer.writeError(he) catch {};
+            }
+            writer.flush() catch {};
+            std.process.exit(he.code.exitCode());
+        },
+    };
+    defer if (user_text.owned) gpa.free(user_text.text);
+
+    const loop_result = agent.reply(&session, user_text.text) catch |err| {
+        const he = replyErrorToHeadless(err);
+        const code = replyErrorExitCode(err);
+        if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
+            writer.writeError(he) catch {};
+        }
+        writer.flush() catch {};
+        std.process.exit(code);
+    };
+    const owned = gpa.dupe(u8, loop_result.final_text) catch {
+        const he = hw.HeadlessError{ .code = .out_of_memory, .message = "Out of memory." };
+        writer.writeError(he) catch {};
+        writer.flush() catch {};
+        std.process.exit(40);
+    };
+    const result = coding.OwnedResult{
+        .final_text = owned,
+        .turns = loop_result.turns,
+        .usage = loop_result.usage,
+        .stop_reason = loop_result.stop_reason,
     };
     defer result.deinit(agent.gpa);
 
@@ -871,6 +1012,8 @@ fn printUsage(io: Io) !void {
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
+        \\  --no-skills                disable Agent Skills discovery (user + project)
+        \\  --trust-project-skills     allow <workspace>/.agents/skills discovery
         \\  --trace                    write run trace (.zag/traces/latest.jsonl)
         \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)
         \\                             (bare words after --trace are treated as prompt)
@@ -878,6 +1021,8 @@ fn printUsage(io: Io) !void {
         \\  --config PATH              JSON config (.zag/config.json also auto-loaded)
         \\
         \\Tools: list_dir, read_file, grep, glob, search_replace, write_file, run_shell
+        \\  (+ read_skill when Skills are discovered)
+        \\Skills: /skill:<name> [rest] expands once before reply (manual activation)
         \\Security: relative paths only; shell denylist even under --yolo
         \\
         \\Model (packages/zag-ai):
@@ -918,6 +1063,8 @@ fn printUsageToStderr(io: Io) !void {
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
+        \\  --no-skills                disable Agent Skills discovery (user + project)
+        \\  --trust-project-skills     allow <workspace>/.agents/skills discovery
         \\  --trace                    write run trace (.zag/traces/latest.jsonl)
         \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)
         \\                             (bare words after --trace are treated as prompt)
@@ -925,6 +1072,8 @@ fn printUsageToStderr(io: Io) !void {
         \\  --config PATH              JSON config (.zag/config.json also auto-loaded)
         \\
         \\Tools: list_dir, read_file, grep, glob, search_replace, write_file, run_shell
+        \\  (+ read_skill when Skills are discovered)
+        \\Skills: /skill:<name> [rest] expands once before reply (manual activation)
         \\Security: relative paths only; shell denylist even under --yolo
         \\
         \\Model (packages/zag-ai):

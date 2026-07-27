@@ -11,10 +11,10 @@ Agent Skills discovery and use. It defines bounded deterministic `SKILL.md`
 discovery, explicit project trust, model-visible summaries with on-demand body
 loading, manual activation, and ordinary downstream safety Gates.
 
-**Implementation status:** contract only. No production code is claimed here.
-Runtime Extensions maturity remains **L0**; this document records only the
-closed **E1 Skills** product slice that implementers must satisfy. Delivery does
-not raise the Runtime Extensions maturity row.
+**Implementation status:** E1 passive slice landed in `zag-coding-agent` /
+`zag-cli` (`skills-001`). Runtime Extensions maturity remains **L0**; this
+document is the binding contract. Delivery does not raise the Runtime Extensions
+maturity row.
 
 Prerequisite contracts (unchanged by this slice):
 
