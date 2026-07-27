@@ -969,14 +969,7 @@ test "parseSkillMd rejects name mismatch and empty body" {
     ;
     try std.testing.expectError(error.name_mismatch, parseSkillMd(bad_name, "demo"));
 
-    const empty_body =
-        \\---
-        \\name: demo
-        \\description: x
-        \\---
-        \\   
-        \\
-    ;
+    const empty_body = "---\nname: demo\ndescription: x\n---\n   \n"; // whitespace-only → body_empty
     try std.testing.expectError(error.body_empty, parseSkillMd(empty_body, "demo"));
 }
 

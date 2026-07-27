@@ -219,7 +219,7 @@ test "skills §11.4: symlink escape soft-skip both roots" {
     defer parent.cleanup();
     try parent.dir.createDirPath(io, "user_root");
     try parent.dir.createDirPath(io, "outside");
-    try parent.dir.writeFile(io, .{ .sub_path = "outside/SKILL.md", .data = 
+    try parent.dir.writeFile(io, .{ .sub_path = "outside/SKILL.md", .data =
         \\---
         \\name: escape
         \\description: should not load
