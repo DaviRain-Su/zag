@@ -531,23 +531,57 @@ test "gate19_control_queue_retained_after_error_join" {
     try std.testing.expectEqual(@as(usize, 1), session.followUpPending());
 }
 
+/// Exclusive, run-unique cwd-relative workspace for gate21 (cwd jail; no chdir).
+/// Uses single-level `createDir` (fails with PathAlreadyExists) — never pre-deletes.
+/// Retries a fresh CSPRNG name on collision so concurrent gate21 processes cannot
+/// claim or delete each other's trees.
+fn createExclusiveGate21Workspace(io: std.Io, name_buf: *[80]u8) ![]const u8 {
+    const Io = std.Io;
+    var rng_src = std.Random.IoSource{ .io = io };
+    const rng = rng_src.interface();
+    var attempt: u8 = 0;
+    while (attempt < 32) : (attempt += 1) {
+        const token = rng.int(u128);
+        const name = try std.fmt.bufPrint(name_buf, ".zag-test-tui-gate21-{x:0>32}", .{token});
+        Io.Dir.cwd().createDir(io, name, .default_dir) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            else => return err,
+        };
+        return name;
+    }
+    return error.PathAlreadyExists;
+}
+
+fn panicGate21Cleanup(path: []const u8, err: anyerror) noreturn {
+    std.debug.panic("gate21: failed to remove owned workspace '{s}': {s}", .{ path, @errorName(err) });
+}
+
 test "gate21_all_field_secret_redaction" {
     // Real Agent + write_file (yolo/AutoAccept) + lifecycle redaction coverage.
     // Agent tools always use Io.Dir.cwd() (no workspace-root override on product
-    // Options). Isolate the real write under a test-owned relative directory
-    // (unique name, never bare "x.txt") and deleteTree on exit — no global chdir.
+    // Options). Isolate the real write under a run-unique exclusive relative dir
+    // owned only after createDir succeeds — no pre-delete, no global chdir.
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     const secret = coding.redact.testing.fake_api_key;
     const Io = std.Io;
 
-    // Unique relative workspace under caller cwd; cleaned even on failure.
-    const ws_dir = ".zag-test-tui-gate21-ws";
-    const payload_name = "gate21_payload.txt";
-    const write_rel = ws_dir ++ "/" ++ payload_name;
-    Io.Dir.cwd().deleteTree(io, ws_dir) catch {};
-    try Io.Dir.cwd().createDirPath(io, ws_dir);
-    defer Io.Dir.cwd().deleteTree(io, ws_dir) catch {};
+    var ws_name_buf: [80]u8 = undefined;
+    var write_rel_buf: [112]u8 = undefined;
+    // Ownership only after exclusive create; defer cleans this path only.
+    var owned_ws: ?[]const u8 = null;
+    defer {
+        if (owned_ws) |path| {
+            Io.Dir.cwd().deleteTree(io, path) catch |err| panicGate21Cleanup(path, err);
+            if (Io.Dir.cwd().access(io, path, .{})) |_| {
+                std.debug.panic("gate21: owned workspace still present after cleanup: {s}", .{path});
+            } else |_| {}
+        }
+    }
+
+    const ws_dir = try createExclusiveGate21Workspace(io, &ws_name_buf);
+    owned_ws = ws_dir;
+    const write_rel = try std.fmt.bufPrint(&write_rel_buf, "{s}/gate21_payload.txt", .{ws_dir});
 
     var host = FakeHost{};
     const app = try app_mod.App.create(gpa);
@@ -576,12 +610,17 @@ test "gate21_all_field_secret_redaction" {
     app.setIdentity(gpa, session.activeRedactor(), "path-" ++ secret, .create_new, "yolo", "protect");
     try std.testing.expect(std.mem.indexOf(u8, app.idDisplay(), secret) == null);
 
-    // Tool path + assistant path via real reply (write_file into test workspace).
+    // Tool path + assistant path via real reply (write_file into owned workspace).
     _ = try agent.reply(&session, "do it");
 
-    // Isolation: never bare x.txt at caller cwd; payload only under test ws.
-    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, "x.txt", .{}));
+    // Isolation proof: tool args target this run's unique relative workspace,
+    // and the real write landed only there (no bare-cwd x.txt probe — user may
+    // already have that name; uniqueness of owned path is the evidence).
+    try std.testing.expect(std.mem.eql(u8, mock.write_path, write_rel));
+    try std.testing.expect(std.mem.startsWith(u8, write_rel, ws_dir));
+    try std.testing.expect(std.mem.indexOf(u8, write_rel, "/") != null);
     try Io.Dir.cwd().access(io, write_rel, .{});
+    try Io.Dir.cwd().access(io, ws_dir, .{});
 
     var snap: [c.card_slots]cards.CardSlot = undefined;
     const n = app.card_ring.snapshot(&snap);
@@ -596,6 +635,13 @@ test "gate21_all_field_secret_redaction" {
     }
     try std.testing.expect(saw_tool);
     try std.testing.expect(saw_assistant);
+
+    // Success-path cleanup: remove owned tree, assert gone, drop ownership so
+    // defer is a no-op. Fail the test if residual secret-bearing files remain.
+    try Io.Dir.cwd().deleteTree(io, ws_dir);
+    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, write_rel, .{}));
+    try std.testing.expectError(error.FileNotFound, Io.Dir.cwd().access(io, ws_dir, .{}));
+    owned_ws = null;
 }
 
 test "gate26_ask_hunk_reviewer_null_option" {
