@@ -41,6 +41,7 @@ pub const agent = @import("agent.zig");
 pub const toolset = @import("toolset.zig");
 pub const project = @import("project.zig");
 pub const skills = @import("skills.zig");
+pub const prompt_templates = @import("prompt_templates.zig");
 pub const doctor = @import("doctor.zig");
 pub const wire_provider = @import("wire_provider.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
@@ -62,6 +63,23 @@ pub fn expandSkillActivation(
     rest: []const u8,
 ) skills.SkillActivationError!skills.SkillActivation {
     return skills.expandSkillActivation(gpa, session.skills_catalog, name, rest);
+}
+
+// prompt-templates-001: public parse/expand + options surface
+pub const ProjectTemplatesTrust = prompt_templates.ProjectTemplatesTrust;
+pub const TemplateExpansion = prompt_templates.TemplateExpansion;
+pub const TemplateExpansionError = prompt_templates.TemplateExpansionError;
+pub const parseTemplateCommand = prompt_templates.parseTemplateCommand;
+
+/// Expand a catalog template once. `user_text` is gpa-owned (caller frees).
+/// Does not call the provider. Does not re-read the filesystem.
+pub fn expandTemplate(
+    gpa: std.mem.Allocator,
+    session: *const Session,
+    name: []const u8,
+    arguments: []const u8,
+) prompt_templates.TemplateExpansionError!prompt_templates.TemplateExpansion {
+    return prompt_templates.expandTemplate(gpa, session.templates_catalog, name, arguments);
 }
 
 // harness-events-001: public SDK lifecycle observer (product adapter over Core
@@ -100,6 +118,11 @@ test {
 // skills-001: Gate fixtures (module §11 items 1–14)
 test {
     _ = @import("skills_tests.zig");
+}
+
+// prompt-templates-001: Gate fixtures (module §11 items 1–17)
+test {
+    _ = @import("prompt_templates_tests.zig");
 }
 
 pub const version = "0.5.0";

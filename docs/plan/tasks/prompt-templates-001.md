@@ -1,7 +1,7 @@
 ---
 id: prompt-templates-001
 scope: coding-agent/prompt-templates (E1 passive)
-status: in-progress
+status: in-progress # implementation landed; done after merged-main Gate
 priority: P1
 depends-on:
   - skills-001
@@ -141,17 +141,17 @@ The module doc is authoritative. Summary of binding product laws:
 - [x] Explicit `git add` of intended docs files only
 - [ ] One local docs commit on `task/prompt-templates-001`
 
-## Implementation Gate (blocked until contract PASS)
+## Implementation Gate
 
 Must pass every fixture in
 [prompt-templates.md §11](../../modules/prompt-templates.md#11-verification--exact-fixture-matrix)
 items **1–17**, plus:
 
-- [ ] Focused coding-agent tests green
-- [ ] External SDK public-surface smoke
+- [x] Focused coding-agent tests green (`prompt_templates_tests.zig` §11 rows 1–17)
+- [x] External SDK public-surface smoke (`tests/sdk-consumer-fixture`)
 - [ ] Root std + curl candidate Gates as required by plan closeout
-- [ ] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
-- [ ] Runtime Extensions maturity remains **L0**
+- [x] No Core / schema v1 / Trace v1 / headless-v1 / `project.zig` behavior change
+- [x] Runtime Extensions maturity remains **L0**
 - [ ] Independent code review + ff-only merge + merged-main Gate before `done`
 
 # non-goals (task boundary)
@@ -165,8 +165,8 @@ and any co-delivery of edit/TUI/scripts/hooks/MCP/WASM.
 | Item | Evidence |
 |------|----------|
 | Contract | `docs/modules/prompt-templates.md` |
-| Task | this file `in-progress` (docs contract freeze) |
-| Implementation | **not started** (blocked on independent contract PASS) |
+| Task | this file `in-progress` (implementation landed; await merge Gate) |
+| Implementation | `packages/zag-coding-agent/src/prompt_templates.zig` + Session/CLI/SDK wiring + §11 fixtures |
 | Maturity | Runtime Extensions **L0** (no raise) |
 
 # closeout criteria

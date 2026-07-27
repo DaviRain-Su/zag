@@ -1605,3 +1605,100 @@ test "skills-001: public options + activation + no implicit reply parse" {
     defer disabled.deinit();
     try std.testing.expectEqual(@as(usize, 0), disabled.skills_catalog.entries.len);
 }
+
+// ── prompt-templates-001: public options + parse/expand surface smoke ───────
+//
+// External consumer uses coding-agent module names only. Proves enable/trust/
+// user-root options, parse/expand, and that Agent.reply does not implicit-parse
+// template slash commands. No schema/event change claims.
+
+test "prompt-templates-001: public options + expand + no implicit reply parse" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Compile assertions: public template surface is reachable.
+    const Trust = coding.ProjectTemplatesTrust;
+    _ = Trust;
+    const TE = coding.TemplateExpansionError;
+    _ = TE;
+
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "sdk-tpl.md", .data = "SDK_TPL_BODY $ARGUMENTS" });
+
+    var root_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const root_n = try tmp.dir.realPathFile(io, ".", &root_buf);
+    const user_root = root_buf[0..root_n];
+
+    var session = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .load_project_instructions = false,
+        .templates_enabled = true,
+        .project_templates_trust = .untrusted,
+        .user_templates_root = user_root,
+        .skills_enabled = false,
+    });
+    defer session.deinit();
+
+    try std.testing.expect(session.templates_catalog.find("sdk-tpl") != null);
+
+    const cmd = coding.parseTemplateCommand("/sdk-tpl more") orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("sdk-tpl", cmd.name);
+    try std.testing.expectEqualStrings("more", cmd.rest);
+
+    const exp = try coding.expandTemplate(gpa, &session, cmd.name, cmd.rest);
+    defer gpa.free(exp.user_text);
+    try std.testing.expect(std.mem.indexOf(u8, exp.user_text, "SDK_TPL_BODY") != null);
+    try std.testing.expect(std.mem.indexOf(u8, exp.user_text, "more") != null);
+
+    try std.testing.expectError(
+        error.UnknownTemplate,
+        coding.expandTemplate(gpa, &session, "missing-tpl", ""),
+    );
+
+    const MockProvider = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const coding.message.Message,
+            _: []const coding.tool.Definition,
+            _: coding.provider.RequestControl,
+        ) coding.provider.ChatError!coding.message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "reply-ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: MockProvider = .{};
+    const provider = coding.provider.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = MockProvider.chat },
+    };
+    var agent = try coding.Agent.init(gpa, io, provider, .{
+        .permission_mode = .yolo,
+        .toolset = &[_]coding.tool.Tool{},
+        .verbose = false,
+        .max_turns = 2,
+    });
+    defer agent.deinit();
+
+    const raw = "/sdk-tpl stays raw in reply";
+    _ = try agent.reply(&session, raw);
+    var saw_raw = false;
+    for (session.transcript.items()) |m| {
+        if (m.role == .user and std.mem.eql(u8, m.content, raw)) saw_raw = true;
+    }
+    try std.testing.expect(saw_raw);
+
+    var disabled = try coding.Session.start(gpa, io, .{
+        .base_system = "system",
+        .load_project_instructions = false,
+        .templates_enabled = false,
+        .user_templates_root = user_root,
+        .skills_enabled = false,
+    });
+    defer disabled.deinit();
+    try std.testing.expectEqual(@as(usize, 0), disabled.templates_catalog.entries.len);
+}

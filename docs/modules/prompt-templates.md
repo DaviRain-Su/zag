@@ -12,10 +12,11 @@ product ownership, roots/trust, format, collision, substitution, budgets,
 lifecycle, routing precedence, errors, safety, compatibility, non-goals, and
 executable fixtures **before** production implementation.
 
-**Implementation status:** docs-only contract track. Production code is **not**
-landed by this document alone. Runtime Extensions maturity remains **L0**; this
-slice must not raise maturity. Delivery does not move behavior into
-`zag-agent-core`.
+**Implementation status:** production code landed under coding-agent + thin CLI
+routing (`prompt_templates.zig`, Session catalog/lifetime, public parse/expand,
+`--no-prompt-templates` / `--trust-project-templates`). Runtime Extensions
+maturity remains **L0**; this slice must not raise maturity. Delivery does not
+move behavior into `zag-agent-core`.
 
 Prerequisite contracts (unchanged by this slice):
 

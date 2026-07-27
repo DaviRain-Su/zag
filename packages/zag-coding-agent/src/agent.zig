@@ -15,6 +15,7 @@ const ai = @import("zag-ai");
 const toolset_mod = @import("toolset.zig");
 const project_mod = @import("project.zig");
 const skills_mod = @import("skills.zig");
+const prompt_templates_mod = @import("prompt_templates.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
 
 const message = core.message;
@@ -121,6 +122,12 @@ pub const SessionStartOptions = struct {
     project_skills_trust: skills_mod.ProjectSkillsTrust = .untrusted,
     /// Host-owned user skills root (`$HOME/.agents/skills`). SDK must pass explicitly; never getenv.
     user_skills_root: ?[]const u8 = null,
+    /// prompt-templates-001: discover Prompt Templates (default on). Independent of Skills knobs.
+    templates_enabled: bool = true,
+    /// Project template root scanned only when `.trusted` (default untrusted).
+    project_templates_trust: prompt_templates_mod.ProjectTemplatesTrust = .untrusted,
+    /// Host-owned user templates root (`$HOME/.agents/prompts`). SDK must pass explicitly; never getenv.
+    user_templates_root: ?[]const u8 = null,
 };
 
 pub const StartError = loop.RunError || session_store.Error;
@@ -163,6 +170,10 @@ pub const Session = struct {
     skills_catalog: skills_mod.Catalog = .{},
     /// skills-001: enable flag retained for tool composition (reply-time).
     skills_enabled: bool = true,
+    /// prompt-templates-001: process-memory template catalog (never session/Trace schema fields).
+    templates_catalog: prompt_templates_mod.Catalog = .{},
+    /// prompt-templates-001: enable flag retained for host routing.
+    templates_enabled: bool = true,
     /// Test-only: next `noteCompaction` returns OOM without mutating gen/summary.
     fail_next_note_compaction: if (builtin.is_test) bool else void =
         if (builtin.is_test) false else {},
@@ -216,12 +227,19 @@ pub const Session = struct {
         }
         const redactor_ref: *const redact_mod.Redactor = &owned_redactor.?;
 
-        // skills-001: discover BEFORE durable create / resume writer lease paths that
-        // follow. OOM here commits no file and holds no lease (errdefer cleans queues).
+        // skills-001 + prompt-templates-001: discover BEFORE durable create / resume
+        // writer lease paths that follow. OOM here commits no file and holds no lease
+        // (errdefer cleans queues). Both complete before durable create.
         const skills_catalog = try skills_mod.discover(gpa, io, arena, .{
             .skills_enabled = opts.skills_enabled,
             .project_skills_trust = opts.project_skills_trust,
             .user_skills_root = opts.user_skills_root,
+            .workspace_cwd = Io.Dir.cwd(),
+        });
+        const templates_catalog = try prompt_templates_mod.discover(gpa, io, arena, .{
+            .templates_enabled = opts.templates_enabled,
+            .project_templates_trust = opts.project_templates_trust,
+            .user_templates_root = opts.user_templates_root,
             .workspace_cwd = Io.Dir.cwd(),
         });
 
@@ -300,6 +318,8 @@ pub const Session = struct {
             moved_queues,
             skills_catalog,
             opts.skills_enabled,
+            templates_catalog,
+            opts.templates_enabled,
         );
     }
 
@@ -319,6 +339,8 @@ pub const Session = struct {
         control_queues: control_queue_mod.DualQueues,
         skills_catalog: skills_mod.Catalog,
         skills_enabled: bool,
+        templates_catalog: prompt_templates_mod.Catalog,
+        templates_enabled: bool,
     ) Session {
         return .{
             .gpa = gpa,
@@ -336,6 +358,8 @@ pub const Session = struct {
             .control_queues = control_queues,
             .skills_catalog = skills_catalog,
             .skills_enabled = skills_enabled,
+            .templates_catalog = templates_catalog,
+            .templates_enabled = templates_enabled,
         };
     }
 
@@ -523,6 +547,9 @@ pub const Session = struct {
         // skills-001: deep-copy live catalog/summary; no FS re-scan at fork.
         const skills_catalog = try skills_mod.deepCopyCatalog(arena, self.skills_catalog);
         const skills_enabled = self.skills_enabled;
+        // prompt-templates-001: deep-copy live catalog; no FS re-scan at fork.
+        const templates_catalog = try prompt_templates_mod.deepCopyCatalog(arena, self.templates_catalog);
+        const templates_enabled = self.templates_enabled;
 
         // 7. Session.path independent of Writer.path
         const path_owned = gpa.dupe(u8, child_path) catch return error.OutOfMemory;
@@ -565,6 +592,8 @@ pub const Session = struct {
             .control_queues = control_queues,
             .skills_catalog = skills_catalog,
             .skills_enabled = skills_enabled,
+            .templates_catalog = templates_catalog,
+            .templates_enabled = templates_enabled,
             .fail_next_note_compaction = if (builtin.is_test) false else {},
         };
     }
@@ -1525,6 +1554,9 @@ pub const Agent = struct {
             skills_enabled: bool = true,
             project_skills_trust: skills_mod.ProjectSkillsTrust = .untrusted,
             user_skills_root: ?[]const u8 = null,
+            templates_enabled: bool = true,
+            project_templates_trust: prompt_templates_mod.ProjectTemplatesTrust = .untrusted,
+            user_templates_root: ?[]const u8 = null,
         },
     ) ReplyError!OwnedResult {
         var session = try Session.start(self.gpa, self.io, .{
@@ -1536,6 +1568,9 @@ pub const Agent = struct {
             .skills_enabled = session_opts.skills_enabled,
             .project_skills_trust = session_opts.project_skills_trust,
             .user_skills_root = session_opts.user_skills_root,
+            .templates_enabled = session_opts.templates_enabled,
+            .project_templates_trust = session_opts.project_templates_trust,
+            .user_templates_root = session_opts.user_templates_root,
         });
         defer session.deinit();
 

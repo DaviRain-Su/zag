@@ -69,6 +69,8 @@ pub fn run(init: std.process.Init) !void {
     var no_project = false;
     var no_skills = false;
     var trust_project_skills = false;
+    var no_prompt_templates = false;
+    var trust_project_templates = false;
     var trace_path: ?[]const u8 = null;
     var enable_trace = false;
     var want_stream = false;
@@ -129,6 +131,10 @@ pub fn run(init: std.process.Init) !void {
             no_skills = true;
         } else if (std.mem.eql(u8, a, "--trust-project-skills")) {
             trust_project_skills = true;
+        } else if (std.mem.eql(u8, a, "--no-prompt-templates")) {
+            no_prompt_templates = true;
+        } else if (std.mem.eql(u8, a, "--trust-project-templates")) {
+            trust_project_templates = true;
         } else if (std.mem.startsWith(u8, a, "--trace=")) {
             enable_trace = true;
             const p = a["--trace=".len..];
@@ -362,9 +368,9 @@ pub fn run(init: std.process.Init) !void {
     // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
     const open_mode = selectOpenMode(continue_session);
 
-    // skills-001: CLI resolves HOME → user skills root; SDK never getenv.
+    // skills-001 + prompt-templates-001: CLI resolves HOME → user roots; SDK never getenv.
     // Configured user-root construction OOM fails closed (does not silently
-    // disable user skills while skills_enabled remains true).
+    // disable discovery while enable flags remain true).
     const skills_enabled = !no_skills;
     const project_skills_trust: coding.ProjectSkillsTrust = if (trust_project_skills) .trusted else .untrusted;
     const user_skills_root: ?[]const u8 = if (skills_enabled)
@@ -372,10 +378,20 @@ pub fn run(init: std.process.Init) !void {
     else
         null;
 
-    const skill_opts: SkillHostOptions = .{
+    const templates_enabled = !no_prompt_templates;
+    const project_templates_trust: coding.ProjectTemplatesTrust = if (trust_project_templates) .trusted else .untrusted;
+    const user_templates_root: ?[]const u8 = if (templates_enabled)
+        try resolveUserTemplatesRoot(arena, init.environ_map)
+    else
+        null;
+
+    const host_opts: HostResourceOptions = .{
         .skills_enabled = skills_enabled,
         .project_skills_trust = project_skills_trust,
         .user_skills_root = user_skills_root,
+        .templates_enabled = templates_enabled,
+        .project_templates_trust = project_templates_trust,
+        .user_templates_root = user_templates_root,
     };
 
     if (headless_mode) |mode| {
@@ -384,23 +400,26 @@ pub fn run(init: std.process.Init) !void {
             std.process.exit(2);
         }
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShotHeadless(gpa, io, &agent, prompt, session_path, open_mode, !no_project, skill_opts, mode, &headless_writer);
+        try runOneShotHeadless(gpa, io, &agent, prompt, session_path, open_mode, !no_project, host_opts, mode, &headless_writer);
         return;
     }
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project, skill_opts);
+        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project, host_opts);
         return;
     }
 
-    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, skill_opts, &sigint_guard);
+    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, host_opts, &sigint_guard);
 }
 
-const SkillHostOptions = struct {
+const HostResourceOptions = struct {
     skills_enabled: bool = true,
     project_skills_trust: coding.ProjectSkillsTrust = .untrusted,
     user_skills_root: ?[]const u8 = null,
+    templates_enabled: bool = true,
+    project_templates_trust: coding.ProjectTemplatesTrust = .untrusted,
+    user_templates_root: ?[]const u8 = null,
 };
 
 /// CLI-only: `$HOME/.agents/skills` when HOME is set; missing HOME → no user root.
@@ -410,6 +429,14 @@ fn resolveUserSkillsRoot(arena: std.mem.Allocator, env: *const std.process.Envir
     const home = env.get("HOME") orelse return null;
     if (home.len == 0) return null;
     return try std.fmt.allocPrint(arena, "{s}/.agents/skills", .{home});
+}
+
+/// CLI-only: `$HOME/.agents/prompts` when HOME is set; missing HOME → no user root.
+/// Allocation failure is hard `error.OutOfMemory` (fail closed/visible).
+fn resolveUserTemplatesRoot(arena: std.mem.Allocator, env: *const std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
+    const home = env.get("HOME") orelse return null;
+    if (home.len == 0) return null;
+    return try std.fmt.allocPrint(arena, "{s}/.agents/prompts", .{home});
 }
 
 /// Pure open-mode decision for CLI flags.
@@ -482,6 +509,25 @@ test "resolveUserSkillsRoot: HOME path; empty/missing null; alloc OOM hard-fails
     try std.testing.expectError(error.OutOfMemory, resolveUserSkillsRoot(failing.allocator(), &env));
 }
 
+test "resolveUserTemplatesRoot: HOME path; empty/missing null; alloc OOM hard-fails" {
+    const gpa = std.testing.allocator;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+
+    try std.testing.expect((try resolveUserTemplatesRoot(gpa, &env)) == null);
+
+    try env.put("HOME", "");
+    try std.testing.expect((try resolveUserTemplatesRoot(gpa, &env)) == null);
+
+    try env.put("HOME", "/tmp/home-test");
+    const root = (try resolveUserTemplatesRoot(gpa, &env)).?;
+    defer gpa.free(root);
+    try std.testing.expectEqualStrings("/tmp/home-test/.agents/prompts", root);
+
+    var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, resolveUserTemplatesRoot(failing.allocator(), &env));
+}
+
 fn runOneShot(
     agent: *coding.Agent,
     prompt: []const u8,
@@ -489,33 +535,30 @@ fn runOneShot(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
-    skill_opts: SkillHostOptions,
+    host_opts: HostResourceOptions,
 ) !void {
-    // skills-001: expand /skill: before reply; unknown → local error, no provider.
+    // skills-001 + prompt-templates-001: expand before reply; local errors → no provider.
     var session = coding.Session.start(agent.gpa, agent.io, .{
         .base_system = default_system,
         .path = session_path,
         .open_mode = open_mode,
         .load_project_instructions = load_project,
         .redactor = agent.activeRedactor(),
-        .skills_enabled = skill_opts.skills_enabled,
-        .project_skills_trust = skill_opts.project_skills_trust,
-        .user_skills_root = skill_opts.user_skills_root,
+        .skills_enabled = host_opts.skills_enabled,
+        .project_skills_trust = host_opts.project_skills_trust,
+        .user_skills_root = host_opts.user_skills_root,
+        .templates_enabled = host_opts.templates_enabled,
+        .project_templates_trust = host_opts.project_templates_trust,
+        .user_templates_root = host_opts.user_templates_root,
     }) catch |err| {
         std.log.err("session failed: {s}", .{@errorName(err)});
         std.process.exit(1);
     };
     defer session.deinit();
 
-    const user_text = resolvePromptWithSkill(agent.gpa, &session, prompt) catch |err| switch (err) {
-        error.UnknownSkill => {
-            std.log.err("unknown skill", .{});
-            std.process.exit(1);
-        },
-        error.OutOfMemory => {
-            std.log.err("skill activation failed: OutOfMemory", .{});
-            std.process.exit(1);
-        },
+    const user_text = resolvePromptRouted(agent.gpa, &session, prompt) catch |err| {
+        logRouteError(err);
+        std.process.exit(1);
     };
     defer if (user_text.owned) agent.gpa.free(user_text.text);
 
@@ -548,16 +591,38 @@ const ResolvedPrompt = struct {
     owned: bool,
 };
 
-/// Route exact `/skill:<name> [rest]` through the public activation API.
-/// Unknown skill / OOM → typed error (no provider). Unrelated slash text stays raw.
-fn resolvePromptWithSkill(
+const RouteError = coding.SkillActivationError || coding.TemplateExpansionError;
+
+/// Host routing precedence (prompt-templates.md §6.2 / skills.md):
+/// 1. exact `/skill:` form → skill expand or UnknownSkill local error
+/// 2. else known `/name` in template catalog → one-pass expand
+/// 3. else raw user text (including unknown slash)
+fn resolvePromptRouted(
     gpa: std.mem.Allocator,
     session: *const coding.Session,
     prompt: []const u8,
-) coding.SkillActivationError!ResolvedPrompt {
-    const cmd = coding.parseSkillCommand(prompt) orelse return .{ .text = prompt, .owned = false };
-    const act = try coding.expandSkillActivation(gpa, session, cmd.name, cmd.rest);
-    return .{ .text = act.user_text, .owned = true };
+) RouteError!ResolvedPrompt {
+    if (coding.parseSkillCommand(prompt)) |cmd| {
+        const act = try coding.expandSkillActivation(gpa, session, cmd.name, cmd.rest);
+        return .{ .text = act.user_text, .owned = true };
+    }
+    if (coding.parseTemplateCommand(prompt)) |cmd| {
+        if (session.templates_enabled and session.templates_catalog.find(cmd.name) != null) {
+            const exp = try coding.expandTemplate(gpa, session, cmd.name, cmd.rest);
+            return .{ .text = exp.user_text, .owned = true };
+        }
+    }
+    return .{ .text = prompt, .owned = false };
+}
+
+fn logRouteError(err: RouteError) void {
+    switch (err) {
+        error.UnknownSkill => std.log.err("unknown skill", .{}),
+        error.UnknownTemplate => std.log.err("unknown template", .{}),
+        error.ArgumentsTooLarge => std.log.err("template arguments too large", .{}),
+        error.ExpansionTooLarge => std.log.err("template expansion too large", .{}),
+        error.OutOfMemory => std.log.err("slash expansion failed: OutOfMemory", .{}),
+    }
 }
 
 const ReplInput = union(enum) {
@@ -645,7 +710,7 @@ fn runRepl(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
-    skill_opts: SkillHostOptions,
+    host_opts: HostResourceOptions,
     guard: *sigint.Guard,
 ) !void {
     try writeStdout(io, "zag (jail + policy + trace, permission=");
@@ -662,9 +727,12 @@ fn runRepl(
         .open_mode = open_mode,
         .load_project_instructions = load_project,
         .redactor = agent.activeRedactor(),
-        .skills_enabled = skill_opts.skills_enabled,
-        .project_skills_trust = skill_opts.project_skills_trust,
-        .user_skills_root = skill_opts.user_skills_root,
+        .skills_enabled = host_opts.skills_enabled,
+        .project_skills_trust = host_opts.project_skills_trust,
+        .user_skills_root = host_opts.user_skills_root,
+        .templates_enabled = host_opts.templates_enabled,
+        .project_templates_trust = host_opts.project_templates_trust,
+        .user_templates_root = host_opts.user_templates_root,
     }) catch |err| {
         std.log.err("session failed: {s}", .{@errorName(err)});
         std.process.exit(1);
@@ -708,16 +776,16 @@ fn runRepl(
         };
         if (user_text.len == 0) break;
 
-        // skills-001: /skill: expand before reply (unknown → local error, no provider).
-        const reply_text = resolvePromptWithSkill(agent.gpa, &session, user_text) catch |err| switch (err) {
-            error.UnknownSkill => {
-                try writeStdout(io, "unknown skill\n");
-                continue;
-            },
-            error.OutOfMemory => {
-                std.log.err("skill activation failed: OutOfMemory", .{});
-                continue;
-            },
+        // skills-001 + prompt-templates-001: route slash expand before reply.
+        const reply_text = resolvePromptRouted(agent.gpa, &session, user_text) catch |err| {
+            switch (err) {
+                error.UnknownSkill => try writeStdout(io, "unknown skill\n"),
+                error.UnknownTemplate => try writeStdout(io, "unknown template\n"),
+                error.ArgumentsTooLarge => try writeStdout(io, "template arguments too large\n"),
+                error.ExpansionTooLarge => try writeStdout(io, "template expansion too large\n"),
+                error.OutOfMemory => std.log.err("slash expansion failed: OutOfMemory", .{}),
+            }
+            continue;
         };
         defer if (reply_text.owned) agent.gpa.free(reply_text.text);
 
@@ -787,7 +855,7 @@ fn runOneShotHeadless(
     session_path: ?[]const u8,
     open_mode: coding.OpenMode,
     load_project: bool,
-    skill_opts: SkillHostOptions,
+    host_opts: HostResourceOptions,
     mode: hw.HeadlessMode,
     writer: *hw.HeadlessWriter,
 ) noreturn {
@@ -801,17 +869,20 @@ fn runOneShotHeadless(
         };
     }
 
-    // skills-001: expand /skill: before reply; unknown → local error, no provider.
-    // Headless schemas unchanged — activation becomes ordinary user text.
+    // skills-001 + prompt-templates-001: expand before reply; local error → no provider.
+    // Headless schemas unchanged — expansion becomes ordinary user text.
     var session = coding.Session.start(gpa, agent.io, .{
         .base_system = default_system,
         .path = session_path,
         .open_mode = open_mode,
         .load_project_instructions = load_project,
         .redactor = agent.activeRedactor(),
-        .skills_enabled = skill_opts.skills_enabled,
-        .project_skills_trust = skill_opts.project_skills_trust,
-        .user_skills_root = skill_opts.user_skills_root,
+        .skills_enabled = host_opts.skills_enabled,
+        .project_skills_trust = host_opts.project_skills_trust,
+        .user_skills_root = host_opts.user_skills_root,
+        .templates_enabled = host_opts.templates_enabled,
+        .project_templates_trust = host_opts.project_templates_trust,
+        .user_templates_root = host_opts.user_templates_root,
     }) catch |err| {
         const he = replyErrorToHeadless(err);
         const code = replyErrorExitCode(err);
@@ -823,23 +894,19 @@ fn runOneShotHeadless(
     };
     defer session.deinit();
 
-    const user_text = resolvePromptWithSkill(gpa, &session, prompt) catch |err| switch (err) {
-        error.UnknownSkill => {
-            const he = hw.HeadlessError{ .code = .session_invalid, .message = "Unknown skill." };
-            if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
-                writer.writeError(he) catch {};
-            }
-            writer.flush() catch {};
-            std.process.exit(he.code.exitCode());
-        },
-        error.OutOfMemory => {
-            const he = hw.HeadlessError{ .code = .out_of_memory, .message = "Out of memory." };
-            if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
-                writer.writeError(he) catch {};
-            }
-            writer.flush() catch {};
-            std.process.exit(he.code.exitCode());
-        },
+    const user_text = resolvePromptRouted(gpa, &session, prompt) catch |err| {
+        const he: hw.HeadlessError = switch (err) {
+            error.UnknownSkill => .{ .code = .session_invalid, .message = "Unknown skill." },
+            error.UnknownTemplate => .{ .code = .session_invalid, .message = "Unknown template." },
+            error.ArgumentsTooLarge => .{ .code = .session_invalid, .message = "Template arguments too large." },
+            error.ExpansionTooLarge => .{ .code = .session_invalid, .message = "Template expansion too large." },
+            error.OutOfMemory => .{ .code = .out_of_memory, .message = "Out of memory." },
+        };
+        if (mode == .json or (mode == .json_stream and !writer.hasTerminal())) {
+            writer.writeError(he) catch {};
+        }
+        writer.flush() catch {};
+        std.process.exit(he.code.exitCode());
     };
     defer if (user_text.owned) gpa.free(user_text.text);
 
@@ -1039,6 +1106,8 @@ fn printUsage(io: Io) !void {
         \\  --no-project               skip AGENTS.md injection
         \\  --no-skills                disable Agent Skills discovery (user + project)
         \\  --trust-project-skills     allow <workspace>/.agents/skills discovery
+        \\  --no-prompt-templates      disable Prompt Templates discovery (user + project)
+        \\  --trust-project-templates  allow <workspace>/.agents/prompts discovery
         \\  --trace                    write run trace (.zag/traces/latest.jsonl)
         \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)
         \\                             (bare words after --trace are treated as prompt)
@@ -1048,6 +1117,7 @@ fn printUsage(io: Io) !void {
         \\Tools: list_dir, read_file, grep, glob, search_replace, write_file, run_shell
         \\  (+ read_skill when Skills are discovered)
         \\Skills: /skill:<name> [rest] expands once before reply (manual activation)
+        \\Templates: /name [args] expands once when discovered (after /skill: precedence)
         \\Security: relative paths only; shell denylist even under --yolo
         \\
         \\Model (packages/zag-ai):
@@ -1090,6 +1160,8 @@ fn printUsageToStderr(io: Io) !void {
         \\  --no-project               skip AGENTS.md injection
         \\  --no-skills                disable Agent Skills discovery (user + project)
         \\  --trust-project-skills     allow <workspace>/.agents/skills discovery
+        \\  --no-prompt-templates      disable Prompt Templates discovery (user + project)
+        \\  --trust-project-templates  allow <workspace>/.agents/prompts discovery
         \\  --trace                    write run trace (.zag/traces/latest.jsonl)
         \\  --trace=PATH / --trace PATH  same, with explicit path (.jsonl or path-like)
         \\                             (bare words after --trace are treated as prompt)
@@ -1099,6 +1171,7 @@ fn printUsageToStderr(io: Io) !void {
         \\Tools: list_dir, read_file, grep, glob, search_replace, write_file, run_shell
         \\  (+ read_skill when Skills are discovered)
         \\Skills: /skill:<name> [rest] expands once before reply (manual activation)
+        \\Templates: /name [args] expands once when discovered (after /skill: precedence)
         \\Security: relative paths only; shell denylist even under --yolo
         \\
         \\Model (packages/zag-ai):
