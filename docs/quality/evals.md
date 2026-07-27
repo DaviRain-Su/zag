@@ -10,7 +10,7 @@
 | Fault/persistence | Session, trace, context, and cancellation failures preserve truth | P0/P1 |
 | Security | Permission, containment, policy, and redaction cannot regress | P0/P1 |
 | Provider contract | Fixed bytes map to canonical turn/error/cancel behavior | H6 |
-| Edit eval | Anchor/patch correctness and recovery; C4 `apply_hunk` / digest / review / verify fixtures (§10) | H2/C4 (branch; L2) |
+| Edit eval | Anchor/patch correctness and recovery; C4 `apply_hunk` / digest / review / verify named §10 fixtures (task verification map) | H2/C4 (branch; L2) |
 | Shell runtime | Stable policy/runtime outcomes, capture budget, direct-child cleanup, and Agent trace composition | H2/P1 |
 | External consumer | Public source SDK composition compiles and runs outside product defaults | SDK gate |
 | Headless E2E | Stable process output/errors/exit status | **done/L2** at `a1a1e0f` — process fixture 4/4 (real `zag` + mock provider, both backends); panel SHIP; dual-backend Gate passed |

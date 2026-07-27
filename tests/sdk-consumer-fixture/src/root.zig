@@ -1702,3 +1702,190 @@ test "prompt-templates-001: public options + expand + no implicit reply parse" {
     defer disabled.deinit();
     try std.testing.expectEqual(@as(usize, 0), disabled.templates_catalog.entries.len);
 }
+
+// ── edit-sharpness-001 public SDK surface (§10.13 external) ─────────────────
+
+test "edit-sharp public ports Options and custom toolset no auto-splice" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Public root re-exports resolve.
+    const auto = coding.autoAcceptHunkReviewer();
+    const decision = auto.reviewFn(null, coding.HunkReviewPreview{
+        .path = "rel/p.txt",
+        .expected_sha256 = "0" ** 64,
+        .old_len = 1,
+        .new_len = 1,
+        .preview_text = "x",
+    });
+    try std.testing.expect(decision == coding.HunkReviewDecision.accept);
+
+    var verify_calls: u32 = 0;
+    const HostVer = struct {
+        calls: *u32,
+        fn verify(ptr: ?*anyopaque, path: []const u8) coding.PostEditVerifyResult {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            self.calls.* += 1;
+            // Path must be workspace-relative when used by product; here just count.
+            _ = path;
+            return .unavailable;
+        }
+    };
+    var host_ver: HostVer = .{ .calls = &verify_calls };
+    const verifier: coding.PostEditVerifier = .{
+        .ptr = &host_ver,
+        .verifyFn = HostVer.verify,
+    };
+    try std.testing.expect(verifier.verifyFn(verifier.ptr, "rel/p.txt") == .unavailable);
+    try std.testing.expectEqual(@as(u32, 1), verify_calls);
+
+    // Options fields exist and bind on default Agent.
+    const provider = coding.provider.Provider{
+        .ptr = undefined,
+        .vtable = &.{ .chat = struct {
+            fn c(
+                _: *anyopaque,
+                _: std.mem.Allocator,
+                _: []const coding.message.Message,
+                _: []const coding.tool.Definition,
+                _: coding.provider.RequestControl,
+            ) coding.provider.ChatError!coding.message.AssistantTurn {
+                return error.InvalidResponse;
+            }
+        }.c },
+    };
+
+    {
+        var agent = try coding.Agent.init(gpa, io, provider, .{
+            .permission_mode = .yolo,
+            .hunk_reviewer = auto,
+            .post_edit_verifier = verifier,
+            .max_turns = 1,
+            .verbose = false,
+        });
+        defer agent.deinit();
+        try std.testing.expect(agent.options.hunk_reviewer != null);
+        try std.testing.expect(agent.options.post_edit_verifier != null);
+    }
+
+    // Custom toolset: Options ports not auto-spliced into caller tools.
+    {
+        const custom = [_]coding.tool.Tool{coding.tool.stateless(.{
+            .definition = .{
+                .name = "sdk_ro",
+                .description = "x",
+                .parameters_json = "{\"type\":\"object\",\"properties\":{}}",
+            },
+            .capabilities = .{
+                .risk = .read,
+                .workspace = .none,
+                .cancellation = .none,
+                .shell = .none,
+            },
+        }, struct {
+            fn h(ctx: coding.tool.Context, _: ?*anyopaque, _: []const u8) coding.tool.HandlerError![]u8 {
+                return ctx.allocator.dupe(u8, "ok") catch return error.OutOfMemory;
+            }
+        }.h)};
+        var agent = try coding.Agent.init(gpa, io, provider, .{
+            .permission_mode = .yolo,
+            .toolset = &custom,
+            .hunk_reviewer = auto,
+            .post_edit_verifier = verifier,
+            .max_turns = 1,
+            .verbose = false,
+        });
+        defer agent.deinit();
+        try std.testing.expectEqual(@as(usize, 1), agent.options.toolset.?.len);
+        try std.testing.expectEqualStrings("sdk_ro", agent.options.toolset.?[0].name());
+        try std.testing.expect(agent.options.toolset.?[0].instance == null);
+        // Ports remain on Options but were not written into custom tool instance.
+        try std.testing.expect(agent.options.hunk_reviewer != null);
+    }
+
+    // Null reviewer fail-closed on public apply_hunk path (default toolset).
+    {
+        const dir_name = ".zag-test-sdk-edit-sharp";
+        const target = ".zag-test-sdk-edit-sharp/t.txt";
+        const original = "alpha OLD omega\n";
+        std.Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+        try std.Io.Dir.cwd().createDirPath(io, dir_name);
+        defer std.Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = original });
+
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(original, &digest, .{});
+        var hex: [64]u8 = undefined;
+        const hexchars = "0123456789abcdef";
+        for (digest, 0..) |byte, i| {
+            hex[i * 2] = hexchars[byte >> 4];
+            hex[i * 2 + 1] = hexchars[byte & 0xf];
+        }
+        const args = try std.fmt.allocPrint(
+            gpa,
+            "{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":\"OLD\",\"new_string\":\"NEW\"}}",
+            .{ std.json.fmt(target, .{}), std.json.fmt(hex[0..], .{}) },
+        );
+        defer gpa.free(args);
+
+        const Mock = struct {
+            step: u32 = 0,
+            args_json: []const u8,
+            fn chat(
+                ptr: *anyopaque,
+                arena: std.mem.Allocator,
+                _: []const coding.message.Message,
+                _: []const coding.tool.Definition,
+                _: coding.provider.RequestControl,
+            ) coding.provider.ChatError!coding.message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.step += 1;
+                if (self.step == 1) {
+                    const tc = try arena.alloc(coding.message.ToolCall, 1);
+                    tc[0] = .{
+                        .id = try arena.dupe(u8, "sdk-edit-sharp-1"),
+                        .name = try arena.dupe(u8, "apply_hunk"),
+                        .arguments = try arena.dupe(u8, self.args_json),
+                    };
+                    return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+                }
+                return .{
+                    .content = try arena.dupe(u8, "done"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+        };
+        var mock: Mock = .{ .args_json = args };
+        var agent = try coding.Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        }, .{
+            .permission_mode = .yolo,
+            .hunk_reviewer = null,
+            .max_turns = 4,
+            .verbose = false,
+        });
+        defer agent.deinit();
+        var session = try coding.Session.start(gpa, io, .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const result = try agent.reply(&session, "apply");
+        try std.testing.expectEqualStrings("done", result.final_text);
+        var found = false;
+        for (session.transcript.items()) |m| {
+            if (m.role == .tool and m.tool_call_id != null) {
+                if (std.mem.eql(u8, m.tool_call_id.?, "sdk-edit-sharp-1")) {
+                    try std.testing.expect(std.mem.indexOf(u8, m.content, "review_unavailable") != null);
+                    found = true;
+                }
+            }
+        }
+        try std.testing.expect(found);
+        const after = try std.Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(64));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings(original, after);
+    }
+}

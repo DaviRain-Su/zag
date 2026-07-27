@@ -66,7 +66,7 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 - [x] B1: post-replace fail-next allocator keeps exact partial `target=modified`；bound verifier non-ok never `apply_hunk_success`；
 - [x] B3/B4 digest type/cap/body formula fixtures；
 - [x] 默认 Tool 描述仍优先 search_replace / apply_hunk over whole-file overwrite；
-- [x] focused std package/root Gates + §10 fixtures (curl dual-backend + independent code review = coordinator)；
+- [x] focused std package Gates + named §10 fixture map (curl dual-backend + independent code review = coordinator)；
 - [ ] Coordinator merged-main closeout / delivery decision (task stays `in-progress`；no L3 claim).
 
 ## 对标

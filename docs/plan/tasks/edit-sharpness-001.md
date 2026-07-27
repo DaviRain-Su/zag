@@ -537,9 +537,32 @@ No false success: committed+verify-non-ok is **partial**. Existing
 
 # verification (implementation track — branch evidence; closeout pending)
 
-- [x] Full §10 fixture matrix in coding-agent / CLI tests (groups 1–16 as unit/Agent/CLI fixtures; private deterministic seams only)
-- [x] Focused package Gates: `packages/zag-coding-agent` **371/371**, `packages/zag-cli` **35/35**, SDK consumer **23/23**; root default `zig build test` **649/649** (std backend; curl dual-backend left to coordinator full Gates)
+## §10 fixture → test name map (review-fix)
+
+| §10 | Test name | Path |
+|----:|-----------|------|
+| 1 | `edit-sharp §10.1 valid single-hunk success not_configured` | `edit_tools.zig` |
+| 2 | `edit-sharp §10.2 stale precondition and revalidate non-mutate` | `edit_tools.zig` |
+| 3 | `edit-sharp §10.3 missing ambiguous empty invalid hex oversize not_found` | `edit_tools.zig` |
+| 4 | `edit-sharp §10.4 insert delete exact newline and utf8 bytes` + preview invalid UTF-8 | `edit_tools.zig` |
+| 5 | `edit-sharp §10.5 reject byte-equal no temp verifier not called` + `decideHunkReviewLine` EOF | `edit_tools.zig` / `cli.zig` |
+| 6 | `edit-sharp §10.6 B2 reviewer bind…` + `edit-sharp §10.4 remember does not skip review; plan deny` | `cli.zig` / `agent.zig` |
+| 7 | `edit-sharp §10.7 jail and contained final symlink` | `edit_tools.zig` |
+| 8 | `edit-sharp §10.8 missing reviewer and pre-review OOM` | `edit_tools.zig` |
+| 9 | `edit-sharp §10.9 verifier matrix and post-replace fail-next allocator` (real arm-in-verifyFn) | `edit_tools.zig` |
+| 10 | `edit-sharp §10.10 include_digest omitted false true caps and boundaries` | `fs_tools.zig` |
+| 11 | `edit-sharp §10.11 resume fork schema v1 no durable preview proposal` | `agent.zig` |
+| 12 | `edit-sharp §10.12 trace caps no raw preview marker` (+ §10.11 trace asserts) | `agent.zig` |
+| 13 | `edit-sharp §10.13 Options ports…` + SDK `edit-sharp public ports Options…` | `agent.zig` / `sdk-consumer-fixture` |
+| 14 | Interactive stderr seam + yolo AutoAccept no stderr_writes | `cli.zig` |
+| 15 | `edit-sharp §10.7 local soft failure exactly two provider calls` | `agent.zig` |
+| 16 | `edit-sharp §10.16 search_replace write_file byte stability` | `edit_tools.zig` |
+
+- [x] §10 fixtures above green under focused package Gates (private deterministic seams only; no production fault knobs)
+- [x] Focused package Gates (review-fix tip): coding-agent **375/375**, CLI **36/36**, SDK consumer **24/24** (std backend; curl dual-backend left to coordinator)
 - [x] `zig build docs-lint`
 - [ ] Independent **code** review PASS + coordinator merged-main dual-backend Gates
 - [x] Maturity row Tools · write/edit remains **L2** (no L3 claim; no current-tip Linux claim)
 - [ ] Coordinator closeout / delivery decision after review (task stays `in-progress` here)
+
+**Not claimed:** mid-verify cancel preemption (`cancellation=none`); process-level TTY interactive; remote/Linux dual-backend.

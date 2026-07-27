@@ -29,11 +29,29 @@ const default_system =
     \\
 ;
 
+/// Pure stdin-line decision for interactive hunk review (B6).
+/// `null` models EOF/read failure → reject. Never accept on empty/other.
+pub fn decideHunkReviewLine(line: ?[]const u8) coding.HunkReviewDecision {
+    const raw = line orelse return .reject;
+    const trimmed = std.mem.trim(u8, raw, " \t\r");
+    if (trimmed.len == 1 and (trimmed[0] == 'y' or trimmed[0] == 'Y')) return .accept;
+    if (std.mem.eql(u8, trimmed, "yes") or std.mem.eql(u8, trimmed, "YES")) return .accept;
+    return .reject;
+}
+
 /// Interactive one-hunk reviewer (B6). Stderr prompt+preview only; not StdinPrompter.
 pub const InteractiveHunkReviewer = struct {
     io: Io,
     /// Cooperative cancel; reject if set before decision (never accept).
     cancel: ?*const core.cancel.Flag = null,
+    /// Test seam: when set, skip stdin and use this line (or null = EOF). Production null.
+    test_line: if (@import("builtin").is_test) ?[]const u8 else void =
+        if (@import("builtin").is_test) null else {},
+    test_use_line: if (@import("builtin").is_test) bool else void =
+        if (@import("builtin").is_test) false else {},
+    /// Counts stderr write attempts (test observability only).
+    stderr_writes: if (@import("builtin").is_test) u32 else void =
+        if (@import("builtin").is_test) 0 else {},
 
     pub fn asReviewer(self: *InteractiveHunkReviewer) coding.HunkReviewer {
         return .{
@@ -62,20 +80,20 @@ pub const InteractiveHunkReviewer = struct {
         }
         w.writeAll("accept hunk? [y/N] > ") catch {};
         w.flush() catch {};
+        if (@import("builtin").is_test) self.stderr_writes += 1;
 
-        var line_buf: [64]u8 = undefined;
-        var reader = Io.File.stdin().reader(self.io, &line_buf);
-        const line = reader.interface.takeDelimiterExclusive('\n') catch {
-            // EOF or read failure → reject (not accept; not OOM).
-            return .reject;
+        const line: ?[]const u8 = blk: {
+            if (@import("builtin").is_test) {
+                if (self.test_use_line) break :blk self.test_line;
+            }
+            var line_buf: [64]u8 = undefined;
+            var reader = Io.File.stdin().reader(self.io, &line_buf);
+            break :blk reader.interface.takeDelimiterExclusive('\n') catch null;
         };
         if (self.cancel) |c| {
             if (c.isSet()) return .reject;
         }
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len == 1 and (trimmed[0] == 'y' or trimmed[0] == 'Y')) return .accept;
-        if (std.mem.eql(u8, trimmed, "yes") or std.mem.eql(u8, trimmed, "YES")) return .accept;
-        return .reject;
+        return decideHunkReviewLine(line);
     }
 };
 
@@ -1355,7 +1373,7 @@ test "edit-sharp §10.6 B2 reviewer bind precedence yolo autoaccept headless" {
     const io = std.testing.io;
     var interactive: InteractiveHunkReviewer = .{ .io = io, .cancel = null };
 
-    // yolo + no headless → AutoAccept
+    // yolo + no headless → AutoAccept (bound; no stderr UI from AutoAccept itself)
     const yolo = resolveHunkReviewer(.yolo, null, &interactive);
     try std.testing.expect(yolo != null);
     try std.testing.expect(yolo.?.reviewFn(null, .{
@@ -1365,8 +1383,9 @@ test "edit-sharp §10.6 B2 reviewer bind precedence yolo autoaccept headless" {
         .new_len = 1,
         .preview_text = "x",
     }) == .accept);
+    try std.testing.expectEqual(@as(u32, 0), interactive.stderr_writes);
 
-    // yolo + json headless → still AutoAccept (no null)
+    // yolo + json headless → still AutoAccept (no null; no review UI on stdout path)
     const yolo_json = resolveHunkReviewer(.yolo, .json, &interactive);
     try std.testing.expect(yolo_json != null);
     try std.testing.expect(yolo_json.?.reviewFn(null, .{
@@ -1389,28 +1408,67 @@ test "edit-sharp §10.6 B2 reviewer bind precedence yolo autoaccept headless" {
 
     // ask + non-headless: depends on TTY; if non-TTY in test, null is correct fail-closed.
     const ask_human = resolveHunkReviewer(.ask, null, &interactive);
-    // In CI/test harness stdin is typically not a TTY → null.
-    // Either interactive bind or null is acceptable for this environment; never AutoAccept.
     if (ask_human) |r| {
-        // If bound, must be interactive adapter (not auto-accept always-true without stdin).
-        // Interactive path rejects empty/non-yes — we only check pointer identity via asReviewer.
         _ = r;
         try std.testing.expect(interactive.cancel == null);
     }
 }
 
-test "edit-sharp InteractiveHunkReviewer rejects on cancel flag" {
+test "edit-sharp decideHunkReviewLine EOF accept reject matrix" {
+    try std.testing.expect(decideHunkReviewLine(null) == .reject);
+    try std.testing.expect(decideHunkReviewLine("") == .reject);
+    try std.testing.expect(decideHunkReviewLine("   ") == .reject);
+    try std.testing.expect(decideHunkReviewLine("n") == .reject);
+    try std.testing.expect(decideHunkReviewLine("no") == .reject);
+    try std.testing.expect(decideHunkReviewLine("maybe") == .reject);
+    try std.testing.expect(decideHunkReviewLine("y") == .accept);
+    try std.testing.expect(decideHunkReviewLine("Y") == .accept);
+    try std.testing.expect(decideHunkReviewLine("yes") == .accept);
+    try std.testing.expect(decideHunkReviewLine("YES") == .accept);
+    try std.testing.expect(decideHunkReviewLine("  yes  ") == .accept);
+    try std.testing.expect(decideHunkReviewLine("Yes") == .reject); // only exact y/Y/yes/YES
+}
+
+test "edit-sharp InteractiveHunkReviewer rejects on cancel and EOF seam" {
     const io = std.testing.io;
-    var flag: core.cancel.Flag = .{};
-    flag.request();
-    var interactive: InteractiveHunkReviewer = .{ .io = io, .cancel = &flag };
-    const rev = interactive.asReviewer();
-    const decision = rev.reviewFn(rev.ptr, .{
+    const preview = coding.HunkReviewPreview{
         .path = "p",
         .expected_sha256 = "0" ** 64,
         .old_len = 0,
         .new_len = 0,
         .preview_text = "preview",
-    });
-    try std.testing.expect(decision == .reject);
+    };
+
+    // Cancel before decision → reject
+    {
+        var flag: core.cancel.Flag = .{};
+        flag.request();
+        var interactive: InteractiveHunkReviewer = .{ .io = io, .cancel = &flag };
+        const rev = interactive.asReviewer();
+        try std.testing.expect(rev.reviewFn(rev.ptr, preview) == .reject);
+    }
+    // EOF/read-fail seam (null line) → reject via pure helper; stderr used once
+    {
+        var interactive: InteractiveHunkReviewer = .{
+            .io = io,
+            .cancel = null,
+            .test_use_line = true,
+            .test_line = null,
+        };
+        const rev = interactive.asReviewer();
+        try std.testing.expect(rev.reviewFn(rev.ptr, preview) == .reject);
+        try std.testing.expect(interactive.stderr_writes >= 1);
+    }
+    // explicit n → reject; y → accept
+    {
+        var interactive: InteractiveHunkReviewer = .{
+            .io = io,
+            .test_use_line = true,
+            .test_line = "n",
+        };
+        const rev = interactive.asReviewer();
+        try std.testing.expect(rev.reviewFn(rev.ptr, preview) == .reject);
+        interactive.test_line = "y";
+        try std.testing.expect(rev.reviewFn(rev.ptr, preview) == .accept);
+    }
 }

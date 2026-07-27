@@ -8548,34 +8548,351 @@ test "edit-sharp §10.13 Options ports root surface and custom toolset no auto-s
     }
 }
 
-test "edit-sharp §10.11 resume fork no durable proposal schema neutral" {
-    // Proposal bytes are per-invocation only; Session schema unchanged.
-    // Smoke: start session, fork idle, resume — no apply_hunk proposal fields.
+/// Build apply_hunk JSON args for Agent fixtures (cwd-relative path).
+fn editSharpApplyArgs(
+    gpa: std.mem.Allocator,
+    path: []const u8,
+    file_bytes: []const u8,
+    old_s: []const u8,
+    new_s: []const u8,
+) ![]u8 {
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(file_bytes, &digest, .{});
+    var hex: [64]u8 = undefined;
+    const hexchars = "0123456789abcdef";
+    for (digest, 0..) |byte, i| {
+        hex[i * 2] = hexchars[byte >> 4];
+        hex[i * 2 + 1] = hexchars[byte & 0xf];
+    }
+    return std.fmt.allocPrint(
+        gpa,
+        "{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":{f},\"new_string\":{f}}}",
+        .{
+            std.json.fmt(path, .{}),
+            std.json.fmt(hex[0..], .{}),
+            std.json.fmt(old_s, .{}),
+            std.json.fmt(new_s, .{}),
+        },
+    );
+}
+
+const EditSharpReviewer = struct {
+    decision: edit_tools.HunkReviewDecision,
+    calls: u32 = 0,
+    last_preview_had_marker: bool = false,
+
+    fn asReviewer(self: *EditSharpReviewer) edit_tools.HunkReviewer {
+        return .{ .ptr = self, .reviewFn = reviewFn };
+    }
+
+    fn reviewFn(ptr: ?*anyopaque, preview: edit_tools.HunkReviewPreview) edit_tools.HunkReviewDecision {
+        const self: *EditSharpReviewer = @ptrCast(@alignCast(ptr.?));
+        self.calls += 1;
+        if (std.mem.indexOf(u8, preview.preview_text, "...[preview_truncated]") != null or
+            std.mem.indexOf(u8, preview.preview_text, "apply_hunk review") != null)
+        {
+            self.last_preview_had_marker = true;
+        }
+        return self.decision;
+    }
+};
+
+const EditSharpVerifier = struct {
+    result: edit_tools.PostEditVerifyResult = .ok,
+    calls: u32 = 0,
+
+    fn asVerifier(self: *EditSharpVerifier) edit_tools.PostEditVerifier {
+        return .{ .ptr = self, .verifyFn = verifyFn };
+    }
+
+    fn verifyFn(ptr: ?*anyopaque, path: []const u8) edit_tools.PostEditVerifyResult {
+        const self: *EditSharpVerifier = @ptrCast(@alignCast(ptr.?));
+        _ = path;
+        self.calls += 1;
+        return self.result;
+    }
+};
+
+test "edit-sharp §10.4 remember does not skip review; plan deny" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
-    const dir_name = ".zag-test-edit-sharp-session";
-    const sess_path = ".zag-test-edit-sharp-session/s.jsonl";
+    const dir_name = ".zag-test-edit-sharp-remember";
+    const sess_path = ".zag-test-edit-sharp-remember/s.jsonl";
+    const target = ".zag-test-edit-sharp-remember/t.txt";
+    const original = "alpha OLD omega\n";
     Io.Dir.cwd().deleteTree(io, dir_name) catch {};
     try Io.Dir.cwd().createDirPath(io, dir_name);
     defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = original });
 
-    var agent = try Agent.init(gpa, io, .{
-        .ptr = undefined,
-        .vtable = &.{ .chat = struct {
-            fn c(_: *anyopaque, arena: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl) provider_mod.ChatError!message.AssistantTurn {
+    const args = try editSharpApplyArgs(gpa, target, original, "OLD", "NEW");
+    defer gpa.free(args);
+
+    // A) remember allows write permission but reject reviewer still runs
+    {
+        var reviewer: EditSharpReviewer = .{ .decision = .reject };
+        var verifier: EditSharpVerifier = .{};
+        const Mock = struct {
+            step: u32 = 0,
+            args_json: []const u8,
+            fn chat(
+                ptr: *anyopaque,
+                arena: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+                _: provider_mod.RequestControl,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.step += 1;
+                if (self.step == 1) {
+                    const tc = try arena.alloc(message.ToolCall, 1);
+                    tc[0] = .{
+                        .id = try arena.dupe(u8, "edit-sharp-remember-1"),
+                        .name = try arena.dupe(u8, "apply_hunk"),
+                        .arguments = try arena.dupe(u8, self.args_json),
+                    };
+                    return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+                }
                 return .{
-                    .content = try arena.dupe(u8, "done"),
+                    .content = try arena.dupe(u8, "recovered-after-reject"),
                     .tool_calls = &.{},
                     .finish_reason = "stop",
                 };
             }
-        }.c },
+        };
+        var mock: Mock = .{ .args_json = args };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        }, .{
+            .permission_mode = .ask,
+            .permission_gate = permissions.Gate.denyAllDangerous(),
+            .hunk_reviewer = reviewer.asReviewer(),
+            .post_edit_verifier = verifier.asVerifier(),
+            .max_turns = 4,
+        });
+        defer agent.deinit();
+        // Lexical remember of write path: Gate allows without ask, but review must still run.
+        agent.remember_store.rememberPath(target);
+
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        const result = try agent.reply(&session, "apply remembered path");
+        try std.testing.expectEqualStrings("recovered-after-reject", result.final_text);
+        try std.testing.expect(reviewer.calls >= 1);
+        try std.testing.expectEqual(@as(u32, 0), verifier.calls);
+        const body = try expectPairedToolId(session.transcript.items(), "edit-sharp-remember-1");
+        try std.testing.expect(std.mem.indexOf(u8, body, "code=rejected") != null);
+        try std.testing.expect(std.mem.indexOf(u8, body, "format=edit-sharp-v1") != null);
+        const after = try Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(64));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings(original, after);
+        try std.testing.expectEqual(@as(u32, 2), mock.step);
+    }
+
+    // B) plan session denies non-plan write path before handler (no review)
+    {
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = original });
+        var reviewer: EditSharpReviewer = .{ .decision = .accept };
+        const Mock = struct {
+            step: u32 = 0,
+            args_json: []const u8,
+            fn chat(
+                ptr: *anyopaque,
+                arena: std.mem.Allocator,
+                _: []const message.Message,
+                _: []const tool.Definition,
+                _: provider_mod.RequestControl,
+            ) provider_mod.ChatError!message.AssistantTurn {
+                const self: *@This() = @ptrCast(@alignCast(ptr));
+                self.step += 1;
+                if (self.step == 1) {
+                    const tc = try arena.alloc(message.ToolCall, 1);
+                    tc[0] = .{
+                        .id = try arena.dupe(u8, "edit-sharp-plan-1"),
+                        .name = try arena.dupe(u8, "apply_hunk"),
+                        .arguments = try arena.dupe(u8, self.args_json),
+                    };
+                    return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+                }
+                return .{
+                    .content = try arena.dupe(u8, "plan-denied-recovered"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+        };
+        var mock: Mock = .{ .args_json = args };
+        var agent = try Agent.init(gpa, io, .{
+            .ptr = &mock,
+            .vtable = &.{ .chat = Mock.chat },
+        }, .{
+            .permission_mode = .yolo,
+            .session_kind = .plan,
+            .hunk_reviewer = reviewer.asReviewer(),
+            .max_turns = 4,
+        });
+        defer agent.deinit();
+        var session = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = ".zag-test-edit-sharp-remember/plan.jsonl",
+            .open_mode = .create_new,
+            .load_project_instructions = false,
+        });
+        defer session.deinit();
+        _ = try agent.reply(&session, "plan apply");
+        try std.testing.expectEqual(@as(u32, 0), reviewer.calls);
+        const body = try expectPairedToolId(session.transcript.items(), "edit-sharp-plan-1");
+        try std.testing.expect(tool_error.hasCode(body, .permission_denied));
+        const after = try Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(64));
+        defer gpa.free(after);
+        try std.testing.expectEqualStrings(original, after);
+    }
+}
+
+test "edit-sharp §10.7 local soft failure exactly two provider calls" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-edit-sharp-provider";
+    const target = ".zag-test-edit-sharp-provider/t.txt";
+    const original = "alpha OLD omega\n";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = original });
+    const args = try editSharpApplyArgs(gpa, target, original, "OLD", "NEW");
+    defer gpa.free(args);
+
+    const Mock = struct {
+        step: u32 = 0,
+        args_json: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "edit-sharp-provider-1"),
+                    .name = try arena.dupe(u8, "apply_hunk"),
+                    .arguments = try arena.dupe(u8, self.args_json),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            if (self.step == 2) {
+                return .{
+                    .content = try arena.dupe(u8, "final-stop"),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+            return error.InvalidResponse; // third call must not happen
+        }
+    };
+    var mock: Mock = .{ .args_json = args };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
     }, .{
         .permission_mode = .yolo,
-        .hunk_reviewer = edit_tools.autoAcceptHunkReviewer(),
-        .max_turns = 2,
+        .hunk_reviewer = null, // soft review_unavailable
+        .max_turns = 4,
     });
     defer agent.deinit();
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+    const result = try agent.reply(&session, "apply");
+    try std.testing.expectEqualStrings("final-stop", result.final_text);
+    try std.testing.expectEqual(@as(u32, 2), mock.step);
+    const body = try expectPairedToolId(session.transcript.items(), "edit-sharp-provider-1");
+    try std.testing.expect(std.mem.indexOf(u8, body, "review_unavailable") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "format=edit-sharp-v1") != null);
+    const after = try Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(64));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(original, after);
+}
+
+test "edit-sharp §10.11 resume fork schema v1 no durable preview proposal" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-edit-sharp-session";
+    const sess_path = ".zag-test-edit-sharp-session/parent.jsonl";
+    const child_path = ".zag-test-edit-sharp-session/child.jsonl";
+    const target = ".zag-test-edit-sharp-session/t.txt";
+    // Large old_string forces preview truncation marker in review callback only.
+    const pad = "PAD_EDIT_SHARP_PREVIEW_ONLY_SENTINEL_";
+    var old_buf: [4500]u8 = undefined;
+    @memset(&old_buf, 'A');
+    @memcpy(old_buf[0..pad.len], pad);
+    const old_s = old_buf[0..];
+    const original_prefix = "HEAD ";
+    const original_suffix = " TAIL\n";
+    const original = try std.fmt.allocPrint(gpa, "{s}{s}{s}", .{ original_prefix, old_s, original_suffix });
+    defer gpa.free(original);
+
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = original });
+
+    const args = try editSharpApplyArgs(gpa, target, original, old_s, "NEW");
+    defer gpa.free(args);
+
+    var reviewer: EditSharpReviewer = .{ .decision = .reject };
+    var verifier: EditSharpVerifier = .{};
+    const Mock = struct {
+        step: u32 = 0,
+        args_json: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "edit-sharp-fork-1"),
+                    .name = try arena.dupe(u8, "apply_hunk"),
+                    .arguments = try arena.dupe(u8, self.args_json),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "done-after-reject"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{ .args_json = args };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .hunk_reviewer = reviewer.asReviewer(),
+        .post_edit_verifier = verifier.asVerifier(),
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
 
     {
         var session = try Session.start(gpa, io, .{
@@ -8585,17 +8902,147 @@ test "edit-sharp §10.11 resume fork no durable proposal schema neutral" {
             .load_project_instructions = false,
         });
         defer session.deinit();
-        const result = try agent.reply(&session, "hi");
-        try std.testing.expectEqualStrings("done", result.final_text);
+        const result = try agent.reply(&session, "apply large hunk");
+        try std.testing.expectEqualStrings("done-after-reject", result.final_text);
+        try std.testing.expect(reviewer.calls >= 1);
+        try std.testing.expect(reviewer.last_preview_had_marker);
+        try std.testing.expectEqual(@as(u32, 0), verifier.calls);
+
+        // Idle fork while session not in reply
+        var child = try session.fork(child_path);
+        defer child.deinit();
+
+        // Live ports remain on Agent (non-persistent)
+        try std.testing.expect(agent.apply_hunk_state.reviewer != null);
+        try std.testing.expect(agent.apply_hunk_state.verifier != null);
+
+        // No durable preview-only markers in parent session file or child
+        try expectSessionBytesForbidNeedle(gpa, io, sess_path, "...[preview_truncated]");
+        try expectSessionBytesForbidNeedle(gpa, io, sess_path, "apply_hunk review");
+        try expectSessionBytesForbidNeedle(gpa, io, child_path, "...[preview_truncated]");
+        try expectSessionBytesForbidNeedle(gpa, io, child_path, "apply_hunk review");
+
+        // schema_version remains 1
+        const parent_raw = try Io.Dir.cwd().readFileAlloc(io, sess_path, gpa, .limited(256 * 1024));
+        defer gpa.free(parent_raw);
+        try std.testing.expect(std.mem.indexOf(u8, parent_raw, "\"schema_version\":1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, parent_raw, "\"schema_version\":2") == null);
+        const child_raw = try Io.Dir.cwd().readFileAlloc(io, child_path, gpa, .limited(256 * 1024));
+        defer gpa.free(child_raw);
+        try std.testing.expect(std.mem.indexOf(u8, child_raw, "\"schema_version\":1") != null);
+
+        // Trace must not durable-persist preview construction
+        const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "...[preview_truncated]") == null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "apply_hunk review") == null);
+        // No new Trace kinds
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"hunk_review\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"proposal\"") == null);
     }
 
-    var resumed = try Session.start(gpa, io, .{
+    // Resume parent + child
+    {
+        var resumed = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = sess_path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = false,
+        });
+        defer resumed.deinit();
+        const body = try expectPairedToolId(resumed.transcript.items(), "edit-sharp-fork-1");
+        try std.testing.expect(std.mem.indexOf(u8, body, "rejected") != null);
+        try std.testing.expect(std.mem.indexOf(u8, body, "...[preview_truncated]") == null);
+        try std.testing.expectEqual(session_store.current_schema_version, @as(u32, 1));
+    }
+    {
+        var resumed_child = try Session.start(gpa, io, .{
+            .base_system = "sys",
+            .path = child_path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = false,
+        });
+        defer resumed_child.deinit();
+        const body = try expectPairedToolId(resumed_child.transcript.items(), "edit-sharp-fork-1");
+        try std.testing.expect(std.mem.indexOf(u8, body, "rejected") != null);
+        try std.testing.expect(std.mem.indexOf(u8, body, "...[preview_truncated]") == null);
+    }
+
+    // Target unchanged
+    const after = try Io.Dir.cwd().readFileAlloc(io, target, gpa, .limited(original.len + 8));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(original, after);
+    // Ports still live on Agent after resume
+    try std.testing.expect(agent.apply_hunk_state.reviewer != null);
+}
+
+test "edit-sharp §10.12 trace caps no raw preview marker" {
+    // Covered jointly with §10.11 (trace buffer asserts). Keep a focused short-path fixture.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const dir_name = ".zag-test-edit-sharp-trace";
+    const target = ".zag-test-edit-sharp-trace/t.txt";
+    const original = "alpha OLD omega\n";
+    Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().createDirPath(io, dir_name);
+    defer Io.Dir.cwd().deleteTree(io, dir_name) catch {};
+    try Io.Dir.cwd().writeFile(io, .{ .sub_path = target, .data = original });
+    const args = try editSharpApplyArgs(gpa, target, original, "OLD", "NEW");
+    defer gpa.free(args);
+
+    var reviewer: EditSharpReviewer = .{ .decision = .reject };
+    const Mock = struct {
+        step: u32 = 0,
+        args_json: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.step += 1;
+            if (self.step == 1) {
+                const tc = try arena.alloc(message.ToolCall, 1);
+                tc[0] = .{
+                    .id = try arena.dupe(u8, "edit-sharp-trace-1"),
+                    .name = try arena.dupe(u8, "apply_hunk"),
+                    .arguments = try arena.dupe(u8, self.args_json),
+                };
+                return .{ .content = "", .tool_calls = tc, .finish_reason = "tool_calls" };
+            }
+            return .{
+                .content = try arena.dupe(u8, "ok"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+    var mock: Mock = .{ .args_json = args };
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = Mock.chat },
+    }, .{
+        .permission_mode = .yolo,
+        .hunk_reviewer = reviewer.asReviewer(),
+        .max_turns = 4,
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    var session = try Session.start(gpa, io, .{
         .base_system = "sys",
-        .path = sess_path,
-        .open_mode = .resume_existing,
+        .path = ".zag-test-edit-sharp-trace/s.jsonl",
+        .open_mode = .create_new,
         .load_project_instructions = false,
     });
-    defer resumed.deinit();
-    // Live ports rebind from Agent state (still present); no proposal catalog on session.
-    try std.testing.expect(agent.apply_hunk_state.reviewer != null);
+    defer session.deinit();
+    _ = try agent.reply(&session, "trace reject");
+    const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "...[preview_truncated]") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "apply_hunk review") == null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"kind\":\"hunk_review\"") == null);
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_call"));
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("tool_result"));
+    try expectSessionBytesForbidNeedle(gpa, io, ".zag-test-edit-sharp-trace/s.jsonl", "...[preview_truncated]");
+    try expectSessionBytesForbidNeedle(gpa, io, ".zag-test-edit-sharp-trace/s.jsonl", "apply_hunk review");
 }

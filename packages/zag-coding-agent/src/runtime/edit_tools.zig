@@ -3963,39 +3963,44 @@ test "edit-sharp §10.8 missing reviewer and pre-review OOM" {
         defer gpa.free(body);
         try expectSharpError(body, "review_unavailable");
     }
-    // pre-review OOM: fail allocations during preview build
+    // Direct preview allocation OOM (B5 pre-review typed OOM surface).
+    {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
+        try std.testing.expectError(
+            error.OutOfMemory,
+            buildPreviewText(failing.allocator(), "t.txt", hex[0..], "OLD", "NEW"),
+        );
+        try std.testing.expect(failing.has_induced_failure);
+    }
+    // Full-handler pre-review OOM: first OOM with reviewer never called, target preserved.
+    // Prefer fail_index after field parse (idx>=4) when possible; any pre-review OOM is typed.
     {
         var reviewer = FixedReviewer.init(.accept);
         var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
-        // Measure allocation count to preview with a counting path is hard;
-        // use FailingAllocator fail_index=0 on a dedicated call that still needs allocs after parse.
-        // Use fail_index high enough that string fields parse but preview alloc fails.
-        // Simpler: wrap apply after fields are free by using fail_index from a probing run.
-        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
-        // First allocations are path/sha/old/new dupe from requireStringField (4 parses × internal).
-        // Instead invoke with fail_index that hits after those: empirically search.
-        // Build args once on gpa; only handler uses failing allocator.
         const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
         defer gpa.free(args);
-        // Probe for first OOM that preserves file.
-        var found_oom = false;
+        var found_post_parse_oom = false;
         var idx: usize = 0;
-        while (idx < 64) : (idx += 1) {
-            failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        while (idx < 80) : (idx += 1) {
+            var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
             const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
+            reviewer.calls_owned = 0;
             const result = applyHunk(fctx, &state, args);
             if (result) |body| {
                 gpa.free(body);
             } else |err| {
                 if (err == error.OutOfMemory) {
-                    found_oom = true;
                     try expectFileBytes(gpa, io, tmp.dir, "t.txt", original);
-                    break;
+                    try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
+                    if (idx >= 4) {
+                        found_post_parse_oom = true;
+                        break;
+                    }
                 }
             }
         }
-        try std.testing.expect(found_oom);
-        try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
+        // OOM past pure argument parse (idx>=4) proves pre-review/preview allocation surface.
+        try std.testing.expect(found_post_parse_oom);
     }
 }
 
@@ -4032,57 +4037,55 @@ test "edit-sharp §10.9 verifier matrix and post-replace fail-next allocator" {
             .denied => try expectSharpPartial(body, "denied"),
             .unavailable => try expectSharpPartial(body, "unavailable"),
         }
-        // restore for next iteration via rewrite
         try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
     }
 
-    // B1: after successful replace, fail-next allocator still returns exact preallocated partial.
+    // B1 real post-replace fail-next: arm FailingAllocator inside verifyFn (after
+    // atomicCommit success). Selection must stay allocation-free → exact partial,
+    // disk modified, no induced allocation failure.
     {
         const original = "alpha OLD omega\n";
         try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
         var hex: [64]u8 = undefined;
         sha256HexOf(original, &hex);
         var reviewer = FixedReviewer.init(.accept);
-        var verifier: FixedVerifier = .{ .result = .failed };
+
+        const ArmFailVerifier = struct {
+            failing: *std.testing.FailingAllocator,
+            armed: bool = false,
+            calls: u32 = 0,
+
+            fn asVerifier(self: *@This()) PostEditVerifier {
+                return .{ .ptr = self, .verifyFn = verifyFn };
+            }
+
+            fn verifyFn(ptr: ?*anyopaque, path: []const u8) PostEditVerifyResult {
+                const self: *@This() = @ptrCast(@alignCast(ptr.?));
+                _ = path;
+                self.calls += 1;
+                // Next allocation (if any) fails — must not be attempted post-replace.
+                self.failing.fail_index = self.failing.alloc_index;
+                self.armed = true;
+                return .failed;
+            }
+        };
+
+        var failing = std.testing.FailingAllocator.init(gpa, .{});
+        var arm_ver: ArmFailVerifier = .{ .failing = &failing };
         var state: ApplyHunkState = .{
             .reviewer = reviewer.asReviewer(),
-            .verifier = verifier.asVerifier(),
+            .verifier = arm_ver.asVerifier(),
         };
-        // First count allocations for a successful path.
-        // Then re-run with fail_index = total so any post-replace alloc would OOM.
-        // Because selection is allocation-free, body must still be exact partial.
+        const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
         const args = try applyHunkArgs(gpa, "t.txt", hex[0..], "OLD", "NEW");
         defer gpa.free(args);
-
-        // Measure: run with counting via FailingAllocator that never fails.
-        // Re-run: find allocation count, then fail at that index (post last success alloc).
-        var last_ok_index: ?usize = null;
-        var idx: usize = 0;
-        while (idx < 256) : (idx += 1) {
-            try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
-            var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
-            const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
-            // reset verifier calls
-            verifier.calls = 0;
-            if (applyHunk(fctx, &state, args)) |body| {
-                defer gpa.free(body);
-                if (std.mem.indexOf(u8, body, "verification=failed") != null) {
-                    last_ok_index = idx;
-                }
-            } else |_| {}
-        }
-        try std.testing.expect(last_ok_index != null);
-
-        // Fail immediately after the last allocation that still produced partial success:
-        // use fail_index = last_ok_index + 1 — if post-replace allocated, would OOM.
-        try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
-        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = last_ok_index.? + 1 });
-        const fctx: tool.Context = .{ .allocator = failing.allocator(), .io = io, .cwd = tmp.dir };
-        verifier.calls = 0;
         const body = try applyHunk(fctx, &state, args);
         defer gpa.free(body);
         try expectSharpPartial(body, "failed");
         try expectFileBytes(gpa, io, tmp.dir, "t.txt", "alpha NEW omega\n");
+        try std.testing.expect(arm_ver.armed);
+        try std.testing.expectEqual(@as(u32, 1), arm_ver.calls);
+        try std.testing.expect(!failing.has_induced_failure);
     }
 }
 
@@ -4179,4 +4182,15 @@ test "edit-sharp preview truncation marker and length" {
     try std.testing.expect(preview.len <= max_preview_text_bytes);
     try std.testing.expect(std.mem.endsWith(u8, preview, preview_truncation_marker));
     try std.testing.expectEqual(@as(usize, 22), preview_truncation_marker.len);
+}
+
+test "edit-sharp preview invalid UTF-8 becomes U+FFFD lossy only" {
+    const gpa = std.testing.allocator;
+    // Raw invalid byte in old/new for preview display only (not JSON path).
+    const preview = try buildPreviewText(gpa, "p.txt", "0" ** 64, "a\xFFb", "c\xFEd");
+    defer gpa.free(preview);
+    try std.testing.expect(std.mem.indexOf(u8, preview, "\u{FFFD}") != null);
+    // Original invalid single bytes must not appear as raw display dump.
+    try std.testing.expect(std.mem.indexOfScalar(u8, preview, 0xFF) == null);
+    try std.testing.expect(preview.len <= max_preview_text_bytes);
 }

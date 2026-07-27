@@ -294,7 +294,7 @@ Options reviewer/verifier are **not** auto-spliced. Null reviewer on `apply_hunk
 **Implementation track (branch evidence; closeout pending)**
 
 - [x] `apply_hunk` + `read_file` `include_digest` match this freeze (B1–B8) on implementation branch.
-- [x] Fixture matrix in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) §10 covered under focused package/root std Gates (incl. fail-next post-replace verifier partial and digest N/N+1/meta boundaries); coordinator full dual-backend/curl + code review pending.
+- [x] §10 fixture map (named tests) in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) verification: real B1 arm-in-`verifyFn` fail-next, remember≠skip-review, resume+idle fork schema v1, trace/session no preview markers, 2-provider soft failure, SDK public ports (+1 consumer test). Coordinator full dual-backend/curl + code review pending.
 - [x] Reject/stale/review_unavailable never mutate; bound-verifier non-ok is partial `target=modified`; no typed OOM after replace (B1 preallocated bodies).
 - [ ] Tools · write/edit maturity raised only by a separate explicit Gate (not automatic).
 
