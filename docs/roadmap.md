@@ -89,7 +89,7 @@ M2 — selected daily UX
         │       edit-sharpness-001 (done @ 7be5151; Tools write/edit L2)
         └──────────────┬──────────────┘
                        ▼
-                 tui-minimal-001 (contract candidate ready; impl BLOCKED)
+                 tui-minimal-001 (contract candidate; re-review pending; impl BLOCKED)
 ```
 
 ### M0 — Interaction reliability
@@ -172,7 +172,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest `read_file` + mandatory hunk review + optional post-commit verifier ([tools-edit](./modules/tools-edit.md)); candidate + merged-main local macOS std **655/655**, curl **654/654**; no push / no fresh remote Linux for tip | no AST/LSP; no multi-file txn; no Core/schema change; Tools write/edit stays L2 |
-| [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **contract candidate** ([tui-minimal.md](./modules/tui-minimal.md)): host UI over public lifecycle/control/permission; docs-only freeze | no product TUI yet; no dashboard/theme/image/plugin; impl BLOCKED until contract PASS |
+| [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **contract candidate** ([tui-minimal.md](./modules/tui-minimal.md)): host UI over public lifecycle/control/permission; round-1 BLOCKED closed; re-review pending | only `packages/zag-tui`; dual-thread host; no product TUI yet; impl BLOCKED until re-review PASS |
 
 Minimal TUI depends on the closed event/control/SIGINT/headless/edit contracts; it must only assemble public coding-agent APIs, keep plain/headless Gates green, and never place UI in Kernel packages.
 

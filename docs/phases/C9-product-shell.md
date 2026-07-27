@@ -37,23 +37,25 @@ Contract: [headless](../modules/headless-contract.md).
 
 Prerequisites `harness-events-001` and `harness-steering-001` are closed. The
 **docs-only binding contract** is [tui-minimal.md](../modules/tui-minimal.md)
-([task](../plan/tasks/tui-minimal-001.md), status `ready` for contract review).
-Implementation remains **BLOCKED** until independent architecture/ownership and
-safety/fail-closed contract PASS and the contract merges. This phase does **not**
-claim a shipped TUI or maturity raise.
+([task](../plan/tasks/tui-minimal-001.md), status `ready` for re-review).
+Round-1 architecture/safety reviews were **BLOCKED**; freezes were tightened.
+Implementation remains **BLOCKED** until re-review PASS and merge. This phase
+does **not** claim a shipped TUI or maturity raise.
 
 Contract freezes (detail in the module — do not fork):
 
-1. progressive text only via existing `Observer.assistant_text` (today: complete
-   assistant body, **not** invented `message_delta` / token lifecycle);
-2. multiline editor + **in-process** history (not durable Session transcript);
-3. Tool call/result cards from public `LifecycleObserver` (end-only / hard mid-call gaps);
-4. permission/cancel/error via Gate `AskFn` + [cli-interaction](../modules/cli-interaction.md);
-5. session identity from CLI path/open mode + `run_start.session_configured` only.
+1. unique later package **`packages/zag-tui/`** only; CLI wires when `-Dtui=true`;
+2. dual-thread host (UI + single reply worker) + permission single-slot rendezvous;
+3. progressive text only via `Observer.assistant_text` (complete body today);
+4. product open modes `create_new`/`resume_existing` only; no false resumed;
+5. ask `Gate.ask(TuiPermissionAdapter)` never `StdinPrompter`; TUI ask hunk null;
+6. full outward redaction via Session-owned `redactAlloc` before publish.
 
-Host owns all UI state; Kernel packages must not import TUI. `-Dtui` stays
-optional default false. No theme platform, extension UI host, package manager,
-or dashboard in this slice.
+Host owns all UI state; Kernel/coding-agent must not import TUI. `-Dtui` default
+false. Permission default remains **ask** (fail-closed; missing ask seam is
+deny, never yolo). Workspace jail + shell protect stay mandatory. Outward UI
+bytes are redacted before render; secrets must not hit stdout. No theme
+platform, extension UI host, package manager, or dashboard.
 
 ## Extension UI host
 
@@ -112,8 +114,9 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 
 - [x] binding module [tui-minimal.md](../modules/tui-minimal.md) authored
 - [x] task [tui-minimal-001](../plan/tasks/tui-minimal-001.md) authored (`status: ready`)
-- [ ] independent architecture/ownership contract review PASS
-- [ ] independent safety/fail-closed contract review PASS
+- [x] round-1 BLOCKED findings closed in docs freeze (re-review pending)
+- [ ] independent architecture/ownership contract **re-review** PASS
+- [ ] independent safety/fail-closed contract **re-review** PASS
 - [ ] docs lint / score / diff green on candidate; no product code in contract node
 
 ### Product implementation track (later — do not check from contract node)
@@ -123,7 +126,7 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 - [ ] lifecycle rendering comes from events, not private Agent memory;
 - [ ] plain/headless dual-backend Gates remain green;
 - [ ] Kernel packages do not import TUI;
-- [ ] fixture matrix in tui-minimal.md §10 green on the implementation tip.
+- [ ] fixture matrix in tui-minimal.md §11 green on the implementation tip.
 
 ## Acceptance for later extension UI host
 

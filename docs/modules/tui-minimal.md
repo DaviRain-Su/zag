@@ -18,7 +18,10 @@ It freezes how a host TUI may assemble public `zag-coding-agent` /
 product TUI, does **not** mark C9 implementation acceptance complete, and
 does **not** raise any maturity row.
 
-Implementation is **BLOCKED** until independent architecture/ownership and
+**Review state:** round-1 independent architecture and safety reviews were
+**BLOCKED**. This revision closes those blockers as unique freezes. Re-review
+is **pending** (do not treat as PASS until re-review records say so).
+Implementation remains **BLOCKED** until architecture/ownership +
 safety/fail-closed contract reviews **PASS** and this contract merges.
 See [task](../plan/tasks/tui-minimal-001.md).
 
@@ -38,14 +41,13 @@ Related truth (do not fork):
 
 ## 1. Ownership and dependency direction
 
-### 1.1 Layer law
+### 1.1 Layer law (unique package owner)
 
 ```text
 terminal / renderer / input / focus / history / card ring
         │  host shell only
         ▼
-zag-tui  (later product package; optional build)
-   or  zag-cli tui module compiled only when -Dtui=true
+packages/zag-tui/   module name: zag-tui   (ONLY later product package)
         │  assembles public APIs only
         ▼
 zag-coding-agent   Agent / Session / LifecycleObserver /
@@ -58,31 +60,26 @@ zag-agent-core     thin generic model→tool→model loop
 
 | Layer | Owns | Must not own |
 |-------|------|--------------|
-| Host TUI (`zag-tui` or `zag-cli` TUI module) | terminal channel, layout, focus/layering, editor buffer, in-process input history, card ring, permission modal UI, host-owned copy buffers | Agent private fields, Loop, Transcript mutation, Trace schema, permission risk classification, session schema, headless envelopes |
-| `zag-cli` | flag parse, mode mutex, SIGINT Guard install, process exit, plain/headless paths, wiring TUI when built | inventing lifecycle facts; silent mode fallback |
-| `zag-coding-agent` | product policy, Session, Trace, lifecycle adapter, edit/review, Gate | terminal widgets, focus, raw TUI input |
+| **`zag-tui` only** | terminal channel, layout, focus/layering, editor buffer, in-process history, card ring, permission modal UI, host-owned preallocated buffers, reply-worker rendezvous | Agent private fields, Loop, Transcript mutation, Trace schema, permission risk classification, session schema, headless envelopes, process SIGINT install |
+| `zag-cli` | flag parse, mode mutex, SIGINT Guard install, process exit, plain/headless paths; **assembles/imports `zag-tui` only when `-Dtui=true`** | inventing lifecycle facts; silent mode fallback; owning TUI widgets under `zag-cli/src/tui` |
+| `zag-coding-agent` | product policy, Session, Trace, lifecycle adapter, edit/review, Gate | terminal widgets, focus, raw TUI input, any TUI import |
 | `zag-agent-core` | thin loop + ports | any TUI / CLI / terminal import |
 
-### 1.2 Later package / build wiring (implementation track)
+**Forbidden shape (removed):** `packages/zag-cli/src/tui/**` as an alternate
+TUI owner. Product TUI code lives **only** under `packages/zag-tui/`.
 
-**Freeze (implementation may choose one of two shapes, not both in default builds):**
-
-1. **Preferred:** new optional package `packages/zag-tui/` with module name
-   `zag-tui`, depending only downward on `zag-coding-agent` (+ chosen
-   terminal library). Root `build.zig` wires it **only** when
-   `-Dtui=true`.
-2. **Acceptable interim:** `packages/zag-cli/src/tui/*.zig` compiled into
-   `zag-cli` **only** when `-Dtui=true`, still never imported by Kernel
-   packages.
-
-**Hard rules (both shapes):**
+### 1.2 Build wiring (unique freeze)
 
 | Rule | Binding |
 |------|---------|
+| Package path | **`packages/zag-tui/`** only; Zig module name **`zag-tui`** |
 | `-Dtui` default | **false** |
-| Default `zig build` / `zig build test` | **no** TUI dependency, **no** change to plain or headless behavior |
-| Kernel import ban | `zag-agent-core` and `zag-coding-agent` must not `@import("zag-tui")`, `@import("tui")`, or reference `zag_tui` (existing headless Kernel scan remains) |
-| Terminal library | may be added as **lazy/optional** dep only under `-Dtui=true`; not a default monorepo dep |
+| Root `build.zig` | declares `-Dtui`; passes the bool into `zag-cli` dependency options |
+| When `-Dtui=false` | **must not** resolve, fetch, or build `zag-tui` or any terminal library; default `zig build` / `zig build test` unchanged |
+| When `-Dtui=true` | root may resolve optional/lazy `zag-tui` + terminal library; `zag-cli` may `@import("zag-tui")` and call its public entry |
+| `zag-cli` role | owns flags/mode/SIGINT/exit; **only** wires TUI entry when built with `-Dtui=true` |
+| Kernel / coding-agent ban | must not `@import("zag-tui")`, `@import("tui")`, or reference `zag_tui` (existing headless Kernel scan remains) |
+| Terminal library | **implementation detail**, not contract-visible API. Must be **quarantined inside `zag-tui`**, lazy/optional, must not alter this behavioral contract. **No wholesale vaxis port** |
 | This contract node | **no** new package, **no** new dependency, **no** product implementation file |
 
 ### 1.3 Public-API-only assembly
@@ -90,88 +87,184 @@ zag-agent-core     thin generic model→tool→model loop
 TUI may call only public roots / documented product APIs, including:
 
 - `Agent.init` / `Agent.reply` / `Agent.deinit` with `Options.lifecycle`,
-  `Options.observer`, `Options.permission_mode`, `Options.permission_gate`
-- `Session.start` / `Session.deinit` with `OpenMode` and validated path
+  `Options.observer`, `Options.permission_mode`, `Options.permission_gate`,
+  `Options.hunk_reviewer`
+- `Session.start` / `Session.deinit` with product-TUI open modes only
+  (§5: `create_new` / `resume_existing`)
 - `Session.enqueueSteering` / `enqueueFollowUp` / `steeringPending` /
   `followUpPending` / `clearControlQueues` (idle-only clear)
+- `Session.activeRedactor` (must be non-null before first worker; §7.5)
 - `LifecycleObserver` + `LifecycleEvent` (`lifecycle.zig`)
 - `Observer` + `Event` (`observer.zig`) — optional progressive text only
 - `permissions.Gate` / `AskFn` / `Mode` / `SessionKind` / remember policy
-- Existing CLI SIGINT `Guard` and mode/exit rules from
-  [cli-interaction](./cli-interaction.md)
+- Existing CLI SIGINT `Guard` from [cli-interaction](./cli-interaction.md)
 
 **Forbidden:** reading `Agent` private fields, Core private loop state,
 `Transcript` internals for UI cards, Trace file as live UI truth, or any
-private memory “peek” that is not a public callback or public method.
+private memory peek that is not a public callback or public method.
 
-## 2. Data-source matrix
+## 2. Dual-thread host concurrency (unique freeze)
+
+Busy steering + synchronous `AskFn` **require** two threads with fixed roles.
+No alternate concurrency model is allowed for product TUI v1.
+
+### 2.1 Threads and ownership
+
+| Thread | Owns exclusively | Must not |
+|--------|------------------|----------|
+| **UI thread** (main) | stdin key decode, stdout/raw/alt-screen, render, editor buffer, history navigation, card **snapshot** display, permission **decision** input, `Session.enqueue*` / `*Pending` calls | execute `Agent.reply`; read raw lifecycle slices after callback return |
+| **Reply worker** (exactly one when busy) | one synchronous `Agent.reply` (single-flight); runs Lifecycle/Observer callbacks and Gate/`AskFn` on this thread | touch stdin/stdout/raw/alt-screen; call render; re-enter `reply`; `clearControlQueues` / `Session.deinit` / `Agent.deinit` |
+
+Rules:
+
+1. **Single-flight:** at most one reply worker exists. While `state=busy`,
+   root prompt submit is **ignored** (status `busy_locked`).
+2. `Agent`, `Session`, `TuiPermissionAdapter`, and all shared host slots are
+   allocated and **address-stable** before the worker starts.
+3. Until the UI thread **joins** the worker, no thread may move/deinit/clear
+   `Agent` / `Session` / adapter / preallocated rings.
+4. After join only: idle `clearControlQueues`, session teardown, adapter
+   reset for the next run.
+5. `Session.enqueueSteering` / `enqueueFollowUp` / pending counts are called
+   **from the UI thread** while the worker may be inside `reply`, using the
+   already-frozen foreign-thread queue safety
+   ([harness-steering](./harness-steering.md)). Clear remains **idle-only**.
+
+### 2.2 Lifecycle / Observer callbacks (worker thread)
+
+Callbacks run **synchronously on the reply worker**. Inside a callback the
+host **must**:
+
+1. **Not** perform TTY I/O, render, or stdin reads.
+2. **Not** re-enter `Agent.reply`, `clearControlQueues`, `Session.deinit`,
+   or `Agent.deinit`.
+3. **Not** hold a host lock while calling back into user/host code outside
+   the fixed publish path.
+4. Redact full source bytes with Session-owned non-null
+   `Redactor.redactAlloc` (**§8**), then UTF-8-validate / truncate / copy
+   into a **preallocated** host card slot.
+5. Under a **short** card-publish lock: write slot + advance a monotonic
+   `ui_seq`, then **release the lock**.
+6. Signal a **bounded non-blocking** UI wake (self-pipe / eventfd / equivalent
+   with drop-on-full). Never block the worker forever on a full wake queue.
+
+UI thread: drain wake → snapshot cards under the same short lock → render
+outside the lock.
+
+**Lock order (unique):**
+
+```text
+1. permission_slot_mutex   (AskFn rendezvous only)
+2. card_ring_mutex         (publish/snapshot only)
+```
+
+Never acquire `permission_slot_mutex` while holding `card_ring_mutex`.
+**Never wait for a permission decision while holding `card_ring_mutex`.**
+
+### 2.3 Permission rendezvous (worker `AskFn`, UI decides)
+
+Product TUI ask mode uses **one preallocated permission slot** (capacity **1**
+outstanding request) + mutex + condition variable (or equivalent single-slot
+rendezvous).
+
+```text
+worker AskFn:
+  if ask_ctx == null OR redactor missing OR slot already pending:
+      return deny
+  redact/copy bounded modal facts into slot   // no raw args body shown
+  publish request + wake UI
+  wait on condition until decision OR host closing
+  return allow|deny
+
+UI thread (only decider):
+  on wake / poll: if permission pending, steal focus to modal
+  a/A → allow; d/D/n/N/Esc/Enter/EOF/render-fail/read-fail → deny
+  signal condition; clear slot
+```
+
+| Failure | Decision |
+|---------|----------|
+| close / host fatal while waiting | **deny** + wake worker |
+| EOF on input | **deny** + if busy enter closing (§9) |
+| render / read failure | **deny** |
+| cancel observed before decision | **deny** (cooperative cancel continues) |
+| null `ask_ctx` / missing redactor | **deny** (no modal) |
+| second concurrent AskFn | **deny** (slot full) |
+
+**Worker must not** read stdin or render. **UI must not** call `Gate.check`
+directly.
+
+### 2.4 Shutdown and host fatal
+
+| Step | Binding |
+|------|---------|
+| TUI entry | **must successfully install** the existing CLI SIGINT `Guard` before raw mode / worker; install failure → fixed stderr, exit **1**, no TUI |
+| Busy close / host fatal | set `closing=true`; **deny** any pending permission slot and signal; request cooperative cancel via Guard-bound flag; enter **visible waiting** state (status `closing`); keep two-phase Ctrl+C escape |
+| Wait honesty | UI waits for worker join. **std HTTP backend may block** in DNS/connect/TLS/response-head; there is **no** automatic graceful host timeout. Documented as **user-visible wait** + second Ctrl+C hard escape `130`. **Forbidden:** “silent unbounded wait” without visible closing chrome |
+| After worker ends | join → restore tty/raw/alt-screen when possible (§9.4) → deinit order: worker resources, then Session/Agent only when idle |
+| Success invent | **forbidden** — no completed chrome on close/fatal |
+
+## 3. Data-source matrix
 
 | UI surface | Source of truth | Not allowed |
 |------------|-----------------|-------------|
 | Run open | `LifecycleEvent.run_start` | fabricating start without facade emit |
 | Assistant complete card | `LifecycleEvent.assistant_message` | inventing turns / partial lifecycle kinds |
-| Tool cards | `tool_start` / `tool_end` with end-only and hard mid-call gaps per [harness-events](./harness-events.md) | inventing `tool_update`; pairing every start with end |
+| Tool cards | `tool_start` / `tool_end` per [harness-events](./harness-events.md) | inventing `tool_update`; assuming every start has end |
 | Control applied card | `LifecycleEvent.control_applied` | treating enqueue as applied |
 | Run terminal card | `LifecycleEvent.run_terminal` | UI drop/close inventing `completed` success |
 | Progressive assistant text (optional) | existing `Observer.Event.assistant_text` only | inventing `message_delta` / token-stream lifecycle |
-| Permission modal | host `AskFn` bound into `Gate.ask` during ask mode | missing seam ⇒ allow / yolo |
-| Cancel / SIGINT UX | [cli-interaction](./cli-interaction.md) + cooperative cancel + `run_terminal` / reply errors | second Ctrl+C as graceful terminal |
-| Session identity strip | CLI validated path + open mode + `Session.path` + `run_start.session_configured` | inventing UUID / “resumed” without host fact |
-| Errors | reply/`ReplyError` mapping + `run_terminal` when started | quiet success after failed render |
+| Permission modal | host `AskFn` via `Gate.ask` (ask mode) | missing seam ⇒ allow / yolo; `StdinPrompter` |
+| Cancel / SIGINT UX | [cli-interaction](./cli-interaction.md) + cooperative cancel + `run_terminal` | second Ctrl+C as graceful terminal |
+| Session identity strip | §5 host facts only | inventing UUID / false resumed |
+| Errors | reply/`ReplyError` + `run_terminal` when started | quiet success after failed render |
 
-### 2.1 Progressive text fact (explicit)
+### 3.1 Progressive text fact
 
-There is **no** public `message_delta` lifecycle event. If the host wants
-near-live assistant text, it may bind `Options.observer` and handle
-`Observer.Event.assistant_text`.
+There is **no** public `message_delta`. Optional progressive display uses
+`Observer.Event.assistant_text` only.
 
-**Current source fact (implementation evidence in coding-agent):**
-`assistant_text` is emitted with the **complete validated assistant message
-body** at the same moment as lifecycle `assistant_message` — it is **not**
-a provider token delta stream today. Headless `assistant_delta` may also
-map that complete body as one chunk.
+**Current source fact:** coding-agent emits `assistant_text` with the
+**complete validated assistant message body** at the same moment as
+lifecycle `assistant_message` — **not** a provider token delta stream.
 
-**Host binding rules:**
+Host rules:
 
-1. Treat each `assistant_text` payload as a full message body snapshot for
-   that emission (replace the open assistant card body, or open a new card
-   if none). Do **not** claim token-streaming fidelity.
-2. Copy borrowed bytes into a host-owned bounded buffer inside the
-   callback (see §7).
-3. Prefer lifecycle `assistant_message` for durable card identity
-   (`turn`, `has_tools`); observer text is presentation-only.
-4. A future real token-delta source requires a **separate** source-owning
-   task; this contract forbids inventing one.
+1. Treat each emission as a full message body snapshot (replace open
+   assistant card body, or open one if none). No token-stream claim.
+2. Redact + copy into preallocated host buffers **inside** the callback (§8).
+3. Prefer lifecycle `assistant_message` for card identity (`turn`, `has_tools`).
+4. Real token deltas require a **separate** source-owning task.
 
-### 2.2 Terminal truth precedence
+### 3.2 Terminal truth precedence
 
 For every started run (`run_start` emitted):
 
 1. Exactly one `run_terminal` is the public lifecycle terminal.
-2. UI close, card drop, render failure, resize failure, or editor OOM
+2. UI close, card drop, render failure, resize failure, or allocation failure
    **must not** invent `stop_reason=completed` / success chrome.
-3. If the process exits without a lifecycle terminal (e.g. second SIGINT
-   hard escape `130`), show process-abandoned state — not completed.
-4. Reply-level errors after start map to failed terminal truth already
-   owned by coding-agent; the TUI only displays them.
+3. Process exit without lifecycle terminal (e.g. second SIGINT `130`) is
+   process-abandoned — not completed.
+4. Reply-level errors after start map to product failed terminal truth; TUI
+   only displays them.
 5. Preflight failure before `run_start` produces no lifecycle terminal;
-   show host error, not a fake run card.
+   fixed host error only.
 
-Tool correlation follows harness-events end-only / hard mid-call rules:
+Tool patterns:
 
 | Pattern | UI must |
 |---------|---------|
 | `tool_start` → `tool_end` | show running then finished |
-| end-only `tool_end` (`cancelled` / `steered`) | show end-only card; **no** fabricated start |
-| `tool_start` then hard fail, no `tool_end` | leave card “open/interrupted”; close run via `run_terminal` only |
+| end-only `tool_end` (`cancelled` / `steered`) | end-only card; **no** fabricated start |
+| `tool_start` then hard fail, no `tool_end` | leave open/interrupted; close via `run_terminal` only |
 
-## 3. Minimal UI layout
+## 4. Minimal UI layout
 
-### 3.1 ASCII layout (default ≥ 80×24)
+### 4.1 ASCII layout (default ≥ 80×24)
 
 ```text
 ┌─ zag  tui ──────────────────────────────────────────────────────────┐
-│ id: <session_path|ephemeral>  open:<create|resume|n/a>  cfg:<y/n>   │
+│ id: <path|ephemeral>  open:<create_new|resume_existing|n/a> cfg:y/n │
 │ perm:ask|yolo  shell:protect|off  state:idle|busy|error|closed      │
 ├─────────────────────────────────────────────────────────────────────┤
 │ CARD VIEWPORT (scrollable ring; newest at bottom)                   │
@@ -180,7 +273,7 @@ Tool correlation follows harness-events end-only / hard mid-call rules:
 │  · tool  start|end  name id …                                       │
 │  · control kind=steering|follow_up next_turn=N …                    │
 │  · run_terminal ok=… stop=… turns=…                                 │
-│  · host_error …                                                     │
+│  · host_error / host_note …                                         │
 ├─────────────────────────────────────────────────────────────────────┤
 │ EDITOR (multiline; focus default when no modal)                     │
 │  > line1                                                            │
@@ -189,380 +282,469 @@ Tool correlation follows harness-events end-only / hard mid-call rules:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Permission modal layer** (focus-stealing; see §3.3):
+**Permission modal** (focus-stealing):
 
 ```text
 ┌─ permission (modal) ────────────────────────────────────────┐
 │ risk:<read|write|shell>  args_len:<n>  tool:<redacted|—>    │
-│ [a]/allow   [d]/deny   Esc=deny   EOF/fail=deny           │
+│ [a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Constrained / tiny terminal** (`cols < 40` or `rows < 10`):
+**Constrained** (`cols < 40` or `rows < 10`, but ≥ 20×5):
 
 ```text
 [zag tui · constrained]
 state=… id=…
 (cards truncated to 1-line summaries)
-> editor single-line mode (still bounded multiline buffer)
+> editor single-line display (buffer still multiline-capable)
 ```
 
-If both dimensions fall below **20×5**, enter **closed-error** host state:
-do not run Agent; print one stderr diagnostic; exit non-zero for one-shot
-launch, or refuse interactive entry. Never silently run headless/plain
-semantics under a TUI flag.
+**Below 20×5:** refuse before raw mode — fixed stderr, exit **1** (§9).
+Never silent headless/plain fallback under `--tui`.
 
-### 3.2 Component tree
+### 4.2 Component tree
 
 ```text
 TuiApp
-├─ StatusStrip        session identity · perm · shell · run state
-├─ CardViewport       bounded ring of CardView
-│   └─ CardView[]     kind-specific rows (run/tool/control/terminal/error)
-├─ EditorPane         buffer · cursor · history index · byte meter
-├─ PermissionModal?   optional focus layer
-└─ HostServices       copy buffers · redactor borrow · SIGINT drain hooks
+├─ StatusStrip
+├─ CardViewport          preallocated ring (§6)
+│   └─ CardSlot[]
+├─ EditorPane            preallocated buffer + history
+├─ PermissionModal?      single-slot rendezvous view
+└─ HostServices          redactor borrow · wake · SIGINT Guard hooks
 ```
 
-### 3.3 Focus and layering
+### 4.3 Focus and layering
 
 | Priority (high → low) | Layer | Input owner |
 |----------------------:|-------|-------------|
-| 1 | `PermissionModal` when open | modal keys only |
-| 2 | `EditorPane` when idle or waiting for user submit | editor keys |
-| 3 | `CardViewport` scroll (optional keys) | scroll only; never submit |
-| — | background run | no text entry into Agent except control queues / cancel |
+| 1 | `PermissionModal` when pending | modal keys only |
+| 2 | `EditorPane` | editor keys / Alt+S|F when busy |
+| 3 | `CardViewport` scroll | scroll only |
 
-Rules:
+1. Modal steals focus; editor does not append while modal open.
+2. Modal close returns focus to editor.
+3. Busy: root Enter submit **ignored**; **Alt+S** / **Alt+F** enqueue control
+   from editor buffer via public Session methods (UI thread).
+4. Card viewport never decides permissions.
 
-1. Opening a permission modal **steals** focus; editor keystrokes do not
-   append while modal is open.
-2. Closing modal (allow/deny/fail-closed) returns focus to editor.
-3. While `state=busy` without modal, editor may still accept keystrokes for
-   **steering/follow-up draft** only if the host freezes a visible draft
-   mode; v1 **minimal** freeze: editor is locked for submit of a new root
-   prompt, but **Alt+S** queues steering and **Alt+F** queues follow-up
-   from the current editor buffer via public Session methods (see §6).
-4. Card viewport never owns permission decisions.
-
-### 3.4 Card retention / backpressure / drop
-
-| Constant | Value | Meaning |
-|----------|------:|---------|
-| `card_ring_capacity` | **128** | max retained host cards |
-| `card_body_max_bytes` | **4096** | max copied body/preview per card |
-| `card_title_max_bytes` | **128** | max title/name/id display slice |
-| `drop_policy` | oldest first | when ring full, drop **oldest** non-terminal card |
-| `terminal_card_pin` | last `run_terminal` | never drop the latest terminal card of the open run |
-| `drop_marker` | insert synthetic `host_note` card | text exactly `cards_dropped=<n>` (ASCII) when ≥1 card dropped since last note |
-
-Drop / failure semantics:
-
-| Failure | Behavior |
-|---------|----------|
-| Card copy OOM | do not retain raw borrowed slice; emit `host_error` card if possible; keep run truth from lifecycle |
-| Body oversize | copy first `card_body_max_bytes` bytes of **valid UTF-8 prefix**; append ASCII `…` if truncated |
-| Invalid UTF-8 in source | replace card body with exact ASCII `invalid_utf8` (no raw bytes to terminal) |
-| Render failure mid-frame | keep previous frame if any; set `state=error` strip; **never** rewrite terminal to success |
-| UI closed during busy run | cooperative cancel request if Guard bound; await run end or process escape; no success chrome |
-
-### 3.5 Terminal resize
-
-| Event | Binding |
-|-------|---------|
-| SIGWINCH / size poll | recompute layout; clamp editor visible rows ≥ 1 when not constrained-closed |
-| Width shrink | wrap card lines; do not reflow by re-querying Agent private state |
-| Height shrink | keep newest cards visible; scroll offset may clamp |
-
-### 3.6 State variants
+### 4.4 State variants
 
 | `state` | When | Editor | Cards |
 |---------|------|--------|-------|
-| `idle` | no open run; ready for submit | enabled | show history of prior cards in ring |
-| `busy` | after `run_start` until `run_terminal` | root-submit locked; Alt+S/F control allowed | append live cards |
-| `error` | host render/input/OOM or displayed failed terminal | enabled after run closes | show error + last terminal |
-| `closed` | TUI exit / constrained refuse / fatal host | disabled | frozen |
-| empty viewport | no cards yet | enabled | show exact placeholder line `(no events yet)` |
-| loading | between submit and first lifecycle event | locked | show exact `(starting…)` status only — not a success terminal |
-
-## 4. Bounded multiline editor and in-process history
-
-### 4.1 Limits
-
-| Constant | Value | Binding |
-|----------|------:|---------|
-| `editor_max_bytes` | **65536** (64 KiB) | hard cap of editor buffer size in UTF-8 **bytes** |
-| `editor_max_lines` | **512** | hard cap of `\n`-separated lines in buffer |
-| `history_capacity` | **64** | max prior **submitted** prompts retained in-process |
-| `history_entry_max_bytes` | **8192** | max bytes stored per history entry |
-
-### 4.2 UTF-8 and oversize
-
-| Condition | Behavior |
-|-----------|----------|
-| Typing produces incomplete UTF-8 sequence | allow in buffer until submit; cursor may sit on incomplete tail |
-| Submit / Alt+S / Alt+F with invalid UTF-8 | **reject**; keep buffer; status `invalid_utf8`; no Agent call / no enqueue |
-| Insert would exceed `editor_max_bytes` | **reject insert** of that keystroke/paste chunk; no truncation of existing buffer |
-| Insert would exceed `editor_max_lines` | **reject** newline that would create line 513 |
-| Paste larger than remaining capacity | reject whole paste chunk (no partial silent fill) |
-| History push of entry > `history_entry_max_bytes` | store only first valid UTF-8 prefix ≤ 8192; if prefix empty, skip push |
-
-### 4.3 Key behavior (v1 freeze)
-
-| Key | Idle editor | Busy (no modal) | Permission modal |
-|-----|-------------|-----------------|------------------|
-| **Enter** | submit root prompt if buffer non-empty after **no trim** of interior; empty buffer (len 0) ignored; leading/trailing spaces kept | ignored for root submit | treated as **deny** only if focus is on deny default — freeze: Enter = **deny** |
-| **Alt+Enter** | insert `\n` (subject to line/byte caps) | insert `\n` into control draft buffer | ignored |
-| **Ctrl+J** | same as Alt+Enter | same | ignored |
-| **Esc** | clear status notes only; does **not** exit process | cancel draft selection only | **deny** |
-| **Ctrl+C** | fully obey [cli-interaction](./cli-interaction.md) | same | same — first = cooperative cancel path when active; second pending = hard `130` |
-| **Ctrl+D** | if buffer empty → EOF exit path (clean interactive exit `0` when idle); if buffer non-empty → ignored | ignored | **deny** (fail-closed) |
-| **Up / Down** | walk in-process history (see §4.4) | disabled | ignored |
-| **a / A** | normal insert | normal insert | **allow** |
-| **d / D** / **n / N** | normal insert | normal insert | **deny** |
-| **Alt+S** | if non-empty valid UTF-8: `Session.enqueueSteering`; on success clear buffer optional **no** (freeze: **keep** buffer, show `steering_queued` or error) | same if Session live | ignored |
-| **Alt+F** | `Session.enqueueFollowUp` with same rules | same | ignored |
-
-Empty message enqueue returns `ControlError.EmptyMessage` — show `control_empty`; do not crash.
-
-### 4.4 History is not Session transcript
-
-| Store | Lifetime | Persistence |
-|-------|----------|-------------|
-| Editor history ring | process memory only | **never** written to session JSONL / Trace / new schema |
-| Session transcript | product Session | existing session-store contract only |
-| Control queues | Session process memory | not schema v1 (already frozen) |
-
-History rules:
-
-1. Push **only** on successful root submit that actually calls `Agent.reply`
-   (not on failed UTF-8, not on control-only Alt+S/F).
-2. Duplicate consecutive identical bytes still push (no dedup requirement).
-3. Up moves to older entries; Down toward newer / live buffer.
-4. Editing after Up detaches from history index (standard shell-like).
-5. **Do not** reload history from durable Session on resume.
-6. **Do not** invent a `.zag/tui-history` file in this contract.
+| `idle` | no worker; ready | root submit enabled | prior ring retained |
+| `busy` | worker live (from accepted dispatch until join) | root submit locked; Alt+S/F allowed | live publishes |
+| `closing` | host close/fatal/EOF-busy; waiting join | locked | frozen + visible wait |
+| `error` | host render fault or failed terminal displayed | enabled after join | error + last terminal |
+| `closed` | process exiting TUI | disabled | frozen |
+| empty | no cards | enabled | exact `(no events yet)` |
+| loading | after dispatch before first lifecycle event | locked | status `(starting…)` only — not success |
 
 ## 5. Session identity, open mode, resume truth
 
-### 5.1 Allowed identity facts
+### 5.1 Product TUI CLI open modes (unique)
 
-| Fact | Source |
-|------|--------|
-| Path string | CLI-validated relative workspace path (`session_store.validateSessionPath`) or host-configured SDK path; display max 128 bytes with truncation marker |
-| Open mode | CLI: `-c`/`--continue` → `resume_existing`; else `create_new` for `-s` / default create; SDK may use `open_or_create` |
-| `session_configured` | `LifecycleEvent.run_start.session_configured` only after start |
-| Ephemeral | `Session.path == null` and no durable path configured → display exact `ephemeral` |
-| Resumed chrome | **only** when open mode is `resume_existing` **and** `Session.start` succeeded, or SDK `open_or_create` path that actually resumed (host must track the branch). **Never** infer “resumed” from path string alone |
+Product TUI CLI uses **only**:
 
-### 5.2 Forbidden identity inventions
+| Flag path | `OpenMode` | Display `open:` |
+|-----------|------------|-----------------|
+| `-c` / `--continue` | `resume_existing` | `resume_existing` |
+| `-s PATH` without continue | `create_new` | `create_new` |
+| no session flags | ephemeral (`path=null`) | `n/a` |
+
+Implementation **must** reuse CLI `selectOpenMode` semantics
+([session-store](./session-store.md)): continue → `resume_existing`, else
+`create_new`. **Product TUI v1 must not call `open_or_create`.**
+
+### 5.2 Resumed / configured facts
+
+| Fact | When true |
+|------|-----------|
+| `resumed` chrome | **only** `open_mode == resume_existing` **and** `Session.start` succeeded |
+| `session_configured` | lifecycle `run_start.session_configured` after start (display `cfg:y/n`) |
+| configured path display | host-validated relative path bytes present **and** lifecycle/host path fact; **never** infer configured from path string alone without start |
+| ephemeral | no durable path configured → display exact `ephemeral` |
+
+### 5.3 SDK hosts and `open_or_create`
+
+Product TUI v1 **excludes** `open_or_create`. If a non-product SDK host
+still starts a Session with `open_or_create` under a custom shell, it **must**
+display `open:open_or_create/unknown` and **must not** claim `resumed`
+(public API does not expose the actual create vs resume branch). Prefer not
+using that mode with this contract at all.
+
+### 5.4 Forbidden identity inventions
 
 - UUID / random session ids
-- Claiming `resumed` on `create_new` success
-- Claiming configured session when `run_start.session_configured=false`
-- Showing absolute canonicalized paths (keep lexical relative path bytes)
-- Reading Trace headers for identity
+- `resumed` on `create_new` success
+- `resumed` for any `open_or_create` path
+- configured session when lifecycle says `session_configured=false`
+- absolute canonicalized paths (keep lexical relative path; redact for display §8)
+- Trace headers as identity
 
-`create_new` / `resume_existing` semantics stay exactly as
-[session-store](./session-store.md). TUI does not add open modes.
+## 6. Preallocation and card ring (unique capacity)
 
-## 6. Run / tool / control / cancel / error binding
+### 6.1 Startup preallocation
 
-### 6.1 Run lifecycle cards
+**Before** entering raw/alt-screen mode, **before** `Session.start` success
+path that leads to interactive loop, and **before** any reply worker:
 
-Map 1:1 from public lifecycle events (§2). Ordering must match program
-order of callbacks. Host may coalesce display rows but must not reorder
-kinds relative to each other for the same run.
+Preallocate **once** (fail-closed):
 
-### 6.2 Control
+- editor buffer (`editor_max_bytes`)
+- history ring (`history_capacity` × `history_entry_max_bytes` backing)
+- full card ring slots (§6.2)
+- permission single-slot storage
+- wake pipe / event primitives
 
-| Action | API | Errors shown |
-|--------|-----|--------------|
-| Steering | `Session.enqueueSteering(text)` | `QueueFull`, `MessageTooLong` (4096), `EmptyMessage`, `InvalidUtf8` |
-| Follow-up | `Session.enqueueFollowUp(text)` | same |
-| Pending counts | `steeringPending` / `followUpPending` | display optional `S:n F:m` in status strip |
-| Clear | `clearControlQueues` **idle-only** | never call during `reply` |
+**OOM at preallocate:** fixed stderr diagnostic (no secrets), exit **1**,
+**never** start a run / never enter raw mode.
 
-Applied control appears only via `LifecycleEvent.control_applied`. Queue
-capacity remains **4 + 4** slots × **4096** bytes
-([harness-steering](./harness-steering.md)).
+### 6.2 Card capacity = 128 slots (exact split)
 
-### 6.3 Cancel
+| Class | Count | Role |
+|------:|------:|------|
+| Ordinary FIFO | **125** | lifecycle/observer/control/host_note drop-eligible |
+| Terminal reserve | **1** | allocation-free current-run `run_terminal` summary |
+| Host-error reserve | **1** | allocation-free host error summary |
+| Drop-note / virtual | **1** | virtual or fixed slot for `cards_dropped=<n>` |
+| **Total** | **128** | |
+
+Each ordinary/terminal/host-error slot has **fixed** title and body arrays:
+
+| Field | Cap |
+|-------|----:|
+| `card_title_max_bytes` | **128** |
+| `card_body_max_bytes` | **4096** |
+
+### 6.3 Drop / terminal / OOM rules
+
+| Rule | Binding |
+|------|---------|
+| Ordinary full | drop **oldest ordinary** slot first (FIFO) |
+| Drop count | saturating `u32`; never wraps to zero |
+| Drop note | single virtual/host_note update with exact ASCII `cards_dropped=<n>`; **does not** consume ordinary FIFO in a way that recursively triggers further drops of itself |
+| Terminal event | format with **numeric/enum fixed fields only** into terminal reserve (`ok`, `stop_reason` tag, `turns`, usage numbers). **Always** writable without redaction heap; **must not** lose current-run terminal summary to redaction/card OOM |
+| Prior-run terminal | when a **new** run starts, previous terminal may demote into ordinary FIFO (then droppable) |
+| Current-run terminal reserve | always available while that run is open |
+| Host-error reserve | always available for fixed host fault codes |
+| “if possible” language | **forbidden** — reserves are mandatory |
+
+## 7. Composition bind matrix (unique)
+
+### 7.1 Permission mode
+
+| Mode | Bind |
+|------|------|
+| **ask** (default) | **must** set `permission_mode=.ask` and `permission_gate = Gate.ask(TuiPermissionAdapter.ask, adapter_ptr)` with non-null stable `ask_ctx`. **Forbidden:** falling through to `StdinPrompter` / stdin y/N |
+| **yolo** | only when user passed explicit `--yolo` / `--permission yolo`; bind `Gate.yolo()`. Jail + shell protect/off still enforce |
+| plan | `session_kind=.plan` still blocks general write/execute per [permissions](./permissions.md) before ask |
+
+Missing AskFn / null ctx in ask mode → Gate deny path; host must still not
+treat that as allow/yolo.
+
+### 7.2 Hunk reviewer (TUI v1)
+
+| Mode | `Options.hunk_reviewer` |
+|------|-------------------------|
+| TUI **ask** | **fixed null** → `apply_hunk` soft `review_unavailable` if reached; **never** `InteractiveHunkReviewer`; **never** stdin/stderr hunk UI |
+| TUI **yolo** | existing explicit **AutoAccept** bind (same product yolo rule as CLI B2); no interactive review |
+| plan / permission deny | no review path (deny before execute) |
+
+No hunk modal in TUI v1. Remember never skips hunk review (product law).
+
+### 7.3 Adapter init order (unique)
+
+```text
+1. Preallocate TUI host state (editor/history/cards/permission/wake) — OOM→exit 1
+2. Install SIGINT Guard successfully — fail→exit 1
+3. Construct address-stable TuiPermissionAdapter + card host (ptrs fixed)
+4. Agent.init(..., .{
+     .permission_mode = ask|yolo,
+     .permission_gate = Gate.ask(...) | Gate.yolo(),
+     .hunk_reviewer = null | AutoAccept,   // §7.2
+     .lifecycle = ...,
+     .observer = ...,                      // optional
+   })
+5. Session.start with create_new|resume_existing|ephemeral only
+6. Require Session.activeRedactor() non-null; bind adapter.redactor =
+   that pointer (Session-owned). If null → fixed error, exit 1, no worker
+7. Enter raw/alt-screen only after 1–6 succeed
+8. On root submit: history push + start single reply worker
+```
+
+Any missing bind / null ctx → deny (permissions) or drop-marker
+(`redaction_unavailable`) for presentation — **never** call
+`redactOptional(null)`.
+
+### 7.4 Control enqueue (UI thread)
+
+| Action | API | UI on error |
+|--------|-----|-------------|
+| Steering | `Session.enqueueSteering` | typed status: `control_empty` / `control_too_long` / `control_queue_full` / `invalid_utf8` |
+| Follow-up | `Session.enqueueFollowUp` | same |
+| Pending | `steeringPending` / `followUpPending` | optional `S:n F:m` |
+| Clear | `clearControlQueues` | **idle-only**, after worker join |
+
+Control text max remains **4096** bytes
+([harness-steering](./harness-steering.md)). Oversize → `MessageTooLong` →
+status `control_too_long` (keep buffer; no truncate-enqueue).
+
+### 7.5 Cancel
 
 | Path | Binding |
 |------|---------|
-| First Ctrl+C while busy | cooperative cancel via existing SIGINT Guard → Agent cancel flag |
-| Observed cancel terminal | show `run_terminal` / stop `cancelled` |
-| Second pending Ctrl+C | hard exit `130`; no promised lifecycle terminal |
-| Idle first Ctrl+C | clean exit `0` per cli-interaction |
+| First Ctrl+C busy | cooperative cancel via Guard → Agent flag |
+| Observed cancel | show truthful `run_terminal` / `cancelled` |
+| Second pending Ctrl+C | hard exit **130**; no promised lifecycle terminal; **tty restore not guaranteed** (§9.4) |
+| Idle first Ctrl+C | clean exit **0** per cli-interaction |
 
-TUI must **not** install a second competing SIGINT handler. Reuse CLI Guard
-lifecycle.
+TUI must **not** install a second SIGINT handler.
 
-### 6.4 Errors
+## 8. Redaction and trust (all outward arbitrary bytes)
 
-| Class | Display |
-|-------|---------|
-| Session start failure | host_error; exit/non-zero or return to idle without run cards |
-| Reply error after start | failed terminal truth from product; show stop reason |
-| Control enqueue error | status line only; no fake `control_applied` |
-| Permission deny | Tool soft result via normal tool_end path; modal closes |
+### 8.1 Mandatory redact-before-publish
 
-## 7. Permission ask adapter (fail-closed)
+For **every** outward presentation of arbitrary bytes, including:
 
-### 7.1 Defaults (unchanged)
+- assistant text (lifecycle + observer)
+- tool id / name / arguments / body
+- control_applied text
+- session path display
+- any host_error / title / note that embeds user or model content
 
-- Default permission mode: **ask**
-- Workspace jail: unchanged
-- Shell policy default: **protect**
-- `--yolo` only when **explicitly** selected; never implied by TUI build
-- yolo does **not** bypass jail or shell policy
-- Plan mode still blocks general write/execute per [permissions](./permissions.md)
-- Hunk review remains separate (`HunkReviewer`); TUI v1 does **not** implement
-  hunk-review UI (interactive hunk review stays CLI stderr path unless a later
-  task binds it). Missing hunk reviewer stays fail-closed
-  (`review_unavailable`), never allow
-
-### 7.2 Ask binding
+**Pipeline (unique order):**
 
 ```text
-TuiPermissionAdapter implements AskFn
-  → Gate.ask(adapter.ask, adapter_ptr)
-  → Agent.Options.permission_gate = gate   (ask mode)
-  → Agent.Options.permission_mode = .ask
+full source slice
+  → Redactor.redactAlloc(gpa, full_input)   // Session-owned, non-null
+  → on success: UTF-8 validate → truncate to cap with marker (§8.2)
+  → copy into preallocated host slot
+  → free temporary redactAlloc buffer
 ```
 
-When `permission_mode=ask` and `ask_fn` is missing, Gate already **denies**
-dangerous ops. TUI **must** install an AskFn in interactive ask mode.
-**Missing seam must never be treated as allow or yolo.**
+| Condition | Published bytes (exact) |
+|-----------|-------------------------|
+| redaction OOM / `redactAlloc` error | ASCII `redaction_failed` |
+| redactor pointer missing / null bind | ASCII `redaction_unavailable` |
+| after redaction, invalid UTF-8 | ASCII `invalid_utf8` |
+| success | redacted, UTF-8-safe truncated body |
 
-### 7.3 Modal presentation (bounded / redacted)
+**Forbidden:**
 
-| Field | Source | Bound |
-|-------|--------|------:|
-| `risk` | `descriptor.capabilities.risk.label()` | enum label only |
-| `args_len` | `arguments_json.len` | decimal length only |
-| `tool` | optional: redacted `descriptor.definition.name` | ≤ **64** bytes host buffer |
-| arguments body | **not shown** in v1 modal | — |
+- raw fallback of unredacted source
+- `redactOptional(null)` (null redactor is **not** a pass-through path for TUI)
+- retaining borrowed callback pointers past callback return
+- writing secrets to stdout/stderr or durable new schemas
 
-Redaction: run tool name through the same product `Redactor` the Agent/Session
-owns (`activeRedactor`) into a host buffer **inside AskFn before any render**.
-On redaction OOM / failure → show tool as `—` and **still** require explicit
-allow/deny (fail-closed default remains deny on EOF).
+**Exempt from redaction** (enum / numeric / fixed codes only):
+`ok`, `stop_reason` tag, turn counters, usage integers, risk label enum,
+`args_len`, fixed status codes like `cards_dropped=<n>`, `busy_locked`.
 
-### 7.4 Modal decisions
+Permission modal: risk + args_len are numeric/enum; optional tool name uses
+the same redactAlloc pipeline into ≤ **64** byte title-class buffer.
+Arguments **body is never shown** in v1 modal.
 
-| Input / failure | Decision |
-|-----------------|----------|
-| `a` / `A` | allow |
-| `d`/`D`/`n`/`N` / Esc / Enter | deny |
-| EOF on input | deny |
-| render failure before decision | deny |
-| read failure | deny |
-| cancel observed before decision | deny (and cooperative cancel continues) |
-| adapter panic | process failure; no false allow |
+### 8.2 Truncation marker (exact)
 
-Remember: still exact lexical request-path remember owned by Gate; TUI must
-not implement a parallel remember store. Remember never skips hunk review.
+| Constant | Value |
+|----------|-------|
+| Truncation marker | exact 14-byte ASCII `...[truncated]` |
+| Body cap | `card_body_max_bytes` = 4096 |
+| Title cap | `card_title_max_bytes` = 128 |
 
-## 8. Redaction and trust
+Truncated output length **≤ cap**, composed as:
 
-### 8.1 Borrowed callback bytes
+```text
+valid_utf8_prefix(redacted, cap - 14)  ++  "...[truncated]"
+```
 
-Lifecycle and Observer payloads are **borrowed only for the callback**.
-Host rules:
+Do **not** call U+2026 / Unicode ellipsis “ASCII”. Marker is the 14-byte
+ASCII sequence above. Empty prefix after redaction → publish marker only if
+cap ≥ 14, else publish empty and treat as drop-marker fault
+(`redaction_failed` preferred for zero-capacity edge — should not occur with
+frozen caps).
 
-1. Copy needed bytes into **host-owned** buffers before returning.
-2. Copy size ≤ card/editor constants above.
-3. On OOM: drop that presentation copy; never retain raw pointer; never
-   write secrets to plain stdout.
-4. On oversize: UTF-8-safe truncate + `…`.
-5. On invalid UTF-8: display `invalid_utf8` marker, not raw bytes.
-6. Never persist raw preview into Session schema, Trace, or new files.
+### 8.3 Channel isolation
 
-### 8.2 Channel isolation
-
-| Mode | stdout | stderr | TUI terminal |
-|------|--------|--------|--------------|
+| Mode | stdout | stderr | TUI tty |
+|------|--------|--------|---------|
 | plain CLI | final text | logs/prompts | unused |
 | headless | `headless-v1` only | diagnostics | unused |
-| TUI | **must not** emit headless envelopes; avoid plain final-text protocol on stdout while alt-screen/TUI owns the tty | diagnostics allowed | exclusive interactive channel |
+| **TUI** | **renderer exclusive**; **must not** emit headless envelopes or plain final-text protocol | **fixed diagnostics only**; during normal alt-screen **must not** print raw user/model content | exclusive interactive channel |
 
-TUI must not pollute headless stdout purity tests. Enabling TUI is a distinct
-mode (see §9).
-
-## 9. Flags, modes, and `-Dtui`
+## 9. Flags, modes, exit, and tty matrix
 
 ### 9.1 Build
 
 | Item | Binding |
 |------|---------|
-| `-Dtui` | optional bool, **default false** (already declared in root `build.zig`) |
-| default tests | no TUI link; Kernel no-TUI scan remains |
-| `-Dtui=true` | may compile TUI package/module + optional terminal dep |
+| `-Dtui` | default **false** |
+| default tests | no TUI resolve/build; Kernel scan green |
+| `-Dtui=true` | may build `zag-tui` + lazy terminal dep |
 
-### 9.2 Runtime mode mutex
+### 9.2 Runtime flag matrix (product TUI v1)
 
-| Combination | Result |
-|-------------|--------|
-| `--json` + `--json-stream` | exit **2** (existing) |
-| headless + REPL (no prompt) | exit **2** (existing) |
-| `--tui` + `--json` | exit **2**, message requires mutual exclusion |
-| `--tui` + `--json-stream` | exit **2** |
-| `--tui` on binary built with `-Dtui=false` | exit **2**, exact class: TUI unavailable — **no** silent REPL fallback |
-| `--tui` without TTY | exit **2** or host_error — **no** silent headless conversion |
-| default (no `--tui`) | existing plain/REPL/headless unchanged |
+Product TUI v1 is an **interactive shell only**: **no positional prompt**.
 
-**No silent fallback** that changes semantics (TUI request must not become
-yolo, headless, or plain without user-visible error).
+| Combination | Exit | stdout | stderr |
+|-------------|-----:|--------|--------|
+| `--json` + `--json-stream` | 2 | empty protocol rules as today | fixed |
+| `--tui` + `--json` | **2** | empty | mutual exclusion |
+| `--tui` + `--json-stream` | **2** | empty | mutual exclusion |
+| `--tui` + `--doctor` | **2** | empty | mutual exclusion |
+| `--tui` + positional prompt | **2** | empty | mutual exclusion |
+| `--tui` + `--verbose` / `-v` | **2** | empty | reject (keeps stderr free of verbose raw dumps) |
+| `--tui` on `-Dtui=false` binary | **2** | empty | TUI unavailable — **no** REPL fallback |
+| `--tui` and **either** stdin or stdout is not a TTY | **2** | **empty** | fixed non-tty diagnostic |
+| `--help` with `--tui` (no json) | **0** | normal help text path as CLI help | help may use stderr per existing help rules; **must not** init TUI / raw mode |
+| `--help` with `--tui` and json flags | **2** | follow existing parse/mutex with headless | — |
+| default without `--tui` | existing | existing | existing |
 
-### 9.3 Dual-backend and terminal truth
+**Allowed with `--tui`** (still subject to validation):
 
-std and curl HTTP backends remain orthogonal. TUI does not alter provider
-control claims. Plain/headless exit matrices remain authoritative for those
-modes.
+- `--ask` / `--yolo` / `--permission`
+- `--plan`
+- `--shell-policy`
+- `-s` / `--session`, `-c` / `--continue`
+- `--trace` / resource / model / provider flags that plain interactive allows
+- `--stream` (provider SSE request; orthogonal; no headless envelopes)
+- `--no-remember`, `--no-project`, skills/templates trust flags
 
-## 10. Implementation Gate matrix (later node)
+### 9.3 Exit code table (TUI mode)
 
-Executable fixtures for the **implementation** track (not this docs node):
+| Scenario | Exit |
+|----------|-----:|
+| Idle EOF (Ctrl+D empty buffer) / clean interactive quit | **0** |
+| Idle first Ctrl+C | **0** |
+| Arg / mode / build-unavailable / non-TTY | **2** |
+| Preallocate OOM, Guard install fail, Session.start fail (before raw), terminal &lt; 20×5 | **1** |
+| Runtime init / unrecoverable host after start (non-signal) | **1** |
+| Second pending SIGINT | **130** |
+
+Session.start failure: **before** raw mode — fixed redacted/generic stderr
+(no absolute secret paths), exit **1**. **Not** “idle with error card”.
+
+Terminal geometry &lt; 20×5: **before** raw mode — fixed stderr, exit **1**.
+
+### 9.4 Tty restore honesty
+
+| Path | Restore raw/alt-screen |
+|------|------------------------|
+| Clean idle exit, cooperative cancel completed + join, host closing after join | **must** restore tty |
+| Second SIGINT `_exit(130)` / kill / panic | **not guaranteed**; **must not** claim scrollback wipe or secret zeroization |
+| Busy renderer fatal | leave alt-screen if possible → fixed stderr explaining cancel/wait/Ctrl+C escape → wait worker join → no fake success |
+
+## 10. Bounded multiline editor and in-process history
+
+### 10.1 Limits
+
+| Constant | Value |
+|----------|------:|
+| `editor_max_bytes` | **65536** |
+| `editor_max_lines` | **512** |
+| `history_capacity` | **64** |
+| `history_entry_max_bytes` | **8192** |
+
+### 10.2 UTF-8 and oversize
+
+| Condition | Behavior |
+|-----------|----------|
+| Incomplete UTF-8 while typing | allowed until submit/enqueue |
+| Submit / Alt+S / Alt+F invalid UTF-8 | reject; status `invalid_utf8`; no dispatch/enqueue |
+| Insert exceeds byte/line cap | reject that insert/paste chunk entirely |
+| History entry &gt; 8192 | store valid UTF-8 prefix ≤ 8192; empty prefix → skip push |
+
+### 10.3 Keys
+
+| Key | Idle | Busy (no modal) | Permission modal |
+|-----|------|-----------------|------------------|
+| **Enter** | root submit if len&gt;0 (no trim); empty ignored | ignored (`busy_locked`) | **deny** |
+| **Alt+Enter** / **Ctrl+J** | insert `\n` | insert `\n` | ignored |
+| **Esc** | clear status notes only | clear draft selection only | **deny** |
+| **Ctrl+C** | cli-interaction | cli-interaction | cli-interaction |
+| **Ctrl+D** | empty buffer → idle EOF exit **0**; non-empty ignored | enter **closing** (deny pending modal, cooperative cancel, wait join) | **deny** then if still busy enter **closing** |
+| **Up/Down** | history walk | disabled | ignored |
+| **a/A** | insert | insert | **allow** |
+| **d/D/n/N** | insert | insert | **deny** |
+| **Alt+S** | enqueue steering if valid; keep buffer; status queued/error | same | ignored |
+| **Alt+F** | enqueue follow-up | same | ignored |
+
+### 10.4 History dispatch point (unique)
+
+History push occurs **only** when root submit is **accepted for worker
+dispatch** (buffer valid UTF-8, non-empty, pre-busy, worker start begins).
+
+- Not on failed UTF-8
+- Not on Alt+S/F control-only
+- Not on busy_locked ignored Enter
+- If worker **fails to start** after push, entry may remain (acceptable);
+  must not call `Agent.reply` without the push already recorded for that
+  accepted dispatch attempt
+
+History is **process-only** — never Session JSONL / Trace / new schema.
+Do not reload from durable Session on resume.
+
+## 11. Implementation Gate matrix (later node)
+
+Fixtures below are **implementation-track** (not this docs node). Fault
+injection is required where noted.
 
 | # | Fixture | Expect |
 |---|---------|--------|
-| 1 | Default `-Dtui=false` build/test | green; no TUI dep |
-| 2 | `-Dtui=true` compile | links TUI; Kernel still clean |
-| 3 | Editor byte/line caps | reject oversize insert; valid UTF-8 submit |
-| 4 | History capacity 64 / entry 8 KiB | ring drop oldest; no durable file |
-| 5 | Lifecycle ordering | run_start → … → one run_terminal |
-| 6 | End-only tool_end cancelled/steered | no fake tool_start card |
-| 7 | Hard mid-call gap | tool_start without tool_end + failed/non-success terminal |
-| 8 | Permission fail-closed | EOF/render/read fail → deny; missing AskFn ≠ allow |
-| 9 | Session create/resume identity | no forged resumed; path validated |
-| 10 | Ctrl+C | idle 0; active cancel; second 130 per cli-interaction |
-| 11 | Render/input/OOM/drop | no success invent; drop markers |
-| 12 | plain + headless std/curl | unchanged green |
-| 13 | Kernel import scan | no TUI imports in core/coding-agent |
-| 14 | Mode mutex | `--tui`+json exit 2; `--tui` without build exit 2 |
-| 15 | Docs/diff | contract remains consistent |
+| 1 | `-Dtui=false` default build/test | no TUI resolve; plain/headless green |
+| 2 | `-Dtui=true` compile + import scan | `zag-tui` links; core/coding-agent have no TUI import |
+| 3 | Editor byte/line caps | reject oversize; valid UTF-8 submit |
+| 4 | History 64×8 KiB | ring behavior; no durable file; push only on accepted dispatch |
+| 5 | Lifecycle ordering | `run_start`→…→one `run_terminal` |
+| 6 | End-only tool_end cancelled/steered | no fake `tool_start` card |
+| 7 | Hard mid-call gap | start without end + truthful terminal |
+| 8 | Permission fail-closed | EOF/render/read/null ctx → deny; missing AskFn ≠ allow |
+| 9 | Permission rendezvous concurrency | single slot; worker wait; UI decide; no worker stdin |
+| 10 | Worker busy controls | Alt+S/F from UI thread; root submit locked; single-flight |
+| 11 | Callback/UI concurrency | no TTY I/O in callback; short lock publish; wake; no deadlock |
+| 12 | Host close + blocked provider | closing chrome; deny modal; cancel; wait; **no** silent unbounded wait; SIGINT escape |
+| 13 | Join/deinit order | no clear/deinit before join; after join idle clear ok |
+| 14 | Session create/resume only | `create_new`/`resume_existing`; **no** product `open_or_create`; no false resumed |
+| 15 | Configured secret in **every** lifecycle/observer arbitrary field | rendered output contains marker / redacted form; **never** raw secret |
+| 16 | Redaction OOM | fixed `redaction_failed`; no raw fallback |
+| 17 | Missing redactor / null ask_ctx | `redaction_unavailable` / deny; no `redactOptional(null)` path |
+| 18 | Exact trunc cap | body/title ≤ cap; ends with exact `...[truncated]` when truncated |
+| 19 | Full ring + simultaneous terminal + OOM/drop | terminal reserve retained; drop note non-recursive; saturating count |
+| 20 | TUI ask hunk null | `review_unavailable`; never InteractiveHunkReviewer/stdin |
+| 21 | TUI yolo AutoAccept | no interactive review; jail/shell still apply |
+| 22 | Non-TTY stdin or stdout | exit **2**, stdout empty, fixed stderr |
+| 23 | Mode matrix | tui+json/stream/doctor/prompt/verbose → exit **2**; help+tui → 0 no TUI init |
+| 24 | Geometry &lt; 20×5 | exit **1** before raw |
+| 25 | Session.start fail | exit **1** before raw; generic/redacted stderr |
+| 26 | Ctrl+C | idle 0; active cancel; second 130; hard path **no false restore claim** |
+| 27 | Cooperative restore | clean/closing-after-join restores tty |
+| 28 | plain + headless std **and** curl | unchanged green |
+| 29 | Docs/diff | contract consistency |
 
-## 11. Non-goals
+## 12. Non-goals
 
 - Theme platform, dashboard, images, cost explorer
 - Plugin / extension UI host (E2/E3 view trees)
 - RPC / ACP / editor protocol
 - OS sandbox / process-tree preemption
 - Multi-file edit transactions; Core/session-v1/Trace-v1/headless-v1 schema edits
-- Maturity raises (any row), including Tools write/edit L3 and Runtime Extensions > L0
-- Pi TUI API parity or wholesale vaxis port
+- Maturity raises (any row), including Tools write/edit L3 and Runtime Extensions &gt; L0
+- Pi TUI API parity or **wholesale vaxis port**
 - Persisting editor history or new UI schema
 - Token-delta lifecycle invention
+- `open_or_create` product chrome / host-tracked branch lies
+- `zag-cli/src/tui` alternate package owner
 - This contract node adding packages, deps, or product code
 
-## 12. Contract-node acceptance (docs only)
+## 13. Contract-node acceptance (docs only)
 
 - [x] Binding module authored (`docs/modules/tui-minimal.md`)
 - [x] Task file authored (`docs/plan/tasks/tui-minimal-001.md`)
-- [ ] Independent architecture/ownership contract review **PASS**
-- [ ] Independent safety/fail-closed contract review **PASS**
+- [x] Round-1 architecture + safety **BLOCKED** findings addressed in this freeze
+- [ ] Independent architecture/ownership **re-review** PASS
+- [ ] Independent safety/fail-closed **re-review** PASS
 - [ ] Docs lint + score + `git diff --check` green on candidate
 - [ ] **No** C9 product implementation acceptance checked off as done
 - [ ] **No** maturity row raise; **no** “TUI implemented” claim
