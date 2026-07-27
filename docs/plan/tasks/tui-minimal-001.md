@@ -29,7 +29,7 @@ done, and does **not** claim maturity or Linux tip evidence.
 
 | Track | Status |
 |-------|--------|
-| Contract freeze (this node) | **candidate** — round-1 BLOCKED fixed @ `a38f0ec`; signal-host/order follow-up; **re-review pending** |
+| Contract freeze (this node) | **candidate** — BLOCKED closed @ `a38f0ec`; signal-host @ `6c73e46`; teardown order follow-up; **re-review pending** |
 | Overall product task | **`ready`** for re-review; **implementation BLOCKED** |
 | Production TUI implementation | **not started** — blocked (see split below) |
 | Maturity / C9 product acceptance | **unchanged / not claimed** |
@@ -72,6 +72,9 @@ results and merge.
 - Follow-up: Guard install **after** `Agent.init`; `SignalHost` defined by
   `zag-tui`, implemented by CLI over `sigint.Guard`; post-join
   `acknowledge_cancel`; ≤250 ms poll timeout for coalesced wakes
+- Follow-up A11/B-S10: final teardown
+  ack → restore tty → App quiesce → **Guard.deinit** → Session.deinit →
+  Agent.deinit → App free last (Guard unbind/drain before Agent storage free)
 
 # path
 
@@ -111,6 +114,7 @@ Do not restate conflicting rules here.
 | Dep direction | CLI → `zag-tui` only; **no** TUI import of CLI/`sigint`; `SignalHost` defined by TUI, implemented by CLI over Guard |
 | Init order | App prealloc → `Agent.init` → `Guard.install(&agent.cancel)` → `Session.start` → bind redactor/SignalHost → raw |
 | Post-join | every worker join success/error → `SignalHost.acknowledge_cancel` before idle (avoid false second SIGINT) |
+| Final teardown | ack → restore tty → App quiesce (keep storage) → Guard.deinit → Session.deinit → Agent.deinit → App free; never Agent before Guard |
 | Wake | bounded nonblocking drop-on-full + poll timeout ≤250 ms |
 | Concurrency | UI + single reply worker; short locks; permission single-slot rendezvous; no worker TTY I/O |
 | Session | product `create_new`/`resume_existing` only; no `open_or_create` product path |
@@ -122,6 +126,7 @@ Do not restate conflicting rules here.
 
 - [x] Round-1 architecture + safety **BLOCKED** findings closed @ `a38f0ec`
 - [x] Signal host / Guard-after-Agent order follow-up recorded (still not PASS)
+- [x] Teardown order A11/B-S10 follow-up recorded (still not PASS)
 - [ ] Independent **architecture / ownership** contract **re-review** PASS
 - [ ] Independent **safety / fail-closed** contract **re-review** PASS
 - [ ] `python3 scripts/lint_docs.py`
@@ -157,7 +162,8 @@ Do not restate conflicting rules here.
 |-------|-----|
 | Contract candidate (initial freeze) | `d01d70b7d02566f0354f976775dab020399d0df5` |
 | Blocker-close follow-up | `a38f0ecde46d9f0c948f3a36dd8f46b1a7aad66f` |
-| Signal-host / Guard order follow-up | tip with message `docs: fix TUI signal host ordering` |
+| Signal-host / Guard order follow-up | `6c73e4652a737b3fead0dbd15a2c661ebe66cfda` |
+| Teardown order follow-up | tip with message `docs: fix TUI teardown ordering` |
 | Contract PASS record | pending re-review |
 | Implementation | blocked |
 | Closeout | blocked |

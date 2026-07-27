@@ -18,13 +18,12 @@ It freezes how a host TUI may assemble public `zag-coding-agent` /
 product TUI, does **not** mark C9 implementation acceptance complete, and
 does **not** raise any maturity row.
 
-**Review state:** round-1 independent architecture and safety reviews were
-**BLOCKED**; unique freezes landed at `a38f0ec`. This follow-up fixes
-SIGINT/Guard **init order** vs live `Agent.cancel` and freezes a CLI-implemented
-`SignalHost` port (no `zag-tui` → `zag-cli` import). Re-review is **pending**
-(do not treat as PASS until re-review records say so). Implementation remains
-**BLOCKED** until architecture/ownership + safety/fail-closed contract reviews
-**PASS** and this contract merges. See [task](../plan/tasks/tui-minimal-001.md).
+**Review state:** round-1 reviews **BLOCKED** (closed @ `a38f0ec`); signal-host
+init order @ `6c73e46`; this tip freezes **final/failure teardown** so
+`Guard.deinit` (unbind + in-flight drain) always precedes `Agent.deinit` (A11 /
+B-S10). Re-review is **pending**. Implementation remains **BLOCKED** until
+architecture/ownership + safety/fail-closed contract reviews **PASS** and this
+contract merges. See [task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
@@ -259,7 +258,8 @@ directly.
 | Missing SignalHost | exit **1** before raw; no degrade |
 | Busy close / host fatal | set `closing=true`; **deny** any pending permission slot and signal; request cooperative cancel via **Agent cancel flag** (already Guard-bound); enter **visible waiting** (`closing`); keep two-phase Ctrl+C escape via Guard state (not forged by TUI) |
 | Wait honesty | UI waits for worker join. **std HTTP backend may block** in DNS/connect/TLS/response-head; there is **no** automatic graceful host timeout. Documented as **user-visible wait** + second Ctrl+C hard escape `130`. **Forbidden:** “silent unbounded wait” without visible closing chrome |
-| After worker ends | join → `SignalHost.acknowledge_cancel` (§2.5) → restore tty when possible (§9.4) on final exit path; deinit only when idle: App/Session/Agent, then Guard |
+| After worker ends (multi-run) | join → §2.5 ack → `idle` (App/Agent/Session/Guard stay live for next run) |
+| Final TUI exit / installed-Guard failure | **only** §2.6 teardown order — never free Agent before Guard unbind/drain |
 | Success invent | **forbidden** — no completed chrome on close/fatal |
 
 ### 2.5 Guard acknowledge after every worker join
@@ -277,6 +277,63 @@ next root submit / next run:
    own cancel flag on reply completion (existing product behavior). Guard
    pending state is **independent** and **must** be acknowledged via
    SignalHost. Programmatic cancel must not forge Guard pending.
+
+### 2.6 Final / failure teardown order (unique; A11 / B-S10)
+
+Applies only when **no reply worker is running** (joined or never started)
+and **no** Lifecycle/Observer/`AskFn` callback can re-enter. Source-aligned
+with `sigint.Guard.deinit`: disable → atomic unbind `agent.cancel` → restore
+prior `sigaction` → drain in-flight → then release Agent storage.
+
+#### 2.6.1 Final cooperative / normal TUI exit (Guard was installed)
+
+Exact order — **no OR**, **no** “App/Session/Agent then Guard”:
+
+```text
+1. SignalHost.acknowledge_cancel          // success and error workers already did this
+                                            // on multi-run; still once more if pending
+                                            // on final exit before Guard.deinit
+2. Restore tty / leave raw / alt-screen     // MUST on cooperative/normal paths after join
+3. App → quiesced / detach                  // forbid further SignalHost calls, workers,
+                                            // callbacks; DO NOT free App storage yet
+                                            // (Agent.Options still holds adapter/lifecycle
+                                            //  ptrs into App until Agent.deinit)
+4. Guard.deinit + CLI SignalHost adapter teardown
+     - disable handler state
+     - atomic unbind agent.cancel flag pointer
+     - restore prior sigaction
+     - drain in-flight handler entries to 0
+     - release Guard ownership (one-shot latch stays set — no reinstall)
+5. Session.deinit                           // idle-only; ONLY after Guard.deinit
+6. Agent.deinit                             // frees cancel flag storage AFTER unbind+drain
+7. App.deinit / free last                   // adapter storage last
+```
+
+**Why Session after Guard (unique):** Guard may still be draining handlers that
+loaded the bound `agent.cancel` address. Session does not own that flag, but
+teardown must keep **all** Agent-owned storage (including cancel) alive until
+step 4 completes. Freeing Session first is allowed **only** after step 4;
+the frozen order places Session at step 5 so no alternate “Session before
+Guard” path exists.
+
+#### 2.6.2 Failure paths after Guard.install succeeded
+
+Same Guard-before-Agent rule. Examples:
+
+| Failure | Order |
+|---------|-------|
+| `Session.start` fails after Guard install | no worker → (skip ack if never pending) → **no** raw enter → `Guard.deinit` → `Agent.deinit` → free App if allocated → exit **1** |
+| Missing redactor / SignalHost bind after Session.start | `Session.deinit` **only after** `Guard.deinit`: `Guard.deinit` → `Session.deinit` → `Agent.deinit` → App free → exit **1** |
+| Reply error then host exit | join → ack (§2.5) → §2.6.1 full order |
+| Success then host exit | join → ack → §2.6.1 full order |
+
+If **Guard.install never succeeded**, omit all Guard/SignalHost steps; deinit
+only what was constructed (e.g. Agent then App).
+
+#### 2.6.3 Hard paths (honest)
+
+Second SIGINT `_exit(130)` / kill / panic: **no** promised restore or ordered
+deinit (unchanged). Do not claim scrollback wipe or secret zeroization.
 
 ## 3. Data-source matrix
 
@@ -543,20 +600,23 @@ Order is therefore **Agent before Guard** (not Guard-before-Agent).
      ...
    })
 3. CLI Guard.install(&agent.cancel)
-     - failure → fixed stderr, exit 1; deinit Agent; **no** Guard reinstall
-       attempt (one-shot install latch — [cli-interaction](./cli-interaction.md))
+     - failure → fixed stderr, exit 1; Agent.deinit; App free if needed;
+       **no** Guard step (never installed); **no** reinstall attempt
+       (one-shot latch — [cli-interaction](./cli-interaction.md))
 4. CLI Session.start (create_new | resume_existing | ephemeral only)
-     - failure → CLI deinit Guard, deinit Agent, fixed redacted/generic stderr,
-       exit 1; **no** one-shot Guard reinstall
+     - failure → §2.6.2: Guard.deinit **then** Agent.deinit; exit 1;
+       **no** one-shot Guard reinstall
 5. Bind into App (still before raw mode):
      - Session-owned non-null activeRedactor() into adapter
      - Agent* / Session* (borrowed for TUI session lifetime)
      - SignalHost port wrapping the live Guard (CLI-implemented)
-     - missing redactor or missing SignalHost → deinit Session/Guard/Agent,
-       exit 1
+     - missing redactor or missing SignalHost → §2.6.2:
+       Guard.deinit → Session.deinit → Agent.deinit → App free; exit 1
 6. Enter raw / alt-screen only after 1–5 succeed
 7. On accepted root submit: history push + start single reply worker
 8. After every worker join: SignalHost.acknowledge_cancel (§2.5) then idle
+9. Final exit: §2.6.1 full teardown (Guard.deinit before Agent.deinit;
+   App free last)
 ```
 
 Any missing bind / null ctx → deny (permissions) or drop-marker
@@ -720,9 +780,9 @@ Terminal geometry &lt; 20×5: **before** raw mode — fixed stderr, exit **1**.
 
 | Path | Restore raw/alt-screen |
 |------|------------------------|
-| Clean idle exit, cooperative cancel completed + join, host closing after join | **must** restore tty |
+| Clean idle exit, cooperative cancel completed + join, host closing after join | **must** restore tty **after join**, as §2.6.1 step 2 (before Guard/Agent free) |
 | Second SIGINT `_exit(130)` / kill / panic | **not guaranteed**; **must not** claim scrollback wipe or secret zeroization |
-| Busy renderer fatal | leave alt-screen if possible → fixed stderr explaining cancel/wait/Ctrl+C escape → wait worker join → no fake success |
+| Busy renderer fatal | **must** leave alt-screen / restore on recoverable path after join (or best-effort before wait if needed for stderr), fixed stderr explaining cancel/wait/Ctrl+C escape → wait worker join → §2.6.1 → no fake success |
 
 ## 10. Bounded multiline editor and in-process history
 
@@ -785,10 +845,13 @@ injection is required where noted.
 | 2 | `-Dtui=true` compile + import scan | `zag-tui` links; core/coding-agent have no TUI import; **`zag-tui` has no `zag-cli` / `sigint` import** |
 | 3 | Init order | App prealloc → Agent.init → Guard.install(&agent.cancel) → Session.start → bind redactor/SignalHost → raw; Guard never before Agent |
 | 4 | Missing SignalHost | exit **1** before raw; no TUI degrade |
-| 5 | Session.start fail after Guard | exit **1**; deinit Guard+Agent; **no** Guard reinstall |
+| 5 | Session.start fail after Guard | exit **1**; **Guard.deinit before Agent.deinit**; **no** Guard reinstall |
 | 6 | Worker join success **and** error | each path calls `SignalHost.acknowledge_cancel` before idle |
 | 7 | Two successive runs | each run’s **first** Ctrl+C is cooperative cancel, not accidental hard **130** (ack between runs) |
 | 8 | Wake coalescing / pipe full | drop write ok; ≤250 ms poll timeout still surfaces terminal card + permission modal |
+| 8a | Final teardown order (inject/observe) | after join: ack → restore tty → App quiesce (storage kept) → **Guard.deinit unbind+in-flight drain completes** → Session.deinit → Agent.deinit → App free last; prove Agent.cancel storage lives until after Guard drain |
+| 8b | Teardown after reply error exit | same §2.6.1 order; App adapter ptrs valid until Agent.deinit |
+| 8c | Teardown Session.start / missing SignalHost | Guard.deinit before Session/Agent free; no raw mode |
 | 9 | Editor byte/line caps | reject oversize; valid UTF-8 submit |
 | 10 | History 64×8 KiB | ring behavior; no durable file; push only on accepted dispatch |
 | 11 | Lifecycle ordering | `run_start`→…→one `run_terminal` |
@@ -799,7 +862,7 @@ injection is required where noted.
 | 16 | Worker busy controls | Alt+S/F from UI thread; root submit locked; single-flight |
 | 17 | Callback/UI concurrency | no TTY I/O in callback; short lock publish; wake; no deadlock |
 | 18 | Host close + blocked provider | closing chrome; deny modal; cancel; wait; **no** silent unbounded wait; SIGINT escape |
-| 19 | Join/deinit order | no clear/deinit before join; ack then idle clear ok |
+| 19 | Join/deinit order | no clear/deinit before join; ack then idle; final §2.6.1 Guard before Agent |
 | 20 | Session create/resume only | `create_new`/`resume_existing`; **no** product `open_or_create`; no false resumed |
 | 21 | Configured secret in **every** lifecycle/observer arbitrary field | rendered output contains marker / redacted form; **never** raw secret |
 | 22 | Redaction OOM | fixed `redaction_failed`; no raw fallback |
