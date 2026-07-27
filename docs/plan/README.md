@@ -25,8 +25,8 @@ docs/plan/
 | Session fork | **done** at `0a3087f` — idle-only durable child, parent immutability, schema v1, SDK 21/21; Session remains L2 |
 | E1 Skills | **done** at `caafef5` — passive discovery/catalog/`read_skill`/activation; SDK 22/22; Runtime Extensions remains L0 |
 | Linux SIGINT raw errno | **done** at `bc737025` — `ci-hang-sigint-linux-errno-001`; candidate Gate std 611/611, curl 610/610; merged-main local macOS std 611/611, curl 610/610; maturity unchanged |
-| CI safety fuses | **done** — [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md); binding [quality/README](../quality/README.md); `.github/workflows/ci.yml` top-level concurrency + `jobs.test` 30m timeout; no push; maturity unchanged |
-| Next code task | **Planned:** process-idle fixture + final merged-path Linux dual-backend Gate remain before `prompt-templates-001`. CI fuses are host rails only (not product hang proof). Broader Linux reliability is **not** closed by errno or fuses alone. |
+| CI safety fuses | **done/closed** at `97f43de` — [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md); binding [quality/README](../quality/README.md); exact fuses `${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress: true` + 30m/job; full dual-OS dual-backend retained; independent review + ff-only local merge; **no push**; maturity unchanged |
+| Next code task | **Planned:** `ci-hang-sigint-process-idle-001` (no task file yet) then final merged-path Linux dual-backend Gate remain before `prompt-templates-001`. CI fuses are host rails only (not product hang proof). Broader Linux reliability is **not** closed by errno or fuses alone. |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -50,7 +50,14 @@ preserving unrelated canonical `.gitignore` (**no push**). Merged-main local mac
 **91**, security **72**, committed-range diff clean. Pure raw-Linux decoder regression ran in both std and
 curl-linked test artifacts. Maturity unchanged. Broader Linux reliability remains open (no fresh post-fix remote
 Linux runner; process-idle and final merged-path Linux Gate still planned).
-CI fuses (`ci-hang-ci-fuses-001`) landed as host concurrency + 30m job timeout rails only.
+CI fuses (`ci-hang-ci-fuses-001`) **closed** at `97f43de` as host rails only
+(`group: ${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress: true`,
+30m per matrix job; full ubuntu/macos + std/curl retained; no `continue-on-error`).
+Independent review → `candidate_for_coordinator`; coordinator ff-only local main
+`af293b0` → `97f43de` preserving unrelated canonical `.gitignore` (**no push**);
+merged-main local macOS Gate again std **40/40 · 611/611**, curl **42/42 · 610/610**,
+OpenAPI **287/287**, catalog **40**, docs lint, readability **91**, security **73**.
+Remote Actions fuse enforcement and process-idle are **not** claimed.
 
 Historical Gate detail remains in each completed task and [maturity](../maturity.md). The accepted capability baseline is [2026-07-26 Pi alignment](./analysis/2026-07-26-pi-zig-alignment.md); historical production-floor assessments are frozen evidence, not the current product roadmap.
 
@@ -68,7 +75,7 @@ completed foundation
           cli-sigint-001 (M0, done) ✅
                   │
                   ├─► ci-hang-sigint-linux-errno-001 (P0, done @ bc737025) ✅
-                  │     ├─► ci-hang-ci-fuses-001 (done; host concurrency + 30m timeout)
+                  │     ├─► ci-hang-ci-fuses-001 (done/closed @ 97f43de; host fuses only)
                   │     ├─► ci-hang-sigint-process-idle-001 (planned; no task file yet)
                   │     └─► final merged-path Linux dual-backend Gate (planned)
                   │     remaining before prompt-templates: process-idle
@@ -117,9 +124,11 @@ raw-Linux decoder regressions ran in both std and curl-linked test artifacts. It
 and does not raise maturity. **Broader Linux reliability remains open:** no fresh post-fix remote Linux runner ran in
 the closeout session; planned `ci-hang-sigint-process-idle-001` (task file not yet authored) and a final merged-path
 Linux dual-backend Gate remain required before `prompt-templates-001`.
-[ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) is **done** as host rails only (concurrency + 30m job
-timeout; timeout/cancel ≠ product hang proof). Task priorities express safety impact; the dependency chain, not
-priority labels, fixes delivery order.
+[ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) is **done/closed** at `97f43de` as host rails only
+(`workflow+ref` concurrency cancel-in-progress + 30m/job; timeout/cancel ≠ product hang proof; remote Actions
+enforcement not claimed). Next reliability node is planned `ci-hang-sigint-process-idle-001` (no task link until
+authored), then final remote Linux dual-backend Gate. Task priorities express safety impact; the dependency chain,
+not priority labels, fixes delivery order.
 
 The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Zag-native `rpc-v1`, runtime model data, theme, and extension UI are distinct planned capabilities, not ready tasks or implementation claims.
 
@@ -137,7 +146,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
-| [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) | P0 | done | CI concurrency + 30m job timeout fuses on dual-OS dual-backend matrix; host rails only; process-idle + remote Linux Gate still open; maturity unchanged |
+| [ci-hang-ci-fuses-001](./tasks/ci-hang-ci-fuses-001.md) | P0 | done/closed @ `97f43de` | Exact fuses `${{ github.workflow }}-${{ github.ref }}` + cancel-in-progress + 30m/job; dual-OS dual-backend retained; review + ff-only local merge; no push; process-idle + remote Linux Gate still open; maturity unchanged |
 | [ci-hang-sigint-linux-errno-001](./tasks/ci-hang-sigint-linux-errno-001.md) | P0 | done | Raw Linux `std.os.linux.errno` decode for SIGINT self-pipe under curl/`link_libc`; closed at `bc737025`; maturity unchanged; broader Linux reliability still open |
 | [skills-001](./tasks/skills-001.md) | P1 | done | E1 passive Agent Skills; closed at `caafef5`; Runtime Extensions remains L0 |
 | [session-fork-001](./tasks/session-fork-001.md) | P1 | done | Safe idle-only durable Session fork; closed at `0a3087f`; schema v1 and Session L2 unchanged |

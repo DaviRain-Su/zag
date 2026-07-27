@@ -23,18 +23,22 @@ Also: `zig build docs-lint` / `zig build test`
 
 **Task:** [ci-hang-ci-fuses-001](../plan/tasks/ci-hang-ci-fuses-001.md)
 
-**Status:** done (workflow fuses landed in `.github/workflows/ci.yml`;
-process-idle + final remote Linux Gate still open; maturity unchanged).
+**Status:** **done/closed** at reviewed tip `97f43de` (workflow fuses landed
+in `.github/workflows/ci.yml`; independent review + ff-only local merge
+complete; **no push**; process-idle + final remote Linux Gate still open;
+maturity unchanged).
 
 **Depends on:** [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 (done @ `bc737025`).
 
 **Does not close:** `ci-hang-sigint-process-idle-001` (planned; no task file
-yet), final merged-path Linux dual-backend Gate, remote Linux runner evidence,
-or any maturity row.
+yet — no task link until authored), final merged-path Linux dual-backend
+Gate, remote GitHub Actions fuse-enforcement evidence, or any maturity row.
 
-Target workflow: `.github/workflows/ci.yml` (top-level concurrency +
-`jobs.test.timeout-minutes: 30`).
+Target workflow: `.github/workflows/ci.yml` — exact fuses:
+`concurrency.group: ${{ github.workflow }}-${{ github.ref }}`,
+`cancel-in-progress: true`, `jobs.test.timeout-minutes: 30` per matrix OS
+job; full ubuntu/macos + std/curl steps retained; no `continue-on-error`.
 
 ## Ownership
 
@@ -176,13 +180,21 @@ Forbidden masking:
 5. No `continue-on-error` masking; triggers unchanged; no secrets/permissions
    expansion.
 
-### Local product Gate (implementation closeout)
+### Local product Gate (implementation closeout) — complete
 
-1. Local std full suite green.
-2. Local curl full suite green.
-3. Docs lint + score thresholds + committed-range `git diff --check`.
+1. Candidate + merged-main local macOS: std **40/40 · 611/611**, curl
+   **42/42 · 610/610**; OpenAPI **287/287**; catalog **40**.
+2. Docs lint + score (readability **91** / security **73**) + committed-range
+   `git diff --check` clean.
+3. Independent review (`zag-task-delivery-4` → `candidate_for_coordinator`);
+   coordinator ff-only local main `af293b0` → `97f43de` preserving unrelated
+   canonical `.gitignore`; **no push**.
 4. Explicit record: process-idle + final remote Linux Gate still pending;
-   timeout/cancel not used as product correctness evidence.
+   timeout/cancel not used as product correctness evidence; remote Actions
+   fuse enforcement **not** claimed exercised.
+
+Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
+`97f43de`.
 
 ## Related
 

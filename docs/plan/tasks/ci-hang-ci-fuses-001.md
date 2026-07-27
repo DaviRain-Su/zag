@@ -53,7 +53,7 @@ errno decode, or idle fixtures are correct.
 |------|--------|--------------|
 | [ci-hang-sigint-linux-errno-001](./ci-hang-sigint-linux-errno-001.md) | **done** @ `bc737025` | Required predecessor; raw Linux errno decode under `link_libc` |
 | `ci-hang-sigint-process-idle-001` | planned (no task file yet) | Separate idle process-fixture reliability; **not** this node |
-| **ci-hang-ci-fuses-001** (this) | **done** (workflow fuses) | Workflow concurrency + per-job timeout only |
+| **ci-hang-ci-fuses-001** (this) | **done/closed** @ `97f43de` | Workflow concurrency + per-job timeout only; review + ff-only merge complete; **no push** |
 | final merged-path Linux dual-backend Gate | planned | Fresh remote Linux runner after idle + fuses; still required before prompt-templates |
 
 ## Out of path (hard)
@@ -280,45 +280,64 @@ or documented checklist — but F1 keys are **mandatory** before `done`.
 - [x] One local docs commit on `task/ci-hang-ci-fuses-001`
 - [x] Docs node: no product Zig; no maturity raise; no push
 
-## Implementation Gate
+## Implementation Gate (complete)
 
 - [x] F1a–F1h static shape pass (workflow concurrency + job timeout; matrix/steps/triggers preserved; no continue-on-error)
 - [x] F2a–F2e local std/curl/docs/diff pass (host gates; timeout/cancel not product proof)
-- [ ] Independent review; ff-only merge path; no soft-success masking
+- [x] Independent review (`zag-task-delivery-4` → `candidate_for_coordinator`); ff-only merge path; no soft-success masking
+- [x] Merged-main local macOS dual-backend Gate after ff-only advance
 - [x] Record that process-idle + final remote Linux Gate remain open
 
 # delivery evidence
 
 | Item | Evidence |
 |------|----------|
-| Contract | `docs/quality/README.md` (CI safety fuses section); docs-first @ `f0ccca6` |
-| Task | this file `done` (implementation) |
-| Implementation | `.github/workflows/ci.yml` — top-level `concurrency` + `jobs.test.timeout-minutes: 30` |
-| Fixtures F0 | docs-first commit `f0ccca6` |
-| Fixtures F1–F2 | F1 static shape PASS; local std **611/611**, curl **610/610**; docs-lint readability **91** / security **73**; `git diff --check` clean |
+| Contract | `docs/quality/README.md` (CI safety fuses section); docs-first @ `f0ccca6fa4bb449af03ba6f6901e98e88174d9e5` |
+| Implementation | `.github/workflows/ci.yml` only — top-level `concurrency.group: ${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress: true`, `jobs.test.timeout-minutes: 30`; full `ubuntu-latest`/`macos-latest` + std/curl steps retained; no `continue-on-error`; impl @ `1d3abaa7df0ff2df7b34d82d23f6428cd3206982` |
+| Reviewed candidate | tip `97f43de1924a85cc1ecf27a5ae1645a9c641e168` |
+| Review | `zag-task-delivery-4` independent review → `candidate_for_coordinator`; clean candidate Gate: std **40/40 steps · 611/611**, curl **42/42 steps · 610/610**, docs lint + score, committed-range diff clean |
+| Merge | coordinator inspected exact `.github/workflows/ci.yml` delta (only top-level workflow+ref concurrency/cancel + job `timeout-minutes: 30`); ff-only advanced local main `af293b0` → `97f43de` while preserving unrelated canonical `.gitignore`; **no push** |
+| Merged-main Gate (local macOS) | std **40/40 steps · 611/611**; curl **42/42 steps · 610/610**; OpenAPI **287/287**; catalog **40**; docs lint; readability **91**; security **73**; committed-range diff clean |
 | Maturity | **unchanged** |
-| Not claimed | remote Linux runner; process-idle; product hang closed by timeout alone; push; independent review/ff-merge |
+| Not claimed | remote GitHub Actions fuse enforcement exercised; fresh post-fix remote Linux runner; process-idle fixed; final Linux reliability closed; prompt-templates unblocked; maturity raise; push |
 
 # non-goals (task boundary)
 
-See §9. No product code, no remote run, no push. Broader Linux reliability
-still requires process-idle + final merged-path Linux dual-backend Gate
-before prompt-templates.
+See §9. No product code, no remote Actions enforcement proof, no push.
+Broader Linux reliability still requires planned process-idle work
+(`ci-hang-sigint-process-idle-001`; task file not yet authored) + final
+merged-path Linux dual-backend Gate before prompt-templates.
 
 # closeout
 
-Implementation landed: top-level concurrency
-`group: ${{ github.workflow }}-${{ github.ref }}` with
-`cancel-in-progress: true`, and `jobs.test.timeout-minutes: 30` on the
-mandatory dual-OS dual-backend matrix. All prior steps/triggers preserved;
-no `continue-on-error`; no product Zig; maturity unchanged; **no push**.
+- Contract: `f0ccca6fa4bb449af03ba6f6901e98e88174d9e5`.
+- Implementation: `1d3abaa7df0ff2df7b34d82d23f6428cd3206982` — exact fuses:
+  - top-level `concurrency.group: ${{ github.workflow }}-${{ github.ref }}`
+  - `cancel-in-progress: true`
+  - `jobs.test.timeout-minutes: 30` (per matrix OS job)
+  - full `ubuntu-latest` + `macos-latest` matrix and full sequential std/curl
+    steps retained; no `continue-on-error`.
+- Reviewed final candidate: `97f43de1924a85cc1ecf27a5ae1645a9c641e168`.
+- Independent review (`zag-task-delivery-4`): `candidate_for_coordinator`
+  with clean candidate Gate (std **40/40 · 611/611**, curl **42/42 · 610/610**,
+  docs lint + score, committed-range diff clean).
+- Coordinator ff-only advanced local main `af293b0` → `97f43de` while
+  preserving unrelated canonical `.gitignore`. **No push.**
+- Merged-main local macOS Gate again: std **40/40 · 611/611**, curl
+  **42/42 · 610/610**, OpenAPI **287/287**, catalog **40**, docs lint,
+  readability **91**, security **73**, range diff clean.
+- Predecessor `ci-hang-sigint-linux-errno-001` remains done @ `bc737025`.
+- This narrow CI-fuse node is **done/closed** (host rails only).
 
-Predecessor `ci-hang-sigint-linux-errno-001` remains done @ `bc737025`.
+**Still open (explicit; not this node):**
+- next reliability node: `ci-hang-sigint-process-idle-001` (planned; **no
+  task file / no task link until authored**)
+- then final merged-path remote Linux dual-backend Gate
+- prompt-templates remain blocked on that residual chain
 
-**Still open (explicit):**
-- `ci-hang-sigint-process-idle-001` (planned; no task file yet)
-- final merged-path Linux dual-backend Gate (fresh remote Linux runner)
-- independent review + ff-only merge for this branch
+**Not claimed:** remote GitHub Actions timeout/cancel enforcement exercised;
+fresh post-fix remote Linux passed; process-idle fixed; final Linux
+reliability closed; prompt-templates unblocked; maturity raised.
 
 Timeouts and concurrency cancellations remain **visible failures/cancellations**
 only — never product SIGINT/errno/idle correctness evidence.

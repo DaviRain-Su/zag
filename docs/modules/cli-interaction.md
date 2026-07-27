@@ -22,8 +22,12 @@ raw-Linux decoder regression ran in both std and curl-linked test artifacts.
 runner in the closeout session; planned process-idle fixture work (task file
 not yet authored) and a final merged-path Linux dual-backend Gate remain
 required before prompt-templates work. [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md)
-are **done** as host rails only (binding [quality/README](../quality/README.md);
-concurrency + 30m job timeout; timeout/cancel ≠ product hang proof).
+are **done/closed** at `97f43de` as host rails only (binding
+[quality/README](../quality/README.md); exact fuses
+`${{ github.workflow }}-${{ github.ref }}` + `cancel-in-progress: true` + 30m per
+matrix job; full dual-OS dual-backend retained; no `continue-on-error`; review +
+ff-only local merge; **no push**; timeout/cancel ≠ product hang proof; remote
+Actions fuse enforcement not claimed).
 
 ## Ownership boundary
 
