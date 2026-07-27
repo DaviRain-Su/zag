@@ -4,7 +4,7 @@
 |------|---------|
 | Code | `packages/zag-coding-agent/src/runtime/{edit_tools,fs_tools}.zig`; `toolset.zig` |
 | Current maturity | **L2** — write/edit after h-edit-integrity-001; read/search after h-read-search-bounds-001 closeout; Phase H closed at `d22ce6e` via fresh 11-sentence integration audit PASS/panel SHIP |
-| C4 first slice | **contract PASS** at `07b8dab` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)); first-slice implementation on branch (merged-main closeout pending); Tools · write/edit remains **L2**; **no L3 maturity claim** |
+| C4 first slice | **done** at `7be5151` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)); contract PASS @ `07b8dab`/`f13b0f8` → impl/fix/closeout; Tools · write/edit remains **L2**; **no L3 maturity claim**; local macOS Gates only (no current-tip Linux/remote) |
 | Target | L2 H correctness → L3 C4 sharpness (after implemented Gate, not this docs freeze alone) |
 | Reference | Hyper hashline; omp; Codex apply_patch |
 
@@ -114,14 +114,15 @@ Phase H remember keys are exact lexical request-path strings. An alias re-prompt
 
 ## L3 / C4 first-slice binding contract (`edit-sharpness-001`)
 
-> **Status:** docs contract freeze for M2/C4 — independent architecture/API,
-> safety/transaction, and final adjudication all **PASS** on candidate `07b8dab`
-> (zero blockers after B1–B8). First-slice production code (`apply_hunk`,
-> `include_digest`, reviewer/verifier ports, CLI bind, §10 fixtures) is on the
-> implementation branch under that freeze; **task remains `in-progress`** until
-> coordinator merged-main closeout. Runtime maturity for Tools · write/edit stays
-> **L2** until a separate implemented Gate explicitly raises it. Session v1, Trace
-> v1, `headless-v1`, `project.zig`, and `--no-project` stay unchanged.
+> **Status:** C4 first-slice **done** at `7be5151` (2026-07-28 local closeout).
+> Contract freeze on candidate `07b8dab` (arch/API + safety + adjudication **PASS**,
+> B1–B8) authorized implementation; delivered under that freeze: `apply_hunk`,
+> `include_digest`, reviewer/verifier ports, CLI bind, §10 fixtures. Independent
+> code review **PASS** (zero blockers) + candidate/merged-main local macOS Gates
+> at `7be5151` (std **655/655**, curl **654/654**). Runtime maturity for Tools ·
+> write/edit stays **L2** (no L3 raise). Session v1, Trace v1, `headless-v1`,
+> `project.zig`, and `--no-project` stay unchanged. **No push**; **no fresh
+> remote/Linux evidence for this tip**.
 
 Authoritative delivery task: [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md).
 Phase map: [C4-edit-sharpness](../phases/C4-edit-sharpness.md).
@@ -291,12 +292,13 @@ Options reviewer/verifier are **not** auto-spliced. Null reviewer on `apply_hunk
 
 - [x] Independent **contract** review PASS on `07b8dab` (architecture/API + safety + adjudication; zero blockers after B1–B8).
 
-**Implementation track (branch evidence; closeout pending)**
+**Implementation track (closed @ `7be5151`)**
 
-- [x] `apply_hunk` + `read_file` `include_digest` match this freeze (B1–B8) on implementation branch.
-- [x] §10 fixture map (named tests) in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) verification: real B1 arm-in-`verifyFn` fail-next, remember≠skip-review, resume+idle fork schema v1, trace/session no preview markers, 2-provider soft failure, SDK public ports (+1 consumer test). Coordinator full dual-backend/curl + code review pending.
+- [x] `apply_hunk` + `read_file` `include_digest` match this freeze (B1–B8).
+- [x] §10 fixture map (named tests) in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md): real B1 arm-in-`verifyFn` fail-next, remember≠skip-review, resume+idle fork schema v1, trace/session no preview markers, 2-provider soft failure, SDK public ports (external consumer **24/24**).
 - [x] Reject/stale/review_unavailable never mutate; bound-verifier non-ok is partial `target=modified`; no typed OOM after replace (B1 preallocated bodies).
-- [ ] Tools · write/edit maturity raised only by a separate explicit Gate (not automatic).
+- [x] Independent code review PASS + candidate/merged-main local macOS dual-backend Gates at `7be5151` (std **655/655**, curl **654/654**).
+- [ ] Tools · write/edit maturity raised only by a separate explicit L3 Gate (not automatic; row remains **L2**).
 
 ## Non-goals for H
 

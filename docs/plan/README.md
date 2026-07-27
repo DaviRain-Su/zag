@@ -29,7 +29,7 @@ docs/plan/
 | Process-idle residual | **done** (Phase B Pass path): [ci-hang-sigint-process-idle-001](./tasks/ci-hang-sigint-process-idle-001.md) — existing idle oracle PASS on fresh remote Linux at tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **611/611** + process fixture **2/2**; curl **610/610** + **2/2**; macOS job success; no product/fixture change; fuses did **not** fire). Current Linux idle status is PASS at that exact tip/run only — not a universal future guarantee. CI fuses remain host rails only. |
 | Final Linux dual-backend Gate | **done** (docs-only): [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) — full remote dual-OS dual-backend Gate closed at exact product tip `8a93ec6` / Actions run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) (Ubuntu std **40/40 · 611/611** + process fixture **2/2** `126ms`; curl **42/42 · 610/610** + **2/2** `126ms`; libcurl install success; macOS job + both std/curl success; OpenAPI **287/287**; catalog **40**; docs **91/73**; fuses configured but **did not fire**). M0 Linux dual-backend reliability closed **only** at that tip/run — not a universal future guarantee. No product/build/`.github` changes after the remote run (base `b953e0b` is two later docs evidence commits only). |
 | Prompt Templates (E1) | **done** at `61326ae` — [prompt-templates-001](./tasks/prompt-templates-001.md) + binding [prompt-templates.md](../modules/prompt-templates.md); passive coding-agent slice + thin CLI routing; Runtime Extensions remains L0 (no E1 maturity raise) |
-| Edit sharpness (C4 first slice) | **contract PASS** at `07b8dab` — [edit-sharpness-001](./tasks/edit-sharpness-001.md) + binding [tools-edit.md](../modules/tools-edit.md) § C4 + [C4-edit-sharpness](../phases/C4-edit-sharpness.md); overall task **in-progress** (first-slice on branch; merged-main closeout pending); Tools · write/edit maturity stays **L2** |
+| Edit sharpness (C4 first slice) | **done** at `7be5151` — [edit-sharpness-001](./tasks/edit-sharpness-001.md) + binding [tools-edit.md](../modules/tools-edit.md) § C4 + [C4-edit-sharpness](../phases/C4-edit-sharpness.md); contract PASS @ `07b8dab`/`f13b0f8` → impl `cfdc81b` → fix `241374a` → docs truth/closeout `7be5151`; candidate + merged-main local macOS std **40/40 · 655/655**, curl **42/42 · 654/654**; coding **375**, CLI **36**, SDK **24/24**; OpenAPI **287**; catalog **40**; docs **92/74**; **no push** / no fresh remote Linux for this tip; Tools · write/edit stays **L2** |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -140,18 +140,20 @@ completed foundation
                            │
                            ▼
           skills-001 (done @ caafef5) ✅ → prompt-templates-001 (done @ 61326ae) ✅
-                    + edit-sharpness-001 (M2; contract PASS @ 07b8dab; branch impl; in-progress/L2)
+                    + edit-sharpness-001 (done @ 7be5151; Tools write/edit L2)
                            │
                            ▼
-                     tui-minimal-001
+                     tui-minimal-001 (planned; task file not yet authored)
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
-`harness-steering-001`, `session-fork-001`, `skills-001`, `prompt-templates-001`, and
-`ci-hang-sigint-linux-errno-001` are complete. `edit-sharpness-001` **contract PASS**
-at `07b8dab` (arch/API + safety + adjudication; zero blockers after B1–B8); overall
-task remains **in-progress** with first-slice implementation on branch (merged-main
-closeout pending; Tools · write/edit stays **L2**). Source
+`harness-steering-001`, `session-fork-001`, `skills-001`, `prompt-templates-001`,
+`edit-sharpness-001`, and
+`ci-hang-sigint-linux-errno-001` are complete. `edit-sharpness-001` closed at
+`7be5151` (contract PASS @ `07b8dab`/`f13b0f8` → impl `cfdc81b` → fix `241374a` →
+docs/closeout `7be5151`; candidate + merged-main local macOS std **655/655**, curl
+**654/654**; Tools · write/edit stays **L2**; no push / no fresh remote Linux for
+this tip). Source
 review rejected the earlier lifecycle design because it would add a third Core event channel while leaving product
 policy/state in the kernel; the replacement coding-agent adapter closed at `aecf402`. Bounded steering/follow-up then
 closed at `a5ff2b7` with Session-owned queues and a thin Core insertion seam. The safe idle-only durable fork closed at
@@ -187,13 +189,13 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
-| [edit-sharpness-001](./tasks/edit-sharpness-001.md) | **in-progress** (M2/C4; **contract PASS** @ `07b8dab`; first-slice on branch) | `apply_hunk` + digest read + mandatory hunk review + optional post-commit verifier; Tools · write/edit stays L2 |
-| `tui-minimal-001` | planned (after M2 edit; task file not yet authored) | minimal host TUI; depends on event/control contracts |
+| `tui-minimal-001` | planned (after M2 edit; task file not yet authored) | minimal host TUI; depends on event/control contracts — **not** claimed ready by edit-sharpness closeout |
 
 ### Completed foundation
 
 | ID | Priority | Status | Scope |
 |----|----------|--------|-------|
+| [edit-sharpness-001](./tasks/edit-sharpness-001.md) | P1 | **done** @ `7be5151` | C4 first slice: `apply_hunk` + `include_digest` + mandatory hunk review + optional post-commit verifier; contract `07b8dab`/`f13b0f8` PASS → impl `cfdc81b` → fix `241374a` → docs `7be5151`; candidate + merged-main local macOS std **40/40 · 655/655**, curl **42/42 · 654/654**; coding **375**, CLI **36**, SDK **24/24**; OpenAPI **287**; catalog **40**; docs **92/74**; no push / no fresh remote Linux for this tip; Tools · write/edit stays **L2** |
 | [prompt-templates-001](./tasks/prompt-templates-001.md) | P1 | **done** @ `61326ae` | E1 passive Prompt Templates; coding-agent discovery/catalog/one-pass expand + thin CLI routing; contract `e00255b` PASS → impl `5487c4b` → fix `61326ae`; candidate + merged-main local macOS std **40/40 · 633/633**, curl **42/42 · 632/632**; OpenAPI **287/287**; catalog **40**; docs **91/73**; no push / no fresh remote Linux for this tip; Runtime Extensions remains L0 |
 | [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md) | P0 | **done** (docs-only Gate) @ tip `8a93ec6` / run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) | Final merged-path remote Linux dual-backend Gate; Ubuntu std **40/40 · 611/611** + fixture **2/2** `126ms`, curl **42/42 · 610/610** + **2/2** `126ms`; macOS success; OpenAPI **287/287**; catalog **40**; docs **91/73**; `waitBounded(4000)` + idle 0 + std 130/curl 11 + `linuxRawErrno` + exact fuses preserved; fuses did **not** fire; M0 dual-backend reliability closed **at exact tip/run only**; prompt-templates unblocked for planning; maturity unchanged |
 | [ci-hang-sigint-process-idle-001](./tasks/ci-hang-sigint-process-idle-001.md) | P0 | **done** (Phase B) @ tip `8a93ec6` / run [30273762011](https://github.com/DaviRain-Su/zag/actions/runs/30273762011) | Idle process-fixture residual; Ubuntu std **611/611** + fixture **2/2**, curl **610/610** + **2/2**; macOS success; no product/fixture change; `waitBounded(4000)` + std 130/curl 11 preserved; final Linux Gate closed by [linux-dual-backend-gate-001](./tasks/linux-dual-backend-gate-001.md); maturity unchanged |

@@ -7,8 +7,8 @@
 | 失败模式 | stale/whitespace 锚点导致误改；用户无法审阅将落盘的变化 |
 | 模块 | [tools-edit](../modules/tools-edit.md) L2 runtime + **C4 first-slice contract freeze** |
 | Task | [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) |
-| 合同状态 | **contract PASS** at `07b8dab` (arch/API + safety + adjudication; zero blockers after B1–B8); first-slice implementation on branch (merged-main closeout pending); Tools · write/edit remains **L2** |
-| 成熟度 | Tools · write/edit remains **L2** (no L3 row raise from docs alone; no current-tip Linux claim) |
+| 合同状态 | **done** at `7be5151` — contract PASS @ `07b8dab`/`f13b0f8` → impl/fix/closeout; Tools · write/edit remains **L2** |
+| 成熟度 | Tools · write/edit remains **L2** (no L3 row raise; local macOS Gates only; no current-tip Linux/remote claim) |
 
 ## 目标
 
@@ -32,12 +32,12 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 | Public surface (B7) | Root re-exports + `Agent.Options.hunk_reviewer` / `post_edit_verifier`; default Agent-owned `ApplyHunkState`; custom toolset does not auto-splice Options ports |
 | Schemas | Session v1 / Trace v1 / headless-v1 / `project.zig` / `--no-project` **unchanged** |
 
-## 近期范围（implementation after PASS）
+## 第一切片交付（closed @ `7be5151`）
 
-1. Implement `apply_hunk` + `read_file` digest option per freeze (B1–B8);
-2. CLI thin bind + interactive stderr protocol;
-3. Fixture matrix §10 on dual-backend Gates (incl. fail-next post-replace + digest boundaries);
-4. Keep legacy `search_replace`/`write_file` behavior stable.
+1. `apply_hunk` + `read_file` digest option per freeze (B1–B8) ✅
+2. CLI thin bind + interactive stderr protocol ✅
+3. Fixture matrix §10 on dual-backend local macOS Gates (incl. fail-next post-replace + digest boundaries) ✅
+4. Legacy `search_replace`/`write_file` behavior stable ✅
 
 ## 后移
 
@@ -58,7 +58,7 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 - [x] Maturity text still claims Tools · write/edit **L2** only;
 - [x] Contract PASS authorizes **only** a later separately dispatched implementation node; no product code in this contract lineage.
 
-### Implementation track (branch evidence; closeout pending)
+### Implementation track (closed @ `7be5151`)
 
 - [x] stale digest precondition + **revalidate** non-mutating deterministic fixtures；
 - [x] 拒绝单个 hunk 后磁盘 byte-equal 且无 temp；interactive cancel flag never accepts；
@@ -66,8 +66,8 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 - [x] B1: post-replace fail-next allocator keeps exact partial `target=modified`；bound verifier non-ok never `apply_hunk_success`；
 - [x] B3/B4 digest type/cap/body formula fixtures；
 - [x] 默认 Tool 描述仍优先 search_replace / apply_hunk over whole-file overwrite；
-- [x] focused std package Gates + named §10 fixture map (curl dual-backend + independent code review = coordinator)；
-- [ ] Coordinator merged-main closeout / delivery decision (task stays `in-progress`；no L3 claim).
+- [x] Independent code review PASS + candidate/merged-main local macOS dual-backend Gates at `7be5151`（std **655/655**、curl **654/654**；coding **375**、CLI **36**、SDK **24/24**；docs **92/74**）；
+- [x] Coordinator ff-only local main `f13b0f8` → `7be5151`；**no push**；**no fresh remote/Linux evidence for this tip**；Tools · write/edit stays **L2**。
 
 ## 对标
 

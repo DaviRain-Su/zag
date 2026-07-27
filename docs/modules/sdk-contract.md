@@ -15,10 +15,10 @@
 > queues, required Core `ControlInput`, and lifecycle `control_applied`. Idle-only durable `Session.fork` closed at
 > `0a3087f`. E1 passive Skills public options/activation closed at `caafef5` (`skills-001`). E1 passive Prompt Templates
 > public options/parse/expand closed at `61326ae` (`prompt-templates-001`). The current external
-> fixture is **24/24** (was **23/23** after Prompt Templates at `61326ae`; +1 edit-sharpness public-ports smoke on the implementation branch). None of these enrichments reopen the `ebdd7ab` SDK-ready Gate, change a schema version, or raise
+> fixture is **24/24** (was **23/23** after Prompt Templates at `61326ae`; +1 edit-sharpness public-ports smoke closed at `7be5151`). None of these enrichments reopen the `ebdd7ab` SDK-ready Gate, change a schema version, or raise
 > a maturity row (Runtime Extensions remains L0).
 >
-> **C4 edit sharpness (contract PASS @ `07b8dab`; first-slice on implementation branch):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)
+> **C4 edit sharpness (done @ `7be5151`; Tools write/edit L2):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)
 > public root re-exports `HunkReviewer`, `HunkReviewPreview`, `HunkReviewDecision`, `PostEditVerifier`,
 > `PostEditVerifyResult` and exact `Agent.Options.hunk_reviewer: ?HunkReviewer = null` plus
 > `post_edit_verifier: ?PostEditVerifier = null` (B7). Default built-in Agent owns heap-stable `ApplyHunkState` that
@@ -27,8 +27,8 @@
 > auto-spliced. Null reviewer on `apply_hunk` → `review_unavailable` (never accept). Explicit host-injected
 > AutoAccept-equivalent is bound, not missing. Null verifier → post-commit `verification=not_configured` only.
 > Preview slices are borrowed only for the `reviewFn` call. No Core ports, no session/Trace/headless schema change,
-> and no Tools · write/edit maturity raise until a separate implemented Gate. Task remains `in-progress` until
-> coordinator merged-main closeout.
+> and no Tools · write/edit maturity raise (row remains L2). External consumer **24/24** after public-ports smoke.
+> Local macOS Gates only at this tip; **no push** / **no fresh remote Linux claim**.
 
 ## 1. What is covered
 
@@ -281,7 +281,7 @@ owned durable child through exclusive `createNewWithRedactor`. Binding rules:
 - the external SDK consumer fork API + durable smoke passed in fixture **21/21** at
   session-fork closeout; Skills closeout was **22/22** at `caafef5`; Prompt Templates
   at `61326ae` was **23/23**; current fixture is **24/24** after edit-sharpness public-ports
-  smoke on the implementation branch;
+  smoke closed at `7be5151`;
 - Session remains **L2**; no tree/journal/`parent_id` or maturity elevation is
   claimed.
 

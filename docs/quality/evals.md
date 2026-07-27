@@ -10,7 +10,7 @@
 | Fault/persistence | Session, trace, context, and cancellation failures preserve truth | P0/P1 |
 | Security | Permission, containment, policy, and redaction cannot regress | P0/P1 |
 | Provider contract | Fixed bytes map to canonical turn/error/cancel behavior | H6 |
-| Edit eval | Anchor/patch correctness and recovery; C4 `apply_hunk` / digest / review / verify named §10 fixtures (task verification map) | H2/C4 (branch; L2) |
+| Edit eval | Anchor/patch correctness and recovery; C4 `apply_hunk` / digest / review / verify named §10 fixtures (task verification map) | H2/C4 first-slice done @ `7be5151`; Tools write/edit **L2** |
 | Shell runtime | Stable policy/runtime outcomes, capture budget, direct-child cleanup, and Agent trace composition | H2/P1 |
 | External consumer | Public source SDK composition compiles and runs outside product defaults | SDK gate |
 | Headless E2E | Stable process output/errors/exit status | **done/L2** at `a1a1e0f` — process fixture 4/4 (real `zag` + mock provider, both backends); panel SHIP; dual-backend Gate passed |
@@ -158,7 +158,7 @@ Merged-main evidence at `ebdd7ab`:
 1. unique anchor replacement succeeds;
 2. ambiguous/missing/stale anchors fail without mutation and are recoverable after reread;
 3. H2 adds the target-preserving `edit-v1` fault matrix above;
-4. C4 first slice (`edit-sharpness-001`, **contract PASS** @ `07b8dab`; first-slice implementation on branch, task **in-progress**/L2) freezes and exercises fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md) including B1–B8:
+4. C4 first slice (`edit-sharpness-001`, **done** @ `7be5151`; Tools write/edit **L2**) freezes and exercises fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md) including B1–B8:
    - valid single-hunk `apply_hunk` success with default `verification=not_configured`;
    - stale `expected_sha256` precondition + **`stage=revalidate`**; invalid hex length/charset → `invalid_arguments` (not stale);
    - missing/ambiguous/oversize/empty-anchor/`not_found` soft failures;

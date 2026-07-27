@@ -3,7 +3,7 @@
 | 文档 | 轨道 | 状态 |
 |------|------|------|
 | [H-harden.md](./H-harden.md) | Production Floor | L2 closeout（single-user trusted-host）|
-| [C4-edit-sharpness.md](./C4-edit-sharpness.md) | Capability | 依赖 H；`edit-sharpness-001` **contract PASS** @ `07b8dab` (branch impl; in-progress/L2) |
+| [C4-edit-sharpness.md](./C4-edit-sharpness.md) | Capability | 依赖 H；`edit-sharpness-001` **done** @ `7be5151` (Tools write/edit L2；local macOS only) |
 | [C5-context.md](./C5-context.md) | Capability | 依赖 H；含 Memory Repo（[modules/memory.md](../modules/memory.md)） |
 | [C6-orchestration.md](./C6-orchestration.md) | Capability | 依赖 H |
 | [C7-sandbox.md](./C7-sandbox.md) | Capability | 依赖 H |

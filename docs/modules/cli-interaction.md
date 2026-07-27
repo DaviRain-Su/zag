@@ -45,8 +45,8 @@ explicit one-shot/REPL/headless `/skill:`-first then known `/name` expansion via
 the public coding-agent API. Maturity and Runtime Extensions L0 unchanged; no
 TUI/autocomplete claim.
 
-**C4 edit sharpness (contract only):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)
-freezes a future **thin** CLI role with **exact first-match bind precedence** (B2):
+**C4 edit sharpness (done @ `7be5151`):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)
+delivers a **thin** CLI role with **exact first-match bind precedence** (B2):
 
 1. plan/permission deny → no review path;
 2. else `--yolo` → bind explicit **`AutoAcceptHunkReviewer`** for **all** yolo modes
@@ -60,10 +60,9 @@ freezes a future **thin** CLI role with **exact first-match bind precedence** (B
 
 Never treat missing/null as accept; never reuse permission `StdinPrompter`
 (risk+args_len) as hunk review; remember never skips review. Production CLI thin
-bind (`InteractiveHunkReviewer` / `autoAcceptHunkReviewer` via B2) is on the
-implementation branch; verifier remains null on CLI built-in path (no doctor/model
-command). No headless-v1 schema change. Task stays `in-progress` until coordinator
-merged-main closeout.
+bind (`InteractiveHunkReviewer` / `autoAcceptHunkReviewer` via B2) is shipped;
+verifier remains null on CLI built-in path (no doctor/model command). No
+headless-v1 schema change. Tools · write/edit stays **L2**.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +

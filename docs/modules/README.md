@@ -11,7 +11,7 @@
 | [core-boundary.md](./core-boundary.md) | D-011 done | thin Core + coding-agent product facade | Core owns Loop/contracts; coding-agent owns product policy/state/lifecycle adapter |
 | [loop-turn.md](./loop-turn.md) | H1 | `packages/zag-agent-core/src/loop.zig` | required kernel seams complete; bounded steering v1 closed at `a5ff2b7`; parallel read-only Tools remain L3 |
 | [tool-runtime.md](./tool-runtime.md) | H/P0 **L2** → SDK | `zag-types` ToolDefinition + ToolCapabilities；Core `tool.zig` | keep generic registry/validation in Core |
-| [tools-edit.md](./tools-edit.md) | H2 **L2** → C4 first-slice **contract PASS** @ `07b8dab` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md); branch impl, in-progress/L2) | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent；无 Core edit ports |
+| [tools-edit.md](./tools-edit.md) | H2 **L2** → C4 first-slice **done** @ `7be5151` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md); Tools write/edit L2) | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent；无 Core edit ports |
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | coding-agent `runtime/edit_tools.zig` + `shell_policy.zig` | future process supervisor remains separate |
 | [permissions.md](./permissions.md) | H3 **L2** | `zag-coding-agent/src/permissions.zig` | concrete product policy stays in coding-agent; required Core seam |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | Core `protocol_history.zig`/`context_view.zig` + coding-agent `context.zig` | ownership split complete; future repo-map work separate |
@@ -61,7 +61,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [core-boundary.md](./core-boundary.md) | D-011 | thin Core ownership and serialized migration contract |
 | [loop-turn.md](./loop-turn.md) | H1 | harness 主循环 |
 | [tool-runtime.md](./tool-runtime.md) | H/P0 → SDK | model definition / runtime capabilities / stateful handler |
-| [tools-edit.md](./tools-edit.md) | H2 **L2** → C4 contract PASS @ `07b8dab` | 编辑 / grep / glob；`apply_hunk` C4 first-slice on branch (in-progress/L2) |
+| [tools-edit.md](./tools-edit.md) | H2 **L2** → C4 first-slice done @ `7be5151` | 编辑 / grep / glob；`apply_hunk` C4 first slice shipped (Tools write/edit L2) |
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | shell 执行 |
 | [permissions.md](./permissions.md) | H3 | 权限矩阵 / plan 语义 |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | 四层 prompt / 压缩 |

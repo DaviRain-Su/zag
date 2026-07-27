@@ -80,7 +80,7 @@ Plan mode permits read and reserved plan-file writes (`plan.md`, `.zag/plan.md`,
 
 ## C4 note — hunk review is not permission prompt
 
-`edit-sharpness-001` (contract PASS @ `07b8dab`; first-slice on branch, task in-progress/L2;
+`edit-sharpness-001` (done @ `7be5151`; Tools write/edit L2;
 [tools-edit](./tools-edit.md)) freezes a coding-agent-owned **`HunkReviewer`**
 separate from this Gate:
 
