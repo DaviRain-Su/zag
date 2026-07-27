@@ -1,6 +1,6 @@
 ---
 id: tui-minimal-001
-scope: host-shell/tui-minimal (M2 / C9 contract PASS; product impl not started)
+scope: host-shell/tui-minimal (M2 / C9; contract PASS; implementation candidate)
 status: ready
 priority: P1
 depends-on:
@@ -13,14 +13,14 @@ depends-on:
 
 # objective
 
-Freeze the **minimal host TUI binding contract** so a later implementation
-node can assemble public coding-agent / CLI APIs into a small interactive
-shell **without** inventing lifecycle kinds, weakening ask/jail/shell,
+Freeze the **minimal host TUI binding contract** and deliver an **implementation
+candidate** that assembles public coding-agent / CLI APIs into a small
+interactive shell **without** inventing lifecycle kinds, weakening ask/jail/shell,
 polluting headless stdout, or placing UI logic in Kernel packages.
 
-This task node is **docs-only**. It does **not** implement a product TUI,
-does **not** check off C9 product acceptance as done, and does **not** claim
-maturity or Linux tip evidence.
+Contract track remains **PASS**. Implementation is a **candidate awaiting
+independent code review + coordinator task/main Gates** — not product “done”,
+not maturity raise, not Linux/remote claim.
 
 **Binding specification:** [tui-minimal.md](../../modules/tui-minimal.md)
 (+ phase constraints in [C9-product-shell.md](../../phases/C9-product-shell.md)).
@@ -29,11 +29,11 @@ maturity or Linux tip evidence.
 
 | Track | Status |
 |-------|--------|
-| Contract freeze (this node) | **PASS** @ candidate `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` — independent architecture/ownership + safety/fail-closed final re-reviews, **zero blockers**; A1–A11 / B-S1–B-S10 closed |
-| Overall product task | **`ready`** — contract track done; product implementation **not started** (needs future Goal/impl node) |
-| Production TUI implementation | **not started** — not auto-started by contract PASS or merge |
+| Contract freeze | **PASS** @ `c7a8f3a` — independent arch+safety re-reviews, zero blockers |
+| Implementation candidate | **in this worktree** (`task/tui-minimal-001-impl`) — `packages/zag-tui` + CLI wire + §11 tests; **awaiting independent code review + coordinator Gates** |
+| Overall product task | **`ready`** (contract) + **implementation candidate** (not claimed done) |
 | Maturity / C9 product acceptance | **unchanged / not claimed** |
-| Session v1 / Trace v1 / headless-v1 / Core | **must remain unchanged** by later impl |
+| Session v1 / Trace v1 / headless-v1 / Core | **unchanged** by this impl |
 
 ## Contract vs implementation split
 
@@ -126,13 +126,17 @@ PASS-record tip.
 - [x] No maturity raise; no “TUI implemented” / current-tip Linux claim
 - [ ] Full std/curl product Gate — **not run on this tip**; do not invent numbers
 
-# verification (implementation track — later; not started)
+# verification (implementation track — candidate)
 
-- [ ] Full matrix in [tui-minimal.md §11](../../modules/tui-minimal.md)
+- [x] Package `packages/zag-tui` + lazy `-Dtui` root/cli wire (default false)
+- [x] Named §11 unit/integration/process fixtures (see zag-tui `tests_gate.zig` + CLI `tui_process_fixture.zig`)
+- [x] `zig build test` (default false) green on implementer host
+- [x] `zig build test -Dtui=true` green on implementer host
+- [x] `zig build test -Dtui=true -Dhttp_backend=curl` green on implementer host
+- [x] Kernel import scan green; plain/headless path retained
 - [ ] Independent code review PASS
-- [ ] Candidate + merged-main dual-backend Gates on that tip
-- [ ] Kernel import scan green; plain/headless unchanged
-- [ ] No schema/maturity inflation unless separate Gate
+- [ ] Coordinator task/main Gates (not claimed by implementer)
+- [ ] No maturity row raise; no Linux/remote claim
 
 # non-goals
 

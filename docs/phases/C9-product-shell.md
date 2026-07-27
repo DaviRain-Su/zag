@@ -36,12 +36,11 @@ Contract: [headless](../modules/headless-contract.md).
 ## Scheduled minimal TUI
 
 Prerequisites `harness-events-001` and `harness-steering-001` are closed. The
-**docs-only binding contract** is [tui-minimal.md](../modules/tui-minimal.md)
-([task](../plan/tasks/tui-minimal-001.md), status `ready` — **contract PASS** @
-`c7a8f3a`, product implementation **not started**). Independent architecture
-and safety final re-reviews **PASS** (zero blockers). Docs-only contract may
-ff-only merge; a separate future Goal must open the implementation node. This
-phase does **not** claim a shipped TUI or maturity raise.
+**binding contract** is [tui-minimal.md](../modules/tui-minimal.md)
+([task](../plan/tasks/tui-minimal-001.md) — **contract PASS** @ `c7a8f3a`). An
+**implementation candidate** exists under `packages/zag-tui/` (lazy `-Dtui`,
+CLI wire) and is **awaiting independent code review + coordinator Gates** —
+not claimed done, **no** maturity row raise, **no** Linux/remote tip claim.
 
 Contract freezes (detail in the module — do not fork):
 

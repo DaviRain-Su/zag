@@ -25,7 +25,7 @@
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | idle-only durable `Session.fork`; closed at `0a3087f` | schema v1 unchanged; Session remains L2; no tree/journal claim |
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | implemented (`skills-001` @ `caafef5`); coding-agent only | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | implemented (`prompt-templates-001` @ `61326ae`); coding-agent only + thin CLI routing | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
-| [tui-minimal.md](./tui-minimal.md) | M2 / C9 **contract PASS** @ `c7a8f3a` | binding only (`tui-minimal-001`); arch+safety re-review PASS zero blockers; no product TUI | unique `packages/zag-tui`; dual-thread host; redactAlloc; `-Dtui` default false; product impl not started |
+| [tui-minimal.md](./tui-minimal.md) | M2 / C9 **contract PASS** @ `c7a8f3a`; **impl candidate** | `packages/zag-tui` + CLI `-Dtui` wire (`tui-minimal-001`); awaiting independent review + coordinator Gates; **no** maturity raise | unique `packages/zag-tui`; dual-thread host; redactAlloc; `-Dtui` default false |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1 Skills @ `caafef5`; E1 Prompt Templates @ `61326ae`; E2/E3 unimplemented; Runtime Extensions L0 | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
@@ -78,7 +78,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | Idle-only durable `Session.fork`; closed at `0a3087f`; schema v1 and Session L2 unchanged |
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | Passive Agent Skills binding contract (`skills-001` done @ `caafef5`); coding-agent only |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | Passive Prompt Templates binding contract (`prompt-templates-001` done @ `61326ae`); coding-agent only + thin CLI routing |
-| [tui-minimal.md](./tui-minimal.md) | M2 / C9 contract PASS @ `c7a8f3a` | Minimal host TUI binding (`tui-minimal-001`; product impl not started) |
+| [tui-minimal.md](./tui-minimal.md) | M2 / C9 contract PASS @ `c7a8f3a`; impl candidate | Minimal host TUI binding + package candidate (`tui-minimal-001`; awaiting independent review) |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |

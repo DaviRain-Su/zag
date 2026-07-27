@@ -1,6 +1,6 @@
 ---
 status: active
-scope: minimal host TUI binding contract (PASS; not product implementation)
+scope: minimal host TUI binding contract (PASS) + implementation candidate
 task: tui-minimal-001
 prerequisite:
   - harness-events-001
@@ -14,20 +14,21 @@ prerequisite:
 
 This module is the **single authoritative binding** for `tui-minimal-001`.
 It freezes how a host TUI may assemble public `zag-coding-agent` /
-`zag-cli` surfaces. It does **not** ship a product TUI, does **not** mark
-C9 product implementation acceptance complete, and does **not** raise any
-maturity row.
+`zag-cli` surfaces. Contract freeze does **not** by itself mark C9 product
+implementation acceptance complete and does **not** raise any maturity row.
 
 **Contract freeze PASS** at candidate tip
 `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` after independent
 **architecture/ownership** and **safety/fail-closed** final re-reviews
 (**zero blockers**; A1–A11 and B-S1–B-S10 closed). Lineage: initial freeze
 `d01d70b` → blocker close `a38f0ec` → signal-host order `6c73e46` → teardown
-order `c7a8f3a` (PASS tip). Docs-only contract may ff-only merge. **Production
-TUI remains not started.** Implementation must **not** auto-start from this
-node; a later Goal/reconciliation must explicitly open a separate
-implementation delivery node/worktree after contract merge. See
-[task](../plan/tasks/tui-minimal-001.md).
+order `c7a8f3a` (PASS tip).
+
+**Implementation candidate** (separate worktree/branch): package
+`packages/zag-tui/`, lazy `-Dtui` CLI wire, §11 fixtures. Status =
+**implementation candidate awaiting independent code review + coordinator
+task/main Gates** — not “done”, no maturity raise, no Linux/remote claim.
+See [task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
