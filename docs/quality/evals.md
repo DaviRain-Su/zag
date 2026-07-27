@@ -158,17 +158,19 @@ Merged-main evidence at `ebdd7ab`:
 1. unique anchor replacement succeeds;
 2. ambiguous/missing/stale anchors fail without mutation and are recoverable after reread;
 3. H2 adds the target-preserving `edit-v1` fault matrix above;
-4. C4 first slice (`edit-sharpness-001`, **contract-in-progress**; impl **BLOCKED** until independent contract PASS) freezes executable fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md):
+4. C4 first slice (`edit-sharpness-001`, **contract-in-progress**; impl **BLOCKED** until independent contract PASS) freezes executable fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md) including B1–B8:
    - valid single-hunk `apply_hunk` success with default `verification=not_configured`;
-   - stale `expected_sha256` (precondition + revalidate) non-mutating / no temp;
-   - missing/ambiguous/invalid/oversize/empty-anchor soft failures;
+   - stale `expected_sha256` precondition + **`stage=revalidate`**; invalid hex length/charset → `invalid_arguments` (not stale);
+   - missing/ambiguous/oversize/empty-anchor/`not_found` soft failures;
    - insert/delete/newline/UTF-8 raw-byte exactness;
-   - reject → byte-equal, no temp, no verifier;
-   - ask deny / yolo AutoAccept / remember does not skip review / plan deny;
-   - jail/symlink/retarget recheck + contained final symlink preservation;
-   - reviewer missing → `review_unavailable`; verifier pass/fail/timeout/denied/unavailable with post-commit `target=modified` partial truth;
-   - session/resume/fork no durable proposal; Trace v1 / headless-v1 unchanged;
-   - SDK null reviewer fail-closed; CLI interactive vs headless; no extra provider call for local failures;
+   - reject / interactive EOF → byte-equal, no temp, no verifier;
+   - ask deny; yolo AutoAccept **including `--json`/`--json-stream`** (no review UI on stdout); remember does not skip review; plan deny;
+   - jail/symlink/retarget + contained final symlink;
+   - null reviewer → `review_unavailable`; proposal OOM typed pre-commit; verifier pass/fail/timeout/denied/unavailable;
+   - **B1** fail-next allocator **after successful replace** keeps exact preallocated partial `target=modified`; no typed OOM after replace;
+   - **B3/B4** `include_digest` type/cap + N/N+1/meta boundary bodies;
+   - session/resume/fork no durable proposal/preview; Trace v1 / headless-v1 unchanged;
+   - SDK Options ports + root re-exports; custom toolset no auto-splice; CLI stderr-only interactive + stdout purity;
    - std/curl full Gates.
 5. Multi-file policy, multi-hunk apply_patch platform, and maturity L3 raise remain **out of** this first-slice freeze.
 

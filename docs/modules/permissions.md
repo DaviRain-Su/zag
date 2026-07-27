@@ -85,12 +85,16 @@ coding-agent-owned **`HunkReviewer`** separate from this Gate:
 
 - `StdinPrompter` / `formatPermissionPrompt` remain **risk + args_len only** and must
   **not** be extended or labeled as hunk review.
-- Permission allow does **not** satisfy `apply_hunk` review; missing reviewer is
+- Permission allow does **not** satisfy `apply_hunk` review; missing/null reviewer is
   fail-closed (`review_unavailable`), never implicit accept.
 - Lexical path **remember** continues to apply only to write permission; first-slice
-  review decisions are not remembered.
-- Gate order stays ToolPolicy → Jail → ShellPolicy → execute; review runs **inside**
+  review decisions are **never** remembered and never skip review.
+- Gate order stays **ToolPolicy → Jail → ShellPolicy → execute**; review runs **inside**
   the coding-agent `apply_hunk` handler after execute is entered.
+- Product reviewer bind precedence (B2 first-match): plan/permission deny → no review
+  path; else CLI `--yolo` → AutoAccept (incl. headless JSON); else interactive
+  non-headless ask → InteractiveHunkReviewer; else null. SDK host injects; explicit
+  AutoAccept-equivalent is bound, not missing.
 
 ## Non-goals
 

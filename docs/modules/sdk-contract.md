@@ -19,10 +19,16 @@
 > a maturity row (Runtime Extensions remains L0).
 >
 > **C4 edit sharpness (contract-in-progress only):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) freezes
-> future host-injectable coding-agent ports `HunkReviewer` and `PostEditVerifier` for the stateful `apply_hunk` Tool.
-> Null reviewer is fail-closed (`review_unavailable`); null verifier yields `verification=not_configured` after commit.
-> No Core ports, no session/Trace/headless schema change, and no Tools · write/edit maturity raise until a separate
-> implemented Gate. Production SDK surface changes are **BLOCKED** until independent contract review PASS.
+> public root re-exports `HunkReviewer`, `HunkReviewPreview`, `HunkReviewDecision`, `PostEditVerifier`,
+> `PostEditVerifyResult` and exact `Agent.Options.hunk_reviewer: ?HunkReviewer = null` plus
+> `post_edit_verifier: ?PostEditVerifier = null` (B7). Default built-in Agent owns heap-stable `ApplyHunkState` that
+> outlives all `reply` calls and Tool copies; default toolset `apply_hunk` points its instance there. When
+> `Options.toolset != null`, the caller owns custom Tool instance lifetimes and Options reviewer/verifier are **not**
+> auto-spliced. Null reviewer on `apply_hunk` → `review_unavailable` (never accept). Explicit host-injected
+> AutoAccept-equivalent is bound, not missing. Null verifier → post-commit `verification=not_configured` only.
+> Preview slices are borrowed only for the `reviewFn` call. No Core ports, no session/Trace/headless schema change,
+> and no Tools · write/edit maturity raise until a separate implemented Gate. Production SDK surface changes are
+> **BLOCKED** until independent contract review PASS.
 
 ## 1. What is covered
 

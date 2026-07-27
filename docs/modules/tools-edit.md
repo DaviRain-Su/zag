@@ -168,81 +168,109 @@ Closed JSON (`additionalProperties: false`):
 }
 ```
 
-- **Descriptor:** `risk=write`, `workspace.path_field="path"`, `shell=none`, `cancellation=none`.
-- **`expected_sha256`:** SHA-256 of the **entire** current file as raw bytes; input exactly 64 ASCII hex digits; compare lowercased.
-- **Match:** unique exact byte substring of `old_string` (same family as `search_replace`). Empty `old_string` → `anchor_not_found`. 0 matches → `anchor_not_found`. ≥2 → `ambiguous_anchor`.
-- **Replace / delete / insert:** replace any unique span; delete with empty `new_string`; insert by replacing unique context with `context+inserted`. No multi-hunk list.
-- **Bytes:** raw match/digest; no CRLF normalization; no Unicode canonicalization.
-- **Parents:** do **not** create parent directories (like `search_replace`).
-- **Compatibility:** `search_replace` / `write_file` remain unchanged; `apply_hunk` is additive.
+- **Descriptor:** `risk=write`, `workspace.path_field="path"`, `shell=none`, `cancellation=none`. Loop order remains **ToolPolicy → Jail → ShellPolicy → execute** (ShellPolicy no-op for `shell=none`).
+- **`expected_sha256` parse:** exactly 64 ASCII hex (`0-9A-Fa-f`); wrong length/charset → soft `invalid_arguments` (not stale). Compare after lowercasing.
+- **Stale:** full-file SHA-256 mismatch → `stale_precondition` with `stage=precondition` or **`stage=revalidate`** after review; non-mutating; no temp on revalidate miss.
+- **Match:** unique exact byte substring (search_replace family). Empty old → `anchor_not_found`. 0 → `anchor_not_found`. ≥2 → `ambiguous_anchor`.
+- **Replace / delete / insert:** replace unique span; empty `new_string` deletes; insert via context replace. No multi-hunk list.
+- **Missing ordinary target:** soft `not_found` `format=edit-sharp-v1`; escape → `jail_deny`.
+- **Parents:** never create (`parent_dirs=unchanged` on edit-v1 I/O).
+- **Bytes:** raw match/digest; no CRLF/Unicode normalize.
+- **Compatibility:** `search_replace` / `write_file` unchanged; optional git-diff enrichment may be omitted/best-effort and must never change ok/partial/error class or replace the verifier.
 
-### Read surface for digest (backward-compatible)
+### Read surface for digest (B3 work/type + B4 body formula)
 
-`read_file` today does **not** supply digest metadata. First slice freezes:
+`read_file` today does **not** supply digest metadata.
 
-- Optional boolean `include_digest` (default/omitted = **false** → exact current raw body).
-- When `true`, success body starts with one line:
+- `include_digest` **must be JSON boolean** when present. Omitted/`false` → **byte-identical** current raw body. Non-boolean → soft `invalid_arguments`.
+- `true`: full-file SHA-256 with hard **512 KiB** cap; file **>512 KiB** → soft `too_large`, **no** meta/partial meta. No unbounded CPU/I/O (≤512 KiB sequential hash when within cap).
+- Success body when within cap:
 
 ```text
-meta: format=fs-meta-v1 sha256=<64 lowercase hex> size=<decimal full-file bytes>
+body = meta_line + content + optional exactly-one complete fs-v1 body_limit marker
 ```
 
-  then the content prefix. Digest/`size` always cover the **whole on-disk file** even if content is truncated. Total body (meta + content + any `fs-v1` marker) ≤ `tool.max_result_bytes` (64 KiB). Required args remain `["path"]` only.
+  Meta always first (trailing `\n` in `meta_len`):
+
+```text
+meta: format=fs-meta-v1 sha256=<64 lowercase hex> size=<unpadded decimal full-file bytes>\n
+```
+
+  If `meta_len + full_file_size <= 64 KiB`: full content, no marker. Else reserve full marker first, maximal content prefix under checked arithmetic, then exactly one marker. Digest/`size` still full-file within the 512 KiB cap. Total ≤64 KiB. Exact N/N+1/meta boundary fixtures required.
 
 ### Budgets (checked arithmetic)
 
 | Item | Limit |
 |------|------:|
-| Target/result file for `apply_hunk` | 512 KiB (compatible with existing mutators) |
+| Target/result + digest hash input | 512 KiB |
 | `old_string` / `new_string` each | 32 KiB |
 | `read_file` body | 64 KiB |
-| Review preview text | 4 KiB |
+| Review `preview_text` | 4 KiB (UTF-8 lossy display; truncate + fixed `...[preview_truncated]`) |
 | Tool-result first line | ≤ `trace.cap_tool_result_body` (500) |
 
-Soft `too_large` for budget breaches; typed `OutOfMemory` pre-commit. No unbounded diff in Trace/diagnostics.
+Soft `too_large` for budgets; typed `OutOfMemory` **only pre-commit**. **No typed OOM after successful replace** (B1).
 
-### Hunk review
+### Hunk review (B2 / B5 / B6 / B8)
 
-- **Whole one-hunk accept/reject only** (explicit first-slice choice).
-- **Port:** coding-agent `HunkReviewer` on a **stateful** `apply_hunk` Tool instance.
-- **Mandatory** for every `apply_hunk` commit path. Missing reviewer → soft `review_unavailable`, **never** accept.
-- **Not** `StdinPrompter` (risk+args_len only).
-- **Mode matrix:** interactive CLI binds InteractiveHunkReviewer; `--yolo` binds AutoAcceptHunkReviewer (instance still required); headless/noninteractive/SDK default null unless host injects; plan uses existing write deny; remember is lexical path for permission only — **review not remembered**.
-- **Reject:** target byte-equal; no temp; no verifier.
-- Preview ≤4 KiB; no new durable session/Trace/headless fields for raw diffs.
+- Whole one-hunk accept/reject only. Port: infallible `reviewFn → accept|reject` on stateful Tool.
+- Allocate proposal/preview **before** `reviewFn`; OOM → typed pre-commit non-mutate. Null → soft `review_unavailable` (never accept). Interactive EOF/read → **reject** (not OOM). Preview borrowed only for the callback.
+- **Not** `StdinPrompter`.
+- **Bind precedence (first-match):** (1) plan/permission deny → no review path; (2) else CLI `--yolo` → **AutoAcceptHunkReviewer** for **all** yolo modes including `--json`/`--json-stream` (no prompt/stdout UI); (3) else interactive non-headless ask → **InteractiveHunkReviewer**; (4) else null → `review_unavailable` if handler reached. SDK host injects; explicit AutoAccept-equivalent is bound; null fails closed; remember never skips review.
+- **Interactive protocol:** stderr-only prompt+preview; stdin `y`/`Y`/`yes`/`YES` accept else reject; EOF/read → reject; cancel before decision → no accept, cooperative cancel truth, no mutation/schema field.
+- **Preview safety:** ≤4 KiB valid UTF-8 (U+FFFD lossy); workspace-relative path only; UTF-8-boundary truncate + `...[preview_truncated]`; exact old/new lengths + digest; never durable-persist raw preview in session/Trace/headless.
+- Reject: target byte-equal; no temp; no verifier.
 
-### Commit order
+### Commit order + post-commit body law (B1)
 
 ```text
-parse → loop(ToolPolicy → Jail → execute) → handler jail/endpoint
-  → read → digest check → unique anchor → in-memory proposal
-  → HunkReviewer → revalidate digest/anchor/containment
-  → preallocate bodies → existing same-parent atomicCommit
-  → optional PostEditVerifier
+parse → ToolPolicy → Jail → ShellPolicy → execute
+  → jail/endpoint → read → digest (precondition) → unique anchor
+  → proposal/preview alloc → review → revalidate (stage=revalidate)
+  → preallocate all reachable post-commit first-lines (before any temp):
+       null verifier → only success verification=not_configured
+       bound verifier → success verification=ok
+                       + partial failed|timeout|denied|unavailable
+  → same-parent atomicCommit (edit-v1 operation=apply_hunk parent_dirs=unchanged)
+  → if replace succeeded: invoke bound verifier (path = workspace-relative request path);
+     select preallocated body allocation-free; free unselected exactly once;
+     verifier-internal OOM → preallocated unavailable partial
 ```
 
-Preserve H2: contained final symlink; `edit-v1` cleanup; post-commit success path non-failing; no multi-file rollback. Stale detected at precondition and revalidate stages.
+Forbid typed OOM after replace. Forbid `apply_hunk_success` when a bound verifier did not return `ok` (`not_configured` only for null verifier). Fail-next allocator after successful replace must prove verify-fail remains exact partial `target=modified`.
 
 ### Post-edit verification
 
-- **Only** host-owned `PostEditVerifier` callback (coding-agent port). **No** model-supplied command inside write Tool JSON.
-- Doctor presence-only candidates are **not** auto-executed.
-- Default product binding: **null** → `verification=not_configured` on commit success (not claimed project-verified).
-- Runs **after** commit. Fail/timeout/deny/unavailable → **partial** result with `target=modified`; **no** rollback; edit commit success ≠ overall verified success.
+- Host-owned `PostEditVerifier` only; `verifyFn(ptr, workspace-relative path)`.
+- No model command in write Tool JSON; doctor presence-only not auto-run.
+- Default null → `verification=not_configured` (edit-commit success ≠ verified success).
+- After commit only; non-ok → partial `target=modified`; no rollback.
+
+### Public surface / lifetime (B7)
+
+Root re-exports: `HunkReviewer`, `HunkReviewPreview`, `HunkReviewDecision`,
+`PostEditVerifier`, `PostEditVerifyResult`.
+
+`Agent.Options.hunk_reviewer: ?HunkReviewer = null` and
+`post_edit_verifier: ?PostEditVerifier = null`.
+
+Default Agent owns heap-stable `ApplyHunkState` outliving all replies/Tool copies;
+default toolset `apply_hunk` instance points at it; ports borrowed at init; deinit
+safe. When `Options.toolset != null`, caller owns custom Tool instance lifetimes and
+Options reviewer/verifier are **not** auto-spliced. Null reviewer on `apply_hunk` →
+`review_unavailable`. No proposal bytes in session v1; resume/fork rebind live ports only.
 
 ### Result vocabulary (`format=edit-sharp-v1` unless noted)
 
 | code | Mutates |
 |------|---------|
-| `stale_precondition` / `anchor_not_found` / `ambiguous_anchor` / `too_large` / `rejected` / `review_unavailable` / `invalid_arguments` | no |
-| `edit_io_failed` `format=edit-v1` | preserved (+ cleanup truth) |
-| `apply_hunk_success` | yes (`verification=ok|not_configured`) |
+| `stale_precondition` / `anchor_not_found` / `ambiguous_anchor` / `not_found` / `too_large` / `rejected` / `review_unavailable` / `invalid_arguments` | no |
+| `edit_io_failed` `format=edit-v1` `operation=apply_hunk` `parent_dirs=unchanged` | preserved (+ cleanup) |
+| `apply_hunk_success` | yes (`verification=ok` or `not_configured`) |
 | `verification_failed` (**partial**) | yes already |
 
 ### State / security / schemas
 
-- Proposal bytes are **per-invocation** only (not Session-durable). Tool instance holds reviewer/verifier pointers only.
-- Defaults ask + jail + shell protect; missing seams fail closed; redaction before durable diagnostics.
+- Proposal bytes per-invocation only. Defaults ask + jail + shell protect; missing seams fail closed; redaction before durable diagnostics.
 - Session v1 / Trace v1 / headless-v1 unchanged.
 
 ### Deferred beyond this first slice (still L3 direction, not this freeze)
@@ -257,9 +285,9 @@ Preserve H2: contained final symlink; `edit-v1` cleanup; post-commit success pat
 ### C4 first-slice acceptance (implementation later)
 
 - [ ] Independent **contract** review PASS (blocks code).
-- [ ] `apply_hunk` + `read_file` `include_digest` match this freeze.
-- [ ] Fixture matrix in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) §10 green under std+curl Gates.
-- [ ] Reject/stale/review_unavailable never mutate; verification_failed is partial with target modified.
+- [ ] `apply_hunk` + `read_file` `include_digest` match this freeze (B1–B8).
+- [ ] Fixture matrix in [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) §10 green under std+curl Gates, including fail-next post-replace verifier partial and digest N/N+1/meta boundaries.
+- [ ] Reject/stale/review_unavailable never mutate; bound-verifier non-ok is partial `target=modified`; no typed OOM after replace.
 - [ ] Tools · write/edit maturity raised only by a separate explicit Gate (not automatic).
 
 ## Non-goals for H

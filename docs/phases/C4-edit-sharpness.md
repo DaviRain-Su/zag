@@ -8,7 +8,7 @@
 | 模块 | [tools-edit](../modules/tools-edit.md) L2 runtime + **C4 first-slice contract freeze** |
 | Task | [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) |
 | 合同状态 | **contract track in progress** — production implementation **BLOCKED** until independent contract review **PASS** |
-| 成熟度 | Tools · write/edit remains **L2** (no L3 row raise from docs alone) |
+| 成熟度 | Tools · write/edit remains **L2** (no L3 row raise from docs alone; no current-tip Linux claim) |
 
 ## 目标
 
@@ -22,20 +22,21 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 |----------|---------------|
 | Ownership | All patch/review/verify state in **zag-coding-agent**; thin CLI reviewer adapter only; **no** new Core ports; **no** new package |
 | Patch mechanism | Model-visible Tool **`apply_hunk`**: single-file, **one** content-anchor hunk + **full-file SHA-256** `expected_sha256` |
-| Why not multi-hunk apply_patch / pure hashline first | Reuse H2 unique-anchor + atomic commit; close stale + review gates first; avoid TUI/multi-file/parser platform |
-| Digest read surface | Optional `read_file.include_digest` → `meta: format=fs-meta-v1 sha256=… size=…` then content; omitted = raw body unchanged (current `read_file` has **no** digest today) |
-| Budgets | File ≤512 KiB; old/new ≤32 KiB each; review preview ≤4 KiB; result body ≤64 KiB; checked arithmetic |
-| Hunk review | Whole one-hunk accept/reject via coding-agent **`HunkReviewer`** on stateful Tool; **mandatory**; missing → `review_unavailable` (never accept). **Not** `StdinPrompter` |
-| Mode matrix | ask+interactive → InteractiveHunkReviewer; yolo → AutoAcceptHunkReviewer (still bound); headless/SDK null default fail-closed; plan/deny unchanged; remember ≠ review skip |
-| Commit order | parse → ToolPolicy → Jail → execute → digest/anchor → review → revalidate → H2 same-parent atomic → optional verify |
-| Verification | Host-owned **`PostEditVerifier` callback only**; no model command in write Tool; doctor presence-only not auto-run; default null → `verification=not_configured`; after commit; fail → partial `target=modified` no rollback |
+| Why not multi-hunk apply_patch / pure hashline first | Reuse H2 unique-anchor + atomic commit; close stale + review gates first |
+| Digest read (B3/B4) | JSON boolean `include_digest` only; omitted/false byte-identical; true hashes ≤512 KiB or soft `too_large` with no meta; body = meta + content + optional one `fs-v1` body_limit marker under checked arithmetic |
+| Budgets | File/hash ≤512 KiB; old/new ≤32 KiB; preview ≤4 KiB; result body ≤64 KiB |
+| Hunk review (B2/B5/B6/B8) | Infallible `reviewFn`; null → `review_unavailable`; first-match bind: plan/deny → none; else yolo AutoAccept (incl. headless JSON); else interactive InteractiveHunkReviewer (stderr/stdin protocol); else null. Not StdinPrompter. Preview UTF-8-safe, relative path, fixed truncation marker |
+| Post-commit body law (B1) | Preallocate all reachable post-commit first-lines **before any temp**; after replace select allocation-free; no typed OOM after replace; bound verifier non-ok never reported as success |
+| Commit order | parse → ToolPolicy → Jail → ShellPolicy → execute → digest/anchor → review → revalidate → preallocate post-commit bodies → atomic → optional verify |
+| Verification | Host `PostEditVerifier` on workspace-relative path; default null → `not_configured`; after commit; fail → partial `target=modified` |
+| Public surface (B7) | Root re-exports + `Agent.Options.hunk_reviewer` / `post_edit_verifier`; default Agent-owned `ApplyHunkState`; custom toolset does not auto-splice Options ports |
 | Schemas | Session v1 / Trace v1 / headless-v1 / `project.zig` / `--no-project` **unchanged** |
 
 ## 近期范围（implementation after PASS）
 
-1. Implement `apply_hunk` + `read_file` digest option per freeze;
-2. CLI thin Interactive/AutoAccept hunk reviewer wiring;
-3. Fixture matrix §10 on dual-backend Gates;
+1. Implement `apply_hunk` + `read_file` digest option per freeze (B1–B8);
+2. CLI thin bind + interactive stderr protocol;
+3. Fixture matrix §10 on dual-backend Gates (incl. fail-next post-replace + digest boundaries);
 4. Keep legacy `search_replace`/`write_file` behavior stable.
 
 ## 后移
@@ -53,15 +54,16 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 ### Contract track
 
 - [ ] Independent contract review **PASS** (production code blocked until then);
-- [ ] Owning docs freeze exact mechanism/review/verification with no ambiguous “or”;
+- [ ] Owning docs freeze exact mechanism/review/verification with no ambiguous “or”; B1–B8 closed;
 - [ ] Maturity text still claims Tools · write/edit **L2** only.
 
 ### Implementation track (later)
 
-- [ ] stale digest 不会落到错误位置；deterministic eval 覆盖 precondition + revalidate；
-- [ ] 拒绝单个 hunk 后磁盘 byte-equal 且无 temp；
-- [ ] 接受后仍满足现有 atomic/jail/redaction/`edit-v1` contract；
-- [ ] verification 失败返回 partial `target=modified`，不标记 overall verified success，不宣称 rollback；
+- [ ] stale digest precondition + **revalidate** non-mutating deterministic evals；
+- [ ] 拒绝单个 hunk 后磁盘 byte-equal 且无 temp；interactive EOF/cancel never accepts；
+- [ ] 接受后仍满足 atomic/jail/redaction/`edit-v1`（`operation=apply_hunk` `parent_dirs=unchanged`）；
+- [ ] B1: post-replace fail-next allocator keeps exact partial `target=modified`；bound verifier non-ok never `apply_hunk_success`；
+- [ ] B3/B4 digest type/cap/body formula fixtures；
 - [ ] 默认 Tool 描述不引导整文件覆写大文件；
 - [ ] std/curl full Gates + §10 fixtures.
 

@@ -46,11 +46,23 @@ the public coding-agent API. Maturity and Runtime Extensions L0 unchanged; no
 TUI/autocomplete claim.
 
 **C4 edit sharpness (contract only):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md)
-freezes a future **thin** CLI role — bind `InteractiveHunkReviewer` for interactive
-ask modes and `AutoAcceptHunkReviewer` under `--yolo`; never treat missing adapter as
-accept; never reuse permission `StdinPrompter` as hunk review; headless/noninteractive
-default remains fail-closed for review. Production CLI wiring is **BLOCKED** until
-independent contract review PASS. No headless-v1 schema change.
+freezes a future **thin** CLI role with **exact first-match bind precedence** (B2):
+
+1. plan/permission deny → no review path;
+2. else `--yolo` → bind explicit **`AutoAcceptHunkReviewer`** for **all** yolo modes
+   including **`--json` / `--json-stream`** (no prompt; no review UI on stdout);
+3. else interactive non-headless ask → **`InteractiveHunkReviewer`** (B6: human
+   prompt+preview on **stderr only**; stdin `y`/`Y`/`yes`/`YES` accept, else reject;
+   EOF/read fail → reject; cancel before decision → no accept, existing cooperative
+   cancel truth, no mutation, no new schema field);
+4. else (headless ask / noninteractive / no adapter) → reviewer **null** → soft
+   `review_unavailable` if the handler is reached.
+
+Never treat missing/null as accept; never reuse permission `StdinPrompter`
+(risk+args_len) as hunk review; remember never skips review. Production CLI wiring
+is **BLOCKED** until independent contract review PASS. No headless-v1 schema change.
+Executable CLI fixture (later): stdout purity under interactive reject; no-temp
+byte-equal rejection.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +
