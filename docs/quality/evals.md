@@ -158,7 +158,7 @@ Merged-main evidence at `ebdd7ab`:
 1. unique anchor replacement succeeds;
 2. ambiguous/missing/stale anchors fail without mutation and are recoverable after reread;
 3. H2 adds the target-preserving `edit-v1` fault matrix above;
-4. C4 first slice (`edit-sharpness-001`, **contract-in-progress**; impl **BLOCKED** until independent contract PASS) freezes executable fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md) including B1–B8:
+4. C4 first slice (`edit-sharpness-001`, **contract PASS** @ `07b8dab`; implementation **not started**) freezes executable fixtures in [edit-sharpness-001 §10](../plan/tasks/edit-sharpness-001.md) and [tools-edit C4 binding](../modules/tools-edit.md) including B1–B8:
    - valid single-hunk `apply_hunk` success with default `verification=not_configured`;
    - stale `expected_sha256` precondition + **`stage=revalidate`**; invalid hex length/charset → `invalid_arguments` (not stale);
    - missing/ambiguous/oversize/empty-anchor/`not_found` soft failures;

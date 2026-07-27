@@ -18,7 +18,7 @@
 > fixture is **23/23**. None of these enrichments reopen the `ebdd7ab` SDK-ready Gate, change a schema version, or raise
 > a maturity row (Runtime Extensions remains L0).
 >
-> **C4 edit sharpness (contract-in-progress only):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) freezes
+> **C4 edit sharpness (contract PASS @ `07b8dab`; implementation not started):** [edit-sharpness-001](../plan/tasks/edit-sharpness-001.md) freezes
 > public root re-exports `HunkReviewer`, `HunkReviewPreview`, `HunkReviewDecision`, `PostEditVerifier`,
 > `PostEditVerifyResult` and exact `Agent.Options.hunk_reviewer: ?HunkReviewer = null` plus
 > `post_edit_verifier: ?PostEditVerifier = null` (B7). Default built-in Agent owns heap-stable `ApplyHunkState` that
@@ -27,8 +27,8 @@
 > auto-spliced. Null reviewer on `apply_hunk` → `review_unavailable` (never accept). Explicit host-injected
 > AutoAccept-equivalent is bound, not missing. Null verifier → post-commit `verification=not_configured` only.
 > Preview slices are borrowed only for the `reviewFn` call. No Core ports, no session/Trace/headless schema change,
-> and no Tools · write/edit maturity raise until a separate implemented Gate. Production SDK surface changes are
-> **BLOCKED** until independent contract review PASS.
+> and no Tools · write/edit maturity raise until a separate implemented Gate. Production SDK surface changes land only
+> in a later separately dispatched implementation node (not started).
 
 ## 1. What is covered
 

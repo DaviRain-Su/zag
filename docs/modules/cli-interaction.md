@@ -60,9 +60,9 @@ freezes a future **thin** CLI role with **exact first-match bind precedence** (B
 
 Never treat missing/null as accept; never reuse permission `StdinPrompter`
 (risk+args_len) as hunk review; remember never skips review. Production CLI wiring
-is **BLOCKED** until independent contract review PASS. No headless-v1 schema change.
-Executable CLI fixture (later): stdout purity under interactive reject; no-temp
-byte-equal rejection.
+is **not started** (contract PASS at `07b8dab` authorizes only a later separately
+dispatched implementation node). No headless-v1 schema change. Executable CLI
+fixture (later): stdout purity under interactive reject; no-temp byte-equal rejection.
 [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md) are **done/closed** at
 `97f43de` as host rails only (binding [quality/README](../quality/README.md);
 exact fuses `${{ github.workflow }}-${{ github.ref }}` +

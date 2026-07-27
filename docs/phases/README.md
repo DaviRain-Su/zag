@@ -3,7 +3,7 @@
 | 文档 | 轨道 | 状态 |
 |------|------|------|
 | [H-harden.md](./H-harden.md) | Production Floor | L2 closeout（single-user trusted-host）|
-| [C4-edit-sharpness.md](./C4-edit-sharpness.md) | Capability | 依赖 H；`edit-sharpness-001` **contract-in-progress** (impl BLOCKED until contract PASS) |
+| [C4-edit-sharpness.md](./C4-edit-sharpness.md) | Capability | 依赖 H；`edit-sharpness-001` **contract PASS** @ `07b8dab` (impl not started) |
 | [C5-context.md](./C5-context.md) | Capability | 依赖 H；含 Memory Repo（[modules/memory.md](../modules/memory.md)） |
 | [C6-orchestration.md](./C6-orchestration.md) | Capability | 依赖 H |
 | [C7-sandbox.md](./C7-sandbox.md) | Capability | 依赖 H |

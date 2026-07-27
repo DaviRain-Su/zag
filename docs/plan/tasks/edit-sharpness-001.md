@@ -1,7 +1,7 @@
 ---
 id: edit-sharpness-001
 scope: coding-agent/edit-sharpness (M2 / C4 first slice)
-status: contract-in-progress
+status: in-progress # contract PASS; implementation not started
 priority: P1
 depends-on:
   - prompt-templates-001
@@ -16,9 +16,9 @@ on top of the closed H2 single-file edit integrity contract:
 1. **Docs-first binding contract** (this task + owning modules) with exact
    mechanism, review, commit, verification, budgets, errors, ownership, and
    fixture choices — no `hashline or equivalent` / `CLI or SDK` ambiguity.
-2. **Production implementation** only after a **different independent reviewer**
-   returns **PASS** on the contract track. Until then, production code is
-   **BLOCKED**.
+2. **Production implementation** only under the frozen contract in a **later
+   separately dispatched** implementation node. **No product code landed** in
+   this contract node.
 
 **Owner:** `zag-coding-agent` for all patch proposal/review/verification state
 and concrete behavior; **thin explicit CLI adapter only** where needed for
@@ -32,8 +32,9 @@ slice + [C4-edit-sharpness.md](../../phases/C4-edit-sharpness.md).
 
 | Track | Status |
 |-------|--------|
-| Contract freeze | **in progress** until independent contract review **PASS** (B1–B8 fixes in this lineage) |
-| Production implementation | **BLOCKED** until that PASS |
+| Contract freeze | **PASS** at candidate tip `07b8dab2158d100642abf5bd61dbc64366f1aba4` after B1–B8: independent architecture/API **PASS**, independent safety/transaction **PASS**, final adjudication **PASS**, zero blockers |
+| Overall product task | **`in-progress` — contract PASS; implementation not started** |
+| Production implementation | **not started** — contract PASS **authorizes only** a later separately dispatched implementation Goal/node under this freeze; no code landed here; not preselected as done |
 | Tools · write/edit maturity | remains **L2** (no L3 claim or row raise; no current-tip Linux claim) |
 | Session v1 / Trace v1 / headless-v1 / `project.zig` / `--no-project` | **unchanged** |
 
@@ -70,7 +71,7 @@ slice + [C4-edit-sharpness.md](../../phases/C4-edit-sharpness.md).
   `docs/quality/evals.md`, and permissions/CLI/SDK notes when their **future**
   contract surface is frozen here
 
-## Implementation (later node; BLOCKED)
+## Implementation (later node; not started)
 
 - `packages/zag-coding-agent/src/runtime/edit_tools.zig` (or adjacent coding-agent module) — `apply_hunk` + shared commit
 - `packages/zag-coding-agent/src/runtime/fs_tools.zig` — optional `include_digest` on `read_file`
@@ -317,8 +318,8 @@ commits an `apply_hunk`.
   with U+FFFD (lossy) for preview only (does not alter apply match bytes).
 - `path` in preview is **workspace-relative only** (no absolute path).
 - Truncation: cut on a **valid UTF-8 boundary**, then append the fixed ASCII
-  marker **`...[preview_truncated]`** (literal 20 bytes) **within** the 4 KiB cap
-  (reserve marker before cutting content).
+  marker **`...[preview_truncated]`** (literal **22** ASCII bytes) **within** the 4 KiB
+  cap (reserve marker before cutting content).
 - `old_len` / `new_len` are exact true byte lengths; `expected_sha256` is exact.
 - Interactive display may show local hunk text on stderr; **never** persist raw
   preview bytes in session / Trace / headless-v1. Ordinary Tool args/results stay
@@ -523,17 +524,22 @@ No false success: committed+verify-non-ok is **partial**. Existing
 
 # verification (contract track)
 
-- Independent **contract** review by a different agent returns **PASS** (or
-  fix loop) before any production implementation node.
-- `python3 scripts/lint_docs.py`
-- `python3 scripts/score_docs.py --check` (timestamp-only report rewrites restored;
-  deterministic body changes committed when required)
-- `/usr/bin/git diff --check` on committed range from base tip
-- Docs-only commit; no `packages/**` / tests / build / schema changes
+- [x] Independent **contract** review on candidate `07b8dab`: architecture/API
+  **PASS**, safety/transaction **PASS**, final adjudication **PASS**, zero
+  blockers after B1–B8. Contract PASS authorizes **only** a later separately
+  dispatched implementation node; **no product code** in this contract node.
+- [x] `python3 scripts/lint_docs.py`
+- [x] `python3 scripts/score_docs.py --check` (scores **92/74** truth preserved;
+  timestamp-only report rewrites restored; deterministic body changes committed
+  when required)
+- [x] `/usr/bin/git diff --check` on committed range from base tip
+- [x] Docs-only contract lineage; no `packages/**` / tests / build / schema changes
 
-# verification (implementation track — later)
+# verification (implementation track — later; **not started**)
 
-- Full §10 fixture matrix in coding-agent tests
-- Dual-backend std/curl Gates; docs lint/score; independent code review PASS
-- Maturity row Tools · write/edit remains L2 unless a **separate** L3 Gate is
+- [ ] Full §10 fixture matrix in coding-agent tests
+- [ ] Dual-backend std/curl Gates; docs lint/score; independent **code** review PASS
+- [ ] Maturity row Tools · write/edit remains L2 unless a **separate** L3 Gate is
   explicitly scheduled and closed
+- [ ] Later Goal/delivery decision to dispatch the implementation node under this
+  frozen contract (not preselected as done here)
