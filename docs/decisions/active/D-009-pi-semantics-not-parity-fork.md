@@ -22,7 +22,7 @@ The historical port is not merged into Zag and is not resumed as a parity fork. 
 
 Zag has two first-class consumers of one harness:
 
-1. the local `zag` CLI (plain, headless, and a later minimal TUI);
+1. the local `zag` CLI (plain, headless, and minimal TUI via lazy `-Dtui`);
 2. Zig callers using the supported source-composition SDK.
 
 This is not an “all-in-one” promise. A capability enters the product only when it closes a reproduced user failure, has a package boundary, and has a deterministic Gate.

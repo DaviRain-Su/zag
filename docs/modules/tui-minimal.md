@@ -1,6 +1,6 @@
 ---
-status: active
-scope: minimal host TUI binding contract (PASS) + implementation candidate
+status: done
+scope: minimal host TUI binding contract (PASS) + implementation closed
 task: tui-minimal-001
 prerequisite:
   - harness-events-001
@@ -14,21 +14,26 @@ prerequisite:
 
 This module is the **single authoritative binding** for `tui-minimal-001`.
 It freezes how a host TUI may assemble public `zag-coding-agent` /
-`zag-cli` surfaces. Contract freeze does **not** by itself mark C9 product
-implementation acceptance complete and does **not** raise any maturity row.
+`zag-cli` surfaces. The behavioral freezes below are **stable contract text**
+and are not weakened by delivery. Closing the minimal slice does **not** raise
+any maturity row and does **not** imply theme/RPC/ACP/extension-UI/dashboard
+or Pi TUI parity.
 
-**Contract freeze PASS** at candidate tip
+**Contract freeze PASS** at tip
 `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` after independent
 **architecture/ownership** and **safety/fail-closed** final re-reviews
 (**zero blockers**; A1–A11 and B-S1–B-S10 closed). Lineage: initial freeze
 `d01d70b` → blocker close `a38f0ec` → signal-host order `6c73e46` → teardown
-order `c7a8f3a` (PASS tip).
+order `c7a8f3a` (contract PASS tip).
 
-**Implementation candidate** (separate worktree/branch): package
-`packages/zag-tui/`, lazy `-Dtui` CLI wire, §11 fixtures. Status =
-**implementation candidate awaiting independent code review + coordinator
-task/main Gates** — not “done”, no maturity raise, no Linux/remote claim.
-See [task](../plan/tasks/tui-minimal-001.md).
+**Implementation closed** at tip
+`f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5` (`packages/zag-tui/`, lazy `-Dtui`
+CLI wire, §11 unit/integration/PTY fixtures). Two independent final code
+reviews **PASS** (**zero blockers**). Local ff-only merge to canonical main at
+the same tip; task-worktree and merged-main Gates green on **local macOS only**
+— **no** current-tip Linux/remote claim; **no push**. Defaults remain ask +
+workspace jail + shell protect; `-Dtui` default **false**/lazy. See
+[task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
@@ -899,16 +904,34 @@ injection is required where noted.
 - `zag-cli/src/tui` alternate package owner
 - This contract node adding packages, deps, or product code
 
-## 13. Contract-node acceptance (docs only)
+## 13. Contract-node acceptance (docs only; historical)
 
 - [x] Binding module authored (`docs/modules/tui-minimal.md`)
 - [x] Task file authored (`docs/plan/tasks/tui-minimal-001.md`)
 - [x] Round-1 architecture + safety **BLOCKED** findings addressed (`a38f0ec`+)
 - [x] Independent architecture/ownership **re-review** PASS @ `c7a8f3a` (zero blockers)
 - [x] Independent safety/fail-closed **re-review** PASS @ `c7a8f3a` (zero blockers)
-- [x] Docs lint + score + `git diff --check` green on contract docs path (this tip)
-- [x] **No** C9 product implementation acceptance checked off as done
-- [x] **No** maturity row raise; **no** “TUI implemented” claim
+- [x] Docs lint + score + `git diff --check` green on contract docs path
+- [x] Contract freeze did **not** invent product acceptance by itself
+- [x] **No** maturity row raise from contract freeze
+
+## 14. Implementation closeout evidence (minimal slice)
+
+Authoritative delivery checklist: [task tui-minimal-001](../plan/tasks/tui-minimal-001.md)
+and [C9 product acceptance](../phases/C9-product-shell.md#acceptance-for-tui-minimal-001).
+Summary only — do not fork Gate numbers elsewhere.
+
+| Fact | Value |
+|------|--------|
+| Contract PASS tip | `c7a8f3a` |
+| Implementation + dual final review tip | `f8f7f55` (zero blockers) |
+| Local macOS default std / curl | **42/42 · 656/656** · **44/44 · 655/655** |
+| Local macOS TUI std / curl | **47/47 · 711/711** · **49/49 · 710/710** |
+| OpenAPI / catalog / docs | **287/287** · **40** · readability **92** / security **74** (55 files) |
+| PTY (macOS product path) | geometry; idle Ctrl+C; busy first/second SIGINT; Ctrl+D/termios restore |
+| Pollution fix | run-unique exclusive owned workspace for gate21 @ `f8f7f55` |
+| Schemas / defaults | Core · session-v1 · Trace-v1 · headless-v1 unchanged; ask + jail + shell protect; `-Dtui` default false |
+| Not claimed | Linux/remote for this tip; maturity raise; theme/RPC/ACP/Pi parity |
 
 ## Related
 

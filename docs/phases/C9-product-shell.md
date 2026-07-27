@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Prerequisite | Headless/Process L2 ✅; minimal TUI additionally needs stable lifecycle events/control |
-| Near-term slice | M2 `tui-minimal-001` |
+| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55` |
 | Failure mode | plain CLI is too weak for daily use, or UI duplicates Kernel business logic |
 | Reference | Current Pi + historical `pi-mono-zig` terminal behavior (design only) |
 | Feature map | [Pi feature correspondence](../plan/analysis/2026-07-26-pi-feature-correspondence.md) |
@@ -33,14 +33,16 @@ Headless is already an independent closed Gate:
 
 Contract: [headless](../modules/headless-contract.md).
 
-## Scheduled minimal TUI
+## Minimal TUI (implemented / closed slice)
 
 Prerequisites `harness-events-001` and `harness-steering-001` are closed. The
 **binding contract** is [tui-minimal.md](../modules/tui-minimal.md)
-([task](../plan/tasks/tui-minimal-001.md) — **contract PASS** @ `c7a8f3a`). An
-**implementation candidate** exists under `packages/zag-tui/` (lazy `-Dtui`,
-CLI wire) and is **awaiting independent code review + coordinator Gates** —
-not claimed done, **no** maturity row raise, **no** Linux/remote tip claim.
+([task](../plan/tasks/tui-minimal-001.md) — **contract PASS** @ `c7a8f3a`;
+**implementation done** @ `f8f7f55`). Package `packages/zag-tui/` (lazy `-Dtui`,
+CLI wire, §11 fixtures) closed after dual independent final reviews (**PASS**,
+zero blockers), local ff-only merge, and local macOS task/main Gates. **No**
+maturity row raise; **no** current-tip Linux/remote claim; **no push**. This is
+the **minimal** host-shell slice only — not theme/RPC/ACP/extension UI.
 
 Contract freezes (detail in the module — do not fork):
 
@@ -113,20 +115,20 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 ### Contract track (docs; PASS @ `c7a8f3a`)
 
 - [x] binding module [tui-minimal.md](../modules/tui-minimal.md) authored
-- [x] task [tui-minimal-001](../plan/tasks/tui-minimal-001.md) authored (`status: ready`)
+- [x] task [tui-minimal-001](../plan/tasks/tui-minimal-001.md) authored (now `status: done`)
 - [x] round-1 BLOCKED findings closed (`a38f0ec` → `6c73e46` → `c7a8f3a`)
 - [x] independent architecture/ownership contract **re-review** PASS @ `c7a8f3a` (zero blockers)
 - [x] independent safety/fail-closed contract **re-review** PASS @ `c7a8f3a` (zero blockers)
 - [x] docs lint / score / diff green on contract docs path; no product code in contract node
 
-### Product implementation track (later — keep unchecked until separate impl node)
+### Product implementation track (closed @ `f8f7f55`; local macOS evidence only)
 
-- [ ] core prompt→Tool→result flow works without losing permission/error/session semantics;
-- [ ] Ctrl+C behavior follows [CLI interaction](../modules/cli-interaction.md);
-- [ ] lifecycle rendering comes from events, not private Agent memory;
-- [ ] plain/headless dual-backend Gates remain green;
-- [ ] Kernel packages do not import TUI;
-- [ ] fixture matrix in tui-minimal.md §11 green on the implementation tip.
+- [x] core prompt→Tool→result flow works without losing permission/error/session semantics;
+- [x] Ctrl+C behavior follows [CLI interaction](../modules/cli-interaction.md) (PTY fixtures: idle / busy first / second SIGINT; termios restore);
+- [x] lifecycle rendering comes from events, not private Agent memory;
+- [x] plain/headless dual-backend Gates remain green (default std **656/656**, curl **655/655**);
+- [x] Kernel packages do not import TUI;
+- [x] fixture matrix in tui-minimal.md §11 green on the implementation tip (TUI std **711/711**, TUI curl **710/710**).
 
 ## Acceptance for later extension UI host
 

@@ -18,7 +18,7 @@
 4. **参考纪律 = 行为对齐，不追源码/API/功能表**：current Pi 与旧 `pi-mono-zig` 是固定快照参考，不是依赖或同步上游。
 
 ```text
-      Zag 产品 Harness（plain/headless/later minimal TUI）
+      Zag 产品 Harness（plain/headless/minimal TUI via lazy -Dtui）
               ▲  组装
       Kernel composition → SDK-ready ✅（zag-agent-core + selected APIs）
               ▲  依赖
@@ -87,7 +87,7 @@ L4 内核 ★low-level composition
                  zag-agent-core ✅    loop · Transcript · Provider/Tool/Cancel ports · protocol history · required ToolPolicy/Jail/ShellPolicy/ContextView/LoopEventSink/ControlInput ports（**仅依赖 zag-types**）
                  SDK-ready ✅         stateful Tool/capabilities/session/event/ownership/cancel/control/fork/skills/prompt-templates contract 已闭合；Gate fixture 7/7，current fixture 24/24（`61326ae` 时为 23/23）
 L5 产品面        zag-cli ✅           flags · resolve · one-shot / REPL
-                 zag-tui / zag-acp   （C9；**only** `packages/zag-tui` per [tui-minimal](./modules/tui-minimal.md); contract PASS @ `c7a8f3a`; **impl candidate** package present; `-Dtui` default false lazy; CLI wires when true; no maturity raise）
+                 zag-tui / zag-acp   （C9；**only** `packages/zag-tui` per [tui-minimal](./modules/tui-minimal.md); **implemented/closed** @ `f8f7f55` (contract PASS @ `c7a8f3a`); `-Dtui` default false lazy; CLI wires when true; no maturity raise；zag-acp still planned）
 L6 发行          zag (bin)           `src/main.zig` 薄入口 → `zag_cli.run` ✅
 ```
 

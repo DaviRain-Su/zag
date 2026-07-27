@@ -24,4 +24,5 @@ zig build test -Dtui=true
 ## Contract
 
 Binding: [`docs/modules/tui-minimal.md`](../../docs/modules/tui-minimal.md).
-Implementation candidate — not maturity promotion, not Linux remote claim.
+Closed at `f8f7f55` (`tui-minimal-001`) — not maturity promotion; no current-tip
+Linux/remote claim.

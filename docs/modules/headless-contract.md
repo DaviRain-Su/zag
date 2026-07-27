@@ -274,7 +274,7 @@ Internal trace events (jail deny, shell deny, provider retry, compaction) remain
 
 ## Non-goals
 
-- TUI implementation (separate binding: [tui-minimal.md](./tui-minimal.md); contract PASS @ `c7a8f3a`; product not shipped).
+- Minimal TUI is a separate closed slice ([tui-minimal.md](./tui-minimal.md); contract PASS @ `c7a8f3a`; implementation **done** @ `f8f7f55`; `-Dtui` still default false; does not alter headless-v1).
 - ACP/editor protocol (follows this contract, but is separate work).
 - SDK in-process semantic changes; headless uses existing `Agent.Options.observer` / `toolset` / `Session` / `stop_reason`.
 - C ABI / dynamic plugin ABI.

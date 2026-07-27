@@ -1,7 +1,7 @@
 ---
 id: tui-minimal-001
-scope: host-shell/tui-minimal (M2 / C9; contract PASS; implementation candidate)
-status: ready
+scope: host-shell/tui-minimal (M2 / C9; contract PASS; implementation done)
+status: done
 priority: P1
 depends-on:
   - harness-events-001
@@ -13,14 +13,10 @@ depends-on:
 
 # objective
 
-Freeze the **minimal host TUI binding contract** and deliver an **implementation
-candidate** that assembles public coding-agent / CLI APIs into a small
-interactive shell **without** inventing lifecycle kinds, weakening ask/jail/shell,
-polluting headless stdout, or placing UI logic in Kernel packages.
-
-Contract track remains **PASS**. Implementation is a **candidate awaiting
-independent code review + coordinator task/main Gates** — not product “done”,
-not maturity raise, not Linux/remote claim.
+Freeze the **minimal host TUI binding contract** and deliver a **minimal
+interactive host shell** that assembles public coding-agent / CLI APIs
+**without** inventing lifecycle kinds, weakening ask/jail/shell, polluting
+headless stdout, or placing UI logic in Kernel packages.
 
 **Binding specification:** [tui-minimal.md](../../modules/tui-minimal.md)
 (+ phase constraints in [C9-product-shell.md](../../phases/C9-product-shell.md)).
@@ -29,33 +25,31 @@ not maturity raise, not Linux/remote claim.
 
 | Track | Status |
 |-------|--------|
-| Contract freeze | **PASS** @ `c7a8f3a` — independent arch+safety re-reviews, zero blockers |
-| Implementation candidate | **in this worktree** (`task/tui-minimal-001-impl`) — `packages/zag-tui` + CLI wire + §11 tests; **awaiting independent code review + coordinator Gates** |
-| Overall product task | **`ready`** (contract) + **implementation candidate** (not claimed done) |
-| Maturity / C9 product acceptance | **unchanged / not claimed** |
-| Session v1 / Trace v1 / headless-v1 / Core | **unchanged** by this impl |
+| Contract freeze | **PASS** @ `c7a8f3a` — independent arch + safety re-reviews, **zero blockers** |
+| Implementation tip | **`f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5`** — two independent final code reviews **PASS**, **zero blockers** |
+| Overall product task | **`done`** — local ff-only merge of impl tip to canonical main; task-worktree + merged-main Gates green (local macOS only) |
+| Docs closeout tip | this commit (`docs(tui-minimal-001): close implementation delivery`) |
+| Maturity / C9 broader shell | **unchanged** — no new maturity row; not theme/RPC/ACP/extension-UI/dashboard/Pi parity |
+| Session v1 / Trace v1 / headless-v1 / Core | **unchanged** |
+| Linux / remote / push | **not claimed** for this tip; **no push** |
 
-## Contract vs implementation split
+## Contract vs implementation (history)
 
 ```text
-THIS NODE (docs contract)
-  status: ready (contract track PASS @ c7a8f3a; not product done)
-  paths: docs only
-  verify: docs lint + score_docs --check + git diff --check (no full std/curl claim)
-  merge: docs-only contract may ff-only merge; does not ship TUI
+CONTRACT NODE (docs freeze)
+  PASS tip: c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11
+  paths: docs only at freeze time
+  did not ship packages/zag-tui
 
-LATER NODE (implementation; separate tip / Gate / worktree)
-  NOT opened by this node
-  Requires:
-    1) contract PASS (done @ c7a8f3a) and contract merge
-    2) explicit future Goal / reconciliation selecting an implementation delivery
-  paths: packages/zag-tui/ ONLY + zag-cli wire + build wiring + tests
-  verify: full fixture matrix in tui-minimal.md §11 + dual-backend Gates
+IMPLEMENTATION NODE (product package + wire + fixtures)
+  final tip: f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5
+  paths: packages/zag-tui/** + zag-cli / root -Dtui wire + §11 tests
+  independent dual final reviews: PASS, zero blockers
+  local ff-only onto canonical main at same tip (canonical .gitignore retained)
+
+DOCS CLOSEOUT NODE (this tip)
+  paths: docs only — status truth + indexes; no product code
 ```
-
-Frontmatter `status: ready` means the **contract track is ready for merge**
-and a future Goal may select implementation work — **not** that product TUI
-is done or that implementation has started.
 
 # context
 
@@ -67,39 +61,38 @@ is done or that implementation has started.
   `-Dtui` default false, Kernel no-TUI scan
 - Closed C4 first slice: [edit-sharpness-001](./edit-sharpness-001.md) @
   `7be5151` — hunk review ≠ permission; TUI ask v1 hunk_reviewer **null**
-- Round-1 architecture/safety **BLOCKED** → freezes @ `a38f0ec` → signal-host
-  @ `6c73e46` → teardown @ `c7a8f3a` → **final re-reviews PASS** (zero blockers)
+- Contract: Round-1 **BLOCKED** → freezes @ `a38f0ec` → signal-host
+  @ `6c73e46` → teardown @ `c7a8f3a` → **final re-reviews PASS**
+- Implementation: package + dual-review fix → PTY fixtures → test hygiene →
+  final tip `f8f7f55` dual review **PASS** (zero blockers)
 
 # path
 
-## Docs (this node — only allowed changes)
+## Docs (closeout)
 
 | Path | Role |
 |------|------|
 | `docs/plan/tasks/tui-minimal-001.md` | this task |
-| `docs/modules/tui-minimal.md` | **binding truth** |
-| `docs/phases/C9-product-shell.md` | phase; product acceptance unchecked |
-| `docs/modules/README.md` | module index |
-| `docs/plan/README.md` | DAG + task index |
-| `docs/roadmap.md` | M2 / C9 pointer |
-| `docs/INDEX.md` | product-spec link |
-| optional minimal cross-links | packaging / headless only for single truth |
+| `docs/modules/tui-minimal.md` | **binding truth** + closeout evidence pointer |
+| `docs/phases/C9-product-shell.md` | product acceptance checkboxes |
+| `docs/modules/README.md` · `docs/plan/README.md` · `docs/roadmap.md` · `docs/INDEX.md` | indexes |
+| `docs/packaging.md` · `docs/maturity.md` | package status + closeout truth (no row raise) |
 
-## Later implementation paths (NOT this node)
+## Implementation (delivered)
 
 | Path | Role |
 |------|------|
 | **`packages/zag-tui/**` only** | host UI (module `zag-tui`) |
-| root + `zag-cli` `build.zig` / `.zon` | `-Dtui` bool pass-through; lazy optional `zag-tui` + terminal dep |
-| `packages/zag-cli/src/cli.zig` | `--tui` mode mutex + assemble `zag-tui` when built |
-| tests under `zag-tui` / CLI | §11 fixture matrix |
-| **forbidden** | `packages/zag-cli/src/tui/**` owner; Core/schema/maturity changes |
+| root + `zag-cli` `build.zig` / `.zon` | `-Dtui` bool; lazy optional `zag-tui` + terminal dep |
+| `packages/zag-cli` | `--tui` mode mutex + SignalHost wrapping Guard; assemble when `-Dtui=true` |
+| tests under `zag-tui` / CLI process fixtures | §11 unit/integration/PTY matrix |
+| **forbidden / unchanged** | Core/schema/maturity; production defaults (ask + jail + shell protect) |
 
 # contract summary
 
 Authoritative detail lives in [tui-minimal.md](../../modules/tui-minimal.md).
-Do not restate conflicting rules here. Mechanism freezes are unchanged by this
-PASS-record tip.
+Do not restate conflicting rules here. Mechanism freezes through `c7a8f3a` are
+unchanged by implementation or this docs closeout.
 
 ### Frozen choices (index)
 
@@ -108,35 +101,43 @@ PASS-record tip.
 | Package owner | **only** `packages/zag-tui/` (`zag-tui`); CLI wires when `-Dtui=true` |
 | Dep direction | CLI → `zag-tui` only; `SignalHost` defined by TUI, implemented by CLI |
 | Init / teardown / redaction / concurrency / mode matrix | as frozen through `c7a8f3a` |
+| Defaults | permission **ask**; workspace jail; shell **protect**; `-Dtui` default **false** / lazy |
 | Non-goals | theme/dashboard/RPC/ACP/E2–E3/schema/maturity/Pi parity/wholesale vaxis |
 
-# verification (contract track — this node)
+# verification (contract track — historical)
 
 - [x] Round-1 architecture + safety **BLOCKED** findings closed @ `a38f0ec`
 - [x] Signal host / Guard-after-Agent order follow-up @ `6c73e46`
 - [x] Teardown order A11/B-S10 follow-up @ `c7a8f3a`
 - [x] Independent **architecture / ownership** contract **re-review** PASS @ `c7a8f3a` (zero blockers)
 - [x] Independent **safety / fail-closed** contract **re-review** PASS @ `c7a8f3a` (zero blockers)
-- [x] `python3 scripts/lint_docs.py` (docs path; this tip)
-- [x] `python3 scripts/score_docs.py --check` (docs path; this tip)
-- [x] `git diff --check` on contract docs range
-- [x] Diff contains **only** expected docs (+ quality reports if body/score changes)
-- [x] Confirm **no** `packages/`, `src/`, `build.zig*` product changes
-- [x] C9 product acceptance remains **unchecked**
-- [x] No maturity raise; no “TUI implemented” / current-tip Linux claim
-- [ ] Full std/curl product Gate — **not run on this tip**; do not invent numbers
+- [x] Contract-path docs lint / score / `git diff --check`
+- [x] Contract node contained **only** docs (no product code)
 
-# verification (implementation track — candidate)
+# verification (implementation track — closed @ `f8f7f55`)
 
-- [x] Package `packages/zag-tui` + lazy `-Dtui` root/cli wire (default false)
-- [x] Named §11 unit/integration/process fixtures (see zag-tui `tests_gate.zig` + CLI `tui_process_fixture.zig`)
-- [x] `zig build test` (default false) green on implementer host
-- [x] `zig build test -Dtui=true` green on implementer host
-- [x] `zig build test -Dtui=true -Dhttp_backend=curl` green on implementer host
-- [x] Kernel import scan green; plain/headless path retained
-- [ ] Independent code review PASS
-- [ ] Coordinator task/main Gates (not claimed by implementer)
-- [ ] No maturity row raise; no Linux/remote claim
+- [x] Package `packages/zag-tui` + lazy `-Dtui` root/cli wire (default **false**)
+- [x] Named §11 unit/integration/process fixtures (`tests_gate.zig` + CLI `tui_process_fixture.zig`)
+- [x] Dual-thread host; lifecycle cards; permission single-slot; full outward redaction
+- [x] PTY process fixtures (macOS product path): geometry; idle Ctrl+C; blocked busy first/second SIGINT; Ctrl+D / termios restore — **no** current-tip Linux/remote claim
+- [x] gate21 write isolation: run-unique exclusive owned workspace (`f8f7f55`); no bare cwd pollution
+- [x] Independent final code reviews (**two paths**) **PASS**, **zero blockers** @ `f8f7f55`
+- [x] Local ff-only merge of impl tip onto canonical main (same tip); unrelated canonical `.gitignore` retained; **no push**
+- [x] Task-worktree **and** merged canonical main — same serial matrix (local macOS):
+
+| Matrix | Steps · tests |
+|--------|----------------|
+| default std (`-Dtui` false) | **42/42 · 656/656** |
+| default curl | **44/44 · 655/655** |
+| TUI std (`-Dtui=true`) | **47/47 · 711/711** |
+| TUI curl (`-Dtui=true -Dhttp_backend=curl`) | **49/49 · 710/710** |
+| OpenAPI | **287/287** |
+| catalog | **40** |
+| docs readability / security | **92/100** / **74/100** (55 files) |
+| docs lint + committed-range diff | clean |
+
+- [x] Kernel import scan / plain+headless paths retained; Core / session-v1 / Trace-v1 / headless-v1 schemas **unchanged**
+- [x] No maturity row raise; no Linux/remote claim for this tip; no production-default weaken
 
 # non-goals
 
@@ -145,10 +146,9 @@ PASS-record tip.
 - E2/E3 extension UI
 - OS sandbox; multi-file edit platform
 - Core or session-v1 / Trace-v1 / headless-v1 schema changes
-- Maturity promotion
+- Maturity promotion or a new “TUI L2” row
 - Pi API or TUI parity; wholesale vaxis port
-- This contract node adding packages, dependencies, or product code
-- Claiming product TUI done or auto-starting implementation from contract merge
+- Claiming remote CI or Linux Gates for tip `f8f7f55`
 
 # lineage (tips)
 
@@ -157,7 +157,9 @@ PASS-record tip.
 | Contract candidate (initial freeze) | `d01d70b7d02566f0354f976775dab020399d0df5` |
 | Blocker-close follow-up | `a38f0ecde46d9f0c948f3a36dd8f46b1a7aad66f` |
 | Signal-host / Guard order follow-up | `6c73e4652a737b3fead0dbd15a2c661ebe66cfda` |
-| Teardown order follow-up (PASS tip) | `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` |
-| Contract PASS record (this docs tip) | tip with message `docs: record minimal TUI contract pass` |
-| Implementation candidate | this branch `task/tui-minimal-001-impl` — awaiting independent review + coordinator Gates |
-| Closeout | blocked on independent review + coordinator task/main Gates (not claimed done) |
+| Teardown order follow-up (**contract PASS**) | `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` |
+| Dual-review product fix | `adf3097` |
+| Strict PTY Gates #30–32/#18 | `ab610ce` |
+| gate21 hygiene (scoped write) | `a97efa6` |
+| gate21 exclusive run-unique workspace (**impl final tip**) | `f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5` |
+| Docs closeout (this tip) | post-`f8f7f55` docs-only commit on this branch |

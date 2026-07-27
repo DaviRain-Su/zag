@@ -20,7 +20,7 @@ Decisions: [D-009 — Pi semantics, not a parity fork](./decisions/active/D-009-
 
 ```text
                     ┌─► zag CLI
-                    │    plain · headless-v1 · later minimal TUI
+                    │    plain · headless-v1 · minimal TUI (-Dtui, default false)
 Zag Harness contracts
                     │
                     └─► Zig source-composition SDK
@@ -138,7 +138,7 @@ Package 是 E1/E2/E3 之上的 bundle，不是 E4；E0 是 build-time source dep
 
 ```text
 zag (bin)
-  └─ product shell: zag-cli · headless-v1 · later minimal TUI
+  └─ product shell: zag-cli · headless-v1 · minimal TUI (lazy -Dtui)
        └─ product harness: zag-coding-agent
             ├─ Agent/Session · policy · context · persistence · observation · Tools
             ├─ Kernel: zag-agent-core (Loop + required ports only)

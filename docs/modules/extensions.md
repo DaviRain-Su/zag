@@ -32,14 +32,14 @@ A feature may use several carriers. A Package is a bundle above E1/E2/E3, not an
 | Extension | selected Tools/events/commands/flags/shortcuts/providers/session/UI through a common vocabulary | E0 available in part; E2/E3 planned incrementally |
 | Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 **done** `skills-001` @ `caafef5` — binding [skills.md](./skills.md); maturity still L0 |
 | Prompt Template | deterministic `/name` prompt expansion with explicit non-recursive substitution | E1 **done** `prompt-templates-001` @ `61326ae` — binding [prompt-templates.md](./prompt-templates.md); maturity still L0 |
-| Theme | passive theme data rendered by the host product shell | after minimal TUI |
+| Theme | passive theme data rendered by the host product shell | after closed minimal TUI; needs own Goal (not auto-ready) |
 | Package | local manifest bundling E1 resources and optional E2/E3 artifacts | package schema/trust Gates planned |
 | Custom Model | validated model metadata/configuration without executable behavior | static catalog exists; runtime catalog unplanned |
 | Custom Provider | trusted Zig Provider plus later process/WASM runtime registration | E0 SDK L2; E2/E3 L0 |
 | SDK | same-process Zig composition | L2 closed |
 | JSON | `headless-v1` one-shot result/event output | L2 closed at `a1a1e0f` |
 | RPC | long-lived bidirectional Zag-native process control | planned after public events/control/session contracts |
-| TUI/UI | host TUI plus host-rendered runtime extension UI | minimal TUI planned; runtime UI L0 |
+| TUI/UI | host TUI plus host-rendered runtime extension UI | minimal TUI **done** @ `f8f7f55` ([tui-minimal.md](./tui-minimal.md)); runtime extension UI L0 |
 
 This is functional correspondence, not Pi API/schema/CLI/package-manager parity.
 
