@@ -19,8 +19,11 @@ Independent review-fix PASS (zero blockers); candidate + merged-main local
 macOS dual-backend Gates green (std **611/611**, curl **610/610**). Pure
 raw-Linux decoder regression ran in both std and curl-linked test artifacts.
 **Broader Linux reliability is not closed:** no fresh post-fix remote Linux
-runner in the closeout session; planned process-idle fixture work (task file
-not yet authored) and a final merged-path Linux dual-backend Gate remain
+runner in the closeout session; residual
+[ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
+is **blocked** on fresh explicitly approved Linux runner/remote action evidence
+(evidence-first contract; not implementation authorization; current Linux idle
+fixture status **unknown**). A final merged-path Linux dual-backend Gate remains
 required before prompt-templates work. [CI fuses](../plan/tasks/ci-hang-ci-fuses-001.md)
 are **done/closed** at `97f43de` as host rails only (binding
 [quality/README](../quality/README.md); exact fuses
@@ -202,11 +205,13 @@ Every raw Linux result that is classified by errno today must use kernel decode:
 3. **Pending-interrupt suite retained** — first wake + idle interrupted path; second-signal predicate remains handler
    state; focused zag-cli SIGINT unit tests stay green.
 4. **Dual-backend full Gate (local host)** — candidate std **611/611**, curl **610/610**; merged-main local macOS
-   again std **40/40 · 611/611**, curl **42/42 · 610/610**. Idle process-fixture reliability remains separately
-   planned (not claimed fixed by this node).
+   again std **40/40 · 611/611**, curl **42/42 · 610/610**. Idle process-fixture reliability remains residual
+   [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md) (**blocked** on Linux
+   runner authorization/evidence; not claimed fixed by the errno node). Local macOS process fixture **2/2** is
+   context only, not Linux proof.
 5. **Docs** — docs lint + score readability **91** / security **72**; committed-range `git diff --check` clean; no
    maturity inflation.
-6. **Not claimed** — fresh post-fix remote Linux runner; process-idle fixture;
+6. **Not claimed** — fresh post-fix remote Linux runner; process-idle residual closed;
    broader Linux reliability. CI fuses (`ci-hang-ci-fuses-001`) are separate host
    rails and do not prove product SIGINT/errno/idle correctness.
 

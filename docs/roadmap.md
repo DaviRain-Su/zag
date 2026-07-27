@@ -62,7 +62,7 @@ M0 — interaction reliability
         └─► ci-hang-sigint-linux-errno-001 ✅ bc737025
               │
               ├─► ci-hang-ci-fuses-001 ✅ done/closed @ 97f43de (host fuses only)
-              ├─► ci-hang-sigint-process-idle-001 (planned; no task file yet)
+              ├─► ci-hang-sigint-process-idle-001 ⛔ blocked (Linux runner auth/evidence)
               └─► final merged-path Linux dual-backend Gate (planned)
         │
         ▼
@@ -112,15 +112,18 @@ both std and curl-linked test artifacts; local host gates passed. Does not raise
 separately tracked idle process-fixture timeout; does not change CI workflows. **No push.**
 
 **Broader Linux reliability is not closed:** no fresh post-fix remote Linux runner ran in the closeout session.
-Separately planned `ci-hang-sigint-process-idle-001` (task file not yet authored) and the final merged-path Linux
-dual-backend Gate remain required before prompt-templates work.
+Residual [ci-hang-sigint-process-idle-001](./plan/tasks/ci-hang-sigint-process-idle-001.md) is **blocked** on
+fresh explicitly approved Linux runner/remote action evidence (evidence-first contract; not implementation
+authorization). The final merged-path Linux dual-backend Gate remains required before prompt-templates work.
 [ci-hang-ci-fuses-001](./plan/tasks/ci-hang-ci-fuses-001.md) is **done/closed** at `97f43de` as host rails only
 (binding [quality/README](./quality/README.md); exact fuses
 `group: ${{ github.workflow }}-${{ github.ref }}`, `cancel-in-progress: true`, 30m per matrix job; full
 ubuntu/macos + std/curl retained; no `continue-on-error`; independent review + ff-only local main
 `af293b0` → `97f43de`; **no push**; timeout/cancel ≠ product hang proof; remote Actions fuse enforcement **not**
-claimed). Next reliability node: planned `ci-hang-sigint-process-idle-001` (no task link until authored), then
-final remote Linux dual-backend Gate. Prompt-templates remain blocked on that residual chain.
+claimed). Next reliability residual:
+[ci-hang-sigint-process-idle-001](./plan/tasks/ci-hang-sigint-process-idle-001.md) (**blocked** on runner
+authorization/evidence), then final remote Linux dual-backend Gate. Prompt-templates remain blocked on that
+residual chain.
 
 Contract: [CLI interaction](./modules/cli-interaction.md). CI fuses quality contract:
 [quality/README](./quality/README.md).
