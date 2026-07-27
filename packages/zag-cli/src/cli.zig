@@ -9,6 +9,9 @@ const core = @import("zag-agent-core");
 const coding = @import("zag-coding-agent");
 const hw = @import("headless_writer.zig");
 const sigint = @import("sigint.zig");
+const build_options = @import("build_options");
+const tui_enabled: bool = build_options.tui_enabled;
+const tui_entry = if (tui_enabled) @import("tui_entry.zig") else struct {};
 
 const default_system =
     \\You are Zag, a coding agent that can read and modify the working directory.
@@ -166,6 +169,7 @@ pub fn run(init: std.process.Init) !void {
     var config_path: ?[]const u8 = null;
     var want_doctor = false;
     var headless_mode: ?hw.HeadlessMode = null;
+    var want_tui = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -174,6 +178,8 @@ pub fn run(init: std.process.Init) !void {
             show_help = true;
         } else if (std.mem.eql(u8, a, "-v") or std.mem.eql(u8, a, "--verbose")) {
             verbose = true;
+        } else if (std.mem.eql(u8, a, "--tui")) {
+            want_tui = true;
         } else if (std.mem.eql(u8, a, "--doctor")) {
             want_doctor = true;
         } else if (std.mem.eql(u8, a, "--yolo")) {
@@ -275,6 +281,32 @@ pub fn run(init: std.process.Init) !void {
         }
     }
 
+    // --tui mode matrix (tui-minimal.md §9.2). Help+tui → 0 no init (except
+    // json+help keeps existing headless help path). Mutual exclusions exit 2
+    // with empty stdout (no silent REPL fallback).
+    if (want_tui) {
+        if (headless_mode != null) {
+            std.log.err("--tui is mutually exclusive with --json/--json-stream", .{});
+            std.process.exit(2);
+        }
+        if (want_doctor) {
+            std.log.err("--tui is mutually exclusive with --doctor", .{});
+            std.process.exit(2);
+        }
+        if (verbose) {
+            std.log.err("--tui is mutually exclusive with --verbose/-v", .{});
+            std.process.exit(2);
+        }
+        if (prompt_parts.items.len > 0) {
+            std.log.err("--tui is an interactive shell only (no positional prompt)", .{});
+            std.process.exit(2);
+        }
+        if (!tui_enabled) {
+            std.log.err("TUI unavailable (binary built without -Dtui=true)", .{});
+            std.process.exit(2);
+        }
+    }
+
     if (show_help) {
         if (headless_mode) |_| {
             try printUsageToStderr(io);
@@ -304,6 +336,16 @@ pub fn run(init: std.process.Init) !void {
             try runDoctor(gpa, io, doctorOptionsFromFlags(permission_mode, shell_policy, no_project));
         }
         return;
+    }
+
+    // TUI requires both stdin and stdout TTYs (exit 2, empty stdout).
+    if (want_tui) {
+        const stdin_tty = Io.File.stdin().isTty(io) catch false;
+        const stdout_tty = Io.File.stdout().isTty(io) catch false;
+        if (!stdin_tty or !stdout_tty) {
+            std.log.err("tui requires a tty on stdin and stdout", .{});
+            std.process.exit(2);
+        }
     }
 
     // D-006: -s PATH → create_new; -c → resume_existing.
@@ -411,64 +453,17 @@ pub fn run(init: std.process.Init) !void {
     }
 
     // B2/B6: stack-stable interactive adapter; cancel pointer fixed after Agent.init.
+    // TUI ask uses hunk_reviewer=null; TUI yolo uses AutoAccept (never Interactive).
     var interactive_hunk_reviewer: InteractiveHunkReviewer = .{ .io = io, .cancel = null };
-    const bound_hunk_reviewer = resolveHunkReviewer(permission_mode, headless_mode, &interactive_hunk_reviewer);
+    const bound_hunk_reviewer: ?coding.HunkReviewer = if (want_tui)
+        (if (permission_mode == .yolo) coding.autoAcceptHunkReviewer() else null)
+    else
+        resolveHunkReviewer(permission_mode, headless_mode, &interactive_hunk_reviewer);
 
-    var agent_opts: coding.agent.Options = .{
-        .verbose = verbose,
-        .permission_mode = permission_mode,
-        .session_kind = session_kind,
-        .remember_writes = remember_writes,
-        .shell_policy = shell_policy,
-        .trace_path = trace_path,
-        .version = coding.version,
-        .context = context_opts,
-        .chat_retries = resolve_result.chat_retries,
-        .retry_base_delay_ms = resolve_result.retry_base_delay_ms,
-        // End-to-end deadline shared across loop retries (not reset per attempt).
-        .provider_timeout_ms = resolved.config.timeout_ms,
-        .model_info = resolve_result.model_info,
-        .secrets = &secret_slots,
-        .pattern_redaction = true,
-        .observer = if (headless_mode == .json_stream) headless_observer.asObserver() else .none(),
-        // Verifier left null on CLI built-in path — never derive doctor/model command.
-        .hunk_reviewer = bound_hunk_reviewer,
-        .post_edit_verifier = null,
-    };
-    if (resolve_result.max_turns) |mt| {
-        agent_opts.max_turns = mt;
-    }
-
-    var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
-        if (headless_mode) |mode| {
-            headlessErrorExit(gpa, io, mode, null, .{ .code = .out_of_memory, .message = "agent init failed" });
-        }
-        std.log.err("agent init failed (out of memory)", .{});
-        std.process.exit(1);
-    };
-    defer agent.deinit();
-    // Wire cancel only after Agent address is stable (B6 cancel-before-decision → reject).
-    interactive_hunk_reviewer.cancel = &agent.cancel;
-    // cli-sigint-001: CLI owns the SIGINT handler. It installs a self-pipe
-    // wakeup + cooperative cancel against `agent.cancel`, and restores the
-    // previous disposition on scope end. The SDK alone never installs this.
-    // Install failure is an initialization fault (pipe/fcntl/sigaction), NOT
-    // out-of-memory — map honestly (review item 7), without lying OOM.
-    var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
-        if (headless_mode) |mode| {
-            headlessErrorExit(gpa, io, mode, null, .{ .code = .trace_error, .message = "sigint guard init failed" });
-        }
-        std.log.err("sigint guard init failed", .{});
-        std.process.exit(1);
-    };
-    defer sigint_guard.deinit();
-
-    // -c → resume_existing; -s without -c → create_new; no path → ephemeral (create_new with null path).
+    // -c → resume_existing; -s without -c → create_new; no path → ephemeral.
     const open_mode = selectOpenMode(continue_session);
 
     // skills-001 + prompt-templates-001: CLI resolves HOME → user roots; SDK never getenv.
-    // Configured user-root construction OOM fails closed (does not silently
-    // disable discovery while enable flags remain true).
     const skills_enabled = !no_skills;
     const project_skills_trust: coding.ProjectSkillsTrust = if (trust_project_skills) .trusted else .untrusted;
     const user_skills_root: ?[]const u8 = if (skills_enabled)
@@ -491,6 +486,105 @@ pub fn run(init: std.process.Init) !void {
         .project_templates_trust = project_templates_trust,
         .user_templates_root = user_templates_root,
     };
+
+    // Shared base options (TUI path overrides permission/lifecycle/observer).
+    var agent_opts: coding.agent.Options = .{
+        .verbose = verbose,
+        .permission_mode = permission_mode,
+        .session_kind = session_kind,
+        .remember_writes = remember_writes,
+        .shell_policy = shell_policy,
+        .trace_path = trace_path,
+        .version = coding.version,
+        .context = context_opts,
+        .chat_retries = resolve_result.chat_retries,
+        .retry_base_delay_ms = resolve_result.retry_base_delay_ms,
+        .provider_timeout_ms = resolved.config.timeout_ms,
+        .model_info = resolve_result.model_info,
+        .secrets = &secret_slots,
+        .pattern_redaction = true,
+        .observer = if (headless_mode == .json_stream) headless_observer.asObserver() else .none(),
+        .hunk_reviewer = bound_hunk_reviewer,
+        .post_edit_verifier = null,
+    };
+    if (resolve_result.max_turns) |mt| {
+        agent_opts.max_turns = mt;
+    }
+
+    // ── TUI path (comptime-gated so -Dtui=false never types zag-tui) ────────
+    if (comptime tui_enabled) {
+        if (want_tui) {
+            const app = tui_entry.App.create(gpa) catch {
+                std.log.err("tui: preallocate failed", .{});
+                std.process.exit(1);
+            };
+            defer app.destroy();
+
+            agent_opts.permission_gate = if (permission_mode == .yolo)
+                coding.permissions.Gate.yolo()
+            else
+                coding.permissions.Gate.ask(tui_entry.App.askFn, app);
+            agent_opts.lifecycle = app.lifecycleObserver();
+            agent_opts.observer = app.observer();
+
+            var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
+                std.log.err("agent init failed (out of memory)", .{});
+                std.process.exit(1);
+            };
+            defer agent.deinit();
+
+            var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
+                std.log.err("sigint guard init failed", .{});
+                std.process.exit(1);
+            };
+            // runTui always deinit's Guard on both success and failure paths.
+            const tui_host_opts: tui_entry.HostResourceOptions = .{
+                .skills_enabled = host_opts.skills_enabled,
+                .project_skills_trust = host_opts.project_skills_trust,
+                .user_skills_root = host_opts.user_skills_root,
+                .templates_enabled = host_opts.templates_enabled,
+                .project_templates_trust = host_opts.project_templates_trust,
+                .user_templates_root = host_opts.user_templates_root,
+            };
+            const result = tui_entry.runTui(.{
+                .gpa = gpa,
+                .io = io,
+                .app = app,
+                .agent = &agent,
+                .guard = &sigint_guard,
+                .session_path = session_path,
+                .open_mode = open_mode,
+                .load_project = !no_project,
+                .host_opts = tui_host_opts,
+                .base_system = default_system,
+                .permission_label = permission_mode.name(),
+                .shell_label = shell_policy.name(),
+            });
+            // Order: Guard already deinit inside runTui → Agent.deinit (defer)
+            // → App.destroy (defer).
+            std.process.exit(result.exit_code);
+        }
+    }
+
+    var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
+        if (headless_mode) |mode| {
+            headlessErrorExit(gpa, io, mode, null, .{ .code = .out_of_memory, .message = "agent init failed" });
+        }
+        std.log.err("agent init failed (out of memory)", .{});
+        std.process.exit(1);
+    };
+    defer agent.deinit();
+    // Wire cancel only after Agent address is stable (B6 cancel-before-decision → reject).
+    interactive_hunk_reviewer.cancel = &agent.cancel;
+    // cli-sigint-001: CLI owns the SIGINT handler.
+    var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
+        if (headless_mode) |mode| {
+            headlessErrorExit(gpa, io, mode, null, .{ .code = .trace_error, .message = "sigint guard init failed" });
+        }
+        std.log.err("sigint guard init failed", .{});
+        std.process.exit(1);
+    };
+    defer sigint_guard.deinit();
 
     if (headless_mode) |mode| {
         if (prompt_parts.items.len == 0) {
@@ -1199,6 +1293,7 @@ fn printUsage(io: Io) !void {
         \\  --doctor                   readiness report (no API key / provider / network)
         \\  --json                     headless one-shot: single JSON result envelope
         \\  --json-stream              headless one-shot: NDJSON event stream
+        \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
@@ -1229,6 +1324,7 @@ fn printUsage(io: Io) !void {
         \\
         \\Packages: zag-cli → coding-agent → agent-core → zag-types
         \\                       ↘ zag-ai → openai-zig
+        \\            (+ zag-tui when -Dtui=true)
         \\
     ;
     try Io.File.stdout().writeStreamingAll(io, usage);
@@ -1253,6 +1349,7 @@ fn printUsageToStderr(io: Io) !void {
         \\  --doctor                   readiness report (no API key / provider / network)
         \\  --json                     headless one-shot: single JSON result envelope
         \\  --json-stream              headless one-shot: NDJSON event stream
+        \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
@@ -1283,6 +1380,7 @@ fn printUsageToStderr(io: Io) !void {
         \\
         \\Packages: zag-cli → coding-agent → agent-core → zag-types
         \\                       ↘ zag-ai → openai-zig
+        \\            (+ zag-tui when -Dtui=true)
         \\
     ;
     try Io.File.stderr().writeStreamingAll(io, usage);

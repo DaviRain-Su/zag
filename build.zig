@@ -14,9 +14,8 @@ pub fn build(b: *std.Build) void {
     const tui = b.option(
         bool,
         "tui",
-        "Enable TUI product shell (default false; currently no TUI package)",
+        "Enable TUI product shell (default false; lazy zag-tui)",
     ) orelse false;
-    _ = tui;
 
     const openai_dep = b.dependency("openai_zig", .{
         .target = target,
@@ -57,10 +56,22 @@ pub fn build(b: *std.Build) void {
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
 
+    // Lazy: only resolve/build zag-tui when -Dtui=true.
+    var tui_mod: ?*std.Build.Module = null;
+    if (tui) {
+        const tui_dep = b.lazyDependency("zag_tui", .{
+            .target = target,
+            .optimize = optimize,
+            .http_backend = http_backend,
+        }) orelse return;
+        tui_mod = tui_dep.module("zag-tui");
+    }
+
     const cli_dep = b.dependency("zag_cli", .{
         .target = target,
         .optimize = optimize,
         .http_backend = http_backend,
+        .tui = tui,
     });
     const cli_mod = cli_dep.module("zag-cli");
 
@@ -126,7 +137,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-ai", .module = ai_mod },
         },
     });
-    _ = b.addModule("zag-cli", .{
+    const cli_named = b.addModule("zag-cli", .{
         .root_source_file = b.path("packages/zag-cli/src/root.zig"),
         .target = target,
         .imports = &.{
@@ -135,6 +146,25 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-ai", .module = ai_mod },
         },
     });
+    // Named module uses same build_options as package dependency graph.
+    {
+        const named_opts = b.addOptions();
+        named_opts.addOption(bool, "tui_enabled", tui);
+        cli_named.addOptions("build_options", named_opts);
+        if (tui_mod) |tm| cli_named.addImport("zag-tui", tm);
+    }
+    if (tui_mod) |tm| {
+        _ = b.addModule("zag-tui", .{
+            .root_source_file = b.path("packages/zag-tui/src/root.zig"),
+            .target = target,
+            .imports = &.{
+                .{ .name = "zag-coding-agent", .module = coding_mod },
+                .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-types", .module = types_mod },
+            },
+        });
+        _ = tm;
+    }
 
     const mod = b.addModule("zag", .{
         .root_source_file = b.path("src/root.zig"),
@@ -242,6 +272,8 @@ pub fn build(b: *std.Build) void {
     });
     const run_fixture_tests = b.addRunArtifact(fixture_tests);
 
+    const cli_test_opts = b.addOptions();
+    cli_test_opts.addOption(bool, "tui_enabled", tui);
     const cli_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("packages/zag-cli/src/root.zig"),
@@ -254,7 +286,28 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    cli_tests.root_module.addOptions("build_options", cli_test_opts);
+    if (tui_mod) |tm| cli_tests.root_module.addImport("zag-tui", tm);
     const run_cli_tests = b.addRunArtifact(cli_tests);
+
+    // zag-tui package tests only when -Dtui=true (lazy package not resolved otherwise).
+    var run_tui_tests: ?*std.Build.Step.Run = null;
+    if (tui_mod) |tm| {
+        const tui_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("packages/zag-tui/src/root.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "zag-coding-agent", .module = coding_mod },
+                    .{ .name = "zag-agent-core", .module = core_mod },
+                    .{ .name = "zag-types", .module = types_mod },
+                },
+            }),
+        });
+        _ = tm;
+        run_tui_tests = b.addRunArtifact(tui_tests);
+    }
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
@@ -420,6 +473,25 @@ pub fn build(b: *std.Build) void {
     );
     sigint_fixture_step.dependOn(&run_sigint_process_tests.step);
 
+    // tui-minimal-001: process-level --tui mode matrix / non-TTY (only when -Dtui=true).
+    var run_tui_process_tests: ?*std.Build.Step.Run = null;
+    if (tui) {
+        const tui_fixture_opts = b.addOptions();
+        tui_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
+        tui_fixture_opts.addOption(bool, "tui_enabled", true);
+        const tui_process_tests = b.addTest(.{
+            .root_module = b.createModule(.{
+                .root_source_file = b.path("packages/zag-cli/src/tui_process_fixture.zig"),
+                .target = target,
+                .optimize = optimize,
+                .imports = &.{
+                    .{ .name = "tui_fixture_options", .module = tui_fixture_opts.createModule() },
+                },
+            }),
+        });
+        run_tui_process_tests = b.addRunArtifact(tui_process_tests);
+    }
+
     const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
@@ -432,6 +504,8 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_doctor_process_tests.step);
     test_step.dependOn(&run_headless_process_tests.step);
     test_step.dependOn(&run_sigint_process_tests.step);
+    if (run_tui_tests) |rt| test_step.dependOn(&rt.step);
+    if (run_tui_process_tests) |rt| test_step.dependOn(&rt.step);
     test_step.dependOn(openai_coverage_step);
     test_step.dependOn(catalog_check_step);
     test_step.dependOn(docs_lint_step);

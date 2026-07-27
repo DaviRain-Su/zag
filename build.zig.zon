@@ -50,6 +50,10 @@
         .zag_cli = .{
             .path = "packages/zag-cli",
         },
+        .zag_tui = .{
+            .path = "packages/zag-tui",
+            .lazy = true,
+        },
         .sdk_consumer_fixture = .{
             .path = "tests/sdk-consumer-fixture",
         },

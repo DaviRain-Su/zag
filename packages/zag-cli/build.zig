@@ -10,6 +10,11 @@ pub fn build(b: *std.Build) void {
         "http_backend",
         "Outbound HTTP for zag-ai (std.http or zig-curl)",
     ) orelse .std;
+    const tui = b.option(
+        bool,
+        "tui",
+        "Enable zag-tui product shell (default false; lazy)",
+    ) orelse false;
 
     const core_dep = b.dependency("zag_agent_core", .{
         .target = target,
@@ -31,6 +36,9 @@ pub fn build(b: *std.Build) void {
     });
     const ai_mod = ai_dep.module("zag-ai");
 
+    const cli_opts = b.addOptions();
+    cli_opts.addOption(bool, "tui_enabled", tui);
+
     const mod = b.addModule("zag-cli", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -40,22 +48,21 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-ai", .module = ai_mod },
         },
     });
+    mod.addOptions("build_options", cli_opts);
 
-    const tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/root.zig"),
+    if (tui) {
+        const tui_dep = b.lazyDependency("zag_tui", .{
             .target = target,
             .optimize = optimize,
-            .imports = &.{
-                .{ .name = "zag-agent-core", .module = core_mod },
-                .{ .name = "zag-coding-agent", .module = coding_mod },
-                .{ .name = "zag-ai", .module = ai_mod },
-            },
-        }),
+            .http_backend = http_backend,
+        }) orelse return;
+        mod.addImport("zag-tui", tui_dep.module("zag-tui"));
+    }
+
+    const tests = b.addTest(.{
+        .root_module = mod,
     });
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run zag-cli tests");
     test_step.dependOn(&run_tests.step);
-
-    _ = mod;
 }

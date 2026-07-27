@@ -1,0 +1,62 @@
+const std = @import("std");
+
+const HttpBackend = enum { std, curl };
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    const http_backend = b.option(
+        HttpBackend,
+        "http_backend",
+        "Outbound HTTP for zag-coding-agent / zag-ai (std.http or zig-curl)",
+    ) orelse .std;
+
+    const coding_dep = b.dependency("zag_coding_agent", .{
+        .target = target,
+        .optimize = optimize,
+        .http_backend = http_backend,
+    });
+    const coding_mod = coding_dep.module("zag-coding-agent");
+
+    // Core public types (StopReason / cancel) via product path; explicit import
+    // keeps layer law visible. No CLI / sigint dependency.
+    const core_dep = b.dependency("zag_agent_core", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const core_mod = core_dep.module("zag-agent-core");
+
+    const types_dep = b.dependency("zag_types", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const types_mod = types_dep.module("zag-types");
+
+    const mod = b.addModule("zag-tui", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "zag-coding-agent", .module = coding_mod },
+            .{ .name = "zag-agent-core", .module = core_mod },
+            .{ .name = "zag-types", .module = types_mod },
+        },
+    });
+
+    const tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/root.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zag-coding-agent", .module = coding_mod },
+                .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-types", .module = types_mod },
+            },
+        }),
+    });
+    const run_tests = b.addRunArtifact(tests);
+    const test_step = b.step("test", "Run zag-tui tests");
+    test_step.dependOn(&run_tests.step);
+
+    _ = mod;
+}
