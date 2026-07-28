@@ -49,7 +49,7 @@ These axes are orthogonal:
 | Extension | Register Tools, lifecycle handlers, commands, flags, shortcuts, providers, session actions, messages, and UI | A common feature vocabulary delivered incrementally; host policy/session/trace authority remains mandatory | E0, E2, E3 | E0 Tool/Provider/Observer composition L2; runtime extensions L0 | No `jiti`, arbitrary TS execution, dynamic Zig ABI, or host-memory mutation |
 | Skill | Discover reusable instructions, expose summaries, load `SKILL.md` on demand, optionally invoke manually | Bounded E1 discovery, precedence, trust, budget, disable/manual-only behavior, and downstream Tool enforcement | E1 + host Tool gates | `skills-001` **done** at `caafef5` ([skills.md](../../modules/skills.md)); Runtime Extensions L0 | The loader never executes code, but Skill content may induce normal Tool/shell execution |
 | Prompt Template | Expand `/name args` into reusable prompts | Explicit passive prompt resource with deterministic discovery, project-override collision, and one-pass `$ARGUMENTS`/`$$` substitution | E1 + host command router | `prompt-templates-001` **done** at `61326ae` ([prompt-templates.md](../../modules/prompt-templates.md)); Runtime Extensions L0 | Syntax smaller than Pi is fine if binding; not accidental or recursively substituted |
-| Theme | Install/select presentation data, adapt to terminal capabilities, reload | Passive theme data plus host-owned terminal renderer | E1-style data + host shell | Minimal TUI **done** @ `f8f7f55`; theme still needs a **fresh Goal** + independent contract — **not** auto-ready/selected | No ANSI/renderer capability crosses E2/E3 |
+| Theme | Install/select presentation data, adapt to terminal capabilities, reload | Passive theme data plus host-owned terminal renderer | E1-style data + host shell | Binding **contract candidate** [theme.md](../../modules/theme.md) / [theme-001](../tasks/theme-001.md) (`status: pending`; dual reviews not started; **no** implementation; owner `zag-tui` only; orthogonal to post-TUI remote Gate TARGET `f352b60…`) | No ANSI/renderer capability crosses E2/E3; fail closed to built-in host Theme |
 | Package | Install one bundle containing several extension resources and enable/disable them | Local runtime bundle manifest declaring E1 resources and optional E2/E3 artifacts; digest/provenance/trust/quarantine | Bundle layer above E1/E2/E3 | Schema/package Gates not started | E0 Zig source dependencies are build-time and never runtime-installed; no npm parity/marketplace |
 | Custom Model | Add/override model metadata for a known API shape without code | Validated runtime model catalog/configuration, with auth stored separately | Host configuration / passive data | Current catalog is static E0; runtime catalog unplanned | Pure data does not require WASM; shell-command secret lookup may be omitted or isolated |
 | Custom Provider | Add transport, streaming, auth, model discovery, and normalization | E0 custom Zig Provider; later runtime registration for portable/system integrations | E0; E2; E3 with narrow host imports | E0 custom Provider L2; runtime registration L0 | OAuth browser/keychain/ambient cloud credentials stay host/E2; E3 never gets broad raw OS access |
@@ -230,11 +230,16 @@ public events/control/session
   ├→ runtime-model-catalog-001 (data-only; independent from E2/E3)
   └→ extension-ui-schema-001 (basic intents first; stateful views later)
 
-host shell (optional follow-on; needs fresh Goal)
-  theme-001   # after closed tui-minimal-001 @ f8f7f55; not auto-selected
+host shell (optional follow-on)
+  theme-001   # contract candidate pending ([theme.md]); dual reviews not started;
+              # no implementation; after closed tui-minimal-001 @ f8f7f55;
+              # orthogonal to post-tui-remote-dual-backend-gate-001
 ```
 
-These are capability placeholders. They become binding only after their own analysis/task contracts exist.
+Theme now has an authored binding module + task skeleton (`status: pending`).
+It is **not** implementation-ready until dual contract reviews PASS and a
+separate implementation Goal is scheduled. Other placeholders remain non-binding
+until their own analysis/task contracts exist.
 
 ## Verification record
 

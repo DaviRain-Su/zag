@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Prerequisite | Headless/Process L2 ✅; minimal TUI additionally needs stable lifecycle events/control |
-| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55` |
+| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55`; Theme contract candidate `theme-001` **pending** |
 | Failure mode | plain CLI is too weak for daily use, or UI duplicates Kernel business logic |
 | Reference | Current Pi + historical `pi-mono-zig` terminal behavior (design only) |
 | Feature map | [Pi feature correspondence](../plan/analysis/2026-07-26-pi-feature-correspondence.md) |
@@ -45,7 +45,10 @@ maturity row raise; **no** current-tip Linux/remote Gate. Local remote-tracking
 reflog records an external/other push of `f8f7f55` to `origin/main`; this
 closeout did not execute or authorize that push. Docs closeout remains local;
 remote branch presence is not a Linux/remote Gate. This is the **minimal**
-host-shell slice only — not theme/RPC/ACP/extension UI.
+host-shell slice only — not Theme implementation/RPC/ACP/extension UI.
+Theme binding is a separate docs candidate: [theme.md](../modules/theme.md)
+([theme-001](../plan/tasks/theme-001.md) `status: pending`; dual reviews not
+started; **no** implementation; **orthogonal** to post-TUI remote Gate).
 
 Contract freezes (detail in the module — do not fork):
 
@@ -92,7 +95,7 @@ E0 trusted static Zig product code may add native host components at compile tim
 
 ## Theme boundary
 
-Theme data is passive. ANSI generation, terminal capability/background detection, hot reload, and UI invalidation are host-shell behavior. `theme-001` follows `tui-minimal-001`; no theme renderer crosses E2/E3.
+Theme data is passive. ANSI generation, terminal capability/background detection, hot reload, and UI invalidation are host-shell behavior. Binding candidate: [theme.md](../modules/theme.md) (`theme-001` **pending**; dual contract reviews not started; **no** implementation; **no** maturity raise). Owner is **`packages/zag-tui` only**; Core/coding-agent gain no Theme types. Fail closed to built-in host Theme; no raw ANSI in Theme data; no theme renderer crosses E2/E3. Orthogonal to [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) (TARGET `f352b60…`; Phase A; no Phase B grant/run/green).
 
 ## Invariants
 
@@ -109,7 +112,7 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 - `rpc-v1` implementation and full command vocabulary;
 - ACP/editor host;
 - dashboard/cost explorer;
-- themes, images, stateful extension views, full overlay framework;
+- Theme **implementation** (contract candidate only; see [theme.md](../modules/theme.md)), images, stateful extension views, full overlay framework;
 - package configuration UI;
 - cloud collaboration/i18n breadth.
 
@@ -132,6 +135,16 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 - [x] plain/headless dual-backend Gates remain green (default std **656/656**, curl **655/655**);
 - [x] Kernel packages do not import TUI;
 - [x] fixture matrix in tui-minimal.md §11 green on the implementation tip (TUI std **711/711**, TUI curl **710/710**).
+
+## Acceptance for `theme-001` (contract track; docs only)
+
+- [x] binding module [theme.md](../modules/theme.md) authored
+- [x] task [theme-001](../plan/tasks/theme-001.md) authored (`status: pending`)
+- [ ] independent architecture/ownership contract review PASS
+- [ ] independent safety/fail-closed contract review PASS
+- [ ] docs lint / score / diff green on contract docs path; no product code
+- [ ] **no** implementation until dual PASS + separate Goal
+- [ ] **no** maturity raise; **no** post-TUI Phase B grant/run/green claim
 
 ## Acceptance for later extension UI host
 
