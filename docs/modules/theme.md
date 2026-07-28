@@ -13,11 +13,12 @@ ownership, passive Theme data rules, the minimal v1 surface, fail-closed
 fallback, host-owned reload/UI invalidation, non-interference with closed L2
 truth, and the later implementation Gate matrix.
 
-**Current status (honest):** this document is a **contract candidate** awaiting
-independent **architecture/ownership** and **safety/fail-closed** reviews.
-There is **no** product implementation, **no** dual contract review PASS, **no**
-implementation Goal authorization, **no** grant/run, **no** Gate green, and
-**no** maturity raise from this node.
+**Current status (honest):** this document is a **contract candidate**. Round-1
+independent **architecture/ownership** and **safety/fail-closed** reviews
+returned **BLOCKED**; this revision closes those blockers in docs only. There
+is still **no** dual contract review PASS, **no** product implementation, **no**
+implementation Goal authorization, **no** grant/run, **no** Gate green, **no**
+`status: ready`, and **no** maturity raise from this node.
 
 **Implementation status:** **not started**. Live `packages/zag-tui` seams
 (read-only evidence for this freeze):
@@ -52,19 +53,23 @@ Related truth (do not fork):
 ### 1.1 Unique owner: `packages/zag-tui` only
 
 ```text
-passive Theme document (on disk or built-in bytes)
-        │  host parse + validate only
+CLI / custom host (when -Dtui=true)
+  · resolve HOME → user_themes_root (CLI only; library hosts pass explicit path)
+  · parse flags → ThemeHostOptions
+  · MUST NOT parse Theme bodies, own catalog, or emit Theme SGR
+        │  pass ThemeHostOptions only
         ▼
-packages/zag-tui/   (ONLY Theme owner)
+packages/zag-tui/   (ONLY Theme owner + discovery I/O)
   · Theme types
   · strict parse / validate
-  · catalog + selection
+  · catalog + selection (from options + FS/built-ins)
   · terminal capability / background detection (later impl)
-  · ANSI generation from validated semantic tokens only
+  · Theme-derived SGR/color attributes from validated semantic roles only
+  · host-owned structural control (alt-screen/cursor/clear/layout) per tui-minimal
   · reload transaction + UI invalidation
         │  assembles public coding-agent APIs (unchanged by Theme)
         ▼
-zag-coding-agent   NO Theme types / ports / state / discovery
+zag-coding-agent   NO Theme types / ports / state / discovery / options
         │
         ▼
 zag-agent-core     NO Theme types / ports / state / discovery
@@ -72,17 +77,19 @@ zag-agent-core     NO Theme types / ports / state / discovery
 
 | Layer | Owns Theme | Must not own |
 |-------|------------|--------------|
-| **`zag-tui` only** | Theme type(s), strict parse/validate, in-process catalog, selection/default, capability/background detection, ANSI generation, reload transaction, UI invalidation after publish, built-in host themes, host diagnostics for Theme faults | Agent/Session durable state; Loop; Trace schema; permission risk; headless envelopes; Core ports |
-| `zag-cli` | When **and only when** built with `-Dtui=true`: parse/forward **explicit** Theme host options into the TUI entry; resolve `$HOME` for user-root option if exposed | Theme catalog, renderer, parse/validate of Theme bodies, capability detection, ANSI generation, discovery I/O beyond forwarding options; Theme code under `zag-cli/src/**` |
-| `zag-coding-agent` | — | Theme types, ports, state, discovery, catalog, ANSI, reload |
+| **`zag-tui` only** | Theme type(s), `ThemeHostOptions` consumer, discovery I/O under options, strict parse/validate, in-process catalog, selection/default, capability/background detection, **Theme-derived SGR** from validated roles, reload transaction, UI invalidation after publish, built-in host themes, host diagnostics for Theme faults | Agent/Session durable state; Loop; Trace schema; permission risk; headless envelopes; Core ports; reading Agent/Session private fields for roots |
+| `zag-cli` | When **and only when** built with `-Dtui=true`: parse/forward **explicit** `ThemeHostOptions` into the TUI entry; resolve `$HOME` → `user_themes_root` | Theme catalog, renderer, parse/validate of Theme bodies, capability detection, Theme SGR generation, discovery I/O beyond building options; Theme source under `zag-cli/src/**` |
+| `zag-coding-agent` | — | Theme types, ports, state, discovery, catalog, options, SGR, reload |
 | `zag-agent-core` | — | any Theme / terminal-palette / renderer concern |
 
 **Forbidden shapes:**
 
-- Theme types, ports, discovery, or state in `zag-agent-core` or `zag-coding-agent`
+- Theme types, ports, state, discovery, catalog, or Theme options in
+  `zag-agent-core` or `zag-coding-agent` (not merely “no `@import`”)
 - Theme catalog or renderer owned by `zag-cli`
-- Theme implementation under `packages/zag-cli/src/**` as an alternate owner
-- Core/coding-agent `@import` of Theme modules
+- Theme implementation / Theme source files under `packages/zag-cli/src/**` or
+  any package other than `packages/zag-tui/`
+- Deriving Theme roots from Agent/Session private fields
 - Shipping Theme as E2/E3 executable surface or raw-terminal capability
 
 ### 1.2 Build and CLI wire (inherits TUI law)
@@ -104,26 +111,108 @@ to assemble only the public surfaces already frozen by
 control queues/`SignalHost`). Theme selection is a **host-shell presentation**
 concern, not a Session schema field and not a Trace kind.
 
+### 1.4 Binding `ThemeHostOptions` (zag-tui entry; conceptual shape)
+
+Exact Zig field names may match package style; **behavior is binding**. These
+options are defined and consumed by **`zag-tui`**. CLI / custom hosts only
+**populate and pass** them when entering TUI. `zag-coding-agent` must **not**
+add Theme options or Theme state. Library/SDK hosts must **not**
+`getenv("HOME")` for Theme roots; only product CLI may map `HOME` →
+`user_themes_root`.
+
+```zig
+// Conceptual — binding behavior, not a shipped API claim.
+pub const ProjectThemeTrust = enum { untrusted, trusted };
+
+pub const ThemeHostOptions = struct {
+    /// Default **true** for product TUI sessions. When false: no user/project
+    /// discovery; render with built-in `zag-default` tokens only.
+    theme_enabled: bool = true,
+
+    /// Default **untrusted**. Project root is scanned only when `.trusted`.
+    project_theme_trust: ProjectThemeTrust = .untrusted,
+
+    /// Optional host-owned user themes directory authority root.
+    /// CLI: resolve $HOME → "<HOME>/.agents/themes" (or equivalent) and pass.
+    /// Library hosts: explicit path or null; MUST NOT getenv("HOME").
+    /// zag-tui owns all discovery I/O under this root when non-null + enabled.
+    user_themes_root: ?[]const u8 = null,
+
+    /// Workspace authority root used for project Theme containment.
+    /// Required for any project Theme scan; may also equal the product workspace.
+    workspace_root: ?[]const u8 = null,
+
+    /// Optional project themes directory (typically
+    /// "<workspace>/.agents/themes"). Scanned only when theme_enabled and
+    /// project_theme_trust == .trusted and both workspace_root and this path
+    /// are set. zag-tui owns discovery I/O.
+    project_themes_root: ?[]const u8 = null,
+
+    /// Optional explicit Theme id selection after catalog build.
+    /// Unknown → zag-default + fixed diagnostic (see §3.5).
+    selected_theme_id: ?[]const u8 = null,
+};
+```
+
+| Rule | Binding |
+|------|---------|
+| Who builds options | CLI (`-Dtui=true`) or custom TUI host only |
+| Who discovers / parses / catalogs | **`zag-tui` only** |
+| Roots source | options fields above only — **never** Agent/Session private fields |
+| coding-agent | **no** Theme option struct, Session field, or discovery call |
+| Independence | Theme knobs independent of Skills / Prompt Templates / `--no-project` |
+
 ## 2. Theme data is completely passive
 
 Theme documents are **data only**. The host is the sole interpreter.
 
-### 2.1 Forbidden in Theme data (hard reject)
+### 2.1 Host structural control vs Theme-derived attributes (unique freeze)
+
+TTY output has two **disjoint** host-owned channels. Theme does **not** own
+structural terminal control required by [tui-minimal](./tui-minimal.md).
+
+| Channel | Source of truth | May Theme data supply? |
+|---------|-----------------|------------------------|
+| **Host-owned structural control** | Fixed host code in `zag-tui` (today: `terminal.zig` / `render.zig`) | **No** |
+| **Theme-derived SGR / color attributes** | Host maps **validated semantic role tokens** → SGR sequences | Values only as constrained color specs (§3.1.1); **never** raw escape strings |
+
+**Host-owned structural control** (non-exhaustive; continues to satisfy
+tui-minimal regardless of Theme):
+
+- alt-screen enter/leave, cursor hide/show, raw/restore termios
+- clear / home / cursor address used for full-frame layout
+- fixed layout glyphs and chrome characters (box-drawing, prompts, separators)
+- wake/poll, geometry, permission-modal key routing (non-color)
+
+**Theme-derived attributes only:**
+
+- SGR / color (and only color-adjacent) attributes generated by **host code**
+  from **already-validated** role → color-spec maps in the active Theme snapshot
+- optional host mapping of `bg`/`fg` roles under capability policy (§3.6)
+
+**Absolute rules:**
+
+1. Theme file/document bytes must **never** be identity-piped to the TTY.
+2. Theme-derived SGR must come **only** from validated semantic roles — not from
+   Theme-supplied CSI/OSC/DCS fragments.
+3. Structural control remains host-owned even when Theme is disabled or
+   fail-closed to `zag-default`.
+4. Existing hard-coded layout CSI/box output in current seams is **not** a
+   contract violation; Theme **adds** a later palette layer and does **not**
+   require deleting structural sequences.
+
+### 2.2 Forbidden in Theme data (hard reject)
 
 | Class | Examples (non-exhaustive) | Host action |
 |-------|---------------------------|-------------|
-| Raw ANSI / escape | CSI/OSC/DCS sequences, `\x1b`, raw terminal control bytes in values | **reject** document |
+| Raw ANSI / escape in values | CSI/OSC/DCS sequences, `\x1b`, raw terminal control bytes | **reject** document |
 | Scripts / hooks / commands | shell snippets, JS/TS, Zig, any executable body | **reject** |
 | Env / substitution engines | `$VAR`, `${…}`, `!command`, recursive includes | **reject** |
 | Import / include / network | `import`, `include`, URLs, package fetches | **reject** |
 | Dynamic Zig ABI / shared libs | `.so`/`.dylib`/plugin paths | **reject** |
 | E2/E3 UI pointers | renderer/widget/allocator/Host pointers, component factories | **reject** (never a Theme field) |
 
-**Host rule:** ANSI bytes are generated **only** by host code from
-**already-validated semantic tokens**. Theme data must never be identity-piped
-to the TTY as raw presentation bytes.
-
-### 2.2 Carrier placement
+### 2.3 Carrier placement
 
 | Axis | Theme v1 |
 |------|----------|
@@ -197,37 +286,53 @@ Unknown role keys → **reject**. Missing required role → **reject**.
 | Reserved ids | `zag-default`, `zag-default-dark`, `zag-default-light` are **host built-in** ids; user/project documents claiming these ids are **rejected** (no override of built-in identity) |
 | Display `name` | optional; ≤ **64** bytes; printable UTF-8 without C0 controls except none |
 
-### 3.3 Roots, trust, precedence
+### 3.3 Roots, trust, precedence, and containment (normative)
 
-Discovery is **host-owned**, non-recursive, deterministic.
+Discovery is **host-owned** (`zag-tui`), non-recursive, deterministic, driven
+only by `ThemeHostOptions` (§1.4).
 
-| Root | Path shape | When scanned |
-|------|------------|--------------|
+| Root | Path shape (typical) | When scanned |
+|------|----------------------|--------------|
 | **Built-in** | host-embedded / compile-time Theme snapshots inside `zag-tui` | **always** (not filesystem discovery) |
-| **User** | `$HOME/.agents/themes/<id>.json` | when Theme enablement is on **and** user root resolved |
-| **Project** | `<workspace>/.agents/themes/<id>.json` | only when Theme enablement is on **and** project Theme trust is **on** |
+| **User** | `user_themes_root` / `<id>.json` (CLI maps `$HOME/.agents/themes`) | `theme_enabled` **and** `user_themes_root != null` |
+| **Project** | `project_themes_root` / `<id>.json` (typically `<workspace>/.agents/themes`) | `theme_enabled` **and** `project_theme_trust == trusted` **and** `project_themes_root != null` **and** `workspace_root != null` |
 
-Rules:
+#### 3.3.1 Listing discipline
 
 1. Direct children only; **no** recursive walk; byte-sorted directory listing.
-2. Symlink/realpath containment: user-root and project-root loaders apply
-   **host path discipline** consistent with E1 passive loaders (no escape via
-   symlink outside the declared root). Exact containment algorithm is a **later
-   implementation requirement**; contract requires **fail-closed skip/reject** of
-   escaping candidates without hard-crashing the process into open presentation.
-3. Missing roots soft-skip (catalog may be built-ins only).
-4. CLI (when `-Dtui=true`) may resolve `HOME` and flags; SDK/custom hosts if any
-   later expose TUI must pass **host-owned** user-root options and must not
-   imply Theme trust from unrelated knobs.
-5. Theme enable/trust knobs are **independent** of Skills / Prompt Templates /
+2. Only regular-file candidates with extension `.json` enter parse (after
+   containment checks). Non-files soft-skip.
+3. Missing roots / null roots soft-skip (catalog may be built-ins only).
+4. Theme enable/trust knobs are **independent** of Skills / Prompt Templates /
    `--no-project` / AGENTS.md trust.
-6. Default v1: Theme feature **on** for TUI sessions; project Theme trust
-   **off**; default selection is host built-in (§3.5).
+5. Default v1 via `ThemeHostOptions`: `theme_enabled=true`,
+   `project_theme_trust=untrusted`, default selection host built-in (§3.5).
+
+#### 3.3.2 Realpath containment (binding; not deferred)
+
+Containment is **normative product law** for any later implementation. It is
+not an optional algorithm sketch.
+
+For **every** filesystem Theme root and **every** candidate path considered for
+read/parse:
+
+| Check | Binding |
+|-------|---------|
+| Authority root realpath | Resolve the configured root (`user_themes_root` or `project_themes_root`) with realpath/symlink-aware resolution. If the root cannot be resolved as a directory under policy, **skip the entire root** (soft) with fixed diagnostic code only. |
+| Candidate realpath-contain | Resolve each candidate; require `realpath(candidate)` is **strictly contained under** `realpath(authority_root)` (prefix boundary at path-component edges — no `../` escape, no sibling prefix tricks). |
+| Project dual containment | For project candidates: additionally require `realpath(candidate)` (and the project authority root) is contained under `realpath(workspace_root)`. Missing `workspace_root` while trust is on → **do not scan** project root. |
+| Symlink escape | Any candidate or intermediate symlink that resolves outside the required authority (and workspace for project) → **skip/reject** that candidate (or root if root itself escapes). |
+| Fail-closed | Escaping candidates never contribute bytes to catalog or active snapshot. |
+| Snapshot purity | Catalog entries and the active Theme snapshot must contain **zero** outside-of-root file bytes; only validated in-memory Theme objects built from contained reads + built-ins. |
+| Process integrity | Containment failure must **not** hard-crash into open presentation or identity-pipe path/body bytes; keep LKG/`zag-default`. |
+
+Built-in Themes are not filesystem candidates and do not use this FS containment
+path.
 
 **Collision after valid parse** (same `id`):
 
 ```text
-project (if trusted)  >  user  >  built-in (for non-reserved ids only)
+project (if trusted + scanned)  >  user  >  built-in (for non-reserved ids only)
 ```
 
 Reserved built-in ids cannot be overridden (§3.2). Selection still chooses among
@@ -251,10 +356,10 @@ Properties:
 
 | Source | Binding |
 |--------|---------|
-| Explicit host option | When `-Dtui=true`, CLI may accept an explicit Theme id option (exact flag spelling is implementation detail; behavior is: select **one** catalog id) |
-| Default | If no explicit id: host selects **`zag-default`**, unless a later capability path implements **optional** background adaptation that chooses between shipped dark/light built-ins **without** reading untrusted files for the decision |
-| Unknown explicit id | **fail closed** → use `zag-default` + bounded diagnostic; **do not** refuse to start TUI solely for unknown Theme id if built-in exists (presentation degrades safely) |
-| Empty / disabled Theme feature | If an impl exposes disable: render with `zag-default` tokens only; **never** “no theme object” that pipes raw file bytes |
+| Explicit host option | `ThemeHostOptions.selected_theme_id` (CLI flag spelling is impl detail; behavior: select **one** catalog id) |
+| Default | If `selected_theme_id == null`: host selects **`zag-default`**, unless a later capability path implements **optional** background adaptation that chooses between shipped dark/light built-ins **without** reading untrusted files for the decision |
+| Unknown explicit id | **fail closed** → use `zag-default` + fixed code `theme_unknown_id`; **do not** refuse to start TUI solely for unknown Theme id if built-in exists (presentation degrades safely) |
+| `theme_enabled == false` | no user/project discovery; render with `zag-default` tokens only; **never** identity-pipe raw file bytes |
 
 Selection never writes Theme id into Session JSONL, Trace, or headless envelopes.
 
@@ -341,20 +446,52 @@ oversized bodies.
 | Unsupported capability | degrade SGR mapping | continue |
 | Theme failure of any kind | **never** identity-through raw Theme file bytes | **never** disable redaction, ask, jail, shell protect, or invent Tool/run success |
 
-### 3.10 Bounded diagnostics (no leak)
+### 3.10 Bounded diagnostics (no leak; closed vocabulary)
 
-Theme diagnostics (stderr before raw, or TUI status_note / host_note after):
+Theme diagnostics (stderr before raw, or TUI `status_note` / host_note after)
+use a **closed vocabulary**. Implementers **must not** invent pathful or
+bodyful free text.
 
-| Allowed | Forbidden |
-|---------|-----------|
-| Fixed codes: `theme_invalid`, `theme_unknown_id`, `theme_budget`, `theme_oom`, `theme_reload_failed`, `theme_using_default` | Theme file **body** bytes |
-| Optional Theme **id** if already validated as id-shaped (≤64) | Absolute paths, `$HOME` expansion, workspace canonical paths |
-| Counts: `rejected=<n>` style fixed ASCII | Secrets, API keys, Session paths, user/model content |
-| | Stack traces with path leakage in product paths |
+#### Allowed diagnostic atoms (only)
 
-Diagnostics must pass the same outward redaction discipline when they embed any
-non-enum user-influenced bytes ([tui-minimal](./tui-minimal.md) §8). Prefer
-**fixed codes only**.
+| Atom | Form | When |
+|------|------|------|
+| Fixed reason codes | exact ASCII tokens below | required primary signal |
+| Validated Theme `id` | already id-shaped ≤64 (`[a-z][a-z0-9-]*`) | optional; only if validation accepted the id shape **before** failure of a later stage, or the id is a built-in reserved id |
+| Saturating counters | exact `rejected=<n>` / `skipped=<n>` style ASCII | optional aggregate |
+
+**Fixed reason codes (exact; closed set for v1):**
+
+| Code | Meaning |
+|------|---------|
+| `theme_invalid` | schema/parse/role/color/UTF-8 rejection |
+| `theme_unknown_id` | selection id not in catalog |
+| `theme_budget` | file/entry/aggregate budget |
+| `theme_oom` | allocation failure during Theme path |
+| `theme_reload_failed` | reload transaction failed (retain LKG) |
+| `theme_using_default` | active snapshot is built-in fallback |
+| `theme_containment` | realpath/symlink containment skip/reject |
+| `theme_root_unresolved` | authority root could not be used |
+| `theme_disabled` | `theme_enabled == false` (optional note) |
+
+Composite product lines may only concatenate these atoms (e.g.
+`theme_containment rejected=1`) within the **≤ 160** byte ASCII cap. No other
+words that embed paths or bodies.
+
+#### Forbidden in diagnostics (hard)
+
+| Forbidden | Examples |
+|-----------|----------|
+| Absolute or canonical filesystem paths | `/Users/...`, `/home/...`, resolved realpaths |
+| `$HOME` / env expansion text | expanded home strings |
+| Theme file **body** bytes | any JSON/content snippet |
+| Secrets / API keys | configured provider keys, tokens |
+| Session paths / ids beyond non-Theme host law | durable session path strings in Theme diagnostics |
+| User / model content | assistant/tool/control text |
+| Implementer-invented pathful prose | `"failed to open /x/y/z"` |
+
+Diagnostics must not bypass [tui-minimal](./tui-minimal.md) §8 when any
+non-enum user-influenced bytes would otherwise appear — prefer **codes only**.
 
 ## 4. Non-interference (closed contracts stay closed)
 
@@ -420,27 +557,37 @@ remote claim unless a separate evidence node explicitly freezes one.
 
 | # | Fixture class | Expect |
 |---|---------------|--------|
-| 1 | Happy path built-in | TUI paints with `zag-default` (or explicit built-in) tokens; layout still meets tui-minimal |
-| 2 | Happy path user Theme | valid user `.json` accepted; roles applied via host ANSI only |
-| 3 | Project trust off | project Theme ignored |
+| 1 | Happy path built-in | TUI paints with `zag-default` (or explicit built-in) **role colors** via host SGR; **structural** control (alt-screen/clear/box) still host-owned per tui-minimal |
+| 2 | Happy path user Theme | valid user `.json` under contained `user_themes_root` accepted; roles → host SGR only |
+| 3 | Project trust off | project Theme ignored even if files exist |
 | 4 | Project trust on + override | project overrides user same id; reserved built-in ids still rejected |
-| 5 | Invalid schema / bad color / unknown role / raw ESC in value | reject; LKG or `zag-default`; no raw bytes on TTY from Theme body |
-| 6 | Budget oversize file / too many entries | reject/skip; diagnostic bounded |
-| 7 | Unknown selection id | `zag-default` + `theme_unknown_id` (or equivalent fixed code) |
+| 5 | Invalid schema / bad color / unknown role / raw ESC in value | reject; LKG or `zag-default`; no Theme body bytes on TTY |
+| 6 | Budget oversize file / too many entries | reject/skip; diagnostic uses closed codes only |
+| 7 | Unknown selection id | `zag-default` + exact `theme_unknown_id` |
 | 8 | Capability degrade | monochrome/16-color path still paints; no crash |
 | 9 | Background adaptation (if implemented) | only switches among built-ins; detection fail → `zag-default` |
 | 10 | Reload success | atomic publish; one full invalidate; no partial roles |
-| 11 | Reload failure mid-way | retain LKG; fixed diagnostic; no partial apply |
+| 11 | Reload failure mid-way | retain LKG; fixed `theme_reload_failed` (and/or `theme_using_default`); no partial apply |
 | 12 | LKG after prior success then bad reload | prior good Theme remains active |
 | 13 | Redaction still mandatory | secret in assistant/tool fields never appears raw; Theme colors do not bypass present pipeline |
-| 14 | No ANSI in Theme data | fixture file containing ESC/`\x1b[` rejected |
-| 15 | No Core / coding-agent Theme import | import scan green |
-| 16 | `-Dtui=false` | default build/test green; no Theme/TUI resolve requirement |
-| 17 | plain + headless std **and** curl | unchanged green |
-| 18 | TUI std **and** curl (local) | Theme fixtures + existing tui-minimal matrix green |
-| 19 | Permission/ask/jail/shell unchanged | mode matrix + deny paths unchanged |
-| 20 | Session v1 / Trace v1 / headless-v1 | schemas unchanged; no Theme fields/kinds |
-| 21 | Docs/diff | contract consistency; no maturity raise language |
+| 14 | No raw escape in Theme data | fixture file containing ESC/`\x1b[` in values rejected (`theme_invalid`) |
+| 15 | Structural vs Theme SGR split | host still emits structural CSI/layout without Theme file bytes; Theme only affects role color mapping |
+| 16 | Ownership — Core | `zag-agent-core` has **no** Theme import **and no** Theme types/ports/state/discovery/catalog symbols |
+| 17 | Ownership — coding-agent | `zag-coding-agent` has **no** Theme import **and no** Theme types/ports/state/discovery/catalog/options |
+| 18 | Ownership — CLI | with `-Dtui=true`, CLI only parse/forward `ThemeHostOptions`; **no** Theme body parse, catalog, or Theme SGR generation in CLI sources |
+| 19 | Ownership — source locus | all Theme parse/catalog/SGR/reload sources live only under `packages/zag-tui/` |
+| 20 | Host options defaults | `theme_enabled` default true; `project_theme_trust` default untrusted; library path does not `getenv("HOME")` |
+| 21 | Roots not from Agent/Session | options-only roots; no private field derivation |
+| 22 | User symlink escape | candidate symlink resolving outside `user_themes_root` → skip/reject; catalog has zero outside bytes; code `theme_containment` |
+| 23 | Project symlink escape | candidate (or root) escaping `project_themes_root` **or** `workspace_root` → skip/reject; `theme_containment` |
+| 24 | Direct-child / non-recursive | nested subdirectory Theme files are **not** discovered |
+| 25 | Diagnostics leak ban | containment/parse/budget/reload failures emit **only** fixed reason codes (+ optional validated id + counters); **no** absolute/canonical path, HOME expansion, Theme body, secret/API key, Session path, user/model content |
+| 26 | `-Dtui=false` | default build/test green; no Theme/TUI resolve requirement |
+| 27 | plain + headless std **and** curl | unchanged green |
+| 28 | TUI std **and** curl (local) | Theme fixtures + existing tui-minimal matrix green |
+| 29 | Permission/ask/jail/shell unchanged | mode matrix + deny paths unchanged |
+| 30 | Session v1 / Trace v1 / headless-v1 | schemas unchanged; no Theme fields/kinds |
+| 31 | Docs/diff | contract consistency; no maturity raise language |
 
 ## 8. Non-goals
 
@@ -457,24 +604,26 @@ remote claim unless a separate evidence node explicitly freezes one.
 - Remote Linux/`-Dtui` Gate, post-TUI Phase B grant/run/green claims
 - RPC / ACP packaging with Theme
 
-## 9. Contract-node acceptance (docs only; this tip)
+## 9. Contract-node acceptance (docs only)
 
 - [x] Binding module authored (`docs/modules/theme.md`)
 - [x] Task file authored (`docs/plan/tasks/theme-001.md`) with required frontmatter
-- [ ] Independent **architecture/ownership** contract review PASS (pending; different agent)
-- [ ] Independent **safety/fail-closed** contract review PASS (pending; different agent)
+- [x] Round-1 architecture/ownership **BLOCKED** findings addressed in docs (structural vs Theme SGR; `ThemeHostOptions`; ownership Gate expansion)
+- [x] Round-1 safety/fail-closed **BLOCKED** findings addressed in docs (normative containment; closed diagnostics; fixtures)
+- [ ] Independent **architecture/ownership** contract **re-review** PASS (pending; different agent; **not claimed**)
+- [ ] Independent **safety/fail-closed** contract **re-review** PASS (pending; different agent; **not claimed**)
 - [ ] Docs lint + score + `git diff --check` green on contract docs path
 - [x] Contract freeze does **not** invent product acceptance or implementation
-- [x] **No** maturity row raise; **no** remote/grant/run/green claim
+- [x] **No** maturity row raise; **no** remote/grant/run/green claim; **no** `ready` / implementation authz
 - [x] Scope excludes `packages/**`, `src/**`, `build.zig*`, `.github/**`, `chapters/**`
 
 ## 10. Current delivery state
 
 | Track | Status |
 |-------|--------|
-| Contract candidate | **this node** — awaiting fresh dual contract reviews |
-| Dual contract review | **not started** / no PASS |
-| Implementation Goal | **not authorized** by this commit |
+| Contract candidate | **hardened** after round-1 BLOCKED findings; still **pending** dual re-review |
+| Dual contract review | round-1 **BLOCKED** → fixes in this docs tip; **no PASS** claimed |
+| Implementation Goal | **not authorized** |
 | Product Theme code | **absent** (seams above) |
 | Maturity | **unchanged** |
 | Post-TUI remote Gate | **independent** in-progress Phase A; no Theme coupling |

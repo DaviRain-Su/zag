@@ -140,10 +140,11 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 
 - [x] binding module [theme.md](../modules/theme.md) authored
 - [x] task [theme-001](../plan/tasks/theme-001.md) authored (`status: pending`)
-- [ ] independent architecture/ownership contract review PASS
-- [ ] independent safety/fail-closed contract review PASS
+- [x] round-1 dual **BLOCKED** findings closed in docs (structural vs Theme SGR; host options; containment; diagnostics; ownership Gates)
+- [ ] independent architecture/ownership contract **re-review** PASS (not claimed)
+- [ ] independent safety/fail-closed contract **re-review** PASS (not claimed)
 - [ ] docs lint / score / diff green on contract docs path; no product code
-- [ ] **no** implementation until dual PASS + separate Goal
+- [ ] **no** implementation until dual PASS + separate Goal; **no** `ready` from blocker close alone
 - [ ] **no** maturity raise; **no** post-TUI Phase B grant/run/green claim
 
 ## Acceptance for later extension UI host
