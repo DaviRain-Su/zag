@@ -27,10 +27,22 @@ a cross-platform TUI maturity Gate and **not** a claim that remote CI runs
 
 | Phase | What it is | What it is not |
 |-------|------------|----------------|
-| **A (current)** | Docs contract + Class C TARGET rebind + cross-links; status **`in-progress`**; rebind candidate **awaiting fresh dual review** | Push; run id; Gate green; product/CI edit; Phase B grant; transfer of OLD_TARGET grant/review as rebind PASS |
-| **B (not started)** | Live remote/Actions evidence only after a **fresh user Phase B grant** of type `observation_grant` **or** `push_grant` (§authorization) naming **TARGET** | Implied by Phase A review/merge/PASS; vague “go ahead”; Goal run alone; old session / OLD_TARGET authz |
+| **A (current)** | Docs contract + Class C TARGET rebind + cross-links; status **`in-progress`**; **rebind review PASS** @ `7f9cfa4` (see below) | Push; run id; Gate green; product/CI edit; Phase B grant; transfer of OLD_TARGET grant/review as rebind PASS |
+| **B (not started)** | Live remote/Actions evidence only after a **fresh user Phase B grant** of type `observation_grant` **or** `push_grant` (§authorization) naming **TARGET** | Implied by Phase A review/merge/PASS/rebind PASS-record; vague “go ahead”; Goal run alone; old session / OLD_TARGET authz |
 
-### Class C TARGET rebind (this tip)
+### Class C rebind review PASS (review of prior tip only)
+
+Class C rebind tip
+**`7f9cfa46424630e803a7270fbddb45afb86a8d66`** received **two independent final
+re-reviews** (facts/CI path + safety/ops path) with **PASS, zero blockers**.
+
+| Claimed | Not claimed |
+|---------|-------------|
+| Phase A **rebind contract text** at tip `7f9cfa4` is review-PASS | Any `observation_grant` / `push_grant` for TARGET |
+| Local docs protocol freeze may proceed to coordinator ff-only when scheduled | Gate green; remote run id; Phase B started |
+| This **PASS-record** commit only **records** that prior rebind-tip review | That **this** PASS-record tip itself was re-reviewed |
+
+### Class C TARGET rebind (prior tip `7f9cfa4`)
 
 Independent product-delta accounting for
 `b1513073190089bd2dc2473a466373c8a1702f1f..f352b60d08e81c19d70ba46198fb06b71ddc85a1`:
@@ -65,10 +77,10 @@ commit: it holds post-TUI product, TUI docs closeout, Phase A protocol docs, and
 
 | Claimed | Not claimed |
 |---------|-------------|
-| OLD_TARGET hardened protocol tip `69c1ec3` had dual-path PASS (facts/CI + safety/ops) under the **OLD_TARGET** identity contract | That PASS is a rebind PASS for **TARGET** `f352b60…` |
-| Generic dual-grant / live-drift / unique-push / run-correlation **mechanisms** are retained | Any `observation_grant` / `push_grant` for TARGET |
-| This tip is a **rebind candidate awaiting fresh facts/safety dual review** | Gate green; remote run id; Phase B started |
-| Local docs rebind may later proceed after fresh dual review when scheduled | That old review transfers to the rebind tip |
+| OLD_TARGET hardened protocol tip `69c1ec3` had dual-path PASS (facts/CI + safety/ops) under the **OLD_TARGET** identity contract | That OLD_TARGET PASS alone is a TARGET Phase B grant |
+| Class C rebind tip `7f9cfa4` received **dual independent final re-reviews** (facts/CI + safety/ops) **PASS, zero blockers** | Any `observation_grant` / `push_grant` for TARGET |
+| Generic dual-grant / live-drift / unique-push / run-correlation **mechanisms** are retained for TARGET | Gate green; remote run id; Phase B started |
+| This **PASS-record** tip only **records** the prior rebind-tip review | That **this** PASS-record tip itself was re-reviewed |
 
 **This contract document does not authorize Phase B.** No user
 `observation_grant` or `push_grant` is claimed here. Template commands below
@@ -175,9 +187,9 @@ Phase A (CURRENT) — docs contract + Class C TARGET rebind
   ├─ status: in-progress (task not done)
   ├─ author contract + Class C rebind + cross-links + local docs commits
   ├─ OLD_TARGET protocol dual-review PASS @ 69c1ec3 retained as lineage only
-  ├─ TARGET identity rebind = material change → awaiting fresh dual review
-  ├─ this tip: Class C rebind docs only (not itself claimed re-reviewed PASS)
-  ├─ after fresh dual review PASS: ff-only local merge allowed when scheduled
+  ├─ independent dual final re-review PASS @ 7f9cfa4 (zero blockers) on rebind tip
+  ├─ this tip: PASS-record docs only (not itself claimed re-reviewed)
+  ├─ after rebind PASS: ff-only local merge allowed when scheduled
   ├─ NO push · NO run id · Gate NOT green · NO Phase B grant
   └─ this task remains docs-only forever
 
@@ -209,7 +221,7 @@ Phase B entry (shared preflight under either grant)
 
 | Phase / path | Allowed | Forbidden |
 |--------------|---------|-----------|
-| **A** | Allowed docs; local commit; later local ff-only after **fresh** dual review PASS on rebind tip | Any push; run id; Gate green; product/CI edits; Phase B live reads without grant; treating OLD_TARGET review as rebind PASS |
+| **A** | Allowed docs; local commit; later local ff-only after dual review PASS on rebind tip `7f9cfa4` | Any push; run id; Gate green; product/CI edits; Phase B live reads without grant; claiming this PASS-record tip re-reviewed |
 | **B Path OBSERVE** (class A) | Live ls-remote; read-only `gh`/API; docs evidence if unique qualifying run | Re-push TARGET; invent run; product/CI fix |
 | **B Path PUSH** (class B + `push_grant`) | Live drift twice; unique authorized push of TARGET; post-push live check; unique run correlation; evidence docs | Force; other refspecs; push under observation_grant; retry without new `push_grant`; OLD_TARGET refspec |
 
@@ -597,8 +609,10 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 | Status | **`in-progress`** (task not done; Gate not green) |
 | **TARGET** (active freeze) | `f352b60d08e81c19d70ba46198fb06b71ddc85a1` |
 | **OLD_TARGET** (abandoned) | `b1513073190089bd2dc2473a466373c8a1702f1f` |
-| OLD_TARGET protocol dual-review | **PASS** @ `69c1ec3` under OLD_TARGET identity only — **not** rebind PASS |
-| Rebind review status | **rebind candidate awaiting fresh facts/safety dual review** |
+| OLD_TARGET protocol dual-review | **PASS** @ `69c1ec3` under OLD_TARGET identity only (lineage) |
+| Rebind tip (reviewed) | `7f9cfa46424630e803a7270fbddb45afb86a8d66` |
+| Dual final re-review | **PASS**, zero blockers (facts/CI + safety/ops) on that rebind tip |
+| This PASS-record tip | records prior rebind-tip PASS only; **not** claimed re-reviewed |
 | Phase B grants | **none claimed** (`observation_grant` / `push_grant` absent for TARGET) |
 | Run id / URL | **none** |
 | Gate green | **No** |
@@ -645,7 +659,7 @@ Fuse fire ≠ product PASS. **No** remote `-Dtui`. **No** maturity raise.
 - [x] Allowed Active surfaces cross-links updated to TARGET
 - [x] Local docs rebind commit; **no push**
 - [x] Docs lint + score check + `git diff --check` + scope on rebind commit
-- [ ] **Fresh independent dual final re-review** (facts/CI + safety/ops) on this **rebind** tip — **unchecked**; OLD_TARGET `69c1ec3` PASS is **not** rebind PASS
+- [x] **Independent dual final re-review PASS** on rebind tip `7f9cfa4` (facts/CI + safety/ops; zero blockers) — **not** a Phase B grant; **not** Gate green; **not** a claim that this PASS-record tip was re-reviewed
 - [x] Status remains **`in-progress`** until Phase B evidence; Gate **not** green; grants **none**; Phase B **not started**
 
 ## Phase B — not started
@@ -701,22 +715,24 @@ git diff --name-only
 | Phase A initial contract | `2c9babcb789f767c15ca17fbe49ce3a793cdc477` | define Gate under OLD_TARGET |
 | Phase A safety harden | `81b93554942e55d1bae975a8b7b3ba2318c068fe` | dual-grant / live-drift mechanisms |
 | Phase A auth clarify / OLD_TARGET contract review PASS | `69c1ec39528c819ed045cf4d0de1d1c3fb6bedaa` | dual final re-review PASS under **OLD_TARGET** only |
-| Phase A PASS-record | `d29ff0043c8aafb7c940041fcc5441c8044a708c` | recorded prior OLD_TARGET-tip PASS |
+| Phase A PASS-record (OLD_TARGET) | `d29ff0043c8aafb7c940041fcc5441c8044a708c` | recorded prior OLD_TARGET-tip PASS |
 | **TARGET** tip (active freeze) | **`f352b60d08e81c19d70ba46198fb06b71ddc85a1`** | `.gitignore` on Phase A chain; product+docs tip |
-| Class C rebind (this tip) | local docs after TARGET | rebinds active identity to TARGET; does **not** change TARGET SHA; awaiting fresh dual review |
+| Class C rebind / **rebind review PASS** | `7f9cfa46424630e803a7270fbddb45afb86a8d66` | rebinds active identity to TARGET; dual final re-review PASS, zero blockers; does **not** change TARGET SHA |
 | Class C incident | live remote already TARGET before OLD_TARGET push; no push; OLD_TARGET grant non-transfer | forces rebind + fresh grant |
+| Phase A rebind PASS-record (this tip) | local docs after `7f9cfa4` | records prior rebind-tip PASS only; **this tip not claimed re-reviewed** |
 | Phase B run | *pending valid Phase B grant naming TARGET* | real run only; not started |
 
 # delivery evidence (Phase A)
 
 | Field | Value |
 |-------|--------|
-| Path | Docs-only Phase A (contract + harden + auth clarify + PASS-record + **Class C TARGET rebind**) |
+| Path | Docs-only Phase A (contract + harden + auth clarify + PASS-record + **Class C TARGET rebind** + rebind PASS-record) |
 | Status | **`in-progress`** |
 | **TARGET** | `f352b60d08e81c19d70ba46198fb06b71ddc85a1` |
 | **OLD_TARGET** | `b1513073190089bd2dc2473a466373c8a1702f1f` (abandoned) |
 | OLD_TARGET dual re-review | **PASS** @ `69c1ec3` (facts/CI + safety/ops) — lineage only |
-| Rebind dual re-review | **awaiting** (not PASS; not claimed) |
+| Rebind dual re-review | **PASS** @ `7f9cfa4` (facts/CI + safety/ops; zero blockers) |
+| This PASS-record tip | records prior rebind-tip PASS only; **not** claimed re-reviewed |
 | Phase B grants | **not present / not claimed** for TARGET |
 | Run id | **none** |
 | Maturity | unchanged |
@@ -728,12 +744,11 @@ git diff --name-only
 
 **Active freeze is TARGET
 `f352b60d08e81c19d70ba46198fb06b71ddc85a1`.** OLD_TARGET protocol review PASS
-@ `69c1ec3` remains lineage under the abandoned identity only. This Class C
-rebind tip is a **rebind candidate awaiting fresh facts/safety dual review**
-and does **not** inherit OLD_TARGET review as rebind PASS. Task remains
-**`in-progress`** until Path OBSERVE or Path PUSH records valid remote evidence
-under a fresh user grant **naming TARGET**. This rebind commit does **not**
-authorize Phase B, invent a run id, mark the Gate green, or change TARGET to
-the rebind commit’s own SHA. Templates remain non-executable without a fresh
-grant. If live remote is already TARGET, Class A Path OBSERVE applies and must
-**never re-push**.
+@ `69c1ec3` remains lineage under the abandoned identity only. **Class C rebind
+review is PASS** at tip `7f9cfa4` (dual final re-reviews, zero blockers). Task
+remains **`in-progress`** until Path OBSERVE or Path PUSH records valid remote
+evidence under a fresh user grant **naming TARGET**. This PASS-record commit
+does **not** authorize Phase B, invent a run id, mark the Gate green, claim that
+**this** tip was re-reviewed, or change TARGET to any post-TARGET docs SHA.
+Templates remain non-executable without a fresh grant. If live remote is already
+TARGET, Class A Path OBSERVE applies and must **never re-push**.

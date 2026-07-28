@@ -39,10 +39,10 @@ docs **91/73**). Broader M0 Linux dual-backend reliability is **closed only**
 at exact tip `8a93ec6` / run `30273762011` — not a universal future guarantee.
 Post-TUI default-path remote dual-backend Gate is a **separate** node
 [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
-(**in-progress**, Phase A Class C rebind): exact TARGET
+(**in-progress**, Phase A Class C rebind review PASS @ `7f9cfa4`): exact TARGET
 `f352b60d08e81c19d70ba46198fb06b71ddc85a1` (OLD_TARGET `b151307` abandoned);
-**no** run id yet; **no** push; rebind awaits fresh dual review; historical M0
-tip/run numbers are **not** reusable as that Gate’s PASS; **no** remote
+**no** run id; **no** push; **no** Phase B grant; Gate green **No**; historical
+M0 tip/run numbers are **not** reusable as that Gate’s PASS; **no** remote
 `-Dtui` claim. `prompt-templates-001` is **done** at `61326ae`
 ([task](../plan/tasks/prompt-templates-001.md), binding
 [prompt-templates.md](./prompt-templates.md)): thin CLI routing for

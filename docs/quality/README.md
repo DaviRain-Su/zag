@@ -45,8 +45,9 @@ merged-path Linux dual-backend Gate
 universal future guarantee). Post-TUI default-path remote dual-backend Gate
 [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
 is a **separate** node (**in-progress**, Phase A; TARGET `f352b60`; Class C
-rebind awaiting fresh dual review; **no** run id; **no** push; default non-TUI
-matrix only; fuses remain rails only and never product PASS).
+rebind review PASS @ `7f9cfa4`; **no** run id; **no** push; **no** Phase B grant;
+Gate green **No**; default non-TUI matrix only; fuses remain rails only and never
+product PASS).
 
 Target workflow: `.github/workflows/ci.yml` — exact fuses:
 `concurrency.group: ${{ github.workflow }}-${{ github.ref }}`,
@@ -234,7 +235,7 @@ Commits: contract `f0ccca6` · implementation `1d3abaa` · reviewed tip
 - Predecessor: [ci-hang-sigint-linux-errno-001](../plan/tasks/ci-hang-sigint-linux-errno-001.md)
 - Process-idle residual (**done** Phase B): [ci-hang-sigint-process-idle-001](../plan/tasks/ci-hang-sigint-process-idle-001.md)
 - Final Linux dual-backend Gate (**done**, exact tip/run only): [linux-dual-backend-gate-001](../plan/tasks/linux-dual-backend-gate-001.md)
-- Post-TUI remote dual-backend Gate (**in-progress** Phase A; TARGET `f352b60`; Class C rebind awaiting fresh dual review; no run id): [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
+- Post-TUI remote dual-backend Gate (**in-progress** Phase A; TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no run id; no Phase B grant; Gate green No): [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
 - Product CLI (unchanged by fuses): [cli-interaction](../modules/cli-interaction.md)
 - Provider contracts: [contracts.md](./contracts.md)
 - Dual-backend bake-off: [http-backend-bakeoff.md](./http-backend-bakeoff.md)

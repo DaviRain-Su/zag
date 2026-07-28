@@ -28,11 +28,11 @@ headless stdout, or placing UI logic in Kernel packages.
 | Contract freeze | **PASS** @ `c7a8f3a` — independent arch + safety re-reviews, **zero blockers** |
 | Implementation tip | **`f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5`** — two independent final code reviews **PASS**, **zero blockers** |
 | Overall product task | **`done`** — local ff-only merge of impl tip to canonical main; task-worktree + merged-main Gates green (local macOS only) |
-| Docs closeout tips | `9d69574` (delivery closeout) → `8694fbb` (feature-correspondence sync) → this push-truth follow-up; **remain local / not on `origin/main`** |
+| Docs closeout tips | `9d69574` (delivery closeout) → `8694fbb` (feature-correspondence sync) → `b151307` (push-truth follow-up): **local-only at TUI closeout time**; later ancestors of supplied Class C / observed TARGET `f352b60` (historical lineage only — **not** Phase B live remote evidence; **not** a claim this closeout pushed) |
 | Maturity / C9 broader shell | **unchanged** — no new maturity row; not theme/RPC/ACP/extension-UI/dashboard/Pi parity |
 | Session v1 / Trace v1 / headless-v1 / Core | **unchanged** |
-| Linux / remote Gate | **not claimed** by this TUI task for tip `f8f7f55` (or docs tips) — branch presence ≠ validation. Post-TUI default-path remote dual-backend Gate is owned by [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) (**in-progress**, Phase A; TARGET `f352b60`; Class C rebind awaiting fresh dual review; **no** run id; **no** remote `-Dtui` claim). |
-| `origin/main` presence | Local remote-tracking reflog records an **external/other push** of implementation tip `f8f7f55` to `origin/main` (`update by push` @ `2026-07-28 06:17:02 +0800`); **this closeout did not execute or authorize that push**. TUI docs closeout tips remain local through historical `b151307` (OLD_TARGET on the post-TUI Gate). Remote branch presence is **not** a Linux/remote Gate. Unrelated canonical `.gitignore` retained on local merge. |
+| Linux / remote Gate | **not claimed** by this TUI task for tip `f8f7f55` (or docs tips) — branch presence ≠ validation. Post-TUI default-path remote dual-backend Gate is owned by [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) (**in-progress**, Phase A; TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; **no** run id; **no** Phase B grant; Gate green **No**; **no** remote `-Dtui` claim). |
+| `origin/main` presence | Local remote-tracking reflog records an **external/other push** of implementation tip `f8f7f55` to `origin/main` (`update by push` @ `2026-07-28 06:17:02 +0800`); **this closeout did not execute or authorize that push**. TUI docs closeout tips through historical `b151307` (OLD_TARGET on the post-TUI Gate) were local-only at closeout time and are later ancestors of observed TARGET `f352b60` (historical Class C lineage only; not Phase B live evidence). Remote branch presence is **not** a Linux/remote Gate. Unrelated canonical `.gitignore` retained on local merge. |
 
 ## Contract vs implementation (history)
 
@@ -50,9 +50,10 @@ IMPLEMENTATION NODE (product package + wire + fixtures)
   later: local origin/main reflog shows external/other push of f8f7f55
          (not executed/authorized by this closeout; not a remote Gate)
 
-DOCS CLOSEOUT NODE (local only; not on origin/main at f8f7f55)
-  9d69574 → 8694fbb → this tip
+DOCS CLOSEOUT NODE (local-only at TUI closeout time; later ancestors of TARGET f352b60)
+  9d69574 → 8694fbb → b151307
   paths: docs only — status truth + indexes; no product code
+  note: historical Class C lineage only; not Phase B live evidence; closeout did not push
 ```
 
 # context
@@ -127,7 +128,7 @@ unchanged by implementation or this docs closeout.
 - [x] gate21 write isolation: run-unique exclusive owned workspace (`f8f7f55`); no bare cwd pollution
 - [x] Independent final code reviews (**two paths**) **PASS**, **zero blockers** @ `f8f7f55`
 - [x] Local ff-only merge of impl tip onto canonical main (same tip); unrelated canonical `.gitignore` retained
-- [x] Local remote-tracking reflog later recorded an **external/other push** of `f8f7f55` to `origin/main`; **this closeout did not execute or authorize that push**. Docs closeout remains local. Remote branch presence is **not** a Linux/remote Gate
+- [x] Local remote-tracking reflog later recorded an **external/other push** of `f8f7f55` to `origin/main`; **this closeout did not execute or authorize that push**. Docs closeout tips were local-only at closeout time and are later ancestors of observed TARGET `f352b60` (historical Class C lineage only; not Phase B live evidence). Remote branch presence is **not** a Linux/remote Gate
 - [x] Task-worktree **and** merged canonical main — same serial matrix (local macOS):
 
 | Matrix | Steps · tests |
@@ -170,6 +171,6 @@ unchanged by implementation or this docs closeout.
 | Strict PTY Gates #30–32/#18 | `ab610ce` |
 | gate21 hygiene (scoped write) | `a97efa6` |
 | gate21 exclusive run-unique workspace (**impl final tip**; later on `origin/main` via external/other push) | `f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5` |
-| Docs closeout delivery | `9d69574` (local only) |
-| Docs feature-correspondence sync | `8694fbb` (local only) |
-| Docs remote-tip truth follow-up | `b151307` (local only; historical OLD_TARGET for [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md); active TARGET is now `f352b60`) |
+| Docs closeout delivery | `9d69574` (local-only at TUI closeout; later ancestor of TARGET `f352b60`) |
+| Docs feature-correspondence sync | `8694fbb` (local-only at TUI closeout; later ancestor of TARGET `f352b60`) |
+| Docs remote-tip truth follow-up | `b151307` (local-only at TUI closeout; historical OLD_TARGET for [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md); later ancestor of active TARGET `f352b60`; historical Class C lineage only — not Phase B live evidence) |
