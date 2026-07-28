@@ -33,15 +33,16 @@ reviews **PASS** (**zero blockers**). Local ff-only merge to canonical main at
 the same tip; task-worktree and merged-main Gates green on **local macOS only**.
 Local remote-tracking reflog records an external/other push of implementation
 tip `f8f7f55` to `origin/main`; this closeout did not execute or authorize that
-push. The docs closeout remains local through tip
-`b1513073190089bd2dc2473a466373c8a1702f1f`. Remote branch presence is not a
-Linux/remote Gate. Post-TUI **default-path** remote dual-backend evidence is
-owned by
+push. The TUI docs closeout chain remains local through historical tip
+`b1513073190089bd2dc2473a466373c8a1702f1f` (now **OLD_TARGET** on the post-TUI
+remote Gate). Remote branch presence is not a Linux/remote Gate. Post-TUI
+**default-path** remote dual-backend evidence is owned by
 [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md)
-(**in-progress**, Phase A; target tip `b151307`; **no** run id; **no** push;
-**no** remote `-Dtui` claim — current CI has no TUI step; PTY remains local
-macOS only). Defaults remain ask + workspace jail + shell protect; `-Dtui`
-default **false**/lazy. See [task](../plan/tasks/tui-minimal-001.md).
+(**in-progress**, Phase A; TARGET `f352b60`; Class C rebind awaiting fresh dual
+review; **no** run id; **no** push; **no** remote `-Dtui` claim — current CI
+has no TUI step; PTY remains local macOS only). Defaults remain ask + workspace
+jail + shell protect; `-Dtui` default **false**/lazy. See
+[task](../plan/tasks/tui-minimal-001.md).
 
 Related truth (do not fork):
 
@@ -940,8 +941,8 @@ Summary only — do not fork Gate numbers elsewhere.
 | Pollution fix | run-unique exclusive owned workspace for gate21 @ `f8f7f55` |
 | Schemas / defaults | Core · session-v1 · Trace-v1 · headless-v1 unchanged; ask + jail + shell protect; `-Dtui` default false |
 | Not claimed by TUI closeout | Remote dual-backend Gate for tip `f8f7f55`/docs tips (branch presence ≠ validation); maturity raise; theme/RPC/ACP/Pi parity; remote `-Dtui` |
-| `origin/main` | Local reflog: external/other push of `f8f7f55`; docs closeout tips local-only through `b151307`; this closeout did not push |
-| Post-TUI remote Gate | [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) — **in-progress** Phase A; target tip `b151307`; default non-TUI matrix only |
+| `origin/main` | Local reflog: external/other push of `f8f7f55`; TUI docs closeout tips local-only through historical `b151307` (OLD_TARGET); this closeout did not push |
+| Post-TUI remote Gate | [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) — **in-progress** Phase A; TARGET `f352b60`; Class C rebind awaiting fresh dual review; default non-TUI matrix only |
 
 ## Related
 

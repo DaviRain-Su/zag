@@ -31,8 +31,8 @@ headless stdout, or placing UI logic in Kernel packages.
 | Docs closeout tips | `9d69574` (delivery closeout) → `8694fbb` (feature-correspondence sync) → this push-truth follow-up; **remain local / not on `origin/main`** |
 | Maturity / C9 broader shell | **unchanged** — no new maturity row; not theme/RPC/ACP/extension-UI/dashboard/Pi parity |
 | Session v1 / Trace v1 / headless-v1 / Core | **unchanged** |
-| Linux / remote Gate | **not claimed** by this TUI task for tip `f8f7f55` (or docs tips) — branch presence ≠ validation. Post-TUI default-path remote dual-backend Gate is owned by [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) (**in-progress**, Phase A; target tip `b151307`; **no** run id; **no** remote `-Dtui` claim). |
-| `origin/main` presence | Local remote-tracking reflog records an **external/other push** of implementation tip `f8f7f55` to `origin/main` (`update by push` @ `2026-07-28 06:17:02 +0800`); **this closeout did not execute or authorize that push**. Docs closeout tips remain local through `b151307`. Remote branch presence is **not** a Linux/remote Gate. Unrelated canonical `.gitignore` retained on local merge. |
+| Linux / remote Gate | **not claimed** by this TUI task for tip `f8f7f55` (or docs tips) — branch presence ≠ validation. Post-TUI default-path remote dual-backend Gate is owned by [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) (**in-progress**, Phase A; TARGET `f352b60`; Class C rebind awaiting fresh dual review; **no** run id; **no** remote `-Dtui` claim). |
+| `origin/main` presence | Local remote-tracking reflog records an **external/other push** of implementation tip `f8f7f55` to `origin/main` (`update by push` @ `2026-07-28 06:17:02 +0800`); **this closeout did not execute or authorize that push**. TUI docs closeout tips remain local through historical `b151307` (OLD_TARGET on the post-TUI Gate). Remote branch presence is **not** a Linux/remote Gate. Unrelated canonical `.gitignore` retained on local merge. |
 
 ## Contract vs implementation (history)
 
@@ -172,4 +172,4 @@ unchanged by implementation or this docs closeout.
 | gate21 exclusive run-unique workspace (**impl final tip**; later on `origin/main` via external/other push) | `f8f7f55014a01ce4d6cf3ad7b751c8f6f0aa30b5` |
 | Docs closeout delivery | `9d69574` (local only) |
 | Docs feature-correspondence sync | `8694fbb` (local only) |
-| Docs remote-tip truth follow-up | `b151307` (local only; exact target for [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md)) |
+| Docs remote-tip truth follow-up | `b151307` (local only; historical OLD_TARGET for [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md); active TARGET is now `f352b60`) |
