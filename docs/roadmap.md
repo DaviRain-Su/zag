@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **partial / post-TUI remote Gate in-progress** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **done** @ `7be5151` (Tools write/edit **L2**; no L3 claim; local macOS only; no push/no fresh remote Linux for tip); minimal TUI **done** @ `f8f7f55` [tui-minimal-001](./plan/tasks/tui-minimal-001.md) / [tui-minimal.md](./modules/tui-minimal.md) (contract PASS @ `c7a8f3a`; dual final reviews PASS; local macOS Gates; no maturity raise); post-TUI default-path remote dual-backend Gate **in-progress** Phase A [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no run id; no push; no Phase B grant; Gate green No; no remote `-Dtui`; no maturity raise); `theme-001` **contract candidate** `status: pending` ([theme.md](./modules/theme.md); dual reviews not started; **no** implementation; orthogonal to post-TUI remote Gate); RPC / ACP remain **pending** (fresh Goal required; not auto-selected) |
+| Pi-inspired daily Harness | **partial / post-TUI remote Gate in-progress** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **done** @ `7be5151` (Tools write/edit **L2**; no L3 claim; local macOS only; no push/no fresh remote Linux for tip); minimal TUI **done** @ `f8f7f55` [tui-minimal-001](./plan/tasks/tui-minimal-001.md) / [tui-minimal.md](./modules/tui-minimal.md) (contract PASS @ `c7a8f3a`; dual final reviews PASS; local macOS Gates; no maturity raise); post-TUI default-path remote dual-backend Gate **in-progress** Phase A [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no run id; no push; no Phase B grant; Gate green No; no remote `-Dtui`; no maturity raise); `theme-001` **contract PASS** @ `9e1b9f9` ([theme.md](./modules/theme.md); `status: ready`; dual re-reviews zero blockers; **no** implementation; orthogonal to post-TUI remote Gate); RPC / ACP remain **pending** (fresh Goal required; not auto-selected) |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -30,7 +30,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Extension | E0 静态组合；E2 process；E3 WASM，按 Tool/events/commands/UI 分 Gate |
 | Skill | M2 E1 `skills-001` ✅ at `caafef5`（Runtime Extensions 仍 L0） |
 | Prompt Template | E1 `prompt-templates-001` ✅ at `61326ae` — binding [prompt-templates](./modules/prompt-templates.md); Runtime Extensions L0 |
-| Theme | host-shell passive data + host renderer; binding candidate [theme.md](./modules/theme.md) / [theme-001](./plan/tasks/theme-001.md) (`status: pending`; dual reviews not started; **no** implementation) |
+| Theme | host-shell passive data + host renderer; binding [theme.md](./modules/theme.md) / [theme-001](./plan/tasks/theme-001.md) (**contract PASS** @ `9e1b9f9`; `status: ready`; **no** implementation) |
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
@@ -98,9 +98,8 @@ M2 — selected daily UX
                        │
                        ├─ orthogonal (not a Theme dependency)
                        │
-                 theme-001 (pending contract candidate;
-                   binding theme.md; dual reviews not started;
-                   no implementation; no maturity raise)
+                 theme-001 (contract PASS @ 9e1b9f9; status ready;
+                   binding theme.md; no implementation; no maturity raise)
 ```
 
 ### M0 — Interaction reliability
@@ -185,9 +184,9 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest `read_file` + mandatory hunk review + optional post-commit verifier ([tools-edit](./modules/tools-edit.md)); candidate + merged-main local macOS std **655/655**, curl **654/654**; no push / no fresh remote Linux for tip | no AST/LSP; no multi-file txn; no Core/schema change; Tools write/edit stays L2 |
 | [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55` ([tui-minimal.md](./modules/tui-minimal.md)): contract PASS @ `c7a8f3a`; host UI over public lifecycle/control/permission; dual final reviews PASS; local macOS default **656/656**/**655/655** + TUI **711/711**/**710/710** | only `packages/zag-tui`; dual-thread host; no maturity raise; remote default-path Gate not claimed here |
 | [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** (Phase A Class C rebind review PASS @ `7f9cfa4`): exact TARGET `f352b60d08e81c19d70ba46198fb06b71ddc85a1` (OLD_TARGET `b151307` abandoned); default non-TUI dual-OS dual-backend CI only; **no** run id; **no** push; Gate green **No** | docs-only Phase A; Phase B needs fresh authz naming TARGET; **no** Phase B grant; **no** remote `-Dtui`; **no** maturity raise; RPC/ACP stay pending |
-| [theme-001](./plan/tasks/theme-001.md) | **pending** contract candidate ([theme.md](./modules/theme.md)); dual architecture/ownership + safety/fail-closed reviews not started; **no** implementation | docs only; owner `zag-tui`; passive Theme data; fail-closed built-in; **orthogonal** to post-TUI remote Gate; **no** maturity raise; does not package RPC/ACP/extension-UI |
+| [theme-001](./plan/tasks/theme-001.md) | **ready** — contract **PASS** @ `9e1b9f9` ([theme.md](./modules/theme.md)); dual architecture/ownership + safety/fail-closed re-reviews **PASS**, zero blockers; **no** implementation | docs only; owner `zag-tui`; passive Theme data; fail-closed built-in; **orthogonal** to post-TUI remote Gate; **no** maturity raise; does not package RPC/ACP/extension-UI; fresh Goal required for impl |
 
-Minimal TUI depends on the closed event/control/SIGINT/headless/edit contracts; it must only assemble public coding-agent APIs, keep plain/headless Gates green, and never place UI in Kernel packages. Post-TUI remote default-path dual-backend Gate is a separate docs evidence node and does not raise maturity or auto-implement Theme. Theme contract (`theme-001`) is docs-only until dual reviews PASS; implementation requires a separate Goal.
+Minimal TUI depends on the closed event/control/SIGINT/headless/edit contracts; it must only assemble public coding-agent APIs, keep plain/headless Gates green, and never place UI in Kernel packages. Post-TUI remote default-path dual-backend Gate is a separate docs evidence node and does not raise maturity or auto-implement Theme. Theme contract (`theme-001`) is **PASS** @ `9e1b9f9` (`status: ready`); implementation still requires a separate fresh Goal.
 
 ## Extension release ladder (D-010)
 
@@ -217,7 +216,7 @@ public events/control/session
         ├─► runtime-model-catalog-001 (data-only)
         └─► extension-ui-schema-001 (basic intents first; stateful views later)
 
-host shell: tui-minimal-001 → theme-001 (contract candidate pending; no impl yet)
+host shell: tui-minimal-001 → theme-001 (contract PASS @ 9e1b9f9; ready; no impl yet)
 ```
 
 E3 is a formal direction, not current implementation. The first WASM host is compute-only Tool scope; later hooks/commands/Provider/UI worlds require separate Gates. Engine choice remains open until measured/security evidence exists.
@@ -231,7 +230,7 @@ E3 is a formal direction, not current implementation. The first WASM host is com
 | C6 Control/Orchestration | steering/follow-up in M1 | Oracle, executable subagents, Graph |
 | C7 Process/Sandbox | none | process supervisor only when executable/background use appears; OS enforcement after that |
 | C8 Extensions | E0 static SDK already; E1 Skills + Prompt Templates in M2 | E2 after C7.1; E3 WASM portable executable tier; bundle/model/UI worlds separately gated |
-| C9 Product shell | minimal TUI **done** @ `f8f7f55` ([tui-minimal-001](./plan/tasks/tui-minimal-001.md); contract PASS @ `c7a8f3a`; local macOS Gates; no maturity raise); post-TUI default-path remote dual-backend Gate **in-progress** Phase A ([post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md); TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui` claim); Theme **contract candidate** ([theme-001](./plan/tasks/theme-001.md) / [theme.md](./modules/theme.md); `status: pending`; dual reviews not started; no implementation) | `rpc-v1`, Theme **implementation**, extension UI host, ACP, dashboard/images/full configuration UX |
+| C9 Product shell | minimal TUI **done** @ `f8f7f55` ([tui-minimal-001](./plan/tasks/tui-minimal-001.md); contract PASS @ `c7a8f3a`; local macOS Gates; no maturity raise); post-TUI default-path remote dual-backend Gate **in-progress** Phase A ([post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md); TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui` claim); Theme **contract PASS** @ `9e1b9f9` ([theme-001](./plan/tasks/theme-001.md) / [theme.md](./modules/theme.md); `status: ready`; dual re-reviews zero blockers; no implementation) | `rpc-v1`, Theme **implementation**, extension UI host, ACP, dashboard/images/full configuration UX |
 
 The detailed phase docs describe domain constraints. A deferred item is not an implied future commitment.
 

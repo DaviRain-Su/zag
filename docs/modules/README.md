@@ -26,7 +26,7 @@
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | implemented (`skills-001` @ `caafef5`); coding-agent only | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | implemented (`prompt-templates-001` @ `61326ae`); coding-agent only + thin CLI routing | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55` (PASS @ `c7a8f3a`); post-TUI remote Gate Phase A **in-progress** (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui`) | `packages/zag-tui` + CLI `-Dtui` wire; local macOS Gates; **no** maturity raise | unique package; dual-thread host; `-Dtui` default false |
-| [theme.md](./theme.md) | M2 / C9 host-shell Theme **contract candidate** ([theme-001](../plan/tasks/theme-001.md) `status: pending`) | docs only; dual contract reviews not started; **no** implementation; **no** maturity raise | owner `zag-tui` only; passive data; fail-closed built-in; orthogonal to post-TUI remote Gate |
+| [theme.md](./theme.md) | M2 / C9 host-shell Theme **contract PASS** @ `9e1b9f9` ([theme-001](../plan/tasks/theme-001.md) `status: ready`) | dual re-reviews PASS zero blockers; **no** implementation; **no** maturity raise | owner `zag-tui` only; passive data; fail-closed built-in; orthogonal to post-TUI remote Gate |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1 Skills @ `caafef5`; E1 Prompt Templates @ `61326ae`; E2/E3 unimplemented; Runtime Extensions L0 | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
@@ -80,7 +80,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | Passive Agent Skills binding contract (`skills-001` done @ `caafef5`); coding-agent only |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | Passive Prompt Templates binding contract (`prompt-templates-001` done @ `61326ae`); coding-agent only + thin CLI routing |
 | [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55`; post-TUI remote Gate Phase A **in-progress** | Minimal host TUI + `zag-tui`; no maturity raise; no remote `-Dtui` claim |
-| [theme.md](./theme.md) | M2 / C9 Theme **contract candidate** (`theme-001` pending) | Host-shell passive Theme binding; no implementation; no maturity raise; independent of post-TUI remote Gate |
+| [theme.md](./theme.md) | M2 / C9 Theme **contract PASS** @ `9e1b9f9` (`theme-001` ready) | Host-shell passive Theme binding; dual re-reviews PASS; no implementation; no maturity raise; independent of post-TUI remote Gate |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |

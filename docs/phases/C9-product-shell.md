@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Prerequisite | Headless/Process L2 ✅; minimal TUI additionally needs stable lifecycle events/control |
-| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55`; Theme contract candidate `theme-001` **pending** |
+| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55`; Theme contract **PASS** @ `9e1b9f9` (`theme-001` **ready**; no implementation) |
 | Failure mode | plain CLI is too weak for daily use, or UI duplicates Kernel business logic |
 | Reference | Current Pi + historical `pi-mono-zig` terminal behavior (design only) |
 | Feature map | [Pi feature correspondence](../plan/analysis/2026-07-26-pi-feature-correspondence.md) |
@@ -46,9 +46,10 @@ reflog records an external/other push of `f8f7f55` to `origin/main`; this
 closeout did not execute or authorize that push. Docs closeout remains local;
 remote branch presence is not a Linux/remote Gate. This is the **minimal**
 host-shell slice only — not Theme implementation/RPC/ACP/extension UI.
-Theme binding is a separate docs candidate: [theme.md](../modules/theme.md)
-([theme-001](../plan/tasks/theme-001.md) `status: pending`; dual reviews not
-started; **no** implementation; **orthogonal** to post-TUI remote Gate).
+Theme binding is separate: [theme.md](../modules/theme.md)
+([theme-001](../plan/tasks/theme-001.md) **contract PASS** @ `9e1b9f9`;
+`status: ready`; dual re-reviews zero blockers; **no** implementation;
+**orthogonal** to post-TUI remote Gate).
 
 Contract freezes (detail in the module — do not fork):
 
@@ -95,7 +96,7 @@ E0 trusted static Zig product code may add native host components at compile tim
 
 ## Theme boundary
 
-Theme data is passive. ANSI generation, terminal capability/background detection, hot reload, and UI invalidation are host-shell behavior. Binding candidate: [theme.md](../modules/theme.md) (`theme-001` **pending**; dual contract reviews not started; **no** implementation; **no** maturity raise). Owner is **`packages/zag-tui` only**; Core/coding-agent gain no Theme types. Fail closed to built-in host Theme; no raw ANSI in Theme data; no theme renderer crosses E2/E3. Orthogonal to [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) (TARGET `f352b60…`; Phase A; no Phase B grant/run/green).
+Theme data is passive. ANSI generation, terminal capability/background detection, hot reload, and UI invalidation are host-shell behavior. Binding: [theme.md](../modules/theme.md) (`theme-001` **contract PASS** @ `9e1b9f9`; `status: ready`; dual re-reviews zero blockers; **no** implementation; **no** maturity raise). Owner is **`packages/zag-tui` only**; Core/coding-agent gain no Theme types. Fail closed to built-in host Theme; no raw ANSI in Theme data; no theme renderer crosses E2/E3. Orthogonal to [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) (TARGET `f352b60…`; Phase A; no Phase B grant/run/green).
 
 ## Invariants
 
@@ -112,7 +113,7 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 - `rpc-v1` implementation and full command vocabulary;
 - ACP/editor host;
 - dashboard/cost explorer;
-- Theme **implementation** (contract candidate only; see [theme.md](../modules/theme.md)), images, stateful extension views, full overlay framework;
+- Theme **implementation** (contract PASS @ `9e1b9f9` / ready; still deferred until a fresh Goal — see [theme.md](../modules/theme.md)), images, stateful extension views, full overlay framework;
 - package configuration UI;
 - cloud collaboration/i18n breadth.
 
@@ -139,13 +140,14 @@ Theme data is passive. ANSI generation, terminal capability/background detection
 ## Acceptance for `theme-001` (contract track; docs only)
 
 - [x] binding module [theme.md](../modules/theme.md) authored
-- [x] task [theme-001](../plan/tasks/theme-001.md) authored (`status: pending`)
+- [x] task [theme-001](../plan/tasks/theme-001.md) authored (now `status: ready`)
 - [x] round-1 dual **BLOCKED** findings closed in docs (structural vs Theme SGR; host options; containment; diagnostics; ownership Gates)
-- [ ] independent architecture/ownership contract **re-review** PASS (not claimed)
-- [ ] independent safety/fail-closed contract **re-review** PASS (not claimed)
-- [ ] docs lint / score / diff green on contract docs path; no product code
-- [ ] **no** implementation until dual PASS + separate Goal; **no** `ready` from blocker close alone
-- [ ] **no** maturity raise; **no** post-TUI Phase B grant/run/green claim
+- [x] independent architecture/ownership contract **re-review** PASS @ reviewed tip `9e1b9f9` (zero blockers)
+- [x] independent safety/fail-closed contract **re-review** PASS @ reviewed tip `9e1b9f9` (zero blockers)
+- [x] docs lint / score / diff green on contract docs path; no product code
+- [x] PASS-record tip records prior-tip PASS only; does not claim self dual re-review
+- [ ] **no** product implementation until a separate fresh Goal (contract PASS alone is not product authz)
+- [x] **no** maturity raise; **no** post-TUI Phase B grant/run/green claim
 
 ## Acceptance for later extension UI host
 

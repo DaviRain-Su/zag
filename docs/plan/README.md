@@ -32,7 +32,7 @@ docs/plan/
 | Edit sharpness (C4 first slice) | **done** at `7be5151` — [edit-sharpness-001](./tasks/edit-sharpness-001.md) + binding [tools-edit.md](../modules/tools-edit.md) § C4 + [C4-edit-sharpness](../phases/C4-edit-sharpness.md); contract PASS @ `07b8dab`/`f13b0f8` → impl `cfdc81b` → fix `241374a` → docs truth/closeout `7be5151`; candidate + merged-main local macOS std **40/40 · 655/655**, curl **42/42 · 654/654**; coding **375**, CLI **36**, SDK **24/24**; OpenAPI **287**; catalog **40**; docs **92/74**; **no push** / no fresh remote Linux for this tip; Tools · write/edit stays **L2** |
 | Minimal TUI (M2 / C9 first slice) | **done** at `f8f7f55` — [tui-minimal-001](./tasks/tui-minimal-001.md) + binding [tui-minimal.md](../modules/tui-minimal.md); contract PASS @ `c7a8f3a` → impl final `f8f7f55` (dual final reviews PASS, zero blockers; PTY + gate21 exclusive workspace); local ff-only merge; task + merged-main local macOS default std **42/42 · 656/656**, curl **44/44 · 655/655**, TUI std **47/47 · 711/711**, TUI curl **49/49 · 710/710**; OpenAPI **287**; catalog **40**; docs **92/74** (55 files); local reflog shows external/other push of `f8f7f55` to `origin/main` (not by this closeout); TUI docs tips local-only at closeout, later ancestors of TARGET `f352b60` (Class C lineage only; not Phase B live evidence; closeout did not push); **no** maturity raise; post-TUI remote Gate **not** claimed here — see [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) (**in-progress** Phase A; TARGET `f352b60`; rebind PASS @ `7f9cfa4`; no grant/run/Gate green) |
 | Post-TUI remote dual-backend Gate | **in-progress** (rebind PASS @ `7f9cfa4`) — [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md); TARGET `f352b60d08e81c19d70ba46198fb06b71ddc85a1` (OLD_TARGET `b151307` abandoned); default non-TUI CI only; **no** run id; **no** Gate green; **no** push; **no** Phase B grant; **no** remote `-Dtui`; **no** maturity raise |
-| Theme (host-shell) | **contract candidate** (`status: pending`) — [theme-001](./tasks/theme-001.md) + binding [theme.md](../modules/theme.md); dual contract reviews not started; **no** implementation; **no** maturity raise; **orthogonal** to post-TUI remote Gate (no grant/run/green claim) |
+| Theme (host-shell) | **contract PASS** @ `9e1b9f9` (`status: ready`) — [theme-001](./tasks/theme-001.md) + binding [theme.md](../modules/theme.md); dual re-reviews PASS zero blockers; **no** implementation; **no** maturity raise; **orthogonal** to post-TUI remote Gate (no grant/run/green claim) |
 
 The `harness-steering-001` merged-main Gate at `a5ff2b7` passed std **567/567**, curl **566/566**, Core **89/89**,
 Coding **298/298**, external SDK **20/20**, OpenAPI **287/287**, catalog **40**, readability **91/100**, and security
@@ -154,7 +154,7 @@ completed foundation
                            │
                            ├─ (orthogonal evidence; not a Theme dep)
                            │
-          theme-001 (pending contract candidate; dual reviews not started;
+          theme-001 (contract PASS @ 9e1b9f9; status ready;
             binding docs/modules/theme.md; no implementation)
 ```
 
@@ -211,7 +211,7 @@ at exact tip `8a93ec6` / run `30273762011`** — not a universal future guarante
 **42/42 · 632/632**; **no push** and no fresh remote/Linux evidence claimed for this tip.
 Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
-The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Theme now has a **docs contract candidate** ([theme-001](./tasks/theme-001.md) / [theme.md](../modules/theme.md); `status: pending`; dual reviews not started; **no** implementation). Zag-native `rpc-v1`, runtime model data, and extension UI remain distinct planned capabilities, not ready tasks or implementation claims.
+The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Theme contract is **PASS** @ `9e1b9f9` ([theme-001](./tasks/theme-001.md) / [theme.md](../modules/theme.md); `status: ready`; dual re-reviews zero blockers; **no** implementation). Zag-native `rpc-v1`, runtime model data, and extension UI remain distinct planned capabilities, not ready tasks or implementation claims.
 
 ## Task index
 
@@ -220,7 +220,7 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 | Planned node | Status | Scope |
 |--------------|--------|-------|
 | [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** (rebind PASS @ `7f9cfa4`) | Docs-first post-TUI **default-path** remote dual-OS dual-backend Gate; TARGET `f352b60…` (OLD_TARGET `b151307` abandoned); no run id; no push; no Phase B grant; Gate green No; **no** remote `-Dtui`; **no** maturity raise |
-| [theme-001](./tasks/theme-001.md) | **pending** (contract candidate; dual reviews not started) | Host-shell Theme binding [theme.md](../modules/theme.md); docs only; depends-on `tui-minimal-001`; **no** implementation authz; **orthogonal** to post-TUI remote Gate; **no** maturity raise |
+| [theme-001](./tasks/theme-001.md) | **ready** (contract PASS @ `9e1b9f9`; dual re-reviews zero blockers) | Host-shell Theme binding [theme.md](../modules/theme.md); docs only; depends-on `tui-minimal-001`; eligible for **fresh** implementation Goal; **no** product code yet; **orthogonal** to post-TUI remote Gate; **no** maturity raise |
 | RPC / ACP / extension-UI | **pending** (not ready) | **fresh Goal** still required; Theme contract does **not** auto-select or package them |
 
 ### Completed foundation

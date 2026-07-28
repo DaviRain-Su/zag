@@ -1,6 +1,6 @@
 ---
 status: active
-scope: host-shell Theme binding contract (docs candidate; no implementation)
+scope: host-shell Theme binding contract (PASS; no implementation)
 task: theme-001
 prerequisite:
   - tui-minimal-001
@@ -13,26 +13,31 @@ ownership, passive Theme data rules, the minimal v1 surface, fail-closed
 fallback, host-owned reload/UI invalidation, non-interference with closed L2
 truth, and the later implementation Gate matrix.
 
-**Current status (honest):** this document is a **contract candidate**. Round-1
-independent **architecture/ownership** and **safety/fail-closed** reviews
-returned **BLOCKED**; this revision closes those blockers in docs only. There
-is still **no** dual contract review PASS, **no** product implementation, **no**
-implementation Goal authorization, **no** grant/run, **no** Gate green, **no**
-`status: ready`, and **no** maturity raise from this node.
+**Contract freeze PASS** at reviewed tip
+`9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` after independent
+**architecture/ownership** and **safety/fail-closed** re-reviews (**PASS**,
+**zero blockers**). Lineage: define `f045e9e` → round-1 BLOCKED → harden
+`9e1b9f9` (reviewed tip) → this docs tip is a **PASS-record only** (records the
+prior tip’s dual re-review result; **does not** claim that *this* PASS-record
+commit was itself dual re-reviewed).
+
+**Task status:** `theme-001` frontmatter is **`ready`** — meaning only that the
+contract is frozen and a later **fresh Goal** may select an independent
+implementation node. This PASS-record **does not** authorize product code, does
+**not** start implementation, and does **not** raise maturity.
 
 **Implementation status:** **not started**. Live `packages/zag-tui` seams
 (read-only evidence for this freeze):
 
 | Seam | Current truth | Theme implication |
 |------|---------------|-------------------|
-| `render.zig` | Hard-coded layout ANSI (home/clear, box chrome); **no** palette / role colors | Theme-driven ANSI generation is a **later implementation requirement** |
+| `render.zig` | Hard-coded layout ANSI (home/clear, box chrome); **no** palette / role colors | Theme-driven SGR generation is a **later implementation requirement** |
 | `terminal.zig` | Raw mode, alt-screen, geometry; **no** color-depth or background detection | Capability/background adaptation is a **later implementation requirement** |
 | `app.zig` / `present.zig` | Dual-thread host, cards, redaction publish path; **no** Theme type/catalog/reload | Catalog, selection, reload transaction, UI invalidation are **later implementation requirements** |
 | `constants.zig` | Frozen TUI capacities only | Theme budgets are additional host constants under this contract |
 
-This docs node **must not** claim any of the above already exist. Closing the
-contract track does **not** ship Theme code and does **not** auto-start an
-implementation Goal.
+This docs node **must not** claim any of the above already exist. Contract PASS
+does **not** ship Theme code and does **not** auto-start an implementation Goal.
 
 Related truth (do not fork):
 
@@ -610,23 +615,28 @@ remote claim unless a separate evidence node explicitly freezes one.
 - [x] Task file authored (`docs/plan/tasks/theme-001.md`) with required frontmatter
 - [x] Round-1 architecture/ownership **BLOCKED** findings addressed in docs (structural vs Theme SGR; `ThemeHostOptions`; ownership Gate expansion)
 - [x] Round-1 safety/fail-closed **BLOCKED** findings addressed in docs (normative containment; closed diagnostics; fixtures)
-- [ ] Independent **architecture/ownership** contract **re-review** PASS (pending; different agent; **not claimed**)
-- [ ] Independent **safety/fail-closed** contract **re-review** PASS (pending; different agent; **not claimed**)
-- [ ] Docs lint + score + `git diff --check` green on contract docs path
+- [x] Independent **architecture/ownership** contract **re-review** PASS @ reviewed tip `9e1b9f9` (**zero blockers**)
+- [x] Independent **safety/fail-closed** contract **re-review** PASS @ reviewed tip `9e1b9f9` (**zero blockers**)
+- [x] Docs lint + score + `git diff --check` green on contract docs path (at reviewed tip / this PASS-record path)
 - [x] Contract freeze does **not** invent product acceptance or implementation
-- [x] **No** maturity row raise; **no** remote/grant/run/green claim; **no** `ready` / implementation authz
+- [x] **No** maturity row raise; **no** remote/grant/run/green claim; **no** product implementation authz on this tip
 - [x] Scope excludes `packages/**`, `src/**`, `build.zig*`, `.github/**`, `chapters/**`
+- [x] This tip is a **PASS-record only** — records prior reviewed tip `9e1b9f9`; **does not** claim this PASS-record commit was dual re-reviewed
+- [ ] Implementation Goal selected / product Theme code (later node only)
+- [ ] Implementation Gate matrix §7 (later node only)
 
 ## 10. Current delivery state
 
 | Track | Status |
 |-------|--------|
-| Contract candidate | **hardened** after round-1 BLOCKED findings; still **pending** dual re-review |
-| Dual contract review | round-1 **BLOCKED** → fixes in this docs tip; **no PASS** claimed |
-| Implementation Goal | **not authorized** |
+| Contract | **PASS** @ reviewed tip `9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` (dual re-reviews, zero blockers) |
+| PASS-record tip | **this commit** — records prior-tip PASS only; **not** self-reviewed as a new contract freeze |
+| Task status | **`ready`** (contract frozen; may be selected by a fresh implementation Goal) |
+| Implementation | **not started** / **not authorized** by contract PASS alone |
 | Product Theme code | **absent** (seams above) |
 | Maturity | **unchanged** |
-| Post-TUI remote Gate | **independent** in-progress Phase A; no Theme coupling |
+| Post-TUI remote Gate | **independent** in-progress Phase A (TARGET `f352b60…`; no Phase B grant/run/green); no Theme coupling |
+| RPC / ACP / extension-UI | remain **pending**/blocked; not packaged |
 
 ## Related
 

@@ -32,7 +32,7 @@ A feature may use several carriers. A Package is a bundle above E1/E2/E3, not an
 | Extension | selected Tools/events/commands/flags/shortcuts/providers/session/UI through a common vocabulary | E0 available in part; E2/E3 planned incrementally |
 | Skill | bounded `SKILL.md` discovery, prompt summary/on-demand load, disable/manual-only behavior | E1 **done** `skills-001` @ `caafef5` — binding [skills.md](./skills.md); maturity still L0 |
 | Prompt Template | deterministic `/name` prompt expansion with explicit non-recursive substitution | E1 **done** `prompt-templates-001` @ `61326ae` — binding [prompt-templates.md](./prompt-templates.md); maturity still L0 |
-| Theme | passive theme data rendered by the host product shell | binding candidate [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) (`status: pending`; dual reviews not started; **no** implementation; owner `zag-tui` only) |
+| Theme | passive theme data rendered by the host product shell | binding [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) (**contract PASS** @ `9e1b9f9`; `status: ready`; dual re-reviews zero blockers; **no** implementation; owner `zag-tui` only) |
 | Package | local manifest bundling E1 resources and optional E2/E3 artifacts | package schema/trust Gates planned |
 | Custom Model | validated model metadata/configuration without executable behavior | static catalog exists; runtime catalog unplanned |
 | Custom Provider | trusted Zig Provider plus later process/WASM runtime registration | E0 SDK L2; E2/E3 L0 |
@@ -48,7 +48,7 @@ This is functional correspondence, not Pi API/schema/CLI/package-manager parity.
 | Tier | Surface | Current |
 |------|---------|---------|
 | E0 trusted static Zig | compile-time Provider/Toolset/Observer/policy and later native host UI | **available in part** through SDK-ready contract |
-| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` E1 Skills slice done @ `caafef5` ([skills.md](./skills.md)); `prompt-templates-001` E1 Prompt Templates slice done @ `61326ae` ([prompt-templates.md](./prompt-templates.md)); Theme **contract candidate** ([theme.md](./theme.md) / `theme-001` pending; host-shell owner; **no** implementation); maturity still L0 |
+| E1 passive resource | `SKILL.md`, Prompt Templates, later theme data | `skills-001` E1 Skills slice done @ `caafef5` ([skills.md](./skills.md)); `prompt-templates-001` E1 Prompt Templates slice done @ `61326ae` ([prompt-templates.md](./prompt-templates.md)); Theme **contract PASS** @ `9e1b9f9` ([theme.md](./theme.md) / `theme-001` ready; host-shell owner; **no** implementation); maturity still L0 |
 | E2 process adapter | `zag-ext-v1` semantics over NDJSON | planned after C7.1 + real process consumer |
 | E3 WASM Component | `zag-ext-v1` semantics over Zag WIT | **planned preferred portable third-party executable tier** |
 
@@ -143,7 +143,7 @@ the module doc — not accidental.
 ### Theme and model data
 
 - Theme data is passive; ANSI generation, terminal capability detection, focus, invalidation, and hot reload are host-shell behavior.
-- Binding candidate: **[theme.md](./theme.md)** (`theme-001` **pending**; dual contract reviews not started; **no** implementation; **no** maturity raise). Unique owner **`packages/zag-tui`**; Core/coding-agent must not gain Theme types/ports/state/discovery. Fail closed to built-in host Theme; Theme documents must not contain raw ANSI/escape or executable content. Orthogonal to post-TUI remote Gate (TARGET `f352b60…`; Phase A; no Phase B grant/run/green).
+- Binding: **[theme.md](./theme.md)** (`theme-001` **contract PASS** @ `9e1b9f9`; `status: ready`; dual re-reviews zero blockers; **no** implementation; **no** maturity raise). Unique owner **`packages/zag-tui`**; Core/coding-agent must not gain Theme types/ports/state/discovery. Fail closed to built-in host Theme; Theme documents must not contain raw ANSI/escape or executable content. Orthogonal to post-TUI remote Gate (TARGET `f352b60…`; Phase A; no Phase B grant/run/green).
 - Custom Model metadata is validated host configuration. Auth material is stored separately. A runtime model catalog is not required for E1 Skills/Prompt delivery and does not require WASM.
 
 ## Runtime package bundle vs. E0 source distribution

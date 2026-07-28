@@ -1,7 +1,7 @@
 ---
 id: theme-001
 scope: host-shell/theme
-status: pending
+status: ready
 priority: P1
 depends-on:
   - tui-minimal-001
@@ -19,10 +19,13 @@ binding **`ThemeHostOptions`**, and non-interference with closed L2 truth
 (redaction, ask, jail, shell protect, Session v1, Trace v1, headless-v1, plain
 CLI, `-Dtui=false`).
 
-**This node does not authorize product implementation.** After dual contract
-**re-review** PASS, Theme may receive an **independent** implementation
-Goal/node. Status remains **`pending`** until those reviews complete — **not**
-`ready`. This revision only closes round-1 **BLOCKED** findings in docs.
+**Contract freeze PASS** at reviewed tip
+`9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` (independent architecture/ownership +
+safety/fail-closed re-reviews, **zero blockers**). This tip is a **PASS-record
+only**: it records that prior-tip result and sets task **`status: ready`** so a
+later **fresh Goal** may select an independent implementation node. It does
+**not** authorize product code, does **not** start implementation, and does
+**not** claim that *this* PASS-record commit was dual re-reviewed.
 
 **Binding specification:** [theme.md](../../modules/theme.md)
 (+ phase constraints in [C9-product-shell.md](../../phases/C9-product-shell.md)).
@@ -31,9 +34,10 @@ Goal/node. Status remains **`pending`** until those reviews complete — **not**
 
 | Track | Status |
 |-------|--------|
-| Contract candidate | **hardened** after round-1 dual **BLOCKED** findings; still awaiting re-review |
-| Dual contract review | round-1 **BLOCKED** → docs fixes; **no PASS** claimed |
-| Implementation | **not authorized**; no Theme product code |
+| Contract freeze | **PASS** @ `9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` — dual re-reviews **PASS**, **zero blockers** |
+| PASS-record tip | **this commit** — records prior-tip PASS only; **not** self-reviewed |
+| Task frontmatter | **`ready`** — contract frozen; eligible for a separate implementation Goal |
+| Implementation | **not started**; contract PASS alone does **not** authorize product code |
 | Maturity | **unchanged** — no row add/raise |
 | Session v1 / Trace v1 / headless-v1 / Core | **unchanged** (by contract law; no code touch) |
 | Post-TUI remote dual-backend Gate | **orthogonal** — [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) Phase A **in-progress**; TARGET `f352b60d08e81c19d70ba46198fb06b71ddc85a1`; Class C rebind review PASS @ `7f9cfa4`; **no** Phase B grant; **no** run id; **no** Gate green; **no** push; **no** remote `-Dtui`. Theme does **not** claim or depend on that path. |
@@ -42,14 +46,19 @@ Goal/node. Status remains **`pending`** until those reviews complete — **not**
 ## Contract vs implementation (discipline)
 
 ```text
-CONTRACT NODE (docs freeze — current)
-  paths: docs only
-  status: pending (await dual contract re-review after blocker close)
-  does not ship packages/zag-tui Theme code
-  does not set status ready / in-progress for implementation
-  does not claim review PASS
+CONTRACT FREEZE (reviewed tip)
+  tip: 9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed
+  dual re-reviews: architecture/ownership PASS + safety/fail-closed PASS
+  zero blockers; docs only at freeze
 
-IMPLEMENTATION NODE (future; only after dual contract PASS + fresh Goal)
+PASS-RECORD NODE (this commit)
+  paths: docs only
+  records prior-tip dual PASS; sets status: ready
+  does NOT claim this record tip was dual re-reviewed
+  does NOT ship packages/zag-tui Theme code
+  does NOT authorize implementation by itself
+
+IMPLEMENTATION NODE (future; only after fresh Goal selects ready task)
   paths: packages/zag-tui/** Theme parse/catalog/SGR/reload
          (+ thin CLI ThemeHostOptions when -Dtui=true)
   forbidden: zag-agent-core / zag-coding-agent Theme types/ports/state/discovery/catalog/options
@@ -60,8 +69,8 @@ IMPLEMENTATION NODE (future; only after dual contract PASS + fresh Goal)
 
 - Closed minimal TUI: [tui-minimal-001](./tui-minimal-001.md) **done** @ `f8f7f55`
   (contract PASS @ `c7a8f3a`); binding [tui-minimal.md](../../modules/tui-minimal.md)
-- Round-1 dual contract reviews: **BLOCKED** (architecture/ownership + safety);
-  this tip hardens binding text only
+- Contract lineage: define `f045e9e` → round-1 **BLOCKED** → harden `9e1b9f9`
+  (reviewed PASS tip) → this PASS-record
 - Live seams (read-only; **not** Theme-ready today):
   - `packages/zag-tui/src/render.zig` — host-owned structural layout CSI/box; no palette
   - `packages/zag-tui/src/terminal.zig` — raw/alt/size; no color/bg detection
@@ -70,25 +79,26 @@ IMPLEMENTATION NODE (future; only after dual contract PASS + fresh Goal)
 
 # path
 
-## Docs (this contract track)
+## Docs (contract + PASS-record track)
 
 | Path | Role |
 |------|------|
-| `docs/modules/theme.md` | **binding truth** |
-| `docs/plan/tasks/theme-001.md` | this task skeleton |
-| Minimal Active cross-links | already present from contract author tip; avoid scope expansion |
+| `docs/modules/theme.md` | **binding truth** + PASS-record |
+| `docs/plan/tasks/theme-001.md` | this task (`status: ready`) |
+| Minimal Active cross-links | plan/roadmap/C9/extensions/tui-minimal/maturity/INDEX/modules README/feature-correspondence |
 
-## Implementation (forbidden on this node)
+## Implementation (forbidden until separate Goal)
 
-| Path | Role on this node |
-|------|-------------------|
-| `packages/**`, `src/**`, `build.zig*`, `.github/**`, `chapters/**` | **must not change** |
-| Future Theme code | only under `packages/zag-tui/` after dual review PASS + separate Goal; CLI may only forward `ThemeHostOptions` when `-Dtui=true` |
+| Path | Role |
+|------|------|
+| `packages/**`, `src/**`, `build.zig*`, `.github/**`, `chapters/**` | **must not change** on this node |
+| Future Theme code | only under `packages/zag-tui/` after a fresh implementation Goal; CLI may only forward `ThemeHostOptions` when `-Dtui=true` |
 
 # contract summary
 
 Authoritative detail lives in [theme.md](../../modules/theme.md). Do not restate
-conflicting rules here.
+conflicting rules here. Behavioral freezes at reviewed tip `9e1b9f9` are
+unchanged by this PASS-record.
 
 ### Frozen choices (index)
 
@@ -103,20 +113,23 @@ conflicting rules here.
 | Diagnostics | closed fixed reason codes (+ optional validated id + counters); **no** path/body/secret/session/model leak |
 | Fail closed | missing/invalid/unsupported → `zag-default`; never identity-through raw bytes; never weaken redaction/permission/Tool/run truth |
 | Reload | parse+validate → temp owned snapshot → atomic publish; failure keeps LKG or built-in; **no** partial apply |
-| Status | **`pending`** until dual re-review PASS; this commit does **not** authorize implementation or claim PASS |
+| Status | **`ready`** after dual re-review PASS @ `9e1b9f9`; implementation still needs a **fresh Goal** |
 
-# verification (contract track — this node)
+# verification (contract track)
 
 - [x] Binding module authored + round-1 blocker close
-- [x] Task file frontmatter (`id`, `scope`, `status: pending`, `priority: P1`, `depends-on: tui-minimal-001`)
+- [x] Task file frontmatter (`id`, `scope`, `status: ready`, `priority: P1`, `depends-on: tui-minimal-001`)
 - [x] Architecture blockers closed in docs: structural vs Theme SGR; `ThemeHostOptions`; ownership Gate beyond import
 - [x] Safety blockers closed in docs: normative containment; closed diagnostics; fixtures for symlink escape + diagnostics leak ban
-- [ ] Independent **architecture/ownership** contract **re-review** PASS (different agent; **not claimed**)
-- [ ] Independent **safety/fail-closed** contract **re-review** PASS (different agent; **not claimed**)
-- [ ] Docs lint / score / `git diff --check` on contract docs path
+- [x] Independent **architecture/ownership** contract **re-review** PASS @ `9e1b9f9` (**zero blockers**)
+- [x] Independent **safety/fail-closed** contract **re-review** PASS @ `9e1b9f9` (**zero blockers**)
+- [x] Docs lint / score / `git diff --check` on contract docs path
 - [x] Scope: docs only; no product/build/CI/chapter edits
-- [x] No maturity raise; no grant/run/Gate green/remote `-Dtui` claim; no `ready`
+- [x] No maturity raise; no grant/run/Gate green/remote `-Dtui` claim
 - [x] Cross-links keep post-TUI remote Gate Phase B **no grant/run/green** truth
+- [x] PASS-record tip records prior-tip PASS only; does **not** claim self dual re-review
+- [ ] Implementation Goal / product Theme code (later; not this tip)
+- [ ] Implementation Gate matrix (later; not this tip)
 
 # verification (implementation track — later; not this commit)
 
@@ -142,8 +155,8 @@ Summary classes (must all appear in any later impl Goal):
 # non-goals
 
 - Product Theme implementation on this node
-- Claiming dual review PASS or `status: ready`
-- Auto-select implementation Goal without dual re-review PASS
+- Claiming this PASS-record tip was dual re-reviewed
+- Auto-starting implementation without a fresh Goal
 - Maturity raise; Runtime Extensions row raise via Theme
 - Post-TUI Phase B grant/run/green; remote `-Dtui`
 - RPC / ACP / extension-UI packaging

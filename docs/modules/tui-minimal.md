@@ -19,7 +19,8 @@ and are not weakened by delivery. Closing the minimal slice does **not** raise
 any maturity row and does **not** imply Theme implementation/RPC/ACP/extension-UI/dashboard
 or Pi TUI parity. Theme has a separate docs candidate:
 [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md)
-(`status: pending`; dual reviews not started; **no** implementation).
+(**contract PASS** @ `9e1b9f9`; `status: ready`; dual re-reviews zero blockers;
+**no** implementation).
 
 **Contract freeze PASS** at tip
 `c7a8f3a23eb2b66febdd24a891ba55ee7fd09a11` after independent
@@ -905,9 +906,9 @@ injection is required where noted.
 
 ## 12. Non-goals
 
-- Theme **implementation** inside this minimal slice (Theme binding is a separate
-  candidate: [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md);
-  still **pending** dual contract reviews; no product Theme code claimed here)
+- Theme **implementation** inside this minimal slice (Theme binding is separate:
+  [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) —
+  **contract PASS** @ `9e1b9f9`, `status: ready`; no product Theme code claimed here)
 - Dashboard, images, cost explorer
 - Plugin / extension UI host (E2/E3 view trees)
 - RPC / ACP / editor protocol
@@ -949,7 +950,7 @@ Summary only — do not fork Gate numbers elsewhere.
 | Pollution fix | run-unique exclusive owned workspace for gate21 @ `f8f7f55` |
 | Schemas / defaults | Core · session-v1 · Trace-v1 · headless-v1 unchanged; ask + jail + shell protect; `-Dtui` default false |
 | Not claimed by TUI closeout | Remote dual-backend Gate for tip `f8f7f55`/docs tips (branch presence ≠ validation); maturity raise; Theme implementation/RPC/ACP/Pi parity; remote `-Dtui` |
-| Theme follow-on | [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) — contract candidate `pending`; dual reviews not started; **orthogonal** to post-TUI remote Gate |
+| Theme follow-on | [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) — contract **PASS** @ `9e1b9f9`; `status: ready`; no implementation; **orthogonal** to post-TUI remote Gate |
 | `origin/main` | Local reflog: external/other push of `f8f7f55`; TUI docs closeout tips local-only at closeout time through historical `b151307` (OLD_TARGET), later ancestors of observed TARGET `f352b60` (historical Class C lineage only; not Phase B live evidence); this closeout did not push |
 | Post-TUI remote Gate | [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) — **in-progress** Phase A; TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; default non-TUI matrix only |
 
@@ -957,7 +958,7 @@ Summary only — do not fork Gate numbers elsewhere.
 
 - [task tui-minimal-001](../plan/tasks/tui-minimal-001.md)
 - [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) (Phase A in-progress; no remote TUI claim)
-- [theme.md](./theme.md) · [theme-001](../plan/tasks/theme-001.md) (contract candidate; no implementation)
+- [theme.md](./theme.md) · [theme-001](../plan/tasks/theme-001.md) (contract PASS @ `9e1b9f9`; ready; no implementation)
 - [C9 product shell](../phases/C9-product-shell.md)
 - [harness-events](./harness-events.md) · [harness-steering](./harness-steering.md)
 - [cli-interaction](./cli-interaction.md) · [headless-contract](./headless-contract.md)
