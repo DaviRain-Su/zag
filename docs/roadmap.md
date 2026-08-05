@@ -1,6 +1,6 @@
 # Zag 路线图
 
-> Zag 是 **Pi-inspired Zig-native Agent Harness**。成熟度真理源：[maturity](./maturity.md)；范围决策：[D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md) 与 [D-011](./decisions/active/D-011-thin-agent-core-boundary.md)；三方分析：[Pi alignment](./plan/analysis/2026-07-26-pi-zig-alignment.md)。
+> Zag 是 **Pi-inspired Zig-native Agent Harness**。成熟度真理源：[maturity](./maturity.md)；范围决策：[D-009](./decisions/active/D-009-pi-semantics-not-parity-fork.md)、[D-011](./decisions/active/D-011-thin-agent-core-boundary.md) 与 [D-012](./decisions/active/D-012-complete-local-coding-agent-target.md)；三方分析：[Pi alignment](./plan/analysis/2026-07-26-pi-zig-alignment.md) 与 [Pi / OMP / Hyper local-agent analysis](./plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md)。
 
 ## 当前状态
 
@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Pi-inspired daily Harness | **partial / post-TUI remote Gate in-progress** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; E1 Skills ✅ at `caafef5` (`skills-001`, Runtime Extensions L0); E1 Prompt Templates ✅ at `61326ae` (`prompt-templates-001`, Runtime Extensions L0); C4 `edit-sharpness-001` **done** @ `7be5151` (Tools write/edit **L2**; no L3 claim; local macOS only; no push/no fresh remote Linux for tip); minimal TUI **done** @ `f8f7f55` [tui-minimal-001](./plan/tasks/tui-minimal-001.md) / [tui-minimal.md](./modules/tui-minimal.md) (contract PASS @ `c7a8f3a`; dual final reviews PASS; local macOS Gates; no maturity raise); post-TUI default-path remote dual-backend Gate **in-progress** Phase A [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no run id; no push; no Phase B grant; Gate green No; no remote `-Dtui`; no maturity raise); `theme-001` **contract PASS** @ `9e1b9f9` ([theme.md](./modules/theme.md); `status: ready`; dual re-reviews zero blockers; **no** implementation; orthogonal to post-TUI remote Gate); RPC / ACP remain **pending** (fresh Goal required; not auto-selected) |
+| Local coding-agent workflow | **partial / post-TUI remote Gate in-progress** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; M3 session/context sharpness ✅ at `31523b6`; E1 Skills ✅ at `caafef5`; E1 Prompt Templates ✅ at `61326ae`; C4 `edit-sharpness-001` **done** @ `7be5151`; minimal TUI ✅ `f8f7f55`, streaming ✅ `2d57e84`, layout/presenter ✅ `189de9e`; post-TUI default-path remote Gate remains **in-progress**; Theme remains contract-only on `main` while `ff509a6` is an unmerged implementation candidate that must be adapted after Vaxis; `rpc-v1`, supervisor, LSP, ACP, typed subagents, MCP and runtime extensions require separate tasks |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -19,7 +19,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 
 1. Zag mainline 保持独立；current Pi 是行为参考，旧 `pi-mono-zig` 是冻结设计/fixture 档案。
 2. 对应 Pi 的用户能力类别，不追 release/API/schema/CLI/实现 parity；每个类别可选择不同的 Zig-native 载体。
-3. C4–C9 是能力域，不是必须全部完成的线性产品清单。
+3. D-012 defines a complete local coding-agent capability target; its work remains a dependency-ordered set of independently gated tasks, not a one-shot parity project.
 4. 每个新 task 从一个可复现失败出发，写 contract、fixture、独立 review 和 merged-main Gate。
 5. 默认不复制外部源码；任何 fixture/code import 都要 MIT provenance。
 
@@ -101,6 +101,29 @@ M2 — selected daily UX
                  theme-001 (contract PASS @ 9e1b9f9; status ready;
                    binding theme.md; no implementation; no maturity raise)
 ```
+
+## D-012 capability route
+
+The next product route is a complete **local** coding-agent workflow, not a
+cloud/desktop/media product or a Pi/OMP/Hyper compatibility target:
+
+```text
+post-TUI integration
+  ├─► edit-transaction: multi-file preflight + stale-anchor recovery
+  ├─► process-supervisor
+  │     ├─► rpc-v1
+  │     ├─► LSP / workspace service
+  │     ├─► ACP adapter
+  │     ├─► typed subagents / optional worktrees
+  │     └─► MCP + E2 process extensions
+  ├─► session tree/navigation and runtime model data
+  └─► E3 WASM only after E2 semantics and capability Gates
+```
+
+`edit-transaction`, `process-supervisor`, `rpc-v1`, LSP, ACP, subagents, MCP,
+session tree, runtime model data, and E2/E3 extensions are **roadmap targets,
+not ready tasks**. Each requires its own user failure, owner, contract,
+fixtures, review, and merged-main Gate.
 
 ### M0 — Interaction reliability
 
@@ -225,12 +248,12 @@ E3 is a formal direction, not current implementation. The first WASM host is com
 
 | Domain | Near-term slice | Deferred |
 |--------|-----------------|----------|
-| C4 Edit | `edit-sharpness-001` in M2 — **done** @ `7be5151` ([task](./plan/tasks/edit-sharpness-001.md), [C4](./phases/C4-edit-sharpness.md)); first slice shipped; Tools write/edit **L2** | multi-file transactions, AST/LSP, multi-hunk apply_patch platform |
-| C5 Context | idle-only durable session fork closed in M1 | full tree/journal and repo map deferred; LLM summary optional; Memory default-off |
-| C6 Control/Orchestration | steering/follow-up in M1 | Oracle, executable subagents, Graph |
-| C7 Process/Sandbox | none | process supervisor only when executable/background use appears; OS enforcement after that |
-| C8 Extensions | E0 static SDK already; E1 Skills + Prompt Templates in M2 | E2 after C7.1; E3 WASM portable executable tier; bundle/model/UI worlds separately gated |
-| C9 Product shell | minimal TUI **done** @ `f8f7f55` ([tui-minimal-001](./plan/tasks/tui-minimal-001.md); contract PASS @ `c7a8f3a`; local macOS Gates; no maturity raise); post-TUI default-path remote dual-backend Gate **in-progress** Phase A ([post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md); TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui` claim); Theme **contract PASS** @ `9e1b9f9` ([theme-001](./plan/tasks/theme-001.md) / [theme.md](./modules/theme.md); `status: ready`; dual re-reviews zero blockers; no implementation) | `rpc-v1`, Theme **implementation**, extension UI host, ACP, dashboard/images/full configuration UX |
+| C4 Edit | `edit-sharpness-001` in M2 — **done** @ `7be5151` ([task](./plan/tasks/edit-sharpness-001.md), [C4](./phases/C4-edit-sharpness.md)); first slice shipped; Tools write/edit **L2** | D-012 selects multi-file transactions and stale-anchor recovery as a future task family; AST/DAP separately justified |
+| C5 Context | idle-only durable session fork and M3 context sharpness closed at `31523b6` | full tree/journal and repo map are D-012 targets; LLM summary is implemented with heuristic fallback; Memory remains default-off |
+| C6 Control/Orchestration | steering/follow-up in M1 | D-012 selects typed executable subagents after supervisor; Graph remains optional |
+| C7 Process/Sandbox | none | D-012 selects process supervisor as a prerequisite; OS enforcement remains a later autonomy/untrusted-execution gate |
+| C8 Extensions | E0 static SDK already; E1 Skills + Prompt Templates in M2 | D-012 selects MCP/E2 after supervisor; E3 WASM and bundle/model/UI worlds remain separately gated |
+| C9 Product shell | minimal TUI ✅ `f8f7f55`; streaming ✅ `2d57e84`; layout/presenter ✅ `189de9e`; post-TUI remote Gate in progress; Theme contract only on `main` | `rpc-v1`, Theme integration after Vaxis, extension UI host and ACP; dashboard/images remain outside D-012 core target |
 
 The detailed phase docs describe domain constraints. A deferred item is not an implied future commitment.
 
@@ -238,17 +261,17 @@ The detailed phase docs describe domain constraints. A deferred item is not an i
 
 | Capability | Required trigger before planning |
 |------------|----------------------------------|
-| Repo map | measured medium-repo file-selection failure that current search/context cannot close |
-| Oracle | repeated real weak-model dead ends and a pinned stronger-model budget |
-| Process supervisor | background child, executable extension, or mid-flight process cancellation use case |
+| Repo map / LSP | D-012 coding-navigation target; first task must record workspace-service owner, bounded indexing, LSP process lifecycle, and edit-transaction integration |
+| Oracle | repeated real weak-model dead ends and a pinned stronger-model budget; not implied by typed subagents |
+| Process supervisor | D-012 prerequisite for rpc children, LSP, MCP, executable extensions, typed subagents, or mid-flight process cancellation |
 | OS sandbox | required higher-autonomy/untrusted execution profile after supervisor exists |
 | E2 process extensions / MCP / runtime hooks | concrete local extension consumer + C7.1 supervisor; untrusted native additionally needs C7.2 OS enforcement |
-| `rpc-v1` | a long-lived client that cannot use one-shot `headless-v1`, after public events/control/session contracts |
+| `rpc-v1` | D-012 long-lived-client target, after a minimal correlated command/event contract and supervisor ownership are specified |
 | Runtime Custom Model/Provider | concrete model/provider requirement that static catalog/E0 Provider cannot express; credentials remain host-owned |
 | Package/UI extension | at least one local multi-resource bundle or stateful view that basic intents cannot express |
 | ACP/editor | a real editor host willing to consume versioned process semantics |
 | Memory | repeated cross-session retrieval use case with delete/audit requirements |
-| Graph/subagents | repeated orchestration shape that cannot be expressed by one Loop + steering |
+| Graph/subagents | D-012 selects typed bounded subagents after supervisor; Graph still needs repeated handoff/join evidence and remains optional |
 | New provider/OAuth | named user/provider requirement and wire contract fixture |
 
 ## Quality rules
@@ -272,7 +295,7 @@ The detailed phase docs describe domain constraints. A deferred item is not an i
 
 - chasing Pi’s provider count, OAuth breadth, exact CLI flags, npm package manager, RPC command/schema parity, or release cadence;
 - reviving/merging the historical parity port as Zag’s implementation base;
-- implementing Oracle/Graph/Memory/MCP/sandbox/dashboard because a competitor has them;
+- implementing cloud collaboration, browser/desktop control, voice/media, or compatibility layers because a competitor has them;
 - adding business logic to `main`/TUI/CLI instead of the owning package;
 - claiming graceful cancellation where only cooperative flags exist;
 - unmeasured Zig marketing claims.

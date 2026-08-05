@@ -4,7 +4,7 @@
 |------|---------|
 | Current code | `packages/zag-coding-agent/src/context.zig` (product layers/compaction/summary/lineage); `packages/zag-agent-core/src/protocol_history.zig` (Tool-bundle legality); `packages/zag-agent-core/src/context_view.zig` (`CompactionEvent`/`View` port types); session sink in `agent.zig` |
 | D-011 target | protocol-history legality in Core; prompt layers/compaction behind coding-agent `ContextView` |
-| Current maturity | **L2** — final-view accounting, ID-exact tool bundles, lineage, shared cap (h-context-001) |
+| Current maturity | **L2** — final-view accounting, ID-exact tool bundles, lineage, shared cap; M3 view-only repair/dedup/token trim and optional LLM summaries are implemented at `31523b6` |
 | Target | L3 repo map/intelligent selection (C5) |
 | Reference | Pi session/compaction; Aider repo map; Hyper compaction |
 
@@ -39,7 +39,9 @@ independently validates the projected view body **after** the product `ContextVi
 returns and **before** `Provider.chat`, regardless of how the product built the view.
 The product `viewForModel` also validates internally before any trim.
 
-Body history (after leading transcript systems) is validated before trim:
+The product first applies M3's **view-only, drop-only** dangling-result repair
+and carrier-scoped duplicate-result dedup. The resulting body is then validated
+before trim:
 
 - For every assistant message with nonempty `tool_calls`:
   - each call ID is **nonempty** and **unique** within the bundle;
@@ -55,13 +57,16 @@ Body history (after leading transcript systems) is validated before trim:
 
 ## L2 compaction algorithm (fixed-point)
 
-1. Validate body tool bundles (fail closed).
-2. Count-trim + legal align.
-3. Soft char-trim by atomic units under current layer cost.
-4. Build UTF-8 summary for omitted prefix (lineage first, then highlights).
+1. Repair/dedup the model view only; authoritative transcript remains unchanged.
+2. Validate body tool bundles (fail closed).
+3. Token-budget trim + legal align, then count-trim and soft char-trim by atomic units.
+4. Build UTF-8 heuristic summary for the omitted prefix (lineage first, then highlights).
 5. Re-cost layers with that summary as session layer.
 6. If still over budget, advance by a legal unit and rebuild until stable.
-7. Emit one final `CompactionEvent`.
+7. When configured and a prefix was dropped, request one optional LLM checkpoint
+   summary after convergence; deterministic/transient/degenerate failure falls
+   back to the heuristic summary.
+8. Emit one final `CompactionEvent`.
 
 ### Shared summary cap
 
@@ -124,7 +129,8 @@ Terminal category for malformed history: `invalid_context` (not `provider_error`
 - repo map and task-aware file selection;
 - session fork/branch (first durable fork slice closed at `0a3087f`: [session-fork](./session-fork.md);
   copies live gen/summary into the child; does not change this row’s **L2** status);
-- optional LLM summary with quality fixtures;
+- M3's optional LLM checkpoint summary is implemented with retry and heuristic
+  fallback; richer quality evaluation and task-aware selection remain future work;
 - default-off Memory Repo injection through a defined layer.
 
 ## Non-goals for H

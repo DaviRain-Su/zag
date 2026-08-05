@@ -12,9 +12,9 @@
 
 > 模型只是引擎；Harness 才决定 Agent 是否可靠、可控、可日用。
 >
-> Zag 参照 Pi 的核心行为，用 Zig 的显式错误、所有权和静态边界重新设计；不做 Pi 的逐版本移植，也不以“大而全”为目标。
+> Zag 参照 Pi 的核心行为，用 Zig 的显式错误、所有权和静态边界重新设计；目标是完整的**本地 coding-agent 工作流**，不做 Pi 的逐版本移植、协议兼容或无边界的全能产品。
 
-Decisions: [D-009 — Pi semantics, not a parity fork](./decisions/active/D-009-pi-semantics-not-parity-fork.md) and [D-011 — thin Agent Core boundary](./decisions/active/D-011-thin-agent-core-boundary.md).
+Decisions: [D-009 — Pi semantics, not a parity fork](./decisions/active/D-009-pi-semantics-not-parity-fork.md), [D-011 — thin Agent Core boundary](./decisions/active/D-011-thin-agent-core-boundary.md), and [D-012 — complete local coding-agent target](./decisions/active/D-012-complete-local-coding-agent-target.md).
 
 ## 一个 Harness，两个消费者
 
@@ -38,8 +38,8 @@ Zag Harness contracts
 |------|------|----------|
 | **Current Pi** (`earendil-works/pi`) | **首要功能/行为参考**：Extension、Skills/Prompts/Themes/Packages、Model/Provider、SDK/RPC/JSON/TUI 与 Harness lifecycle | 不追包名、API、schema、CLI flag、provider 数量或 TypeScript 实现；功能按 Zag Gate 分批对应 |
 | **Historical `pi-mono-zig`** (`DaviRain-Su/pi-mono-zig`) | 冻结的 Zig 设计/fixture 档案：events、session tree、SignalGuard、TUI、goldens | 不恢复为 parity fork；不整体 merge |
-| Hyper / Grok Build | 依赖单向、quarantine、安全/进程边界 | 不采用 batteries-included 产品范围，不复制包粒度 |
-| omp / Aider / Codex / Amp | edit/review/repo-map/Oracle 的按需机制 | 不按竞品功能表排期 |
+| Hyper / Grok Build | 依赖单向、quarantine、安全/进程边界 | 不复制包粒度、协议或云服务产品面 |
+| omp / Aider / Codex / Amp | edit/review/repo-map/LSP/typed subagent 的功能与 failure contracts | 不复制实现、桌面/browser/voice/media 面或竞品 API |
 
 固定研究快照与资产规则见 [Pi alignment analysis](./plan/analysis/2026-07-26-pi-zig-alignment.md)。
 
@@ -55,7 +55,7 @@ Zag 的稳定 Harness 是分层协作，不是把所有能力塞进 Agent Core�
 
 绑定规格：[thin Core boundary](./modules/core-boundary.md)。
 
-近期只补齐 Pi-style 日用 Harness 语义：
+已经闭合的 Pi-style 日用 Harness 语义：
 
 - Ctrl+C/terminal lifecycle；
 - message/Tool 细粒度事件；
@@ -63,6 +63,11 @@ Zag 的稳定 Harness 是分层协作，不是把所有能力塞进 Agent Core�
 - session fork/tree；
 - passive Skills 与 Prompt Templates；
 - edit review 与最小 TUI。
+
+后续本地 coding-agent 路线（D-012）会按独立 Gate 补齐可靠多文件编辑、
+repo map/LSP、supervisor、`rpc-v1`/ACP、typed subagent、MCP/受控 runtime
+extension、session tree 与按需 memory；这些能力不进入 Kernel，也不自动改变
+现有 L2 声明。
 
 ## Zig-native 的具体含义
 
@@ -121,14 +126,15 @@ Package 是 E1/E2/E3 之上的 bundle，不是 E4；E0 是 build-time source dep
 - 贵路径默认关；没有真实使用者就不建立空抽象。
 - Teaching ≠ Production；绿色 happy path 不能单独提升 maturity。
 
-## 近期明确不做
+## 明确不做
 
 - provider zoo / OAuth 全家桶；仅按真实需求扩现有 WireAdapter；
 - Bun/TypeScript compatibility host、Pi/npm package manager、Pi RPC byte/API parity；Zag-native `rpc-v1` 另走独立 Gate；
 - 在 E3 WIT/runtime/capability/package Gates 前发布或宣传 WASM extension platform；
-- Oracle/subagents/Graph、Memory Repo、MCP（无当前失败场景）；
+- 云协作/relay、remote session hosting、marketplace operation；
+- browser takeover、desktop automation、Slack/app control、voice/image/video；
+- Pi/OMP/Hyper CLI、RPC/JSON、package-manager 或 extension API compatibility；
 - OS sandbox/background jobs（需独立 process-supervisor Gate）；
-- ACP/dashboard、cloud thread/collaboration、HTML/share/image/theme breadth；
 - 多 repo 双向开发、C ABI、Zig dynamic ABI；
 - 未测量的 Zig 性能/体积宣传。
 

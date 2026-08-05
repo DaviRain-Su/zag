@@ -15,6 +15,9 @@
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | coding-agent `runtime/edit_tools.zig` + `shell_policy.zig` | future process supervisor remains separate |
 | [permissions.md](./permissions.md) | H3 **L2** | `zag-coding-agent/src/permissions.zig` | concrete product policy stays in coding-agent; required Core seam |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | Core `protocol_history.zig`/`context_view.zig` + coding-agent `context.zig` | ownership split complete; future repo-map work separate |
+| [session-item.md](./session-item.md) | M3 ✅ `31523b6` | Core `session_item.zig` + additive message fields | reasoning/synthetic/prompt-index and view-only repair/token trim; no maturity raise |
+| [chat-state-prune.md](./chat-state-prune.md) | M3 ✅ `31523b6` | Core `session_item.zig` + coding-agent context composition | carrier-scoped dedup and prompt-index rewind API; no maturity raise |
+| [compaction-llm.md](./compaction-llm.md) | M3 ✅ `31523b6` | Core summary helpers + coding-agent provider seam | optional LLM checkpoint summary with heuristic fallback; no maturity raise |
 | [session-store.md](./session-store.md) | H4 → C5 | `packages/zag-coding-agent/src/session_store.zig` | durable store stays coding-agent; Transcript stays Core; fork contract in [session-fork](./session-fork.md) |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | coding-agent `workspace.zig`/`shell_policy.zig`/`redact.zig` | future C7 OS sandbox remains separate |
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 | `zag-ai` + coding `wire_provider` | core 仅纯 Provider |
@@ -26,6 +29,8 @@
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | implemented (`skills-001` @ `caafef5`); coding-agent only | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | implemented (`prompt-templates-001` @ `61326ae`); coding-agent only + thin CLI routing | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55` (PASS @ `c7a8f3a`); post-TUI remote Gate Phase A **in-progress** (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui`) | `packages/zag-tui` + CLI `-Dtui` wire; local macOS Gates; **no** maturity raise | unique package; dual-thread host; `-Dtui` default false |
+| [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | Provider stream → Loop/Façade events → progressive TUI card | default streaming transport; headless/session/Trace wire unchanged |
+| [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | `zag-tui` layout + presenter | pure geometry and dirty-flag paint; no cell diff/virtualization |
 | [theme.md](./theme.md) | M2 / C9 host-shell Theme **contract PASS** @ `9e1b9f9` ([theme-001](../plan/tasks/theme-001.md) `status: ready`) | dual re-reviews PASS zero blockers; **no** implementation; **no** maturity raise | owner `zag-tui` only; passive data; fail-closed built-in; orthogonal to post-TUI remote Gate |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
@@ -67,6 +72,9 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | shell 执行 |
 | [permissions.md](./permissions.md) | H3 | 权限矩阵 / plan 语义 |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | 四层 prompt / 压缩 |
+| [session-item.md](./session-item.md) | M3 ✅ `31523b6` | reasoning/synthetic/prompt-index + repair/token trim |
+| [chat-state-prune.md](./chat-state-prune.md) | M3 ✅ `31523b6` | tool-result dedup + prompt-index rewind |
+| [compaction-llm.md](./compaction-llm.md) | M3 ✅ `31523b6` | optional LLM checkpoint compaction |
 | [session-store.md](./session-store.md) | H4 → C5 | 会话落盘 / schema |
 | [workspace-sandbox.md](./workspace-sandbox.md) | H5 → C7 | jail / policy / redact |
 | [zag-ai-provider.md](./zag-ai-provider.md) | H6 + WireAdapter | OpenAI-compatible + Anthropic；deadline/cancel contract |
@@ -80,6 +88,8 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | Passive Agent Skills binding contract (`skills-001` done @ `caafef5`); coding-agent only |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | Passive Prompt Templates binding contract (`prompt-templates-001` done @ `61326ae`); coding-agent only + thin CLI routing |
 | [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55`; post-TUI remote Gate Phase A **in-progress** | Minimal host TUI + `zag-tui`; no maturity raise; no remote `-Dtui` claim |
+| [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | progressive assistant streaming; default transport |
+| [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | pure layout + dirty-flag presenter |
 | [theme.md](./theme.md) | M2 / C9 Theme **contract PASS** @ `9e1b9f9` (`theme-001` ready) | Host-shell passive Theme binding; dual re-reviews PASS; no implementation; no maturity raise; independent of post-TUI remote Gate |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |

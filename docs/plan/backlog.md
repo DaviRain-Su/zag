@@ -11,7 +11,7 @@ Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/
 | 2026-07-25 | H1/H2 | P2 | Tool/shell preemption needs post-H process ownership; h-provider-001 covers provider I/O only. |
 | 2026-07-24 | Assessment | P2 | C4 edit sharpness and C5.1 repo map may start after their H dependencies. |
 | 2026-07-24 | Assessment | P2 | OS sandbox/process supervisor before higher-autonomy background jobs and executable extensions. |
-| 2026-07-24 | Assessment | P2 | Memory Repo, Graph, TUI, full LSP/AST remain later capability work. |
+| 2026-08-06 | D-012 | P2 | Local coding-agent route selects multi-file edit transactions, repo map/LSP, supervisor, `rpc-v1`/ACP, typed subagents, MCP/E2, session tree, runtime model data, and default-off Memory for separate task contracts; Graph remains optional. |
 | 2026-07-24 | Assessment | P2 | Measure startup/size/cross-build before making Zig performance claims. |
 | 2026-07-24 | Packaging | P2 | Repo split/C ABI/dynamic plugin ABI deferred until second consumer/release channel (SDK gate is closed). |
 | 2026-07-25 | h-doctor-001 N1 | P2 | `--doctor` silently ignores other legal product flags/prompt (`--stream`, `--config`, `--plan`, `-v`, free-text). Report-only surface still correct; optional reject-or-document UX later. |
@@ -19,7 +19,7 @@ Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/
 | 2026-07-25 | h-integration-001 review | P3 | Trace `tool_result` has no call-id field; pending cancelled pairing is transcript/session-owned (schema-true; optional future id on tool_result). |
 | 2026-07-25 | h-integration-001 review | P3 | Jail fixture `SkipZigTest` on Windows / symlink `AccessDenied` — document CI hosts without symlink support skip rather than fail closed. |
 | 2026-07-25 | h-shell-001 Oracle | P3 | Add a shell-specific valid UTF-8 NUL/control-byte transcript/session/resume/parsed-trace roundtrip fixture; core trace control-byte escaping already passes, so this is evidence hardening rather than an L2 blocker. |
-| 2026-07-26 | D-009/D-010 | deferred | Provider/OAuth breadth, Bun/TS compatibility, Pi/npm package manager, Pi RPC command/schema parity, Oracle/Graph/Memory/dashboard are not parity work. Zag-native RPC and E2/E3 extensions follow separate explicit Gates. |
+| 2026-08-06 | D-012 | deferred | Provider/OAuth breadth, Bun/TS compatibility, Pi/npm package manager, and Pi RPC command/schema parity remain out of scope. Cloud collaboration, marketplace operation, browser/desktop control, and voice/media are not the local coding-agent target. |
 | 2026-07-26 | D-009 | P2 | Historical `pi-mono-zig` goldens may be imported only by a scoped provenance task (exact commit/path + MIT notice + relevance test). |
 | 2026-07-26 | D-010 review | P2 | WASM runtime selection must measure Component Model support, macOS/Linux integration, license/security update path, metering, trap isolation, and binary/startup/RSS cost before choosing an engine. |
 | 2026-07-26 | D-010 review | P3 | E2/E3 supply-chain work (signing/remote registry/updater) remains a separate Gate after local manifest+digest+quarantine. |

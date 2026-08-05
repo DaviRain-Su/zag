@@ -50,6 +50,15 @@ dual-backend evidence is owned by
 macOS only). Defaults remain ask + workspace jail + shell protect; `-Dtui`
 default **false**/lazy. See [task](../plan/tasks/tui-minimal-001.md).
 
+Merged C9 follow-ons preserve this contract: [TUI streaming](./tui-streaming.md)
+landed at `2d57e84` (default provider streaming into progressive assistant
+cards) and [TUI layout](./tui-layout.md) landed at `189de9e` (pure layout plus
+dirty-flag presenter). Neither changes Session/Trace/headless wire contracts or
+raises maturity. The Vaxis backend remains separate uncommitted work and is
+not claimed by this module. Theme implementation candidate `ff509a6` is also
+unmerged; its standalone audit does not change `main` status and it must be
+adapted and re-gated after the Vaxis backend stabilizes.
+
 Related truth (do not fork):
 
 | Concern | Authority |
