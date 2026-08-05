@@ -28,6 +28,7 @@ changing the D-011 gate, fail-closed validation, Session v1, or Trace v1.
 |-------|--------|
 | Contract | **PASS** — final re-review (two revision rounds closed all blockers; prune stage removed as behaviorally redundant) |
 | Implementation | **complete** — std 711/711, curl 710/710 (std 694→711, curl 693→710, +17 tests) |
+| Evidence refresh | **PASS** — implementation is present in `31523b6`; isolated coding-agent integration binary passed 406/406 tests and OpenAPI adapter suite passed 25/25 |
 | Maturity | **unchanged** — no row add/raise |
 | Session v1 / Trace v1 / headless-v1 / Core D-011 seams | **unchanged** (loop.zig, context_view.zig, protocol_history.zig untouched) |
 | session-item-001 | closed (std 694/694, curl 693/693) — this slice builds on it |

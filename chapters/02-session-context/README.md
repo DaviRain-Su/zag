@@ -112,6 +112,8 @@ Session (full transcript, durable)
 - 非 system **尾部最多 48 条**；**约 120k 字符** 软预算
 - Tool **bundle**（按 call ID 顺序成对）合法边界；畸形 history → `invalid_context`（不调模型）
 - 启发式 summary（非 LLM）；**fixed-point** 重建 `dropped`/summary；共享 cap **800**
+- M3 视图增强：reasoning/synthetic/prompt_index 为可选字段；repair + carrier-scoped dedup + token-budget trim 只作用于 model view，不修改 transcript
+- 可选 LLM compaction summary：采用结构化 checkpoint、有限重试；任何失败都回退到原启发式 summary
 - 重复压缩 lineage：先验精确保留或显式截断记录（digest + `[LINEAGE_TRUNCATED]`）
 - `CompactionEvent` 描述**最终** view；成功路径 session 与 trace 同字节
 - soft budget / `min_tail`：无法再合法裁切时诚实终止
@@ -145,7 +147,7 @@ Session (full transcript, durable)
 ## 8. 生产缺口
 
 Session open/save 已按 [D-006](../../docs/decisions/active/D-006-session-open-and-durability.md) 到 **L2**（create/resume 分离、原子保存、可见错误、单 writer）。
-Context final-view accounting 已按 **h-context-001** 到 **L2**（fixed-point `dropped`/summary/lineage；session 与 trace 同最终事件）。
+Context final-view accounting 已按 **h-context-001** 到 **L2**（fixed-point `dropped`/summary/lineage；session 与 trace 同最终事件）。M3 session/context sharpness 已在 `31523b6` 实现并通过 406/406 coding-agent integration tests；这是 L2 enrichment，不升成熟度。
 仍未声称：fsync/掉电耐久、session 路径 symlink containment、fork/tree、repo map（L3/C5）。
 合同细节：[context-compaction](../../docs/modules/context-compaction.md) · [gaps/02-session](../../docs/gaps/02-session.md)。
 

@@ -1,10 +1,9 @@
 ---
 id: session-item-001
 scope: types+context/session-item
-status: contract-draft
+status: implementation-complete
 priority: P1
-depends-on:
-  - post-tui-remote-dual-backend-gate-001
+depends-on: []
 ---
 
 # objective
@@ -31,11 +30,11 @@ spec at `/tmp/conversation_model_spec.md`).
 
 | Track | Status |
 |-------|--------|
-| Contract | **draft** — pending independent architecture + safety re-reviews |
-| Implementation | not started |
+| Contract | **binding** — implementation evidence is present; independent closeout review remains separate |
+| Implementation | **complete** — landed in `31523b6`; focused Core/Coding/AI and full integration fixtures pass |
 | Maturity | **unchanged** — no row add/raise (enrichment, per roadmap C5/C4 precedent) |
 | Session v1 / Trace v1 / headless-v1 / Core D-011 seams | **unchanged** by contract law |
-| post-tui-remote-dual-backend-gate-001 | orthogonal — no interference |
+| post-tui-remote-dual-backend-gate-001 | orthogonal — no dependency or interference |
 
 # context
 

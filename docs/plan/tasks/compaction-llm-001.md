@@ -29,6 +29,7 @@ untouched).
 |-------|--------|
 | Contract | **PASS** — close-out re-review (two revision rounds closed R1-B1/B2/B3 + R2-B4; zero blockers) |
 | Implementation | **complete** — std 749/749, curl 748/748 (baseline 712/711 → +37 tests) |
+| Evidence refresh | **PASS** — implementation is present in `31523b6`; isolated coding-agent integration binary passed 406/406 tests and OpenAPI adapter suite passed 25/25 |
 | Maturity | **unchanged** — no row add/raise |
 | Session v1 / Trace v1 / headless-v1 / Core D-011 seams | **unchanged** (loop.zig, context_view.zig, protocol_history.zig untouched) |
 | session-item-001 / chat-state-prune-001 | closed — this slice builds on them |
