@@ -111,6 +111,16 @@ pub const App = struct {
     /// Optional teardown probe (tests).
     teardown_probe: ?*TeardownProbe = null,
 
+    /// Dirty-flag presenter (tui-layout-001): set by every mutation block
+    /// (key action, worker join, host wake drain, interrupt, permission
+    /// modal change, note update); `paint()` early-returns when `!dirty` and
+    /// the terminal size is unchanged since the last paint.
+    dirty: bool = false,
+    /// Terminal size at the last successful paint; null → first paint always
+    /// runs. Any size difference (idle-terminal resize included) forces a
+    /// repaint because `paint()` re-reads `term.size()` on every call.
+    last_painted_size: ?terminal_mod.Size = null,
+
     pub fn create(gpa: std.mem.Allocator) error{ OutOfMemory, PipeFailed }!*App {
         const app = try gpa.create(App);
         errdefer gpa.destroy(app);
@@ -248,6 +258,7 @@ pub const App = struct {
     }
 
     pub fn setNote(self: *App, note: []const u8) void {
+        self.dirty = true;
         self.status_note_len = present.copyTruncated(&self.status_note, note);
     }
 
@@ -466,9 +477,13 @@ pub const App = struct {
             _ = posix.poll(&pollfds, c.poll_timeout_ms) catch {};
 
             if (pollfds[1].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
+                // Worker wake: cards/modal may have changed (join handled
+                // below); a permission modal pending change lands here too.
+                self.dirty = true;
                 terminal_mod.drainPipe(self.wake_r);
             }
             if (pollfds[2].fd >= 0 and pollfds[2].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
+                self.dirty = true;
                 self.host.?.drainWake();
             }
 
@@ -482,6 +497,7 @@ pub const App = struct {
 
             // SIGINT via Guard: idle clean exit; busy deny pending modal + cancel.
             if (self.host.?.pendingInterrupt()) {
+                self.dirty = true;
                 if (self.state == .idle) {
                     exit_code = 0;
                     self.state = .closed;
@@ -495,6 +511,8 @@ pub const App = struct {
             }
 
             if (pollfds[0].revents & posix.POLL.IN != 0) {
+                // Any key input (including EOF) is a change worth repainting.
+                self.dirty = true;
                 const action = self.readAndHandleKeys() catch {
                     self.permission.denyAndClose();
                     self.markHostFatal(1);
@@ -560,6 +578,7 @@ pub const App = struct {
     /// After every reply worker join: ack Guard pending. **Does not** clear
     /// control queues (steering/follow-up survive cancel/error for next reply).
     pub fn afterWorkerJoin(self: *App) void {
+        self.dirty = true;
         self.worker_active = false;
         self.worker_finished.store(false, .release);
         if (self.worker_prompt.len != 0) {
@@ -622,6 +641,9 @@ pub const App = struct {
     }
 
     fn handleKey(self: *App, key: keys_mod.Key) KeyAction {
+        // Any decoded key is a change worth repainting (no-op keys included —
+        // batching is per-iteration, so this costs at most one frame).
+        self.dirty = true;
         if (self.permission.isPending()) {
             switch (key) {
                 .char => |ch| {
@@ -805,6 +827,13 @@ pub const App = struct {
 
     fn paint(self: *App, term: *terminal_mod.Terminal) error{WriteFailed}!void {
         const sz = term.size();
+        // Skip when nothing changed since the last paint. The size check
+        // always runs (idle-terminal resizes still repaint), and a skipped
+        // paint cannot fail — callers keep the error surface unchanged.
+        if (!self.dirty and self.last_painted_size != null) {
+            const last = self.last_painted_size.?;
+            if (last.cols == sz.cols and last.rows == sz.rows) return;
+        }
         const n = self.card_ring.snapshot(&self.snap_buf);
         const session = self.session;
         var steer: u32 = 0;
@@ -826,6 +855,8 @@ pub const App = struct {
             .followup_pending = follow,
         };
         try render.renderFrame(term, sz, facts, self.snap_buf[0..n], &self.editor, modal);
+        self.dirty = false;
+        self.last_painted_size = sz;
     }
 
     fn fixedStderr(self: *App, msg: []const u8) void {
@@ -998,4 +1029,123 @@ test "tui-streaming: complete assistant_message resets at turn boundary" {
     try std.testing.expectEqual(@as(usize, 1), saw_progressive);
     const newest = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
     try std.testing.expectEqualStrings("next", newest.bodySlice());
+}
+
+// ── tui-layout-001 fixtures: dirty-flag presenter ───────────────────────────
+
+/// Pipe-backed recording terminal for paint fixtures. `term.size()` on pipe
+/// fds falls back to the 80×24 default; `drainCount()` reports how many
+/// bytes a paint actually wrote (0 ⇒ paint skipped).
+const RecTerm = struct {
+    term: terminal_mod.Terminal,
+    fds: [2]posix.fd_t,
+
+    fn init() !RecTerm {
+        const fds = try terminal_mod.makeWakePipe();
+        return .{ .term = .{ .in_fd = fds[0], .out_fd = fds[1], .orig_in = undefined }, .fds = fds };
+    }
+
+    fn drainCount(self: *RecTerm) usize {
+        var buf: [2048]u8 = undefined;
+        var total: usize = 0;
+        while (true) {
+            const n = posix.read(self.fds[0], &buf) catch break;
+            if (n == 0) break;
+            total += n;
+        }
+        return total;
+    }
+
+    fn deinit(self: *RecTerm) void {
+        terminal_mod.closeFd(self.fds[0]);
+        terminal_mod.closeFd(self.fds[1]);
+    }
+};
+
+test "tui-layout: first paint always happens" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init();
+    defer rec.deinit();
+
+    app.dirty = false; // explicitly clean — first paint must still run
+    try app.paint(&rec.term);
+    try std.testing.expect(rec.drainCount() > 0);
+    try std.testing.expect(!app.dirty);
+    try std.testing.expect(app.last_painted_size != null);
+}
+
+test "tui-layout: no-change poll skips write (0 bytes)" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init();
+    defer rec.deinit();
+
+    try app.paint(&rec.term); // first paint
+    _ = rec.drainCount();
+    try std.testing.expect(!app.dirty);
+    // Poll-timeout-only iteration: no handler ran, dirty stays false → paint
+    // early-returns without writing a single byte.
+    try app.paint(&rec.term);
+    try std.testing.expectEqual(@as(usize, 0), rec.drainCount());
+}
+
+test "tui-layout: key input paints once" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init();
+    defer rec.deinit();
+
+    _ = app.handleKey(.{ .char = 'x' });
+    try std.testing.expect(app.dirty);
+    try app.paint(&rec.term);
+    try std.testing.expect(rec.drainCount() > 0);
+    try std.testing.expect(!app.dirty);
+}
+
+test "tui-layout: worker join paints" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init();
+    defer rec.deinit();
+
+    app.afterWorkerJoin();
+    try std.testing.expect(app.dirty);
+    try app.paint(&rec.term);
+    try std.testing.expect(rec.drainCount() > 0);
+    try std.testing.expect(!app.dirty);
+}
+
+test "tui-layout: idle-terminal resize repaints (size re-read in paint)" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init();
+    defer rec.deinit();
+
+    try app.paint(&rec.term); // first paint; pipe term.size() == 80×24
+    _ = rec.drainCount();
+    app.dirty = false;
+    // Simulate a resize between polls: last painted size no longer matches
+    // the size paint() re-reads, so the size check fires and repaints.
+    app.last_painted_size = .{ .cols = 79, .rows = 23 };
+    try app.paint(&rec.term);
+    try std.testing.expect(rec.drainCount() > 0);
+    const last = app.last_painted_size orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 80), last.cols);
+    try std.testing.expectEqual(@as(u16, 24), last.rows);
+}
+
+test "tui-layout: note update sets dirty" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+
+    app.setNote("hello");
+    try std.testing.expect(app.dirty);
+    try std.testing.expectEqualStrings("hello", app.noteSlice());
 }

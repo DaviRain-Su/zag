@@ -40,12 +40,17 @@ pub fn compute(size: Size, card_count: usize, modal_pending: bool, note_present:
 Geometry rules (mirror today's render.zig exactly):
 
 - **constrained** (`size.isConstrained()`): 3-line form — status line, up to
-  3 card titles (newest first), editor line; regions sized to content.
-- **full**: header rows 2 (+1 when `note_present`); cards region starts after
-  header; `max_cards = rows > 12 ? rows - 10 : 3`; cards window =
-  last `min(card_count, max_cards)` cards; editor band at bottom (editor rows
-  + hint line); status/modal regions as today.
-- All regions clamped: `w >= 1`, no negative heights, `y+h <= size.rows`.
+  3 card titles (newest first), editor line; **modal is never drawn
+  (modal = null)**; regions sized to content.
+- **full**: header rows **3** (+1 when `note_present`) — top border, id line,
+  perm/shell/state line (render.zig:68-82); the `├─ cards ─` separator is
+  the first row of the cards region and `├─ editor ─` the first row of the
+  editor region; `max_cards = rows > 12 ? rows - 10 : 3`; cards window =
+  last `min(card_count, max_cards)` cards; **editor band fixed height 3**
+  (separator + ONE content row, multi-line editor content clipped + hint
+  line); modal.y computed bottom-up from the fixed editor band.
+- All regions clamped: `w` shrinks to ≥ 1, `h` shrinks to available,
+  `h == 0` → region absent (draw skips), `y+h <= size.rows`.
 
 ## 3. Renderer (packages/zag-tui/src/render.zig)
 
@@ -54,9 +59,11 @@ Geometry rules (mirror today's render.zig exactly):
 1. `const layout = layout_mod.compute(size, snap.len, modal.pending, note_present)`;
 2. per-region draw fns (`drawHeader/drawCards/drawEditor/drawStatus/drawModal`)
    write only within their region bounds;
-3. card body preview truncated to the cards region width on a UTF-8 boundary
-   (today: fixed 120 chars);
-4. multi-line card bodies clipped to the region height;
+3. truncation rules (min-capped so frames never exceed today's bytes):
+   `body_preview = utf8Prefix(body, min(120, region.w - 3))` (body prefix
+   `│   `), `title = utf8Prefix(title, min(128, region.w - 2))`, header
+   strings min-capped to their region width;
+4. multi-line editor content clipped to the fixed content row;
 5. ANSI output via the existing `term.writeAll` path; clear+home emitted once
    per frame (full repaint semantics retained in v1).
 
@@ -64,17 +71,15 @@ Geometry rules (mirror today's render.zig exactly):
 
 `App` gains:
 
-- `dirty: bool` — set by every mutation path (key action, worker join, host
-  wake, interrupt, modal change, steering/follow-up count change);
-- `last_painted_size: ?terminal.Size` — first paint and any size change force
-  a repaint;
-- `paint()` returns early when `!dirty` and size unchanged (callers keep the
-  error surface: a skipped paint cannot fail);
+- `dirty: bool` — set explicitly by every mutation block (key action,
+  worker join, host wake drain, interrupt check, permission modal change,
+  note update);
+- `last_painted_size: ?terminal.Size`;
 
-Event loop: after poll, if any fd was ready or any handler ran, `dirty = true`
-(set by handlers); a poll-timeout-only iteration leaves `dirty == false` and
-skips paint. No 16ms throttle in v1 — per-iteration batching is the
-improvement (today every iteration paints, including no-op timeouts).
+Event loop: **paint() is ALWAYS called**; inside, it re-reads
+`term.size()` and early-returns ONLY when `!dirty` AND size equals
+`last_painted_size` (idle-terminal resizes still repaint — the size check
+cannot be skipped). First paint always runs. No 16ms throttle in v1.
 
 ## 5. Tests
 

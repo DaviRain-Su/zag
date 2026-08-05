@@ -15,6 +15,7 @@ pub const editor = @import("editor.zig");
 pub const permission = @import("permission.zig");
 pub const keys = @import("keys.zig");
 pub const terminal = @import("terminal.zig");
+pub const layout = @import("layout.zig");
 pub const render = @import("render.zig");
 pub const app = @import("app.zig");
 pub const App = app.App;

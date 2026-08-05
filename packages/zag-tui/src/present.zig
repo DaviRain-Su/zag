@@ -31,6 +31,9 @@ pub fn copyTruncated(dst: []u8, src: []const u8) usize {
 pub fn utf8Prefix(src: []const u8, max_bytes: usize) []const u8 {
     if (max_bytes == 0) return src[0..0];
     var end = @min(src.len, max_bytes);
+    // Fully fits — nothing to cut (a complete trailing multi-byte char must
+    // survive; only an *incomplete* tail sequence is dropped below).
+    if (end == src.len) return src;
     while (end > 0 and (src[end - 1] & 0xC0) == 0x80) {
         end -= 1;
     }
@@ -99,6 +102,15 @@ test "presentInto missing redactor marker" {
     var buf: [64]u8 = undefined;
     const n = presentInto(std.testing.allocator, null, &buf, "secret");
     try std.testing.expectEqualStrings(c.redaction_unavailable, buf[0..n]);
+}
+
+test "utf8Prefix full fit keeps complete trailing multibyte char" {
+    // A fully-fitting prefix must not drop the last complete codepoint.
+    try std.testing.expectEqualStrings("aé", utf8Prefix("aé", 3));
+    try std.testing.expectEqualStrings("aé", utf8Prefix("aé", 99));
+    try std.testing.expectEqualStrings("", utf8Prefix("é", 1)); // cut mid-char → drop
+    try std.testing.expectEqualStrings("a", utf8Prefix("aé", 1));
+    try std.testing.expectEqualStrings("ab", utf8Prefix("abé", 3)); // é partial at cut
 }
 
 test "presentInto redacts secret" {

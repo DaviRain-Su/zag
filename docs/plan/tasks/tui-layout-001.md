@@ -1,7 +1,7 @@
 ---
 id: tui-layout-001
 scope: tui/layout-presenter
-status: contract-draft
+status: implementation-complete
 priority: P1
 depends-on:
   - tui-minimal-001
@@ -23,8 +23,8 @@ regardless of whether anything changed.
 
 | Track | Status |
 |-------|--------|
-| Contract | **draft** — pending independent architecture + safety re-reviews |
-| Implementation | not started |
+| Contract | **PASS** — close-out re-review (4 blockers + 2 suggestions closed; zero blockers) |
+| Implementation | **complete** — std 764/764, curl 763/763, TUI std 853/853, TUI curl 852/852 (+28 TUI tests); pre-slice byte-identical goldens (full 439B / constrained 96B) |
 | Maturity | **unchanged** — no row add/raise (host-shell enrichment, per C9 precedent) |
 | Core / coding-agent / headless-v1 / Session v1 / Trace v1 | **unchanged** by contract law (zag-tui-only slice) |
 | tui-minimal-001 | closed at `f8f7f55` — this slice builds on it |
@@ -60,10 +60,11 @@ regardless of whether anything changed.
 | Topic | Freeze |
 |-------|--------|
 | Layout types | `Region { x: u16, y: u16, w: u16, h: u16 }`; `Layout` = header/cards/editor/status/modal regions + `cards_window { start: usize, count: usize }` + `mode: enum{ full, constrained }`; pure data, no pointers into app state |
-| compute() | `compute(size: Size, card_count: usize, modal_pending: bool, note_present: bool) Layout` — pure, allocation-free, unit-testable; rules EXACTLY mirror today's render.zig paragraph layout (same row counts and card window math: `max_cards = rows > 12 ? rows - 10 : 3`, constrained window ≤ 3) |
-| Renderer | `renderFrame` consumes the computed `Layout`; per-region draw functions write only within their region; card body truncated to region width (today: fixed 120) via UTF-8-safe boundary cut; constrained mode output byte-identical to today |
-| Presenter | dirty flag in `App`: `paint()` runs only when (a) any input/state change occurred this iteration (key action, worker join, host wake, interrupt, pending-modal change), or (b) terminal size changed since last paint, or (c) first paint. Poll-timeout-only iterations skip paint. No 16ms throttle in v1 (timing-sensitive tests; batching per iteration is the improvement) |
-| Size change | `App` stores last painted size; `paint()` re-reads `term.size()`; different → recompute layout + full repaint |
+| compute() | `compute(size: Size, card_count: usize, modal_pending: bool, note_present: bool) Layout` — pure, allocation-free, unit-testable; **full-mode header.h = 3 (+1 when note)** (top border + id line + perm/shell/state line — render.zig:68-82); `├─ cards ─` separator is the first row of the cards region, `├─ editor ─` the first row of the editor region; **editor band fixed height 3** (separator row + one content row, multi-line editor content clipped, + hint line); constrained mode: 3-line form, modal is NEVER drawn (modal = null); `max_cards = rows > 12 ? rows - 10 : 3`; cards window = last `min(card_count, max_cards)`; modal.y depends on the fixed editor band (bottom-up layout) |
+| Clamp semantics | `w` shrinks to available (≥ 1); `h` shrinks to available; `h == 0` → region absent (draw skips empty regions); `y+h <= size.rows` always |
+| Renderer | `renderFrame` consumes the computed `Layout`; per-region draw functions write only within their region; **truncation rules: `body_preview = utf8Prefix(body, min(120, region.w - 3))` (body prefix `│   ` = 3); titles `utf8Prefix(title, min(128, region.w - 2))` (prefix `│ · ` — cap 2 keeps parity with today's 128 title cap); header strings (id/note/perm) min-capped to region width** — byte-identical at cols ≥ 123, strictly shorter below, frames never exceed today's byte count (16KB buffer safe); constrained mode output byte-identical to today |
+| Presenter | **paint() is ALWAYS called** by the event loop; it re-reads `term.size()` and early-returns ONLY when `!dirty` AND size == `last_painted_size` (resize detection lives in paint, so idle-terminal resizes still repaint); `dirty` is set explicitly in every mutation block: key action, worker join, host wake drain, interrupt check, permission modal change, note update; first paint always runs (last_painted_size == null) |
+| Size change | `App` stores last painted size; paint re-reads `term.size()` every call; different → recompute layout + full repaint + update last_painted_size |
 | Output | unchanged ANSI writer path (`term.writeAll`); no cell model in v1 (deferred slice) |
 | Divergence from reference | no throttle/tick-demand (v1), no scrollback paint-window (v1), no cell diff (v1) — this slice is layout math + dirty flag only |
 
@@ -73,13 +74,13 @@ regardless of whether anything changed.
 
 | Class | Intent |
 |-------|--------|
-| compute() geometry | full mode: header 2 rows (+1 with note), cards region rows = rows-10 (>12), editor + status rows at bottom; constrained mode: 3-line form; modal_pending affects layout only via its region presence |
-| compute() edge cases | rows ≤ 12 (cards cap 3), rows = 0/1 (no overflow), tiny width (region w ≥ 1), card_count 0 (empty cards region), card_count < window |
+| compute() geometry | full mode: header 3 rows (+1 with note); cards region rows = rows-10 (>12); editor band fixed height 3 (separator + clipped content + hint); constrained mode: 3-line form, modal null; modal_pending affects only the modal region presence |
+| compute() edge cases | rows ≤ 12 (cards cap 3), rows = 0/1 (no overflow), rows = 10 + note + modal (clamps), tiny width (w = 1), card_count 0 (empty cards region), card_count < window |
 | cards window | window = last `count` cards, start = card_count - count when overflowing; count respects constrained (≤3) |
-| Region truncation | card body cut at region width on UTF-8 boundary; multi-line body rows clipped to region height |
-| Renderer parity | full-mode frame rows/lines byte-identical to pre-slice output for a fixed input (golden via inline expected string), constrained-mode byte-identical |
-| Presenter dirty | no change → paint skipped (write count 0); key input → painted; worker join → painted; size change → painted; poll timeout alone → skipped |
-| Presenter first paint | first paint always happens |
+| Region truncation | body preview = utf8Prefix(body, min(120, w-3)); title = utf8Prefix(title, min(128, w-2)); multi-line editor content clipped to the fixed content row; header strings min-capped to region width |
+| Renderer parity | full-mode frame rows/lines byte-identical to pre-slice output at cols ≥ 123 (golden inline string); strictly shorter below; constrained-mode byte-identical |
+| Presenter dirty | no change + same size → paint early-returns (write count 0); key input → painted; worker join → painted; **idle-terminal resize → painted (size re-read in paint)**; first paint always happens |
+| Presenter regression | poll-timeout iterations still CALL paint (early-return inside); no path skips the size check |
 | Regression | existing TUI matrix (tui Gate) green; default + curl matrices green; `-Dtui=false` default unchanged |
 
 ### Gate
