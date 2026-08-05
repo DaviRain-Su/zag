@@ -21,10 +21,10 @@ pub const Phase0Storage = struct {
     }
 };
 
-/// Default coding toolset: explore + search + edit + apply_hunk + shell.
-/// `apply_hunk` instance points at Agent-owned `ApplyHunkState` (B7).
+/// Default coding toolset: explore + search + edit + apply_hunk + apply_transaction + shell.
+/// `apply_hunk` / `apply_transaction` share Agent-owned `ApplyHunkState` (B7).
 pub const Phase1Storage = struct {
-    tools: [8]tool.Tool,
+    tools: [9]tool.Tool,
 
     pub fn init(apply_hunk_state: *edit_tools.ApplyHunkState) Phase1Storage {
         const ro = fs_tools.phase0Tools();
@@ -39,6 +39,7 @@ pub const Phase1Storage = struct {
                 rw[0], // search_replace (preferred edit)
                 rw[1], // write_file
                 edit_tools.makeApplyHunkTool(apply_hunk_state),
+                edit_tools.makeApplyTransactionTool(apply_hunk_state),
                 rw[2], // run_shell
             },
         };
@@ -71,6 +72,7 @@ test "every built-in declares complete descriptor capabilities" {
         .{ .name = "search_replace", .risk = .write, .uses_path = true, .shell = .none },
         .{ .name = "write_file", .risk = .write, .uses_path = true, .shell = .none },
         .{ .name = "apply_hunk", .risk = .write, .uses_path = true, .shell = .none, .stateful = true },
+        .{ .name = "apply_transaction", .risk = .write, .uses_path = false, .shell = .none, .stateful = true },
         .{ .name = "run_shell", .risk = .execute, .uses_path = false, .shell = .command_argument },
     };
 

@@ -5936,7 +5936,7 @@ test "h-shell: default protect policy deny skips handler and roundtrips session 
     var handler_invocations: u32 = 0;
     var probe: ShellDenyProbe = .{ .invocations = &handler_invocations };
     const deny_tools = [_]tool.Tool{.{
-        .descriptor = agent.tools_storage.tools[7].descriptor, // run_shell (after apply_hunk)
+        .descriptor = agent.tools_storage.tools[8].descriptor, // run_shell (after apply_transaction)
         .instance = &probe,
         .handler = ShellDenyProbe.handle,
     }};

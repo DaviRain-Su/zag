@@ -1,4 +1,5 @@
-//! Write / edit / shell tools: `search_replace`, `write_file`, `apply_hunk`, `run_shell`.
+//! Write / edit / shell tools: `search_replace`, `write_file`, `apply_hunk`,
+//! `apply_transaction`, `run_shell`.
 //!
 //! File mutators enforce symlink-aware workspace containment (h-workspace-001)
 //! so raw `Registry.execute` cannot bypass the jail. Shell remains a separate
@@ -7,6 +8,10 @@
 //! C4 first slice (`edit-sharpness-001`): `apply_hunk` is single-file one-hunk
 //! content-anchor replace with full-file SHA-256 precondition, mandatory
 //! `HunkReviewer`, and optional host `PostEditVerifier` (B1–B8).
+//!
+//! C4 second slice (`edit-transaction-001`): `apply_transaction` is multi-file
+//! all-or-nothing (N≤16) with product multi-path jail, one review, and
+//! stage-all-then-commit restore (`edit-txn-v1`).
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -109,6 +114,43 @@ pub const apply_hunk_def: tool.Definition = .{
     ,
 };
 
+pub const apply_transaction_def: tool.Definition = .{
+    .name = "apply_transaction",
+    .description =
+    \\Apply one unique content-anchor hunk to each of 1–16 existing files as an
+    \\all-or-nothing transaction. Each entry needs path, expected_sha256 (64 hex
+    \\of the entire current file), old_string (exactly once), and new_string.
+    \\One mandatory host hunk review covers the whole transaction before any
+    \\commit temporary. Parents are never created. Subject to permission checks
+    \\and workspace jail on every entry.
+    ,
+    .parameters_json =
+    \\{
+    \\  "type": "object",
+    \\  "properties": {
+    \\    "entries": {
+    \\      "type": "array",
+    \\      "minItems": 1,
+    \\      "maxItems": 16,
+    \\      "items": {
+    \\        "type": "object",
+    \\        "properties": {
+    \\          "path": { "type": "string" },
+    \\          "expected_sha256": { "type": "string" },
+    \\          "old_string": { "type": "string" },
+    \\          "new_string": { "type": "string" }
+    \\        },
+    \\        "required": ["path", "expected_sha256", "old_string", "new_string"],
+    \\        "additionalProperties": false
+    \\      }
+    \\    }
+    \\  },
+    \\  "required": ["entries"],
+    \\  "additionalProperties": false
+    \\}
+    ,
+};
+
 pub const run_shell_def: tool.Definition = .{
     .name = "run_shell",
     .description =
@@ -135,6 +177,10 @@ const max_write_bytes: u32 = 512 * 1024;
 const max_read_for_edit: u32 = max_write_bytes + 1;
 const max_hunk_string_bytes: u32 = 32 * 1024;
 const max_preview_text_bytes: usize = 4 * 1024;
+const max_txn_entries: usize = 16;
+const max_txn_preimage_aggregate: usize = 8 * 1024 * 1024;
+const max_txn_hunk_aggregate: usize = 1024 * 1024;
+const max_txn_preview_text_bytes: usize = 16 * 1024;
 const preview_truncation_marker = "...[preview_truncated]";
 comptime {
     std.debug.assert(preview_truncation_marker.len == 22);
@@ -181,7 +227,7 @@ pub const PostEditVerifier = struct {
     verifyFn: *const fn (ptr: ?*anyopaque, path: []const u8) PostEditVerifyResult,
 };
 
-/// Agent-owned heap-stable state for the default `apply_hunk` Tool instance (B7).
+/// Agent-owned heap-stable state for default `apply_hunk` / `apply_transaction` (B7).
 pub const ApplyHunkState = struct {
     reviewer: ?HunkReviewer = null,
     verifier: ?PostEditVerifier = null,
@@ -225,6 +271,11 @@ var test_fail_temp_cleanup_delete: if (builtin.is_test) bool else void =
     if (builtin.is_test) false else {};
 var test_replace_observed_closed: if (builtin.is_test) bool else void =
     if (builtin.is_test) false else {};
+/// Bit i set → inject replace failure on the i-th replace attempt (0-based) this arm.
+var test_replace_fail_mask: if (builtin.is_test) u32 else void =
+    if (builtin.is_test) 0 else {};
+var test_replace_call_index: if (builtin.is_test) u32 else void =
+    if (builtin.is_test) 0 else {};
 var test_git_executable: if (builtin.is_test) ?[]const u8 else void =
     if (builtin.is_test) null else {};
 var test_git_term_signal_stdout_observed: if (builtin.is_test) bool else void =
@@ -279,6 +330,19 @@ pub const testing = if (builtin.is_test) struct {
         test_edit_fault = fault;
     }
 
+    /// Fail replace attempts whose 0-based indices have bits set in `mask`.
+    /// Resets the replace call counter. Does not clear one-shot `failNextEditAt`.
+    pub fn armReplaceFailMask(mask: u32) void {
+        test_replace_fail_mask = mask;
+        test_replace_call_index = 0;
+        if (mask != 0) test_replace_observed_closed = false;
+    }
+
+    pub fn clearReplaceFailMask() void {
+        test_replace_fail_mask = 0;
+        test_replace_call_index = 0;
+    }
+
     pub fn failNextTempCleanupDelete() void {
         test_fail_temp_cleanup_delete = true;
     }
@@ -302,6 +366,8 @@ pub const testing = if (builtin.is_test) struct {
         test_edit_fault = .none;
         test_fail_temp_cleanup_delete = false;
         test_replace_observed_closed = false;
+        test_replace_fail_mask = 0;
+        test_replace_call_index = 0;
         test_git_executable = null;
         test_git_term_signal_stdout_observed = false;
     }
@@ -661,6 +727,620 @@ pub fn applyHunk(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []con
     return post.takeNotConfigured();
 }
 
+
+/// Multi-file all-or-nothing edit transaction (edit-transaction-001).
+pub fn applyTransaction(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []const u8) tool.HandlerError![]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, ctx.allocator, arguments_json, .{}) catch
+        return softTxn(ctx.allocator, "invalid_arguments", null, null);
+    defer parsed.deinit();
+    if (parsed.value != .object) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+    const root = parsed.value.object;
+    var root_it = root.iterator();
+    while (root_it.next()) |kv| {
+        if (!std.mem.eql(u8, kv.key_ptr.*, "entries")) {
+            return softTxn(ctx.allocator, "invalid_arguments", null, null);
+        }
+    }
+    const entries_val = root.get("entries") orelse
+        return softTxn(ctx.allocator, "invalid_arguments", null, null);
+    if (entries_val != .array) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+    const entries_arr = entries_val.array;
+    if (entries_arr.items.len == 0) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+    if (entries_arr.items.len > max_txn_entries) return softTxn(ctx.allocator, "too_large", null, null);
+
+    const n = entries_arr.items.len;
+    var prepared: PreparedTxn = .{ .allocator = ctx.allocator, .n = 0 };
+    defer prepared.deinit();
+
+    var hunk_aggregate: usize = 0;
+    for (entries_arr.items, 0..) |item, i| {
+        if (item != .object) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+        const obj = item.object;
+        var field_count: usize = 0;
+        var path: ?[]const u8 = null;
+        var expected_sha: ?[]const u8 = null;
+        var old_s: ?[]const u8 = null;
+        var new_s: ?[]const u8 = null;
+        var it = obj.iterator();
+        while (it.next()) |kv| {
+            field_count += 1;
+            if (std.mem.eql(u8, kv.key_ptr.*, "path")) {
+                if (kv.value_ptr.* != .string) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+                path = kv.value_ptr.string;
+            } else if (std.mem.eql(u8, kv.key_ptr.*, "expected_sha256")) {
+                if (kv.value_ptr.* != .string) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+                expected_sha = kv.value_ptr.string;
+            } else if (std.mem.eql(u8, kv.key_ptr.*, "old_string")) {
+                if (kv.value_ptr.* != .string) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+                old_s = kv.value_ptr.string;
+            } else if (std.mem.eql(u8, kv.key_ptr.*, "new_string")) {
+                if (kv.value_ptr.* != .string) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+                new_s = kv.value_ptr.string;
+            } else {
+                return softTxn(ctx.allocator, "invalid_arguments", null, null);
+            }
+        }
+        if (field_count != 4 or path == null or expected_sha == null or old_s == null or new_s == null) {
+            return softTxn(ctx.allocator, "invalid_arguments", null, null);
+        }
+        if (path.?.len == 0) return softTxn(ctx.allocator, "invalid_arguments", null, null);
+        const digest = parseSha256Hex(expected_sha.?) orelse
+            return softTxn(ctx.allocator, "invalid_arguments", null, null);
+        if (old_s.?.len > max_hunk_string_bytes or new_s.?.len > max_hunk_string_bytes) {
+            return softTxn(ctx.allocator, "too_large", null, @intCast(i));
+        }
+        hunk_aggregate = std.math.add(usize, hunk_aggregate, old_s.?.len) catch
+            return softTxn(ctx.allocator, "too_large", null, null);
+        hunk_aggregate = std.math.add(usize, hunk_aggregate, new_s.?.len) catch
+            return softTxn(ctx.allocator, "too_large", null, null);
+        if (hunk_aggregate > max_txn_hunk_aggregate) {
+            return softTxn(ctx.allocator, "too_large", null, null);
+        }
+
+        const path_owned = try ctx.allocator.dupe(u8, path.?);
+        errdefer ctx.allocator.free(path_owned);
+        const sha_owned = try ctx.allocator.dupe(u8, expected_sha.?);
+        errdefer ctx.allocator.free(sha_owned);
+        const old_owned = try ctx.allocator.dupe(u8, old_s.?);
+        errdefer ctx.allocator.free(old_owned);
+        const new_owned = try ctx.allocator.dupe(u8, new_s.?);
+        errdefer ctx.allocator.free(new_owned);
+
+        prepared.entries[prepared.n] = .{
+            .path = path_owned,
+            .expected_sha_hex = sha_owned,
+            .expected_digest = digest,
+            .old_string = old_owned,
+            .new_string = new_owned,
+            .preimage = null,
+            .replaced = null,
+        };
+        prepared.n += 1;
+        // Ownership in prepared; errdefers must not free on success path of this iteration.
+        // Zig errdefer still armed — disarm by transferring only; next OOM will free via
+        // errdefer AND prepared.deinit double-free. So clear errdefers by scoping:
+    }
+    // NOTE: errdefers above are per-iteration and fire on typed error from `try` only.
+    // After prepared.n+=1, a later `try` OOM in the SAME iteration cannot happen.
+    // Across iterations, prior entries live only in prepared (defer deinit). Good.
+    // Soft returns after prepared.n+=1: errdefer does not run; prepared.deinit frees. Good.
+    // Soft returns BEFORE prepared.n+=1 after some dupes: errdefers free those dupes. Good.
+
+    std.debug.assert(prepared.n == n);
+
+    for (0..n) |i| {
+        for (0..i) |j| {
+            if (std.mem.eql(u8, prepared.entries[i].path, prepared.entries[j].path)) {
+                return softTxn(ctx.allocator, "invalid_arguments", null, null);
+            }
+        }
+    }
+
+    var guard = obtainGuard(ctx) catch |err| {
+        return jailOrFail(ctx, prepared.entries[0].path, err);
+    };
+    defer guard.deinit(ctx.allocator);
+
+    var preimage_aggregate: usize = 0;
+    for (0..n) |i| {
+        const e = &prepared.entries[i];
+        workspace.checkToolPath(e.path) catch |err| return lexicalJail(ctx, e.path, err);
+        try validateFileEndpointShape(e.path);
+
+        guard.checkExisting(ctx.io, ctx.cwd, e.path) catch |err| {
+            if (err == error.NotFound) return softTxn(ctx.allocator, "not_found", null, @intCast(i));
+            return jailOrFail(ctx, e.path, err);
+        };
+        validateMutationEndpoint(ctx, guard, e.path, false) catch |err| {
+            return mutationEndpointFailureForApplyHunk(ctx, e.path, err);
+        };
+
+        const contents = readEditTarget(ctx, e.path) catch |err| switch (err) {
+            error.FileTooLarge => return softTxn(ctx.allocator, "too_large", null, @intCast(i)),
+            else => |er| return er,
+        };
+
+        preimage_aggregate = std.math.add(usize, preimage_aggregate, contents.len) catch {
+            ctx.allocator.free(contents);
+            return softTxn(ctx.allocator, "too_large", null, null);
+        };
+        if (preimage_aggregate > max_txn_preimage_aggregate) {
+            ctx.allocator.free(contents);
+            return softTxn(ctx.allocator, "too_large", null, null);
+        }
+
+        var actual: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(contents, &actual, .{});
+        if (!std.mem.eql(u8, &actual, &e.expected_digest)) {
+            ctx.allocator.free(contents);
+            return softTxn(ctx.allocator, "stale_precondition", "stage=precondition", @intCast(i));
+        }
+        if (e.old_string.len == 0) {
+            ctx.allocator.free(contents);
+            return softTxn(ctx.allocator, "anchor_not_found", null, @intCast(i));
+        }
+        const match_count = countOccurrences(contents, e.old_string);
+        if (match_count == 0) {
+            ctx.allocator.free(contents);
+            return softTxn(ctx.allocator, "anchor_not_found", null, @intCast(i));
+        }
+        if (match_count > 1) {
+            ctx.allocator.free(contents);
+            return softTxn(ctx.allocator, "ambiguous_anchor", null, @intCast(i));
+        }
+
+        const replaced = applyUniqueReplace(ctx.allocator, contents, e.old_string, e.new_string) catch |err| {
+            ctx.allocator.free(contents);
+            return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.AnchorNotFound => softTxn(ctx.allocator, "anchor_not_found", null, @intCast(i)),
+                error.AmbiguousAnchor => softTxn(ctx.allocator, "ambiguous_anchor", null, @intCast(i)),
+            };
+        };
+        if (replaced.len > max_write_bytes) {
+            ctx.allocator.free(contents);
+            ctx.allocator.free(replaced);
+            return softTxn(ctx.allocator, "too_large", null, @intCast(i));
+        }
+        e.preimage = contents;
+        e.replaced = replaced;
+    }
+
+    const preview_owned = try buildTxnPreviewText(ctx.allocator, prepared.entries[0..n]);
+    defer ctx.allocator.free(preview_owned);
+
+    const state: ?*ApplyHunkState = if (instance) |ptr|
+        @ptrCast(@alignCast(ptr))
+    else
+        null;
+    const reviewer: ?HunkReviewer = if (state) |s| s.reviewer else null;
+    const verifier: ?PostEditVerifier = if (state) |s| s.verifier else null;
+
+    if (reviewer == null) {
+        return softTxn(ctx.allocator, "review_unavailable", null, null);
+    }
+
+    var old_agg: usize = 0;
+    var new_agg: usize = 0;
+    for (prepared.entries[0..n]) |e| {
+        old_agg += e.old_string.len;
+        new_agg += e.new_string.len;
+    }
+    const decision = reviewer.?.reviewFn(reviewer.?.ptr, .{
+        .path = prepared.entries[0].path,
+        .expected_sha256 = prepared.entries[0].expected_sha_hex,
+        .old_len = old_agg,
+        .new_len = new_agg,
+        .preview_text = preview_owned,
+    });
+    if (decision == .reject) {
+        return softTxn(ctx.allocator, "rejected", null, null);
+    }
+
+    for (0..n) |i| {
+        const e = &prepared.entries[i];
+        guard.checkExisting(ctx.io, ctx.cwd, e.path) catch |err| {
+            if (err == error.NotFound) return softTxn(ctx.allocator, "not_found", null, @intCast(i));
+            return jailOrFail(ctx, e.path, err);
+        };
+        validateMutationEndpoint(ctx, guard, e.path, false) catch |err| {
+            return mutationEndpointFailureForApplyHunk(ctx, e.path, err);
+        };
+        const contents2 = readEditTarget(ctx, e.path) catch |err| switch (err) {
+            error.FileTooLarge => return softTxn(ctx.allocator, "too_large", null, @intCast(i)),
+            else => |er| return er,
+        };
+        defer ctx.allocator.free(contents2);
+        var actual2: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(contents2, &actual2, .{});
+        if (!std.mem.eql(u8, &actual2, &e.expected_digest)) {
+            return softTxn(ctx.allocator, "stale_precondition", "stage=revalidate", @intCast(i));
+        }
+        const match_count2 = countOccurrences(contents2, e.old_string);
+        if (match_count2 != 1) {
+            return softTxn(ctx.allocator, "stale_precondition", "stage=revalidate", @intCast(i));
+        }
+        const replaced2 = applyUniqueReplace(ctx.allocator, contents2, e.old_string, e.new_string) catch {
+            return softTxn(ctx.allocator, "stale_precondition", "stage=revalidate", @intCast(i));
+        };
+        defer ctx.allocator.free(replaced2);
+        if (replaced2.len > max_write_bytes) {
+            return softTxn(ctx.allocator, "too_large", null, @intCast(i));
+        }
+        if (e.replaced) |old_r| ctx.allocator.free(old_r);
+        e.replaced = try ctx.allocator.dupe(u8, replaced2);
+        if (e.preimage) |old_p| ctx.allocator.free(old_p);
+        e.preimage = try ctx.allocator.dupe(u8, contents2);
+    }
+
+    var post = try PreparedTxnPostBodies.init(ctx.allocator, verifier != null, n);
+    defer post.deinit();
+
+    var staged: [max_txn_entries]?TxnStaged = .{null} ** max_txn_entries;
+    defer {
+        for (&staged) |*slot| {
+            if (slot.*) |*s| s.cleanup(ctx.io);
+            slot.* = null;
+        }
+    }
+
+    for (0..n) |i| {
+        const e = &prepared.entries[i];
+        const selected_path = selectCommitPath(ctx, guard, .apply_transaction, e.path) catch |err| {
+            return finalContainmentFailure(ctx, e.path, .unchanged, .absent, err);
+        };
+        const parent_path = std.fs.path.dirname(selected_path) orelse {
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "temp_create", .absent);
+        };
+        const target_basename = std.fs.path.basename(selected_path);
+        if (target_basename.len == 0) {
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "temp_create", .absent);
+        }
+        var target_parent = Io.Dir.openDirAbsolute(ctx.io, parent_path, .{}) catch {
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "temp_create", .absent);
+        };
+        if (takeEditFault(.temp_create)) {
+            target_parent.close(ctx.io);
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "temp_create", .absent);
+        }
+        var atomic_file = target_parent.createFileAtomic(ctx.io, target_basename, .{
+            .replace = true,
+        }) catch {
+            target_parent.close(ctx.io);
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "temp_create", .absent);
+        };
+        var write_buffer: [4096]u8 = undefined;
+        var file_writer = atomic_file.file.writer(ctx.io, &write_buffer);
+        writeCompleteForCommit(&file_writer, e.replaced.?) catch {
+            const art = cleanupTemporary(&atomic_file, ctx.io);
+            atomic_file.deinit(ctx.io);
+            target_parent.close(ctx.io);
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "write", art);
+        };
+        flushCompleteForCommit(&file_writer) catch {
+            const art = cleanupTemporary(&atomic_file, ctx.io);
+            atomic_file.deinit(ctx.io);
+            target_parent.close(ctx.io);
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "flush", art);
+        };
+        recheckForCommit(ctx, guard, .apply_transaction, e.path) catch {
+            const art = cleanupTemporary(&atomic_file, ctx.io);
+            atomic_file.deinit(ctx.io);
+            target_parent.close(ctx.io);
+            ctx.allocator.free(selected_path);
+            return try softTxnEditIo(ctx.allocator, "replace", art);
+        };
+        staged[i] = .{
+            .allocator = ctx.allocator,
+            .selected_path = selected_path,
+            .parent = target_parent,
+            .atomic = atomic_file,
+            .live = true,
+        };
+    }
+
+    var committed: usize = 0;
+    while (committed < n) : (committed += 1) {
+        var slot = &staged[committed].?;
+        replaceForCommit(&slot.atomic, ctx.io) catch {
+            for (committed..n) |j| {
+                if (staged[j]) |*s| {
+                    s.cleanup(ctx.io);
+                    staged[j] = null;
+                }
+            }
+            var statuses: [max_txn_entries]TxnEntryDiskStatus = undefined;
+            for (0..n) |j| statuses[j] = .preserved;
+            var restore_failed = false;
+            for (0..committed) |j| {
+                statuses[j] = .modified;
+                if (try atomicCommit(ctx, guard, .apply_transaction, prepared.entries[j].path, prepared.entries[j].preimage.?)) |fail_body| {
+                    ctx.allocator.free(fail_body);
+                    restore_failed = true;
+                } else {
+                    statuses[j] = .restored;
+                }
+            }
+            if (restore_failed) {
+                return post.takeRestoreFailed(statuses[0..n]);
+            }
+            return post.takeEditIo();
+        };
+        slot.cleanup(ctx.io);
+        staged[committed] = null;
+    }
+
+    if (verifier) |v| {
+        var outcome: PostEditVerifyResult = .ok;
+        for (0..n) |i| {
+            const o = v.verifyFn(v.ptr, prepared.entries[i].path);
+            if (o != .ok and outcome == .ok) outcome = o;
+        }
+        return post.takeBound(outcome);
+    }
+    return post.takeNotConfigured();
+}
+
+const TxnPreparedEntry = struct {
+    path: []u8,
+    expected_sha_hex: []u8,
+    expected_digest: [32]u8,
+    old_string: []u8,
+    new_string: []u8,
+    preimage: ?[]u8,
+    replaced: ?[]u8,
+};
+
+const PreparedTxn = struct {
+    allocator: std.mem.Allocator,
+    n: usize,
+    entries: [max_txn_entries]TxnPreparedEntry = undefined,
+
+    fn deinit(self: *PreparedTxn) void {
+        for (self.entries[0..self.n]) |*e| {
+            self.allocator.free(e.path);
+            self.allocator.free(e.expected_sha_hex);
+            self.allocator.free(e.old_string);
+            self.allocator.free(e.new_string);
+            if (e.preimage) |p| self.allocator.free(p);
+            if (e.replaced) |r| self.allocator.free(r);
+        }
+        self.n = 0;
+    }
+};
+
+const TxnEntryDiskStatus = enum { restored, modified, preserved };
+
+const TxnStaged = struct {
+    allocator: std.mem.Allocator,
+    selected_path: []u8,
+    parent: Io.Dir,
+    atomic: Io.File.Atomic,
+    live: bool,
+
+    fn cleanup(self: *TxnStaged, io: Io) void {
+        if (!self.live) return;
+        self.live = false;
+        if (self.atomic.file_exists) {
+            _ = cleanupTemporary(&self.atomic, io);
+        }
+        self.atomic.deinit(io);
+        self.parent.close(io);
+        self.allocator.free(self.selected_path);
+    }
+};
+
+fn softTxn(
+    gpa: std.mem.Allocator,
+    code: []const u8,
+    stage_field: ?[]const u8,
+    entry_index: ?u8,
+) tool.HandlerError![]u8 {
+    var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const line = blk: {
+        if (stage_field) |stage| {
+            if (entry_index) |ei| {
+                break :blk std.fmt.bufPrint(
+                    &line_buf,
+                    "error: code={s} format=edit-txn-v1 operation=apply_transaction {s} entry={d} target=preserved temp_artifact=absent",
+                    .{ code, stage, ei },
+                ) catch return error.ToolFailed;
+            }
+            break :blk std.fmt.bufPrint(
+                &line_buf,
+                "error: code={s} format=edit-txn-v1 operation=apply_transaction {s} target=preserved temp_artifact=absent",
+                .{ code, stage },
+            ) catch return error.ToolFailed;
+        }
+        if (entry_index) |ei| {
+            break :blk std.fmt.bufPrint(
+                &line_buf,
+                "error: code={s} format=edit-txn-v1 operation=apply_transaction entry={d} target=preserved temp_artifact=absent",
+                .{ code, ei },
+            ) catch return error.ToolFailed;
+        }
+        break :blk std.fmt.bufPrint(
+            &line_buf,
+            "error: code={s} format=edit-txn-v1 operation=apply_transaction target=preserved temp_artifact=absent",
+            .{code},
+        ) catch return error.ToolFailed;
+    };
+    std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+    return gpa.dupe(u8, line) catch return error.OutOfMemory;
+}
+
+fn softTxnEditIo(
+    gpa: std.mem.Allocator,
+    stage: []const u8,
+    temp_artifact: TempArtifact,
+) tool.HandlerError![]u8 {
+    var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const line = std.fmt.bufPrint(
+        &line_buf,
+        "error: code=edit_io_failed format=edit-txn-v1 operation=apply_transaction stage={s} target=preserved parent_dirs=unchanged temp_artifact={s}",
+        .{ stage, temp_artifact.name() },
+    ) catch return error.ToolFailed;
+    std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+    return gpa.dupe(u8, line) catch return error.OutOfMemory;
+}
+
+fn truncateTxnPreviewUtf8(gpa: std.mem.Allocator, full: []const u8) error{OutOfMemory}![]u8 {
+    if (full.len <= max_txn_preview_text_bytes) {
+        return gpa.dupe(u8, full);
+    }
+    const marker = preview_truncation_marker;
+    const content_budget = max_txn_preview_text_bytes - marker.len;
+    var cut = content_budget;
+    while (cut > 0 and (full[cut] & 0xC0) == 0x80) cut -= 1;
+    const out = try gpa.alloc(u8, cut + marker.len);
+    @memcpy(out[0..cut], full[0..cut]);
+    @memcpy(out[cut..][0..marker.len], marker);
+    return out;
+}
+
+fn buildTxnPreviewText(gpa: std.mem.Allocator, entries: []const TxnPreparedEntry) error{OutOfMemory}![]u8 {
+    var body: std.ArrayList(u8) = .empty;
+    errdefer body.deinit(gpa);
+    try body.appendSlice(gpa, "apply_transaction review\n");
+    for (entries, 0..) |e, i| {
+        try body.print(gpa, "entry[{d}] path: ", .{i});
+        try body.appendSlice(gpa, e.path);
+        try body.appendSlice(gpa, "\nexpected_sha256: ");
+        try body.appendSlice(gpa, e.expected_sha_hex);
+        try body.print(gpa, "\nold_len={d} new_len={d}\n--- old ---\n", .{ e.old_string.len, e.new_string.len });
+        try appendLossyUtf8(&body, gpa, e.old_string);
+        try body.appendSlice(gpa, "\n--- new ---\n");
+        try appendLossyUtf8(&body, gpa, e.new_string);
+        try body.append(gpa, '\n');
+    }
+    const full = try body.toOwnedSlice(gpa);
+    errdefer gpa.free(full);
+    const truncated = try truncateTxnPreviewUtf8(gpa, full);
+    gpa.free(full);
+    return truncated;
+}
+
+const PreparedTxnPostBodies = struct {
+    allocator: std.mem.Allocator,
+    not_configured: ?[]u8 = null,
+    ok: ?[]u8 = null,
+    failed: ?[]u8 = null,
+    timeout: ?[]u8 = null,
+    denied: ?[]u8 = null,
+    unavailable: ?[]u8 = null,
+    edit_io: ?[]u8 = null,
+    restore_buf: ?[]u8 = null,
+    n: usize = 0,
+
+    fn init(gpa: std.mem.Allocator, verifier_bound: bool, n: usize) tool.HandlerError!PreparedTxnPostBodies {
+        var self: PreparedTxnPostBodies = .{ .allocator = gpa, .n = n };
+        errdefer self.deinit();
+        self.edit_io = try softTxnEditIo(gpa, "replace", .absent);
+        self.restore_buf = gpa.alloc(u8, trace.cap_tool_result_body) catch return error.OutOfMemory;
+        if (!verifier_bound) {
+            self.not_configured = try txnSuccessBody(gpa, "not_configured");
+            return self;
+        }
+        self.ok = try txnSuccessBody(gpa, "ok");
+        self.failed = try txnPartialVerifyBody(gpa, "failed");
+        self.timeout = try txnPartialVerifyBody(gpa, "timeout");
+        self.denied = try txnPartialVerifyBody(gpa, "denied");
+        self.unavailable = try txnPartialVerifyBody(gpa, "unavailable");
+        return self;
+    }
+
+    fn deinit(self: *PreparedTxnPostBodies) void {
+        self.freeSlot(&self.not_configured);
+        self.freeSlot(&self.ok);
+        self.freeSlot(&self.failed);
+        self.freeSlot(&self.timeout);
+        self.freeSlot(&self.denied);
+        self.freeSlot(&self.unavailable);
+        self.freeSlot(&self.edit_io);
+        self.freeSlot(&self.restore_buf);
+    }
+
+    fn takeNotConfigured(self: *PreparedTxnPostBodies) []u8 {
+        return takeSlot(&self.not_configured);
+    }
+
+    fn takeBound(self: *PreparedTxnPostBodies, outcome: PostEditVerifyResult) []u8 {
+        return switch (outcome) {
+            .ok => takeSlot(&self.ok),
+            .failed => takeSlot(&self.failed),
+            .timeout => takeSlot(&self.timeout),
+            .denied => takeSlot(&self.denied),
+            .unavailable => takeSlot(&self.unavailable),
+        };
+    }
+
+    fn takeEditIo(self: *PreparedTxnPostBodies) []u8 {
+        return takeSlot(&self.edit_io);
+    }
+
+    fn takeRestoreFailed(self: *PreparedTxnPostBodies, statuses: []const TxnEntryDiskStatus) []u8 {
+        const buf = takeSlot(&self.restore_buf);
+        var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+        const prefix = "error: code=transaction_restore_failed format=edit-txn-v1 operation=apply_transaction target=partial";
+        @memcpy(line_buf[0..prefix.len], prefix);
+        var len: usize = prefix.len;
+        for (statuses, 0..) |st, i| {
+            const piece = std.fmt.bufPrint(line_buf[len..], " entry{d}={s}", .{ i, @tagName(st) }) catch {
+                @panic("transaction_restore_failed line overflow");
+            };
+            len += piece.len;
+        }
+        std.debug.assert(std.mem.indexOfScalar(u8, line_buf[0..len], '\n') == null);
+        @memcpy(buf[0..len], line_buf[0..len]);
+        if (self.allocator.resize(buf, len)) {
+            return buf[0..len];
+        }
+        @memset(buf[len..], 0);
+        return buf;
+    }
+
+    fn freeSlot(self: *PreparedTxnPostBodies, slot: *?[]u8) void {
+        if (slot.*) |body| self.allocator.free(body);
+        slot.* = null;
+    }
+
+    fn takeSlot(slot: *?[]u8) []u8 {
+        std.debug.assert(slot.* != null);
+        const body = slot.*.?;
+        slot.* = null;
+        return body;
+    }
+
+    fn txnSuccessBody(gpa: std.mem.Allocator, verification: []const u8) tool.HandlerError![]u8 {
+        var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+        const line = std.fmt.bufPrint(
+            &line_buf,
+            "ok: code=apply_transaction_success format=edit-txn-v1 operation=apply_transaction target=modified verification={s} temp_artifact=absent",
+            .{verification},
+        ) catch return error.ToolFailed;
+        std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+        return gpa.dupe(u8, line) catch return error.OutOfMemory;
+    }
+
+    fn txnPartialVerifyBody(gpa: std.mem.Allocator, verification: []const u8) tool.HandlerError![]u8 {
+        var line_buf: [trace.cap_tool_result_body]u8 = undefined;
+        const line = std.fmt.bufPrint(
+            &line_buf,
+            "partial: code=verification_failed format=edit-txn-v1 operation=apply_transaction target=modified verification={s} temp_artifact=absent",
+            .{verification},
+        ) catch return error.ToolFailed;
+        std.debug.assert(std.mem.indexOfScalar(u8, line, '\n') == null);
+        return gpa.dupe(u8, line) catch return error.OutOfMemory;
+    }
+};
+
 fn mutationEndpointFailureForApplyHunk(
     ctx: tool.Context,
     path: []const u8,
@@ -867,6 +1547,7 @@ const EditOperation = enum {
     write_file,
     search_replace,
     apply_hunk,
+    apply_transaction,
 
     fn name(self: EditOperation) []const u8 {
         return @tagName(self);
@@ -1305,7 +1986,8 @@ fn selectCommitPath(
         return existing;
     } else |err| switch (err) {
         error.NotFound => {
-            if (operation == .search_replace or operation == .apply_hunk) return error.NotFound;
+            if (operation == .search_replace or operation == .apply_hunk or operation == .apply_transaction)
+                return error.NotFound;
         },
         else => return err,
     }
@@ -1375,7 +2057,7 @@ fn recheckForCommit(
 ) workspace.ContainError!void {
     switch (operation) {
         .write_file => try guard.checkCreate(ctx.allocator, ctx.io, ctx.cwd, request_path),
-        .search_replace, .apply_hunk => try guard.checkExisting(ctx.io, ctx.cwd, request_path),
+        .search_replace, .apply_hunk, .apply_transaction => try guard.checkExisting(ctx.io, ctx.cwd, request_path),
     }
     if (takeEditFault(.containment)) return error.OutsideWorkspace;
 }
@@ -1385,6 +2067,14 @@ fn replaceForCommit(atomic_file: *Io.File.Atomic, io: Io) !void {
     if (atomic_file.file_open) {
         atomic_file.file.close(io);
         atomic_file.file_open = false;
+    }
+    if (builtin.is_test) {
+        const call_i = test_replace_call_index;
+        test_replace_call_index += 1;
+        if (call_i < 32 and (test_replace_fail_mask & (@as(u32, 1) << @intCast(call_i))) != 0) {
+            test_replace_observed_closed = !atomic_file.file_open;
+            return error.InjectedEditReplaceFailure;
+        }
     }
     if (takeEditFault(.replace)) {
         if (builtin.is_test) test_replace_observed_closed = !atomic_file.file_open;
@@ -1964,6 +2654,14 @@ const path_write_caps: tool.ToolCapabilities = .{
     .shell = .none,
 };
 
+/// Multi-path product jail: Core path_field omitted (edit-transaction §3.2).
+const txn_write_caps: tool.ToolCapabilities = .{
+    .risk = .write,
+    .workspace = .none,
+    .cancellation = .none,
+    .shell = .none,
+};
+
 const shell_caps: tool.ToolCapabilities = .{
     .risk = .execute,
     .workspace = .none,
@@ -1988,6 +2686,18 @@ pub fn makeApplyHunkTool(state: *ApplyHunkState) tool.Tool {
         },
         .instance = state,
         .handler = applyHunk,
+    };
+}
+
+/// Default toolset `apply_transaction` sharing Agent-owned `ApplyHunkState` (reviewer/verifier).
+pub fn makeApplyTransactionTool(state: *ApplyHunkState) tool.Tool {
+    return .{
+        .descriptor = .{
+            .definition = apply_transaction_def,
+            .capabilities = txn_write_caps,
+        },
+        .instance = state,
+        .handler = applyTransaction,
     };
 }
 
@@ -2115,12 +2825,14 @@ fn invokeEditFixture(
             .{std.json.fmt(path, .{})},
         ) catch return error.OutOfMemory,
         .apply_hunk => unreachable,
+        .apply_transaction => unreachable,
     };
     defer ctx.allocator.free(arguments);
     return switch (operation) {
         .write_file => writeFile(ctx, null, arguments),
         .search_replace => searchReplace(ctx, null, arguments),
         .apply_hunk => unreachable,
+        .apply_transaction => unreachable,
     };
 }
 
@@ -2373,6 +3085,7 @@ test "edit endpoints reject contained directory and root aliases for both handle
                     .{std.json.fmt(endpoint, .{})},
                 ),
                 .apply_hunk => unreachable,
+                .apply_transaction => unreachable,
             };
             defer gpa.free(arguments);
             const body = try executePublicEdit(ctx, operation, arguments);
@@ -2730,6 +3443,7 @@ test "atomic edit success commits through contained final symlink without replac
             .write_file => "complete replacement bytes\n",
             .search_replace => "alpha NEW omega\n",
             .apply_hunk => unreachable,
+            .apply_transaction => unreachable,
         };
         try expectFileBytes(gpa, io, tmp.dir, "real.txt", expected);
         try expectSymlink(tmp.dir, io, "link.txt", "real.txt");
@@ -2895,6 +3609,7 @@ test "post-commit enrichment failure remains successful with complete target byt
             .write_file => "complete replacement bytes\n",
             .search_replace => "alpha NEW omega\n",
             .apply_hunk => unreachable,
+            .apply_transaction => unreachable,
         };
         try expectFileBytes(gpa, io, tmp.dir, "target.txt", expected);
         try expectDirEntries(io, tmp.dir, &.{"target.txt"});
@@ -4193,4 +4908,296 @@ test "edit-sharp preview invalid UTF-8 becomes U+FFFD lossy only" {
     // Original invalid single bytes must not appear as raw display dump.
     try std.testing.expect(std.mem.indexOfScalar(u8, preview, 0xFF) == null);
     try std.testing.expect(preview.len <= max_preview_text_bytes);
+}
+
+// ── edit-transaction-001 §10 fixture matrix ─────────────────────────────────
+
+fn applyTxnArgsTwo(
+    gpa: std.mem.Allocator,
+    path0: []const u8,
+    sha0: []const u8,
+    old0: []const u8,
+    new0: []const u8,
+    path1: []const u8,
+    sha1: []const u8,
+    old1: []const u8,
+    new1: []const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(
+        gpa,
+        "{{\"entries\":[{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":{f},\"new_string\":{f}}},{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":{f},\"new_string\":{f}}}]}}",
+        .{
+            std.json.fmt(path0, .{}),
+            std.json.fmt(sha0, .{}),
+            std.json.fmt(old0, .{}),
+            std.json.fmt(new0, .{}),
+            std.json.fmt(path1, .{}),
+            std.json.fmt(sha1, .{}),
+            std.json.fmt(old1, .{}),
+            std.json.fmt(new1, .{}),
+        },
+    );
+}
+
+fn expectTxnError(body: []const u8, code: []const u8) !void {
+    try std.testing.expect(std.mem.startsWith(u8, body, "error: code="));
+    try std.testing.expect(std.mem.indexOf(u8, body, code) != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "format=edit-txn-v1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "operation=apply_transaction") != null);
+    try std.testing.expect(std.mem.indexOfScalar(u8, body, '\n') == null);
+}
+
+fn expectTxnOk(body: []const u8, verification: []const u8) !void {
+    var expect_buf: [trace.cap_tool_result_body]u8 = undefined;
+    const expected = try std.fmt.bufPrint(
+        &expect_buf,
+        "ok: code=apply_transaction_success format=edit-txn-v1 operation=apply_transaction target=modified verification={s} temp_artifact=absent",
+        .{verification},
+    );
+    // restore_failed may return CAP-sized buf; success bodies are exact.
+    try std.testing.expectEqualStrings(expected, body);
+}
+
+test "edit-txn §10.1 happy 2-file success" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    const b0 = "beta OLD_B gamma\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = b0 });
+    var ha: [64]u8 = undefined;
+    var hb: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    sha256HexOf(b0, &hb);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyTxnArgsTwo(gpa, "a.txt", ha[0..], "OLD_A", "NEW_A", "b.txt", hb[0..], "OLD_B", "NEW_B");
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnOk(body, "not_configured");
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", "alpha NEW_A omega\n");
+    try expectFileBytes(gpa, io, tmp.dir, "b.txt", "beta NEW_B gamma\n");
+    try std.testing.expectEqual(@as(u32, 1), reviewer.calls_owned);
+}
+
+test "edit-txn §10.2 stale second file zero mutations" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    const b0 = "beta OLD_B gamma\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = b0 });
+    var ha: [64]u8 = undefined;
+    var hb: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    sha256HexOf("wrong", &hb);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyTxnArgsTwo(gpa, "a.txt", ha[0..], "OLD_A", "NEW_A", "b.txt", hb[0..], "OLD_B", "NEW_B");
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "stale_precondition");
+    try std.testing.expect(std.mem.indexOf(u8, body, "entry=1") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+    try expectFileBytes(gpa, io, tmp.dir, "b.txt", b0);
+    try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
+}
+
+test "edit-txn §10.3 review deny" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    const b0 = "beta OLD_B gamma\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = b0 });
+    var ha: [64]u8 = undefined;
+    var hb: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    sha256HexOf(b0, &hb);
+
+    var reviewer = FixedReviewer.init(.reject);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyTxnArgsTwo(gpa, "a.txt", ha[0..], "OLD_A", "NEW_A", "b.txt", hb[0..], "OLD_B", "NEW_B");
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "rejected");
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+    try expectFileBytes(gpa, io, tmp.dir, "b.txt", b0);
+}
+
+test "edit-txn §10.4 null reviewer" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    var ha: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    var state: ApplyHunkState = .{ .reviewer = null };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try std.fmt.allocPrint(
+        gpa,
+        "{{\"entries\":[{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":\"OLD_A\",\"new_string\":\"NEW_A\"}}]}}",
+        .{ std.json.fmt("a.txt", .{}), std.json.fmt(ha[0..], .{}) },
+    );
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "review_unavailable");
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+}
+
+test "edit-txn §10.5 mid-commit restore ok" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    const b0 = "beta OLD_B gamma\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = b0 });
+    var ha: [64]u8 = undefined;
+    var hb: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    sha256HexOf(b0, &hb);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    // Fail 2nd replace (index 1) after file0 committed.
+    testing.armReplaceFailMask(0b10);
+    const args = try applyTxnArgsTwo(gpa, "a.txt", ha[0..], "OLD_A", "NEW_A", "b.txt", hb[0..], "OLD_B", "NEW_B");
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "edit_io_failed");
+    try std.testing.expect(std.mem.indexOf(u8, body, "target=preserved") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+    try expectFileBytes(gpa, io, tmp.dir, "b.txt", b0);
+}
+
+test "edit-txn §10.6 mid-commit restore fail" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    testing.reset();
+    defer testing.reset();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    const b0 = "beta OLD_B gamma\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = b0 });
+    var ha: [64]u8 = undefined;
+    var hb: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    sha256HexOf(b0, &hb);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    // Fail commit of file1 (call 1) and restore of file0 (call 2).
+    testing.armReplaceFailMask(0b110);
+    const args = try applyTxnArgsTwo(gpa, "a.txt", ha[0..], "OLD_A", "NEW_A", "b.txt", hb[0..], "OLD_B", "NEW_B");
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "transaction_restore_failed");
+    try std.testing.expect(std.mem.indexOf(u8, body, "target=partial") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "entry0=modified") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "entry1=preserved") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", "alpha NEW_A omega\n");
+    try expectFileBytes(gpa, io, tmp.dir, "b.txt", b0);
+}
+
+test "edit-txn §10.7 duplicate path" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    var ha: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    var state: ApplyHunkState = .{ .reviewer = autoAcceptHunkReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyTxnArgsTwo(gpa, "a.txt", ha[0..], "OLD_A", "NEW_A", "a.txt", ha[0..], "OLD_A", "NEW_A");
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "invalid_arguments");
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+}
+
+test "edit-txn §10.8 N=17 too_large" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var state: ApplyHunkState = .{ .reviewer = autoAcceptHunkReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+
+    var list: std.ArrayList(u8) = .empty;
+    defer list.deinit(gpa);
+    try list.appendSlice(gpa, "{\"entries\":[");
+    var i: usize = 0;
+    while (i < 17) : (i += 1) {
+        if (i != 0) try list.append(gpa, ',');
+        try list.appendSlice(gpa, "{\"path\":\"x.txt\",\"expected_sha256\":\"");
+        try list.appendSlice(gpa, "0" ** 64);
+        try list.appendSlice(gpa, "\",\"old_string\":\"a\",\"new_string\":\"b\"}");
+    }
+    try list.appendSlice(gpa, "]}");
+    const args = try list.toOwnedSlice(gpa);
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "too_large");
+}
+
+test "edit-txn §10.9 second path jail escape" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    var ha: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try applyTxnArgsTwo(
+        gpa,
+        "a.txt",
+        ha[0..],
+        "OLD_A",
+        "NEW_A",
+        "../escape.txt",
+        "0" ** 64,
+        "OLD",
+        "NEW",
+    );
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "jail_deny") != null);
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+    try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
 }
