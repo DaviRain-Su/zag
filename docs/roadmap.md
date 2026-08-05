@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Local coding-agent workflow | **partial / post-TUI remote Gate in-progress** | lifecycle events ✅; bounded steering/follow-up ✅ at `a5ff2b7`; idle-only durable session fork ✅ at `0a3087f`; M3 session/context sharpness ✅ at `31523b6`; E1 Skills ✅ at `caafef5`; E1 Prompt Templates ✅ at `61326ae`; C4 `edit-sharpness-001` **done** @ `7be5151`; minimal TUI ✅ `f8f7f55`, streaming ✅ `2d57e84`, layout/presenter ✅ `189de9e`; post-TUI default-path remote Gate remains **in-progress**; Theme remains contract-only on `main` while `ff509a6` is an unmerged implementation candidate that must be adapted after Vaxis; `rpc-v1`, supervisor, LSP, ACP, typed subagents, MCP and runtime extensions require separate tasks |
+| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 first edit slice + minimal TUI(+streaming/layout) landed. **Host-shell track:** vaxis backend in flight (not merged as done); Theme `ready` but adapt-after-vaxis; post-TUI remote Gate still Phase A. **D-012 coding track:** `edit-transaction-001` **contract-draft** @ `cd55b2d`; supervisor / `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -56,74 +56,63 @@ Phase H correctness ──► Zig SDK-ready ──► closed
 ## 近期 DAG
 
 ```text
-M0 — interaction reliability
-  cli-sigint-001 ✅
-        │
-        └─► ci-hang-sigint-linux-errno-001 ✅ bc737025
-              │
-              ├─► ci-hang-ci-fuses-001 ✅ done/closed @ 97f43de (host fuses only)
-              ├─► ci-hang-sigint-process-idle-001 ✅ done Phase B (tip 8a93ec6 / run 30273762011)
-              └─► linux-dual-backend-gate-001 ✅ done (tip 8a93ec6 / run 30273762011; exact tip/run only)
+M0…M1 foundation ✅ (SIGINT / thin Core / events / steering / session-fork)
         │
         ▼
-M0.5 — thin Core responsibility migration
-  core-boundary-001
-    → core-seams-001
-    → core-session-ownership-001
-    → core-observation-ownership-001
-    → core-policy-ownership-001
-    → core-context-ownership-001
+M2 — selected daily UX ✅
+  skills → prompt-templates → edit-sharpness → tui-minimal
+  (+ M3 session/context @ 31523b6; tui-streaming @ 2d57e84; tui-layout @ 189de9e)
         │
-        ▼
-M1 — product Harness controls
-  harness-events-001 ✅ aecf402
-        │
-        ├────► harness-steering-001 ✅ a5ff2b7
-        └────► session-fork-001 ✅ 0a3087f
-                       │
-                       ▼
-M2 — selected daily UX
-  skills-001 ✅ caafef5 → prompt-templates-001 ✅ 61326ae
-        │
-        ├──────────────┐
-        │       edit-sharpness-001 (done @ 7be5151; Tools write/edit L2)
-        └──────────────┬──────────────┘
-                       ▼
-                 tui-minimal-001 (done @ f8f7f55; contract PASS @ c7a8f3a)
-                       │
-                       ▼
-          post-tui-remote-dual-backend-gate-001
-            (in-progress Phase A; TARGET f352b60;
-             default non-TUI remote matrix; no run id; no push)
-                       │
-                       ├─ orthogonal (not a Theme dependency)
-                       │
-                 theme-001 (contract PASS @ 9e1b9f9; status ready;
-                   binding theme.md; no implementation; no maturity raise)
+        ├────────────────────────────┬────────────────────────────┐
+        ▼                            ▼                            ▼
+  Host-shell polish            Evidence / Gate              D-012 coding route
+  tui-vaxis-001                post-tui-remote-             edit-transaction-001
+   (backend; in flight /         dual-backend-gate-001       **contract-draft** @ cd55b2d
+    not closed)                  (Phase A in-progress)            │
+        │                            │                            ▼
+  theme-001 (ready;              (orthogonal)               process-supervisor
+   adapt after vaxis)                                         ├─ rpc-v1
+                                                              ├─ LSP / workspace
+                                                              ├─ ACP
+                                                              ├─ typed subagents
+                                                              └─ MCP / E2
+                                                         (+ session tree / model data /
+                                                            memory / E3 — own Gates)
 ```
+
+Two **parallel** delivery lanes after M2 (do not serialize them):
+
+1. **Host shell** — finish quarantined vaxis backend → Theme impl (reuse/adapt
+   unmerged `ff509a6` candidate only after vaxis) → richer views later.
+2. **D-012 coding agent** — edit transaction → supervisor → long-lived clients
+   / intelligence / extensions. Does **not** wait on Theme or remote `-Dtui`.
 
 ## D-012 capability route
 
-The next product route is a complete **local** coding-agent workflow, not a
-cloud/desktop/media product or a Pi/OMP/Hyper compatibility target:
+Complete **local** coding-agent workflow (not cloud/desktop/media; not
+Pi/OMP/Hyper parity). Dependency order from
+[analysis](./plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md):
 
 ```text
-post-TUI integration
-  ├─► edit-transaction: multi-file preflight + stale-anchor recovery
-  ├─► process-supervisor
-  │     ├─► rpc-v1
-  │     ├─► LSP / workspace service
-  │     ├─► ACP adapter
-  │     ├─► typed subagents / optional worktrees
-  │     └─► MCP + E2 process extensions
-  ├─► session tree/navigation and runtime model data
-  └─► E3 WASM only after E2 semantics and capability Gates
+edit-transaction-001 (contract-draft @ cd55b2d; binding edit-transaction.md)
+  └─► process-supervisor-001 (not drafted)
+        ├─► rpc-v1
+        ├─► LSP / workspace service
+        ├─► ACP adapter
+        ├─► typed subagents / optional worktrees
+        └─► MCP + E2 process extensions
+session tree / runtime model data / default-off memory — own schema Gates
+E3 WASM — only after E2 semantics + capability Gates
 ```
 
-`edit-transaction`, `process-supervisor`, `rpc-v1`, LSP, ACP, subagents, MCP,
-session tree, runtime model data, and E2/E3 extensions are **roadmap targets,
-not ready tasks**. Each requires its own user failure, owner, contract,
-fixtures, review, and merged-main Gate.
+| Node | Status |
+|------|--------|
+| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **contract-draft** — dual review next; no impl yet |
+| process-supervisor / `rpc-v1` / LSP / ACP / subagents / MCP / session-tree / model-data / E2–E3 | **roadmap only** — each needs its own contract + Gate |
+
+`process-supervisor` and everything under it remain **not task-ready** until
+drafted. Edit-transaction is the only D-012 coding node with a binding draft
+today.
 
 ### M0 — Interaction reliability
 
@@ -204,12 +193,14 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 |------|-----------|------------------|
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
-| [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest `read_file` + mandatory hunk review + optional post-commit verifier ([tools-edit](./modules/tools-edit.md)); candidate + merged-main local macOS std **655/655**, curl **654/654**; no push / no fresh remote Linux for tip | no AST/LSP; no multi-file txn; no Core/schema change; Tools write/edit stays L2 |
-| [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55` ([tui-minimal.md](./modules/tui-minimal.md)): contract PASS @ `c7a8f3a`; host UI over public lifecycle/control/permission; dual final reviews PASS; local macOS default **656/656**/**655/655** + TUI **711/711**/**710/710** | only `packages/zag-tui`; dual-thread host; no maturity raise; remote default-path Gate not claimed here |
-| [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** (Phase A Class C rebind review PASS @ `7f9cfa4`): exact TARGET `f352b60d08e81c19d70ba46198fb06b71ddc85a1` (OLD_TARGET `b151307` abandoned); default non-TUI dual-OS dual-backend CI only; **no** run id; **no** push; Gate green **No** | docs-only Phase A; Phase B needs fresh authz naming TARGET; **no** Phase B grant; **no** remote `-Dtui`; **no** maturity raise; RPC/ACP stay pending |
-| [theme-001](./plan/tasks/theme-001.md) | **ready** — contract **PASS** @ `9e1b9f9` ([theme.md](./modules/theme.md)); dual architecture/ownership + safety/fail-closed re-reviews **PASS**, zero blockers; **no** implementation | docs only; owner `zag-tui`; passive Theme data; fail-closed built-in; **orthogonal** to post-TUI remote Gate; **no** maturity raise; does not package RPC/ACP/extension-UI; fresh Goal required for impl |
+| [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest + review ([tools-edit](./modules/tools-edit.md)) | no multi-file txn (that is `edit-transaction-001`); Tools write/edit stays L2 |
+| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **contract-draft** @ `cd55b2d` ([edit-transaction.md](./modules/edit-transaction.md)); D-012 item 1 | dual review next; no product code; orthogonal to TUI/Theme |
+| [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55`; streaming @ `2d57e84`; layout @ `189de9e` | host shell only; no maturity raise |
+| tui-vaxis-001 | **in flight** (binding draft + WIP; not closed) | quarantined backend only; no vxfw wholesale |
+| [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** Phase A; TARGET `f352b60…`; Gate green **No** | docs evidence; **no** remote `-Dtui`; no Phase B grant |
+| [theme-001](./plan/tasks/theme-001.md) | **ready** — contract **PASS** @ `9e1b9f9`; **no** merged implementation | implement only after vaxis base lands (adapt unmerged `ff509a6` candidate) |
 
-Minimal TUI depends on the closed event/control/SIGINT/headless/edit contracts; it must only assemble public coding-agent APIs, keep plain/headless Gates green, and never place UI in Kernel packages. Post-TUI remote default-path dual-backend Gate is a separate docs evidence node and does not raise maturity or auto-implement Theme. Theme contract (`theme-001`) is **PASS** @ `9e1b9f9` (`status: ready`); implementation still requires a separate fresh Goal.
+Host shell and D-012 coding route run **in parallel**. Theme must not block edit-transaction review/impl. Post-TUI remote Gate does not authorize Theme or vaxis.
 
 ## Extension release ladder (D-010)
 
@@ -239,7 +230,8 @@ public events/control/session
         ├─► runtime-model-catalog-001 (data-only)
         └─► extension-ui-schema-001 (basic intents first; stateful views later)
 
-host shell: tui-minimal-001 → theme-001 (contract PASS @ 9e1b9f9; ready; no impl yet)
+host shell: tui-minimal → streaming/layout → **vaxis backend (in flight)** → theme-001
+            (Theme ready @ 9e1b9f9; impl after vaxis; adapt unmerged ff509a6)
 ```
 
 E3 is a formal direction, not current implementation. The first WASM host is compute-only Tool scope; later hooks/commands/Provider/UI worlds require separate Gates. Engine choice remains open until measured/security evidence exists.

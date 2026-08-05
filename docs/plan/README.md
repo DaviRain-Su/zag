@@ -153,16 +153,19 @@ completed foundation
                     (implementation-complete @ 31523b6)
                            │
                            ▼
-                     tui-minimal-001 (done @ f8f7f55; contract PASS @ c7a8f3a)
+                     tui-minimal-001 (done @ f8f7f55)
                            │
-                           ▼
-          post-tui-remote-dual-backend-gate-001 (in-progress Phase A;
-            TARGET f352b60; no run id; no push)
-                           │
-                           ├─ (orthogonal evidence; not a Theme dep)
-                           │
-          theme-001 (contract PASS @ 9e1b9f9; status ready;
-            binding docs/modules/theme.md; no implementation)
+           ┌───────────────┼───────────────────────────────┐
+           ▼               ▼                               ▼
+   tui-streaming ✅   post-tui-remote-gate            edit-transaction-001
+   tui-layout ✅        (Phase A in-progress)          **contract-draft** @ cd55b2d
+           │               │                               │
+   tui-vaxis-001           │                         (D-012 → supervisor…)
+    (in flight;            ├─ orthogonal
+     not closed)           │
+           ▼               │
+   theme-001 (ready;       │
+    adapt after vaxis)     │
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
