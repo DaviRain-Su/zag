@@ -41,7 +41,8 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 
 ## 后移
 
-- 多文件事务/回滚；
+- 多文件事务/回滚 — **合同草稿** [edit-transaction-001](../plan/tasks/edit-transaction-001.md)
+  / [edit-transaction.md](../modules/edit-transaction.md)（`contract-draft`；尚未 dual review / 实现）；
 - AST/LSP/DAP；
 - 完整 IDE/TUI diff pane；
 - multi-hunk apply_patch / hashline line-address formats；
