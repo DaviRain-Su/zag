@@ -62,13 +62,19 @@ pub const Transcript = struct {
         self.messages.appendAssumeCapacity(message.Message.user(prepared.text));
     }
 
-    /// Persist an assistant turn (text and optional tool_calls) into the ledger.
+    /// Persist an assistant turn (text, optional tool_calls, optional
+    /// reasoning) into the ledger.
     pub fn appendAssistantTurn(self: *Transcript, turn: message.AssistantTurn) Error!void {
         const content = self.arena.dupe(u8, turn.content) catch return error.OutOfMemory;
+        const reasoning = if (turn.reasoning) |r|
+            self.arena.dupe(u8, r) catch return error.OutOfMemory
+        else
+            null;
 
         if (turn.tool_calls.len == 0) {
-            self.messages.append(self.arena, message.Message.assistantText(content)) catch
-                return error.OutOfMemory;
+            var m = message.Message.assistantText(content);
+            m.reasoning = reasoning;
+            self.messages.append(self.arena, m) catch return error.OutOfMemory;
             return;
         }
 
@@ -81,8 +87,26 @@ pub const Transcript = struct {
                 .arguments = self.arena.dupe(u8, c.arguments) catch return error.OutOfMemory,
             };
         }
-        self.messages.append(self.arena, message.Message.assistantToolCalls(content, calls)) catch
-            return error.OutOfMemory;
+        var m = message.Message.assistantToolCalls(content, calls);
+        m.reasoning = reasoning;
+        self.messages.append(self.arena, m) catch return error.OutOfMemory;
+    }
+
+    /// Append a runtime-injected assistant row (synthetic reason carrier:
+    /// interjection, auto-continue, task-completed, system-reminder).
+    /// `prompt_index` is the current prompt-turn index (may be null).
+    pub fn appendSyntheticReason(
+        self: *Transcript,
+        content: []const u8,
+        prompt_index: ?u32,
+    ) Error!void {
+        const owned = self.arena.dupe(u8, content) catch return error.OutOfMemory;
+        self.messages.append(self.arena, .{
+            .role = .assistant,
+            .content = owned,
+            .synthetic = true,
+            .prompt_index = prompt_index,
+        }) catch return error.OutOfMemory;
     }
 
     pub fn appendToolResult(
@@ -143,4 +167,58 @@ test "transcript abandoned PreparedUser exposes no user row" {
     t.appendPreparedUser(again);
     try std.testing.expectEqual(@as(usize, 1), t.items().len);
     try std.testing.expectEqualStrings("visible", t.items()[0].content);
+}
+
+test "transcript appendAssistantTurn forwards reasoning" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    var t = Transcript.init(arena_impl.allocator());
+
+    try t.appendAssistantTurn(.{
+        .content = "visible",
+        .tool_calls = &.{},
+        .reasoning = "hidden thinking",
+    });
+    const m = t.items()[0];
+    try std.testing.expectEqualStrings("visible", m.content);
+    try std.testing.expectEqualStrings("hidden thinking", m.reasoning.?);
+
+    // Reasoning survives the tool-call path too.
+    const calls = [_]message.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    try t.appendAssistantTurn(.{
+        .content = "",
+        .tool_calls = &calls,
+        .reasoning = "planning the call",
+    });
+    const m2 = t.items()[1];
+    try std.testing.expectEqualStrings("planning the call", m2.reasoning.?);
+    try std.testing.expectEqualStrings("c1", m2.tool_calls.?[0].id);
+
+    // Absent reasoning stays null.
+    try t.appendAssistantTurn(.{ .content = "plain", .tool_calls = &.{} });
+    try std.testing.expect(t.items()[2].reasoning == null);
+}
+
+test "transcript appendSyntheticReason stamps synthetic + prompt_index" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    var t = Transcript.init(arena_impl.allocator());
+
+    try t.appendSyntheticReason("task completed", 3);
+    const m = t.items()[0];
+    try std.testing.expect(m.role == .assistant);
+    try std.testing.expectEqualStrings("task completed", m.content);
+    try std.testing.expect(m.synthetic);
+    try std.testing.expectEqual(@as(?u32, 3), m.prompt_index);
+
+    // Null prompt_index is allowed (unknown / preamble rows).
+    try t.appendSyntheticReason("interjection", null);
+    const m2 = t.items()[1];
+    try std.testing.expect(m2.synthetic);
+    try std.testing.expect(m2.prompt_index == null);
+    try std.testing.expect(m2.reasoning == null);
 }

@@ -16,6 +16,7 @@ pub const tool_args = @import("tool_args.zig");
 pub const transcript = @import("transcript.zig");
 pub const provider = @import("provider.zig");
 pub const protocol_history = @import("protocol_history.zig");
+pub const session_item = @import("session_item.zig");
 pub const tool_error = @import("tool_error.zig");
 pub const cancel = @import("cancel.zig");
 

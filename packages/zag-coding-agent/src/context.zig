@@ -22,15 +22,19 @@
 //!
 //! `viewForModel` uses a **deterministic fixed-point** over the absolute body
 //! start index:
-//! 1. Fail-closed validate body tool-call bundles (exact IDs, call order).
-//! 2. Count-trim the tail, then align to a legal Tool-bundle boundary.
-//! 3. Soft char-trim under current layer cost, advancing by atomic units
+//! 1. Tolerant drop-only repair + duplicate-result dedup (combined pre-gate)
+//!    on the scratch view — `validateBodyHistory` stays authoritative.
+//! 2. Fail-closed validate body tool-call bundles (exact IDs, call order).
+//! 3. Token-budget truncate from the front (`session_item.truncateForPrompt`,
+//!    budget from `effectiveTokenBudget`), then the historical count cap
+//!    (`max_tail_messages`) and legal Tool-bundle alignment.
+//! 4. Soft char-trim under current layer cost, advancing by atomic units
 //!    (assistant+all results, or a single non-bundle message).
-//! 4. Build a summary for the omitted body prefix (with prior-session lineage).
-//! 5. Re-cost layers with that summary as the session layer.
-//! 6. If over budget, advance by another legal unit and rebuild; repeat until
+//! 5. Build a summary for the omitted body prefix (with prior-session lineage).
+//! 6. Re-cost layers with that summary as the session layer.
+//! 7. If over budget, advance by another legal unit and rebuild; repeat until
 //!    stable.
-//! 7. Emit one final `CompactionEvent` whose `dropped` equals the final
+//! 8. Emit one final `CompactionEvent` whose `dropped` equals the final
 //!    omitted body prefix length and whose summary describes that set.
 //!
 //! Soft budget / min-tail: when further trim would drop below
@@ -66,9 +70,11 @@
 
 const std = @import("std");
 const core = @import("zag-agent-core");
+const ztypes = @import("zag-types");
 const message = core.message;
 const context_view = core.context_view;
 const protocol_history = core.protocol_history;
+const session_item = core.session_item;
 
 /// Shared hard cap for heuristic compaction summaries (session + trace + view).
 /// Built events never exceed this after clamp.
@@ -86,6 +92,16 @@ pub const CompactionEvent = context_view.CompactionEvent;
 /// Single authoritative context view type (Core `context_view.zig`).
 pub const View = context_view.View;
 
+// compaction-llm-001: the summarizer seam types are authored in L0
+// (`zag-types`) so Core's `session_item.summarizeWithRetry` and this product
+// module can both reference them without a Core → product import (D-011).
+// The concrete provider impl lives in `agent.zig`.
+pub const SummaryErrorKind = ztypes.SummaryErrorKind;
+pub const SummaryRequest = ztypes.SummaryRequest;
+pub const SummaryResult = ztypes.SummaryResult;
+pub const CompactionSummarizerVTable = ztypes.CompactionSummarizerVTable;
+pub const CompactionSummarizer = ztypes.CompactionSummarizer;
+
 pub const Error = error{
     OutOfMemory,
     /// Malformed tool-call/result history or other fail-closed context policy.
@@ -97,6 +113,11 @@ pub const Options = struct {
     max_tail_messages: usize = 48,
     /// Soft char budget across the whole view (0 = unlimited).
     max_chars: usize = 120_000,
+    /// Token budget for the Stage-A truncate (0 = derive from `max_chars / 4`,
+    /// consistent with the `len / 4` estimator; when `max_chars` is also 0 the
+    /// budget is unlimited). Internal knob only — no user-facing config
+    /// option in v1 (the CLI derives it from the char budget automatically).
+    max_tokens: usize = 0,
     /// Never drop below this many history messages from the end.
     min_tail_messages: usize = 6,
     /// Requested max chars for the heuristic summary. Clamped to `summary_cap`.
@@ -105,11 +126,28 @@ pub const Options = struct {
     /// a minimal truncated lineage record (prior_bytes/kept_bytes=0/digest/marker).
     summary_max_chars: usize = default_summary_max_chars,
 
+    /// Optional LLM compaction summarizer (compaction-llm-001). Null → the
+    /// pure heuristic `buildSummary` path, byte-identical to pre-LLM
+    /// behavior. When set, the LLM summary (subject to the same budget /
+    /// UTF-8 clamps as heuristic summaries) replaces the heuristic text in
+    /// the compaction event + session layer; any failure falls back.
+    summarizer: ?CompactionSummarizer = null,
+
     /// Effective summary budget after clamp to the shared cap and content floor.
     /// Floor uses **sanitized** prior UTF-8 byte length (same as `prior_bytes` /
     /// digest input in lineage), not raw prior length.
     pub fn effectiveSummaryMax(self: Options, dropped_count: usize, prior_session: []const u8) usize {
         return clampSummaryBudget(self.summary_max_chars, dropped_count, prior_session);
+    }
+
+    /// Effective token budget for the Stage-A truncate: explicit `max_tokens`
+    /// wins; else derived from the char budget (`max_chars / 4`); `0` (both
+    /// unset) = unlimited. The budget covers the non-system history body only
+    /// (layer/summary costs keep their own char accounting).
+    pub fn effectiveTokenBudget(self: Options) usize {
+        if (self.max_tokens > 0) return self.max_tokens;
+        if (self.max_chars > 0) return self.max_chars / 4;
+        return std.math.maxInt(usize);
     }
 };
 
@@ -128,6 +166,7 @@ pub fn optionsFromBudget(
         max_chars: ?usize = null,
         max_tail_messages: ?usize = null,
         min_tail_messages: ?usize = null,
+        max_tokens: ?usize = null,
     },
 ) Options {
     const defaults = Options{};
@@ -135,6 +174,7 @@ pub fn optionsFromBudget(
         .max_chars = overrides.max_chars orelse (budget_chars orelse defaults.max_chars),
         .max_tail_messages = overrides.max_tail_messages orelse defaults.max_tail_messages,
         .min_tail_messages = overrides.min_tail_messages orelse defaults.min_tail_messages,
+        .max_tokens = overrides.max_tokens orelse defaults.max_tokens,
     };
 }
 
@@ -246,9 +286,13 @@ fn fitsExactLineage(room: usize, prefix_len: usize, payload_len: usize) bool {
 /// When all layer strings are empty, falls back to keeping leading transcript
 /// `system` rows (compat with tests / callers that only seed the transcript).
 ///
+/// `io` is required for the compaction summarizer's retry ladder sleeps
+/// (compaction-llm-001); unused when `opts.summarizer == null`.
+///
 /// Returns `error.InvalidContext` before any provider-facing view when body
 /// tool-call/result bundles are malformed (fail-closed).
 pub fn viewForModel(
+    io: std.Io,
     arena: std.mem.Allocator,
     full: []const message.Message,
     opts: Options,
@@ -262,15 +306,37 @@ pub fn viewForModel(
     const transcript_systems = full[0..hist_start];
     const body = full[hist_start..];
 
-    // Fail closed on malformed tool bundles before any trim/provider path.
-    protocol_history.validateBodyHistory(body) catch return error.InvalidContext;
+    // --- Stage A: tolerant repair + dedup (combined pre-gate, view-only, drop-only) ---
+    // Repair drops orphan/empty-carrier tool rows; dedup collapses repeated
+    // tool_call_id result rows (keep-last). Both run on the scratch view
+    // (never the transcript); the dedup output feeds the authoritative gate.
+    const repaired = (try session_item.repairDanglingToolCalls(arena, body)) orelse body;
+    const working = (try session_item.dedupDuplicateToolResults(arena, repaired)) orelse repaired;
 
-    // --- Stage A: count trim + legal Tool-bundle align ---
+    // Fail closed on malformed tool bundles after repair+dedup (authoritative
+    // gate): incomplete bundles, out-of-order results, duplicate/empty call
+    // ids and leading-system-without-tail still reject here.
+    protocol_history.validateBodyHistory(working) catch return error.InvalidContext;
+
     var start: usize = 0;
-    if (opts.max_tail_messages > 0 and body.len > opts.max_tail_messages) {
-        start = body.len - opts.max_tail_messages;
+    const trunc = try session_item.truncateForPrompt(
+        arena,
+        working,
+        opts.effectiveTokenBudget(),
+        opts.min_tail_messages,
+    );
+    start = trunc.dropped;
+    // Historical count cap: still a hard row limit on the kept tail.
+    if (opts.max_tail_messages > 0 and working.len - start > opts.max_tail_messages) {
+        start = working.len - opts.max_tail_messages;
+        start = protocol_history.alignToLegalStart(working, start) catch return error.InvalidContext;
     }
-    start = protocol_history.alignToLegalStart(body, start) catch return error.InvalidContext;
+
+    // No separate pruning stage: `truncateForPrompt` already performs
+    // whole-bundle head trims under the token budget (chat-state-prune-001:
+    // a prune pass would be behaviorally identical under drop-only law).
+    const post_cap = working[start..];
+    const prefix_dropped = start;
 
     // Layer cost without a new compaction summary (prior session layer may exist).
     var layer_chars: usize = if (use_layers)
@@ -279,21 +345,26 @@ pub fn viewForModel(
         estimateChars(transcript_systems);
 
     // --- Stage B: soft char trim under current layer cost ---
-    start = try charTrimStart(body, start, layer_chars, opts);
+    var tail_start: usize = 0; // index into `post_cap`
+    tail_start = try charTrimStart(post_cap, tail_start, layer_chars, opts);
 
     // --- Stage C: fixed-point — summary insertion may force further legal trims ---
     var compaction: ?CompactionEvent = null;
     var session_layer = layers.session;
 
-    if (start > 0) {
-        const max_iters = body.len + 1;
+    if (prefix_dropped > 0 or tail_start > 0) {
+        const max_iters = post_cap.len + 1;
         var iter: usize = 0;
         while (iter < max_iters) : (iter += 1) {
-            const dropped = start;
+            const dropped = prefix_dropped + tail_start;
             const budget = opts.effectiveSummaryMax(dropped, layers.session);
+            // Omitted set = truncate/cap prefix + char-trim prefix of the
+            // post-cap view — contiguous in `working` (post_cap starts at
+            // prefix_dropped), so no copy is needed.
+            const omitted = working[0 .. prefix_dropped + tail_start];
             const summary = try buildSummary(
                 arena,
-                body[0..dropped],
+                omitted,
                 budget,
                 dropped,
                 layers.session,
@@ -307,19 +378,20 @@ pub fn viewForModel(
                 layer_chars = estimateChars(transcript_systems) + summary.len + 64;
             }
 
-            const before = start;
-            start = try charTrimStart(body, start, layer_chars, opts);
-            if (start == before) {
+            const before = tail_start;
+            tail_start = try charTrimStart(post_cap, tail_start, layer_chars, opts);
+            if (tail_start == before) {
                 compaction = .{ .dropped = dropped, .summary = summary };
                 session_layer = summary;
                 break;
             }
         } else {
-            const dropped = start;
+            const dropped = prefix_dropped + tail_start;
             const budget = opts.effectiveSummaryMax(dropped, layers.session);
+            const omitted = working[0 .. prefix_dropped + tail_start];
             const summary = try buildSummary(
                 arena,
-                body[0..dropped],
+                omitted,
                 budget,
                 dropped,
                 layers.session,
@@ -329,7 +401,27 @@ pub fn viewForModel(
         }
     }
 
-    const selected = body[start..];
+    // compaction-llm-001: with a configured summarizer, run ONE LLM
+    // summarization over the final omitted set and replace the heuristic text
+    // in the compaction event + session layer (same slot, same shape). The
+    // fixed-point already converged on the heuristic summary, so this is a
+    // single provider call per view; any failure keeps the heuristic bytes.
+    if (compaction) |ev| {
+        if (opts.summarizer) |summarizer| {
+            const omitted = working[0..ev.dropped];
+            // OOM during LLM summarization falls back to the heuristic text
+            // (turn continues; noteCompaction OOM atomicity untouched).
+            const text = summarizeOmitted(io, arena, summarizer, omitted, layers.session, ev.dropped, opts) catch |err| switch (err) {
+                error.OutOfMemory => null,
+            };
+            if (text) |t| {
+                compaction = .{ .dropped = ev.dropped, .summary = t };
+                session_layer = t;
+            }
+        }
+    }
+
+    const selected = post_cap[tail_start..];
     // Selected tail starts at a legal boundary when body is valid.
     if (selected.len > 0 and selected[0].role == .tool) return error.InvalidContext;
 
@@ -389,33 +481,51 @@ fn charTrimStart(
     return start;
 }
 
-/// Compute the body start after count trim + legal align only (no char/summary).
-pub fn initialCountTrimStart(body: []const message.Message, opts: Options) error{InvalidContext}!usize {
+/// Compute the body start after Stage A (token-budget truncate + count cap +
+/// legal align) with no char/summary re-cost.
+///
+/// `session_item.truncateForPrompt` performs no allocation; `page_allocator`
+/// is a placeholder for its allocator parameter.
+pub fn initialTrimStart(body: []const message.Message, opts: Options) error{InvalidContext}!usize {
     var start: usize = 0;
-    if (opts.max_tail_messages > 0 and body.len > opts.max_tail_messages) {
+    const trunc = try session_item.truncateForPrompt(
+        std.heap.page_allocator,
+        body,
+        opts.effectiveTokenBudget(),
+        opts.min_tail_messages,
+    );
+    start = trunc.dropped;
+    if (opts.max_tail_messages > 0 and body.len - start > opts.max_tail_messages) {
         start = body.len - opts.max_tail_messages;
+        start = protocol_history.alignToLegalStart(body, start) catch return error.InvalidContext;
     }
-    return protocol_history.alignToLegalStart(body, start) catch return error.InvalidContext;
+    return start;
 }
 
-/// Count-trim + first-pass char trim without summary re-cost (legacy intermediate).
+/// Stage-A trim + first-pass char trim without summary re-cost (legacy
+/// intermediate for fixed-point assertions).
 pub fn intermediateDroppedBeforeSummary(
     full: []const message.Message,
     opts: Options,
     layers: Layers,
-) error{InvalidContext}!usize {
+) error{OutOfMemory, InvalidContext}!usize {
     const use_layers = layers.system.len > 0 or layers.project.len > 0 or
         layers.session.len > 0 or layers.ephemeral.len > 0;
     var hist_start: usize = 0;
     while (hist_start < full.len and full[hist_start].role == .system) : (hist_start += 1) {}
     const body = full[hist_start..];
-    protocol_history.validateBodyHistory(body) catch return error.InvalidContext;
-    const start = try initialCountTrimStart(body, opts);
+    // Repair-first (product semantics): orphan/empty-carrier rows are dropped
+    // before the authoritative gate; page_allocator is a placeholder.
+    const repaired_raw = try session_item.repairDanglingToolCalls(std.heap.page_allocator, body);
+    defer if (repaired_raw) |w| std.heap.page_allocator.free(w);
+    const working = repaired_raw orelse body;
+    protocol_history.validateBodyHistory(working) catch return error.InvalidContext;
+    const start = try initialTrimStart(working, opts);
     const layer_chars: usize = if (use_layers)
         layerEstimate(layers, null)
     else
         estimateChars(full[0..hist_start]);
-    return try charTrimStart(body, start, layer_chars, opts);
+    return try charTrimStart(working, start, layer_chars, opts);
 }
 
 fn layerEstimate(layers: Layers, session_override: ?[]const u8) usize {
@@ -538,6 +648,104 @@ fn buildSummary(
         return try sanitizeUtf8(arena, owned);
     }
     return owned;
+}
+
+// ── compaction-llm-001: LLM summary composition ─────────────────────────────
+
+/// Provider_max default for summary requests: capped at 256 tokens (revised
+/// contract — the summary is clamped to summary_cap ≈ 800 chars ≈ 200 tokens;
+/// 256 is a generous generation ceiling and keeps u32 arithmetic safe in the
+/// unlimited-budget configuration).
+pub const summary_provider_max_tokens: u32 = 256;
+
+/// Serialize the dropped prefix, build INITIAL/UPDATE prompts, and run the
+/// retry ladder. Returns the composed LLM summary (cleaned, non-degenerate,
+/// plus the structured lineage record — same semantics as the heuristic
+/// path) routed through the same budget + UTF-8 clamps; `null` on any
+/// failure or on the skip guard (heuristic fallback).
+fn summarizeOmitted(
+    io: std.Io,
+    arena: std.mem.Allocator,
+    summarizer: CompactionSummarizer,
+    omitted: []const message.Message,
+    prior: []const u8,
+    dropped_count: usize,
+    opts: Options,
+) error{OutOfMemory}!?[]const u8 {
+    // Skip guard: 4 * max_tokens < MIN_SUMMARY_SEED_CHARS can never produce
+    // a non-degenerate summary — do not burn attempts/sleeps.
+    const max_tokens = summaryMaxTokens(opts);
+    if (4 * @as(usize, max_tokens) < session_item.MIN_SUMMARY_SEED_CHARS) return null;
+
+    const serialized = try session_item.serializeConversationForSummary(arena, omitted);
+    const prompts = try session_item.buildSummaryPrompts(arena, if (prior.len > 0) prior else null);
+    // Single user message, pi shape: <conversation>…</conversation> + prompt.
+    const user_content = try std.fmt.allocPrint(
+        arena,
+        "<conversation>\n{s}\n</conversation>\n\n{s}",
+        .{ serialized, prompts.prompt },
+    );
+    const request: SummaryRequest = .{
+        .prompt = user_content,
+        .system = prompts.system,
+        .max_tokens = max_tokens,
+    };
+    const raw = try session_item.summarizeWithRetry(
+        io,
+        arena,
+        summarizer,
+        request,
+        session_item.default_summary_max_attempts,
+        session_item.default_summary_retry_delay_ms,
+    ) orelse return null;
+
+    // Compose: cleaned LLM text + lineage record (writeLineage semantics),
+    // fully within the shared budget, then apply the shared clamps.
+    const budget = opts.effectiveSummaryMax(dropped_count, prior);
+    var body: std.Io.Writer.Allocating = .init(arena);
+    errdefer body.deinit();
+    // Reserve the minimal truncated-lineage record up front so the lineage
+    // chain is never silently dropped when the LLM text is large (mirror of
+    // the heuristic path's summaryFloor guarantee).
+    const lineage_reserve = if (prior.len > 0)
+        minimalTruncatedLineageLen(utf8SanitizedByteLen(prior)) + 1
+    else
+        0;
+    const llm_text = try clampSummaryText(arena, raw, budget -| lineage_reserve);
+    body.writer.print("{s}", .{llm_text}) catch return error.OutOfMemory;
+    if (prior.len > 0) {
+        try writeLineage(&body, arena, prior, budget);
+    }
+    body.writer.flush() catch {};
+    return try clampSummaryText(arena, body.written(), budget);
+}
+
+/// Apply the shared summary clamps (UTF-8 sanitize + budget truncate) to an
+/// LLM-produced summary, matching `buildSummary`'s final processing exactly.
+/// Truncation happens AFTER sanitization (truncateUtf8 requires valid UTF-8).
+fn clampSummaryText(
+    arena: std.mem.Allocator,
+    text: []const u8,
+    budget: usize,
+) error{OutOfMemory}![]const u8 {
+    if (text.len > budget) {
+        const clean = try sanitizeUtf8(arena, text);
+        const owned = try arena.dupe(u8, clean);
+        return truncateUtf8Owned(arena, owned, budget);
+    }
+    if (!std.unicode.utf8ValidateSlice(text)) {
+        return try sanitizeUtf8(arena, text);
+    }
+    return try arena.dupe(u8, text);
+}
+
+/// max_tokens = `@max(1, @min(0.8 * effectiveTokenBudget(), 256))` (usize
+/// arithmetic, overflow-safe: the min with 256 bounds every cast;
+/// unlimited-budget config → 256). No new config key.
+fn summaryMaxTokens(opts: Options) u32 {
+    const reserve = opts.effectiveTokenBudget();
+    const eighty_pct = (reserve *| 8) / 10;
+    return @intCast(@max(@as(usize, 1), @min(eighty_pct, @as(usize, summary_provider_max_tokens))));
 }
 
 /// Realloc-truncate to `max` on a UTF-8 boundary (last-resort safety only).
@@ -730,7 +938,7 @@ test "view layers then history; skips transcript systems" {
         .assistantText("a2"),
     };
 
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 10,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -769,7 +977,7 @@ test "view trims history and returns compaction without mutating transcript" {
     const before_len = full.len;
     const u1_ptr = full[1].content.ptr;
 
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 4,
         .max_chars = 0,
         .min_tail_messages = 2,
@@ -814,7 +1022,7 @@ test "view does not start on orphan tool message" {
         .assistantText("ok"),
     };
 
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 3,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -869,7 +1077,7 @@ test "h-context: two-stage trim requires final > intermediate" {
     const intermediate = try intermediateDroppedBeforeSummary(&full, opts, layers);
     try std.testing.expect(intermediate > 0);
 
-    const v = try viewForModel(arena, &full, opts, layers);
+    const v = try viewForModel(std.testing.io, arena, &full, opts, layers);
     try std.testing.expect(v.compaction != null);
     const ev = v.compaction.?;
 
@@ -924,7 +1132,7 @@ test "h-context: summary growth multi-iteration fixed-point" {
     const layers = Layers{ .system = "S" };
 
     const intermediate = try intermediateDroppedBeforeSummary(&msgs, opts, layers);
-    const v = try viewForModel(arena, &msgs, opts, layers);
+    const v = try viewForModel(std.testing.io, arena, &msgs, opts, layers);
     try std.testing.expect(v.compaction != null);
     const final_dropped = v.compaction.?.dropped;
     try std.testing.expect(final_dropped > intermediate);
@@ -961,7 +1169,7 @@ test "h-context: multi-tool exact IDs atomic align and advance" {
         .assistantText("done"),
     };
 
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 4,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -1009,12 +1217,20 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .{ .id = "", .name = "list_dir", .arguments = "{}" },
     };
 
-    // Orphan tool.
+    // Orphan tool — repair-first product semantics: the orphan row is dropped
+    // deterministically (view-only), so the view succeeds WITHOUT the orphan
+    // (transcript untouched). The remaining malformed classes below still
+    // fail closed: repair never rescues incomplete/out-of-order/duplicate
+    // bundles because it only drops rows, never reorders or invents content.
     const orphan = [_]message.Message{
         .user("u"),
         .toolResult("z", "nope"),
     };
-    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &orphan, .{}, .{ .system = "b" }));
+    const orphan_v = try viewForModel(std.testing.io, arena, &orphan, .{}, .{ .system = "b" });
+    try std.testing.expectEqual(@as(usize, 2), orphan_v.messages.len);
+    try std.testing.expect(orphan_v.messages[0].role == .system);
+    try std.testing.expect(orphan_v.messages[1].role == .user);
+    try std.testing.expect(orphan_v.compaction == null);
 
     // Unknown / wrong ID.
     const wrong_id = [_]message.Message{
@@ -1023,7 +1239,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .toolResult("a1", "ok"),
         .toolResult("WRONG", "bad"),
     };
-    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &wrong_id, .{}, .{}));
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &wrong_id, .{}, .{}));
 
     // Out of order.
     const ooo = [_]message.Message{
@@ -1032,7 +1248,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .toolResult("a2", "second-first"),
         .toolResult("a1", "first-second"),
     };
-    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &ooo, .{}, .{}));
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &ooo, .{}, .{}));
 
     // Missing result (incomplete).
     const incomplete = [_]message.Message{
@@ -1040,7 +1256,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .assistantToolCalls("", &calls),
         .toolResult("a1", "only-one"),
     };
-    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &incomplete, .{}, .{}));
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &incomplete, .{}, .{}));
 
     // Duplicate IDs in calls.
     const dups = [_]message.Message{
@@ -1049,7 +1265,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .toolResult("x", "1"),
         .toolResult("x", "2"),
     };
-    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &dups, .{}, .{}));
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &dups, .{}, .{}));
 
     // Empty call id.
     const empty = [_]message.Message{
@@ -1057,7 +1273,7 @@ test "h-context: malformed tool bundles return InvalidContext" {
         .assistantToolCalls("", &empty_id),
         .toolResult("", "x"),
     };
-    try std.testing.expectError(error.InvalidContext, viewForModel(arena, &empty, .{}, .{}));
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &empty, .{}, .{}));
 }
 
 test "h-context: min_tail soft budget terminates honestly" {
@@ -1071,7 +1287,7 @@ test "h-context: min_tail soft budget terminates honestly" {
         .user(huge),
         .assistantText(huge),
     };
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 0,
         .max_chars = 100,
         .min_tail_messages = 2,
@@ -1089,7 +1305,7 @@ test "h-context: min_tail soft budget terminates honestly" {
         .user("keep-u"),
         .assistantText("keep-a"),
     };
-    const v2 = try viewForModel(arena, &full2, .{
+    const v2 = try viewForModel(std.testing.io, arena, &full2, .{
         .max_tail_messages = 0,
         .max_chars = 50,
         .min_tail_messages = 2,
@@ -1121,7 +1337,7 @@ test "h-context: lineage exact fit and truncated record with digest" {
 
     // Exact fit: small prior fully retained.
     const small_prior = "PRIOR_EXACT_BYTES_OK";
-    const v_exact = try viewForModel(arena, &full, .{
+    const v_exact = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 2,
@@ -1138,7 +1354,7 @@ test "h-context: lineage exact fit and truncated record with digest" {
     const prior790 = prior_buf[0..];
     try std.testing.expectEqual(@as(usize, 790), prior790.len);
 
-    const v_trunc = try viewForModel(arena, &full, .{
+    const v_trunc = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 2,
@@ -1189,7 +1405,7 @@ test "h-context: shared summary_cap clamp and tiny budget keeps header" {
     try std.testing.expectEqual(floor_prior, clampSummaryBudget(1, 4, &prior790));
     try std.testing.expectEqual(floor_prior, clampSummaryBudget(8, 4, &prior790));
 
-    const v_over = try viewForModel(arena, &full, .{
+    const v_over = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -1199,7 +1415,7 @@ test "h-context: shared summary_cap clamp and tiny budget keeps header" {
     try std.testing.expect(v_over.compaction.?.summary.len <= summary_cap);
 
     // Tiny budget still has complete dropped header.
-    const v_tiny = try viewForModel(arena, &full, .{
+    const v_tiny = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -1244,7 +1460,7 @@ test "h-context: tiny budget with 790-byte prior keeps full lineage metadata" {
         const floor = summaryFloor(6, prior790); // lower bound; actual dropped may differ
         try std.testing.expect(floor <= summary_cap);
 
-        const v = try viewForModel(arena, &full, .{
+        const v = try viewForModel(std.testing.io, arena, &full, .{
             .max_tail_messages = 0,
             .max_chars = 420, // two-stage pressure
             .min_tail_messages = 2,
@@ -1348,7 +1564,7 @@ test "h-context: raw-nine invalid prior end-to-end tiny compaction prior_bytes=2
 
     // Invalid priors always take truncated form → prior_bytes/digest auditable.
     for ([_]usize{ 1, 8 }) |tiny| {
-        const v = try viewForModel(arena, &full, .{
+        const v = try viewForModel(std.testing.io, arena, &full, .{
             .max_tail_messages = 2,
             .max_chars = 0,
             .min_tail_messages = 1,
@@ -1398,7 +1614,7 @@ test "h-context: larger invalid prior still truncated with sanitized prior_bytes
         .user("u3"),
         .assistantText("a3"),
     };
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -1428,7 +1644,7 @@ test "h-context: invalid UTF-8 sanitized to U+FFFD not OOM" {
         .user("tail"),
         .assistantText("ok"),
     };
-    const v = try viewForModel(arena, &full, .{
+    const v = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -1464,8 +1680,8 @@ test "h-context: identical inputs are deterministic" {
     };
     const layers = Layers{ .system = "base", .session = "prior-session-layer" };
 
-    const v1 = try viewForModel(arena, &full, opts, layers);
-    const v2 = try viewForModel(arena, &full, opts, layers);
+    const v1 = try viewForModel(std.testing.io, arena, &full, opts, layers);
+    const v2 = try viewForModel(std.testing.io, arena, &full, opts, layers);
     try std.testing.expect(v1.compaction != null and v2.compaction != null);
     try std.testing.expectEqual(v1.compaction.?.dropped, v2.compaction.?.dropped);
     try std.testing.expectEqualStrings(v1.compaction.?.summary, v2.compaction.?.summary);
@@ -1497,7 +1713,7 @@ test "h-context: deep transcript snapshot tool ids unchanged after view" {
     const rid0 = full[3].tool_call_id.?;
     const rid1 = full[4].tool_call_id.?;
 
-    _ = try viewForModel(arena, &full, .{
+    _ = try viewForModel(std.testing.io, arena, &full, .{
         .max_tail_messages = 2,
         .max_chars = 0,
         .min_tail_messages = 1,
@@ -1511,4 +1727,643 @@ test "h-context: deep transcript snapshot tool ids unchanged after view" {
     try std.testing.expectEqualStrings(rid1, full[4].tool_call_id.?);
     try std.testing.expectEqualStrings("out1", full[3].content);
     try std.testing.expectEqualStrings("out2", full[4].content);
+}
+
+// ── session-item-001: token-budget Stage A fixtures ─────────────────────────
+
+test "session-item: effectiveTokenBudget derives from max_chars / 4" {
+    const default_budget = Options{ .max_chars = 120_000 };
+    try std.testing.expectEqual(@as(usize, 30_000), default_budget.effectiveTokenBudget());
+    const unlimited = Options{ .max_tokens = 0, .max_chars = 0 };
+    try std.testing.expectEqual(std.math.maxInt(usize), unlimited.effectiveTokenBudget());
+    // Explicit max_tokens wins over the derivation.
+    const explicit = Options{ .max_chars = 120_000, .max_tokens = 77 };
+    try std.testing.expectEqual(@as(usize, 77), explicit.effectiveTokenBudget());
+}
+
+test "session-item: token-budget truncate replaces count-trim in viewForModel" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    // 8 rows × 40 bytes = 10 tokens each; a 30-token budget keeps ~3 rows
+    // (count cap disabled, min_tail 0). The view must fit the token budget.
+    const pad = "X" ** 40;
+    var full: [9]message.Message = undefined;
+    full[0] = .system("sys");
+    var i: usize = 1;
+    while (i < full.len) : (i += 2) {
+        full[i] = .user(pad);
+        if (i + 1 < full.len) full[i + 1] = .assistantText(pad);
+    }
+
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 0,
+        .max_chars = 0,
+        .max_tokens = 30,
+        .min_tail_messages = 0,
+        .summary_max_chars = 400,
+    }, .{ .system = "base" });
+
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expect(v.compaction.?.dropped >= 5);
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    const kept = v.messages[hist_i..];
+    var tokens: usize = 0;
+    for (kept) |m| tokens += m.estimateTokens();
+    try std.testing.expect(tokens <= 30);
+    try std.testing.expectEqual(full.len - 1 - v.compaction.?.dropped, kept.len);
+}
+
+test "session-item: viewForModel max_tokens 0 with max_chars 0 is unlimited" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u1"),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
+    };
+    // Backward-compatible default: no token budget, no char budget → no trim.
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 10,
+        .max_chars = 0,
+        .min_tail_messages = 1,
+    }, .{ .system = "base" });
+    try std.testing.expect(v.compaction == null);
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    try std.testing.expectEqual(@as(usize, 4), v.messages.len - hist_i);
+}
+
+test "session-item: tiny token budget with min_tail 0 empties history + compaction" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("user-message"),
+        .assistantText("assistant-message"),
+    };
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 0,
+        .max_chars = 0,
+        .max_tokens = 1,
+        .min_tail_messages = 0,
+        .summary_max_chars = 400,
+    }, .{ .system = "base" });
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expectEqual(@as(usize, 2), v.compaction.?.dropped);
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    try std.testing.expectEqual(@as(usize, 0), v.messages.len - hist_i);
+}
+
+test "session-item: max_tail_messages count cap still applies on top of token truncate" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u1"),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
+        .user("u3"),
+        .assistantText("a3"),
+    };
+    // Unlimited token budget, count cap 2 → exactly the tail 2 rows kept.
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summary_max_chars = 400,
+    }, .{ .system = "base" });
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expectEqual(@as(usize, 4), v.compaction.?.dropped);
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    try std.testing.expectEqual(@as(usize, 2), v.messages.len - hist_i);
+    try std.testing.expectEqualStrings("u3", v.messages[v.messages.len - 2].content);
+}
+
+test "session-item: viewForModel keeps token-truncated tool bundles atomic" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const calls = [_]message.ToolCall{
+        .{ .id = "a1", .name = "list_dir", .arguments = "{}" },
+        .{ .id = "a2", .name = "read_file", .arguments = "{}" },
+    };
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("early"),
+        .assistantToolCalls("", &calls),
+        .toolResult("a1", "dir-out"),
+        .toolResult("a2", "file-out"),
+        .user("late"),
+        .assistantText("done"),
+    };
+    // Budget 5 tokens: the first user (1 token) + the whole 4-row bundle
+    // (7 tokens) must drop as one unit, keeping exactly the last 2 rows.
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 0,
+        .max_chars = 0,
+        .max_tokens = 5,
+        .min_tail_messages = 0,
+        .summary_max_chars = 400,
+    }, .{ .system = "base" });
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expectEqual(@as(usize, 4), v.compaction.?.dropped);
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    const kept = v.messages[hist_i..];
+    try std.testing.expectEqual(@as(usize, 2), kept.len);
+    try std.testing.expectEqualStrings("late", kept[0].content);
+    try std.testing.expectEqualStrings("done", kept[1].content);
+    // View validates: bundle dropped as a unit, no stray tool rows.
+    try protocol_history.validateViewBody(v.messages);
+}
+
+// ── chat-state-prune-001: dedup + rewind integration ────────────────────────
+
+test "chat-state-prune: dedup rescues a duplicate-result view deterministically" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const calls = [_]message.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("ask"),
+        .assistantToolCalls("", &calls),
+        .toolResult("c1", "out-1"),
+        .toolResult("c1", "out-2"), // duplicate result row
+        .user("done"),
+    };
+    // Pre-dedup this view fails closed at validateBodyHistory (top-level tool
+    // row after the bundle); the combined repair+dedup pre-gate rescues it
+    // deterministically (keep-last, view-only).
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 0,
+        .max_chars = 0,
+        .min_tail_messages = 0,
+    }, .{ .system = "base" });
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    const hist = v.messages[hist_i..];
+    try std.testing.expectEqual(@as(usize, 4), hist.len);
+    try std.testing.expect(hist[2].role == .tool);
+    try std.testing.expectEqualStrings("out-2", hist[2].content);
+    try protocol_history.validateViewBody(v.messages);
+}
+
+test "chat-state-prune: incomplete bundles still InvalidContext after dedup" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const calls = [_]message.ToolCall{
+        .{ .id = "a1", .name = "list_dir", .arguments = "{}" },
+        .{ .id = "a2", .name = "read_file", .arguments = "{}" },
+    };
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u"),
+        .assistantToolCalls("", &calls),
+        .toolResult("a1", "only-one"),
+    };
+    // Dedup never invents content: a missing result stays fail-closed.
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &full, .{}, .{}));
+}
+
+test "chat-state-prune: cross-carrier tool_call_id reuse is legal end-to-end" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const calls = [_]message.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u0"),
+        .assistantToolCalls("", &calls),
+        .toolResult("c1", "out-1"),
+        .user("u1"),
+        .assistantToolCalls("", &calls),
+        .toolResult("c1", "out-2"), // carrier 2 reuses c1 from carrier 1
+        .user("u2"),
+    };
+    // Dedup is carrier-scoped: a global seen-set would have collapsed the
+    // second c1; both bundles must survive and validate.
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 0,
+        .max_chars = 0,
+        .min_tail_messages = 0,
+    }, .{ .system = "base" });
+    var hist_i: usize = 0;
+    while (hist_i < v.messages.len and v.messages[hist_i].role == .system) : (hist_i += 1) {}
+    const hist = v.messages[hist_i..];
+    try std.testing.expectEqual(@as(usize, 7), hist.len);
+    try std.testing.expectEqualStrings("out-1", hist[2].content);
+    try std.testing.expectEqualStrings("out-2", hist[5].content);
+    try protocol_history.validateViewBody(v.messages);
+}
+
+test "chat-state-prune: interleaved within-run repeats still InvalidContext" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const calls = [_]message.ToolCall{
+        .{ .id = "c1", .name = "list_dir", .arguments = "{}" },
+        .{ .id = "c2", .name = "read_file", .arguments = "{}" },
+    };
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("u"),
+        .assistantToolCalls("", &calls),
+        .toolResult("c1", "a"),
+        .toolResult("c2", "b"),
+        .toolResult("c1", "c"), // interleaved repeat: keep-last leaves r(c2), r(c1)
+        .user("done"),
+    };
+    // Dedup does NOT rescue interleaved repeats: after keep-last the result
+    // order no longer matches the call list, so the gate still fails closed.
+    try std.testing.expectError(error.InvalidContext, viewForModel(std.testing.io, arena, &full, .{}, .{}));
+}
+
+// ── compaction-llm-001: summarizer seam fixtures ────────────────────────────
+
+const LlmFake = struct {
+    calls: u32 = 0,
+    results: []const SummaryResult,
+    last_request: ?SummaryRequest = null,
+
+    fn summarize(ptr: *anyopaque, request: SummaryRequest) SummaryResult {
+        const self: *@This() = @ptrCast(@alignCast(ptr));
+        self.calls += 1;
+        self.last_request = request;
+        const idx = @min(self.calls - 1, self.results.len - 1);
+        return self.results[idx];
+    }
+};
+
+const llm_fake_vtable = CompactionSummarizerVTable{ .summarize = LlmFake.summarize };
+
+fn llmSeam(fake: *LlmFake) CompactionSummarizer {
+    return .{ .ptr = fake, .vtable = &llm_fake_vtable };
+}
+
+/// 719 bytes / 660 visible chars — non-degenerate and under the 800 cap, so it
+/// passes through cleaning, degenerate checks, and budget clamps unchanged.
+const llm_healthy = ("hello world\n" ** 59) ++ "hello world";
+
+fn llmFixture() struct { full: [9]message.Message } {
+    return .{ .full = [_]message.Message{
+        .system("sys"),
+        .user("u1"),
+        .assistantText("a1"),
+        .user("u2"),
+        .assistantText("a2"),
+        .user("u3"),
+        .assistantText("a3"),
+        .user("now"),
+        .assistantText("here"),
+    } };
+}
+
+test "compaction-llm: success path uses LLM text in event + session layer" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expectEqualStrings(llm_healthy, v.compaction.?.summary);
+    try std.testing.expectEqual(@as(u32, 1), fake.calls);
+    // The session layer in the final view carries the LLM text.
+    var saw_session = false;
+    for (v.messages) |m| {
+        if (m.role == .system and std.mem.indexOf(u8, m.content, llm_healthy) != null) saw_session = true;
+    }
+    try std.testing.expect(saw_session);
+}
+
+test "compaction-llm: deterministic error aborts to heuristic byte-identical" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{.{ .err = .{ .kind = .deterministic, .message = "auth" } }} };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+
+    // Immediate abort (no retries), heuristic summary used.
+    try std.testing.expectEqual(@as(u32, 1), fake.calls);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "compaction") != null);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, llm_healthy) == null);
+
+    // Fallback identity: byte-identical to the no-summarizer run.
+    const v0 = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+    }, .{ .system = "base" });
+    try std.testing.expectEqual(v0.compaction.?.dropped, v.compaction.?.dropped);
+    try std.testing.expectEqualStrings(v0.compaction.?.summary, v.compaction.?.summary);
+}
+
+test "compaction-llm: context_overflow aborts to heuristic immediately" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{.{ .err = .{ .kind = .context_overflow, .message = "ctx" } }} };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+    try std.testing.expectEqual(@as(u32, 1), fake.calls);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "compaction") != null);
+}
+
+test "compaction-llm: transient x3 falls back to heuristic" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{
+        .{ .err = .{ .kind = .transient, .message = "net" } },
+        .{ .err = .{ .kind = .transient, .message = "net" } },
+        .{ .err = .{ .kind = .transient, .message = "net" } },
+    } };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+    try std.testing.expectEqual(@as(u32, 3), fake.calls);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "compaction") != null);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, llm_healthy) == null);
+}
+
+test "compaction-llm: degenerate x3 falls back to heuristic" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{
+        .{ .ok = .{ .text = "tiny" } },
+        .{ .ok = .{ .text = "tiny" } },
+        .{ .ok = .{ .text = "tiny" } },
+    } };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+    try std.testing.expectEqual(@as(u32, 3), fake.calls);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "compaction") != null);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, llm_healthy) == null);
+}
+
+test "compaction-llm: success after 2 transient retries uses LLM text" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{
+        .{ .err = .{ .kind = .transient, .message = "net" } },
+        .{ .err = .{ .kind = .transient, .message = "net" } },
+        .{ .ok = .{ .text = llm_healthy } },
+    } };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+    try std.testing.expectEqual(@as(u32, 3), fake.calls);
+    try std.testing.expectEqualStrings(llm_healthy, v.compaction.?.summary);
+}
+
+test "compaction-llm: INITIAL prompt without prior; UPDATE with layers.session prior" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    const opts = Options{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+    };
+
+    // INITIAL: no prior session layer.
+    var fake0 = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    _ = try viewForModel(std.testing.io, arena, &f.full, .{ .summarizer = llmSeam(&fake0), .max_tail_messages = opts.max_tail_messages, .max_chars = opts.max_chars, .min_tail_messages = opts.min_tail_messages }, .{ .system = "base" });
+    const req0 = fake0.last_request.?;
+    try std.testing.expect(std.mem.indexOf(u8, req0.prompt, "<conversation>\n[User]: u1") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req0.prompt, "## Goal") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req0.prompt, "<previous-summary>") == null);
+    try std.testing.expectEqualStrings(session_item.summarization_system_prompt, req0.system);
+    // max_tokens = min(0.8 * reserve, provider_max): unlimited budget (max_chars
+    // 0, max_tokens 0) → capped at provider_max 256.
+    try std.testing.expectEqual(@as(u32, 256), req0.max_tokens);
+
+    // UPDATE: prior summary from layers.session is embedded in tags.
+    var fake1 = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    _ = try viewForModel(std.testing.io, arena, &f.full, .{ .summarizer = llmSeam(&fake1), .max_tail_messages = opts.max_tail_messages, .max_chars = opts.max_chars, .min_tail_messages = opts.min_tail_messages }, .{ .system = "base", .session = "PRIOR-LLM-SUMMARY" });
+    const req1 = fake1.last_request.?;
+    try std.testing.expect(std.mem.indexOf(u8, req1.prompt, "<previous-summary>\nPRIOR-LLM-SUMMARY\n</previous-summary>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, req1.prompt, "PRESERVE all existing information from the previous summary") != null);
+    try std.testing.expectEqualStrings(session_item.summarization_system_prompt, req1.system);
+
+    // max_tokens respects an explicit small token budget: 0.8 * 315 = 252
+    // (below the 256 cap; 4 * 252 = 1008 >= 500 so the skip guard passes).
+    var fake2 = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    _ = try viewForModel(std.testing.io, arena, &f.full, .{ .summarizer = llmSeam(&fake2), .max_tail_messages = opts.max_tail_messages, .max_chars = 0, .max_tokens = 315, .min_tail_messages = opts.min_tail_messages }, .{ .system = "base" });
+    try std.testing.expectEqual(@as(u32, 252), fake2.last_request.?.max_tokens);
+}
+
+test "compaction-llm: single LLM call after fixed-point convergence" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    // Char pressure forces the fixed-point loop past the first iteration; the
+    // LLM is consulted exactly once, over the final omitted set.
+    const pad = "X" ** 80;
+    const full = [_]message.Message{
+        .system("sys"),
+        .user("early-1 " ++ pad),
+        .assistantText("early-a1 " ++ pad),
+        .user("early-2 " ++ pad),
+        .assistantText("early-a2 " ++ pad),
+        .user("mid-1 " ++ pad),
+        .assistantText("mid-a1 " ++ pad),
+        .user("late-u"),
+        .assistantText("late-a"),
+    };
+    var fake = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    // max_tokens 1000 keeps the skip guard away (4 * min(0.8*1000, 256) =
+    // 1024 >= 500); max_chars 420 still forces the fixed-point loop.
+    const v = try viewForModel(std.testing.io, arena, &full, .{
+        .max_tail_messages = 0,
+        .max_chars = 420,
+        .max_tokens = 1000,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base-system" });
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expectEqual(@as(u32, 1), fake.calls);
+    try std.testing.expectEqualStrings(llm_healthy, v.compaction.?.summary);
+    // Final omitted set = the event's dropped prefix (heuristic convergence).
+    try std.testing.expect(v.compaction.?.dropped > 2);
+}
+
+test "compaction-llm: LLM text routed through budget clamp and UTF-8 sanitize" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    // 5000-char text with an invalid trailing byte; 100-char summary budget.
+    var raw: [5000]u8 = undefined;
+    @memset(&raw, 'a');
+    raw[4999] = 0xFF;
+    var fake = LlmFake{ .results = &.{.{ .ok = .{ .text = &raw } }} };
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summary_max_chars = 100,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+    const sum = v.compaction.?.summary;
+    try std.testing.expect(sum.len <= 100);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
+    // Clamped to exactly the 100-byte ASCII prefix (before the invalid byte).
+    try std.testing.expectEqual(@as(usize, 100), sum.len);
+    try std.testing.expect(std.mem.eql(u8, sum, "a" ** 100));
+}
+
+test "compaction-llm: skip guard avoids summarizer on tiny token budget" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var fake = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    // max_tokens 40 → request max_tokens = min(0.8*40, 256) = 32 →
+    // 4 * 32 = 128 < 500 → skip guard fires: summarizer never called.
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .max_tokens = 40,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base" });
+    try std.testing.expectEqual(@as(u32, 0), fake.calls);
+    // Compaction still happened; heuristic summary stands (dropped header).
+    try std.testing.expect(v.compaction != null);
+    try std.testing.expect(std.mem.indexOf(u8, v.compaction.?.summary, "[compaction]") != null);
+}
+
+test "compaction-llm: LLM-path allocation failure is absorbed (heuristic stands)" {
+    const gpa = std.testing.allocator;
+    const f = llmFixture();
+    var saw_llm_called: u32 = 0;
+    var saw_main_oom: u32 = 0;
+    var idx: usize = 0;
+    while (idx < 96) : (idx += 1) {
+        var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = idx });
+        var arena_impl = std.heap.ArenaAllocator.init(failing.allocator());
+        defer arena_impl.deinit();
+        const arena = arena_impl.allocator();
+        var fake = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+        const result = viewForModel(std.testing.io, arena, &f.full, .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 2,
+            .summarizer = llmSeam(&fake),
+        }, .{ .system = "base" });
+        if (result) |v| {
+            // Success: the view must always be complete (heuristic summary
+            // stands even when the LLM replacement point absorbed an OOM).
+            try std.testing.expect(v.compaction != null);
+            if (fake.calls > 0) saw_llm_called += 1;
+        } else |err| {
+            // Main-path OOM must be induced, never masked.
+            try std.testing.expect(err == error.OutOfMemory);
+            try std.testing.expect(failing.has_induced_failure);
+            saw_main_oom += 1;
+        }
+    }
+    // The injection was effective (main-path OOMs observed) and the LLM
+    // path was actually exercised on successful runs (catch not dead code).
+    try std.testing.expect(saw_main_oom > 0);
+    try std.testing.expect(saw_llm_called > 0);
+}
+
+test "compaction-llm: lineage record survives composition at realistic sizes" {
+    var arena_impl: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    const f = llmFixture();
+    var prior: [700]u8 = undefined;
+    @memset(&prior, 'p');
+    var fake = LlmFake{ .results = &.{.{ .ok = .{ .text = llm_healthy } }} };
+    // Large LLM text (719B) + 700B prior under the 800B cap: the lineage
+    // reservation must keep the truncated lineage record present.
+    const v = try viewForModel(std.testing.io, arena, &f.full, .{
+        .max_tail_messages = 2,
+        .max_chars = 0,
+        .min_tail_messages = 2,
+        .summarizer = llmSeam(&fake),
+    }, .{ .system = "base", .session = &prior });
+    try std.testing.expect(v.compaction != null);
+    const sum = v.compaction.?.summary;
+    try std.testing.expect(sum.len <= summary_cap);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(sum));
+    // Lineage chain preserved (truncated record with digest).
+    try std.testing.expect(std.mem.indexOf(u8, sum, "prior_bytes=700") != null);
+    try std.testing.expect(std.mem.indexOf(u8, sum, lineage_truncated_marker) != null);
 }

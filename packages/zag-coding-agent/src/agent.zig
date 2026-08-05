@@ -10,6 +10,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
+const ztypes = @import("zag-types");
 const core = @import("zag-agent-core");
 const ai = @import("zag-ai");
 const toolset_mod = @import("toolset.zig");
@@ -922,6 +923,7 @@ fn bridgeContextView(
     const session = bridge.session;
     const layers = session.layers();
     const v = context_mod.viewForModel(
+        a.io,
         scratch,
         transcript_items,
         a.options.context,
@@ -931,6 +933,72 @@ fn bridgeContextView(
         error.InvalidContext => return error.InvalidContext,
     };
     return .{ .messages = v.messages, .compaction = v.compaction };
+}
+
+// ── compaction-llm-001: product CompactionSummarizer over the provider ──────
+
+/// Bounded deadline for one summarizer provider call (ms). No new config key;
+/// the existing `provider_timeout_ms` caps it when set.
+const summary_call_deadline_ms: u64 = 60_000;
+
+const agent_summarizer_vtable: ztypes.CompactionSummarizerVTable = .{
+    .summarize = agentSummarize,
+};
+
+/// Product `CompactionSummarizer` over the existing provider (compaction-llm-001).
+/// `agent` is borrowed and must outlive every `reply`; install the result in
+/// `options.context.summarizer` before `Agent.init`:
+/// ```zig
+/// var agent: Agent = undefined;
+/// agent = try Agent.init(gpa, io, provider, .{
+///     .context = .{ .summarizer = compactionSummarizer(&agent) },
+/// });
+/// ```
+pub fn compactionSummarizer(agent: *Agent) ztypes.CompactionSummarizer {
+    return .{ .ptr = agent, .vtable = &agent_summarizer_vtable };
+}
+
+/// One summary provider call: single system + user message, bounded
+/// `RequestControl` deadline, errors mapped to `SummaryErrorKind`. The
+/// response text is allocated from the Agent's per-call scratch arena and is
+/// valid until the summarizer's next call (the retry ladder copies it
+/// immediately).
+fn agentSummarize(ptr: *anyopaque, request: ztypes.SummaryRequest) ztypes.SummaryResult {
+    const a: *Agent = @ptrCast(@alignCast(ptr));
+    // Previous responses were already consumed; start each call clean.
+    _ = a.summary_scratch.reset(.retain_capacity);
+    const arena = a.summary_scratch.allocator();
+
+    const messages = [_]message.Message{
+        .{ .role = .system, .content = request.system },
+        .{ .role = .user, .content = request.prompt },
+    };
+
+    const timeout_ms = if (a.options.provider_timeout_ms) |pt|
+        @min(pt, summary_call_deadline_ms)
+    else
+        summary_call_deadline_ms;
+    var control = ztypes.RequestControl.withTimeoutMs(ztypes.monoNowNs(), timeout_ms);
+    control = control.withCancel(&a.cancel);
+
+    const turn = a.provider.chat(arena, &messages, &.{}, control) catch |err| {
+        return .{ .err = .{ .kind = mapSummaryErrorKind(err), .message = @errorName(err) } };
+    };
+    return .{ .ok = .{ .text = turn.content } };
+}
+
+/// Map provider `ChatError` to `SummaryErrorKind` (binding §5): timeout →
+/// `.timeout`; auth/schema/capability/cancel → `.deterministic` (never
+/// retried); rate-limit/network/server → `.transient`. `request.max_tokens`
+/// is the requested output ceiling; the wire applies its own configured
+/// `chat_options.max_tokens` as the provider cap (the type-erased Provider
+/// port has no per-call max_tokens parameter).
+fn mapSummaryErrorKind(err: provider_mod.ChatError) ztypes.SummaryErrorKind {
+    return switch (err) {
+        error.Timeout => .timeout,
+        error.RateLimited, error.HttpFailed, error.StreamFailed, error.WriteFailed, error.ServerError, error.Unexpected, error.BadStatus => .transient,
+        error.AuthenticationFailed, error.PermissionDenied, error.InvalidResponse, error.BadRequest, error.NotSupported, error.UnsupportedControl, error.Cancelled, error.OutOfMemory => .deterministic,
+    };
 }
 
 // ── LoopEventSink adapter: the existing per-event fan-out (Observer + Trace) ─
@@ -1109,6 +1177,10 @@ pub const Agent = struct {
     tools_storage: toolset_mod.Phase1Storage,
     /// Heap-stable default `apply_hunk` state (B7). Outlives all reply/Tool copies.
     apply_hunk_state: *edit_tools.ApplyHunkState,
+    /// Heap-stable scratch arena for LLM compaction-summary responses
+    /// (compaction-llm-001). Reset before each summarizer call; the response
+    /// text only needs to live until the retry ladder copies it.
+    summary_scratch: *std.heap.ArenaAllocator,
     options: Options,
     stdin_prompter: permissions.StdinPrompter,
     permission_gate: permissions.Gate,
@@ -1154,12 +1226,19 @@ pub const Agent = struct {
             .verifier = options.post_edit_verifier,
         };
 
+        // compaction-llm-001: per-Agent scratch for summarizer provider
+        // responses (reset per summarize call; deinit'd with the Agent).
+        const summary_scratch = try gpa.create(std.heap.ArenaAllocator);
+        errdefer gpa.destroy(summary_scratch);
+        summary_scratch.* = .init(gpa);
+
         var self: Agent = .{
             .gpa = gpa,
             .io = io,
             .provider = provider,
             .tools_storage = .init(apply_state),
             .apply_hunk_state = apply_state,
+            .summary_scratch = summary_scratch,
             .options = options,
             .stdin_prompter = .{ .io = io },
             .permission_gate = .yolo(),
@@ -1187,6 +1266,8 @@ pub const Agent = struct {
         }
         self.owned_redactor.deinit();
         self.gpa.destroy(self.apply_hunk_state);
+        self.summary_scratch.deinit();
+        self.gpa.destroy(self.summary_scratch);
         self.* = undefined;
     }
 
@@ -3303,6 +3384,7 @@ test "h-context: noteCompaction OOM leaves gen and summary unchanged" {
 // leaked; these are file-local test scaffolding.
 
 const LayeredCtx = struct {
+    io: std.Io,
     layers: context_mod.Layers,
     opts: context_mod.Options,
 };
@@ -3316,7 +3398,7 @@ fn layeredContextView(
     transcript_items: []const message.Message,
 ) context_view_mod.ContextViewError!context_view_mod.View {
     const ctx: *LayeredCtx = @ptrCast(@alignCast(ptr.?));
-    const v = context_mod.viewForModel(scratch, transcript_items, ctx.opts, ctx.layers) catch |err| switch (err) {
+    const v = context_mod.viewForModel(ctx.io, scratch, transcript_items, ctx.opts, ctx.layers) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
         error.InvalidContext => return error.InvalidContext,
     };
@@ -3395,6 +3477,7 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
     const oom_sink_vtable: loop_event_mod.LoopEventSinkVTable = .{ .emit = OomEventSink.emit };
 
     var ctx_state: LayeredCtx = .{
+        .io = io,
         .layers = .{ .system = "base" },
         .opts = .{
             .max_tail_messages = 2,
@@ -3429,6 +3512,154 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
     // Provider must not have been called after sink failure.
     // (Mock would have returned text; no assistant event expected from loop.)
     try std.testing.expectEqual(@as(u32, 0), tr.countKind("assistant"));
+}
+
+test "compaction-llm: product summarizer feeds LLM text into session meta + trace" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const healthy = ("hello world\n" ** 59) ++ "hello world";
+
+    const Mock = struct {
+        calls: u32 = 0,
+        healthy: []const u8,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            // Summarizer call: system prompt + user message with <conversation>.
+            if (messages.len == 2 and messages[0].role == .system and
+                std.mem.indexOf(u8, messages[1].content, "<conversation>") != null)
+            {
+                return .{
+                    .content = try arena.dupe(u8, self.healthy),
+                    .tool_calls = &.{},
+                    .finish_reason = "stop",
+                };
+            }
+            return .{ .content = try arena.dupe(u8, "turn-ok"), .tool_calls = &.{}, .finish_reason = "stop" };
+        }
+    };
+    var mock: Mock = .{ .healthy = healthy };
+
+    // The summarizer seam borrows the Agent (stable address after init).
+    var agent: Agent = undefined;
+    agent = try Agent.init(gpa, io, .{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+        .context = .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 2,
+            .summarizer = compactionSummarizer(&agent),
+        },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    // Long transcript: the count cap (2) forces compaction on this reply.
+    for (0..10) |_| {
+        try session.transcript.appendUser("u");
+        try session.transcript.appendAssistantTurn(.{
+            .content = "a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+    }
+
+    const result = try agent.reply(&session, "final");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    // One summarizer call + one turn call.
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+
+    // Session meta (header gen 1) carries the LLM summary.
+    try std.testing.expectEqual(@as(u32, 1), session.compaction_gen);
+    const summary = session.compaction_summary orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(healthy, summary);
+
+    // Trace compaction line carries the same LLM text (newlines are
+    // JSON-escaped, so assert on a newline-free substring).
+    const tr = agent.trace.?;
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("compaction"));
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "hello world") != null);
+}
+
+test "compaction-llm: product summarizer provider failure falls back to heuristic" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const Mock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            messages: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (messages.len == 2 and messages[0].role == .system and
+                std.mem.indexOf(u8, messages[1].content, "<conversation>") != null)
+            {
+                return error.AuthenticationFailed;
+            }
+            return .{ .content = try arena.dupe(u8, "turn-ok"), .tool_calls = &.{}, .finish_reason = "stop" };
+        }
+    };
+    var mock: Mock = .{};
+
+    var agent: Agent = undefined;
+    agent = try Agent.init(gpa, io, .{ .ptr = &mock, .vtable = &.{ .chat = Mock.chat } }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 0,
+        .context = .{
+            .max_tail_messages = 2,
+            .max_chars = 0,
+            .min_tail_messages = 2,
+            .summarizer = compactionSummarizer(&agent),
+        },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+    for (0..10) |_| {
+        try session.transcript.appendUser("u");
+        try session.transcript.appendAssistantTurn(.{
+            .content = "a",
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+        });
+    }
+
+    const result = try agent.reply(&session, "final");
+    try std.testing.expectEqual(loop.StopReason.completed, result.stop_reason);
+    // Deterministic auth failure → 1 summarizer call, heuristic fallback.
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+    const summary = session.compaction_summary orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, summary, "compaction") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "hello world") == null);
+    const tr = agent.trace.?;
+    try std.testing.expectEqual(@as(u32, 1), tr.countKind("compaction"));
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "hello world") == null);
 }
 
 test "h-context: Agent.reply malformed tools invalid_context provider=0" {

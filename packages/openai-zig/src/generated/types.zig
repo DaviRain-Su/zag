@@ -3178,6 +3178,7 @@ pub const ChatCompletionRequestUserMessageContentPart = std.json.Value;
 
 pub const ChatCompletionResponseMessage = struct {
     content: ?[]const u8 = null,
+    reasoning_content: ?[]const u8 = null,
     refusal: ?std.json.Value = null,
     tool_calls: ?ChatCompletionMessageToolCalls = null,
     annotations: ?[]const struct {

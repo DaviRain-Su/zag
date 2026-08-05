@@ -189,6 +189,57 @@ pub const RequestControl = struct {
     }
 };
 
+// ── compaction-llm-001: LLM compaction-summary seam (L0) ─────────────────────
+//
+// The summarizer seam types live here (L0) so both `zag-agent-core` and
+// `zag-coding-agent` can reference them without a Core → product import
+// (D-011). The concrete provider impl lives in the product layer
+// (`zag-coding-agent` `agent.zig`); Core's `session_item.summarizeWithRetry`
+// only consumes the port.
+
+/// Outcome category of a summarizer failure (compaction-llm-001).
+/// - `.timeout` / `.transient` → the retry ladder retries (bounded attempts).
+/// - `.deterministic` / `.context_overflow` → abort the ladder immediately;
+///   the caller falls back to the heuristic summary.
+pub const SummaryErrorKind = enum { timeout, deterministic, transient, context_overflow };
+
+/// One LLM compaction-summary request (compaction-llm-001).
+pub const SummaryRequest = struct {
+    /// Assembled single user message: the serialized conversation wrapped in
+    /// `<conversation>` tags plus the INITIAL/UPDATE summarization prompt.
+    prompt: []const u8,
+    /// Summarization system prompt (pi `SUMMARIZATION_SYSTEM_PROMPT`).
+    system: []const u8,
+    /// Requested output ceiling: `min(0.8 * reserve_tokens, provider_max)`.
+    max_tokens: u32,
+};
+
+/// Result of one summarizer call (compaction-llm-001).
+/// `ok.text` is borrowed from the summarizer and must remain valid until the
+/// summarizer's next call (or until the caller discards the result).
+pub const SummaryResult = union(enum) {
+    ok: struct { text: []const u8 },
+    err: struct { kind: SummaryErrorKind, message: []const u8 },
+};
+
+/// Summarizer vtable (compaction-llm-001). `ptr` borrows the impl context
+/// for the seam's lifetime.
+pub const CompactionSummarizerVTable = struct {
+    summarize: *const fn (ptr: *anyopaque, request: SummaryRequest) SummaryResult,
+};
+
+/// Optional LLM compaction-summarizer seam (compaction-llm-001). Absent (or
+/// any failure after retries) → the heuristic summary path, byte-identical
+/// to pre-LLM behavior.
+pub const CompactionSummarizer = struct {
+    ptr: *anyopaque,
+    vtable: *const CompactionSummarizerVTable,
+
+    pub fn summarize(self: CompactionSummarizer, request: SummaryRequest) SummaryResult {
+        return self.vtable.summarize(self.ptr, request);
+    }
+};
+
 pub const Role = enum {
     system,
     user,
@@ -229,6 +280,15 @@ pub const Message = struct {
     content_parts: ?[]const ContentPart = null,
     tool_calls: ?[]const ToolCall = null,
     tool_call_id: ?[]const u8 = null,
+    /// Model thinking carried from the wire into the transcript; never replayed
+    /// to a provider (user-visible audit artifact only).
+    reasoning: ?[]const u8 = null,
+    /// Row was runtime-injected (interjection, auto-continue, task-completed,
+    /// system-reminder), not typed by the user.
+    synthetic: bool = false,
+    /// Monotone prompt-turn index this row belongs to; null = pre-existing /
+    /// preamble / unknown.
+    prompt_index: ?u32 = null,
 
     pub fn user(content: []const u8) Message {
         return .{ .role = .user, .content = content };
@@ -264,9 +324,50 @@ pub const Message = struct {
                 }
             }
         }
+        if (self.reasoning) |r| n += r.len;
         return n;
     }
+
+    /// Approximate token weight for context budgeting (truncating `len/4` per
+    /// string, fixed `IMAGE_TOKENS` per image).
+    pub fn estimateTokens(self: Message) usize {
+        return estimateMessageTokens(&self);
+    }
 };
+
+/// Fixed token estimate per image content part (zag-defined v1).
+pub const IMAGE_TOKENS: usize = 765;
+
+/// Truncating byte→token estimate: `len / 4`.
+///
+/// Explicit divergence from the historical `(len + 3) / 4` round-up. CJK bytes
+/// count as bytes (no Unicode decoding); 0/1/2/3 bytes → 0 tokens, 4-7 → 1.
+pub fn estimateTokens(len: usize) usize {
+    return len / 4;
+}
+
+/// Sum token estimate over one message: content, content_parts (text →
+/// `estimateTokens`, image → `IMAGE_TOKENS`), tool_calls (id/name/arguments),
+/// tool_call_id, and reasoning.
+pub fn estimateMessageTokens(m: *const Message) usize {
+    var n: usize = estimateTokens(m.content.len);
+    if (m.content_parts) |parts| {
+        for (parts) |p| {
+            switch (p) {
+                .text => |t| n += estimateTokens(t.len),
+                .image_url => n += IMAGE_TOKENS,
+            }
+        }
+    }
+    if (m.tool_calls) |calls| {
+        for (calls) |c| {
+            n += estimateTokens(c.id.len) + estimateTokens(c.name.len) + estimateTokens(c.arguments.len);
+        }
+    }
+    if (m.tool_call_id) |id| n += estimateTokens(id.len);
+    if (m.reasoning) |r| n += estimateTokens(r.len);
+    return n;
+}
 
 /// Options for embed (vendors ignore unsupported fields).
 pub const EmbedOptions = struct {
@@ -316,6 +417,9 @@ pub const AssistantTurn = struct {
     tool_calls: []const ToolCall = &.{},
     finish_reason: []const u8 = "",
     usage: ?Usage = null,
+    /// Adapter-captured thinking for this assistant turn (OpenAI
+    /// `reasoning_content`, Anthropic `thinking`/`redacted_thinking`).
+    reasoning: ?[]const u8 = null,
 
     pub fn wantsTools(self: AssistantTurn) bool {
         return self.tool_calls.len > 0;
@@ -594,6 +698,77 @@ test "monoNowNs is nondecreasing" {
     try std.testing.expect(b >= a);
 }
 
+test "estimateTokens truncates len/4 (0/3/4/5 byte edges)" {
+    try std.testing.expectEqual(@as(usize, 0), estimateTokens(0));
+    try std.testing.expectEqual(@as(usize, 0), estimateTokens(3));
+    try std.testing.expectEqual(@as(usize, 1), estimateTokens(4));
+    try std.testing.expectEqual(@as(usize, 1), estimateTokens(5));
+    try std.testing.expectEqual(@as(usize, 2), estimateTokens(8));
+    try std.testing.expectEqual(@as(usize, 25), estimateTokens(100));
+}
+
+test "estimateTokens counts CJK bytes as bytes" {
+    // 3 CJK chars × 3 bytes = 9 bytes → 9/4 = 2 (truncating, not rounding up).
+    try std.testing.expectEqual(@as(usize, 2), estimateTokens("你好啊".len));
+}
+
+test "estimateMessageTokens sums content, parts, tool fields, reasoning" {
+    const parts = [_]ContentPart{
+        .{ .text = "look at this" },
+        .{ .image_url = .{ .url = "https://x/i.png" } },
+    };
+    const calls = [_]ToolCall{.{
+        .id = "c1",
+        .name = "read_file",
+        .arguments = "{\"path\":\".\"}",
+    }};
+    const m = Message{
+        .role = .user,
+        .content = "",
+        .content_parts = &parts,
+    };
+    const expected_text = estimateTokens("look at this".len);
+    try std.testing.expectEqual(
+        expected_text + IMAGE_TOKENS,
+        estimateMessageTokens(&m),
+    );
+
+    const a = Message{
+        .role = .assistant,
+        .content = "using tools",
+        .tool_calls = &calls,
+        .reasoning = "think step by step",
+    };
+    const exp = estimateTokens("using tools".len) +
+        estimateTokens("c1".len) + estimateTokens("read_file".len) +
+        estimateTokens("{\"path\":\".\"}".len) +
+        estimateTokens("think step by step".len);
+    try std.testing.expectEqual(exp, estimateMessageTokens(&a));
+
+    const t = Message.toolResult("c1", "out");
+    try std.testing.expectEqual(
+        estimateTokens("c1".len) + estimateTokens("out".len),
+        estimateMessageTokens(&t),
+    );
+}
+
+test "Message.estimateTokens convenience matches module function" {
+    const m = Message{
+        .role = .assistant,
+        .content = "hello world",
+        .reasoning = "planning",
+    };
+    try std.testing.expectEqual(estimateMessageTokens(&m), m.estimateTokens());
+    try std.testing.expectEqual(@as(usize, 0), Message.user("").estimateTokens());
+}
+
+test "estimateChars counts reasoning when set" {
+    const plain = Message.assistantText("abc");
+    try std.testing.expectEqual(@as(usize, 3), plain.estimateChars());
+    const with_reasoning = Message{ .role = .assistant, .content = "abc", .reasoning = "xyzzy" };
+    try std.testing.expectEqual(@as(usize, 8), with_reasoning.estimateChars());
+}
+
 test "WorkspaceAccess accessors preserve required and defaulted path metadata" {
     const none: WorkspaceAccess = .none;
     try std.testing.expect(!none.usesPath());
@@ -611,4 +786,10 @@ test "WorkspaceAccess accessors preserve required and defaulted path metadata" {
     try std.testing.expect(defaulted.usesPath());
     try std.testing.expectEqualStrings("path", defaulted.pathField().?);
     try std.testing.expectEqualStrings(".", defaulted.defaultPath().?);
+}
+
+// Pull L0 submodule tests into the package suite — Zig analyzes
+// imported-file tests only when the import is referenced.
+test {
+    std.testing.refAllDecls(@This());
 }

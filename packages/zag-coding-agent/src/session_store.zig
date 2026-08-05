@@ -935,6 +935,11 @@ fn writeMessageRedacted(
     }.call;
 
     const content = try take(gpa, &owned, redactor, msg.content);
+    // Reasoning is user-visible thinking text: redacted exactly like content.
+    const reasoning: ?[]const u8 = if (msg.reasoning) |r|
+        try take(gpa, &owned, redactor, r)
+    else
+        null;
     // Tool IDs: structural pseudonym map (never collapse multiple IDs to one marker).
     const tool_call_id: ?[]const u8 = if (msg.tool_call_id) |id|
         mapToolId(id_map, id)
@@ -978,8 +983,17 @@ fn writeMessageRedacted(
         break :blk arr;
     } else null;
 
-    writeMessageRaw(w, msg.role, content, tool_call_id, calls_out, parts_out) catch
-        return error.OutOfMemory;
+    writeMessageRaw(
+        w,
+        msg.role,
+        content,
+        tool_call_id,
+        calls_out,
+        parts_out,
+        reasoning,
+        msg.synthetic,
+        msg.prompt_index,
+    ) catch return error.OutOfMemory;
 }
 
 fn writeMessageRaw(
@@ -989,6 +1003,9 @@ fn writeMessageRaw(
     tool_call_id: ?[]const u8,
     tool_calls: ?[]const message.ToolCall,
     content_parts: ?[]const message.ContentPart,
+    reasoning: ?[]const u8,
+    synthetic: bool,
+    prompt_index: ?u32,
 ) Io.Writer.Error!void {
     var s: std.json.Stringify = .{ .writer = w };
     try s.beginObject();
@@ -1019,6 +1036,10 @@ fn writeMessageRaw(
                     try s.endObject();
                 }
                 try s.endArray();
+            }
+            if (reasoning) |r| {
+                try s.objectField("reasoning");
+                try s.write(r);
             }
         },
         .system, .user => {
@@ -1054,6 +1075,17 @@ fn writeMessageRaw(
         },
     }
 
+    // Additive session-item fields: omitted when default (byte-stable with
+    // old sessions; schema_version stays 1).
+    if (synthetic) {
+        try s.objectField("synthetic");
+        try s.write(true);
+    }
+    if (prompt_index) |pi| {
+        try s.objectField("prompt_index");
+        try s.write(pi);
+    }
+
     try s.endObject();
     try w.writeAll("\n");
 }
@@ -1076,42 +1108,145 @@ fn appendMessageFromObject(
         break :blk "";
     };
 
+    // Additive session-item fields (missing → defaults; schema_version stays 1).
+    const synthetic = try parseSynthetic(obj);
+    const prompt_index = try parsePromptIndex(obj);
+    const reasoning = try parseReasoning(obj);
+
     switch (role) {
-        .system => try transcript.appendSystem(content),
-        .user => try transcript.appendUser(content),
+        .system, .user => {
+            if (synthetic or prompt_index != null) {
+                try appendOwned(transcript, .{
+                    .role = role,
+                    .content = content,
+                    .synthetic = synthetic,
+                    .prompt_index = prompt_index,
+                });
+            } else if (role == .system) {
+                try transcript.appendSystem(content);
+            } else {
+                try transcript.appendUser(content);
+            }
+        },
         .assistant => {
+            var calls: []message.ToolCall = &.{};
+            var calls_owned: []message.ToolCall = &.{};
+            defer if (calls_owned.len > 0) gpa.free(calls_owned);
             if (obj.get("tool_calls")) |tc| {
                 if (tc != .array) return error.InvalidSession;
-                if (tc.array.items.len == 0) {
-                    try transcript.appendAssistantTurn(.{ .content = content, .tool_calls = &.{} });
-                    return;
+                if (tc.array.items.len > 0) {
+                    const arr = gpa.alloc(message.ToolCall, tc.array.items.len) catch
+                        return error.OutOfMemory;
+                    calls_owned = arr;
+                    for (tc.array.items, 0..) |item, i| {
+                        if (item != .object) return error.InvalidSession;
+                        const id = item.object.get("id") orelse return error.InvalidSession;
+                        const name = item.object.get("name") orelse return error.InvalidSession;
+                        const args = item.object.get("arguments") orelse return error.InvalidSession;
+                        if (id != .string or name != .string or args != .string) return error.InvalidSession;
+                        arr[i] = .{
+                            .id = id.string,
+                            .name = name.string,
+                            .arguments = args.string,
+                        };
+                    }
+                    calls = arr;
                 }
-                const calls = gpa.alloc(message.ToolCall, tc.array.items.len) catch
-                    return error.OutOfMemory;
-                defer gpa.free(calls);
-                for (tc.array.items, 0..) |item, i| {
-                    if (item != .object) return error.InvalidSession;
-                    const id = item.object.get("id") orelse return error.InvalidSession;
-                    const name = item.object.get("name") orelse return error.InvalidSession;
-                    const args = item.object.get("arguments") orelse return error.InvalidSession;
-                    if (id != .string or name != .string or args != .string) return error.InvalidSession;
-                    calls[i] = .{
-                        .id = id.string,
-                        .name = name.string,
-                        .arguments = args.string,
-                    };
-                }
-                try transcript.appendAssistantTurn(.{ .content = content, .tool_calls = calls });
+            }
+
+            if (reasoning != null or synthetic or prompt_index != null) {
+                try appendOwned(transcript, .{
+                    .role = .assistant,
+                    .content = content,
+                    .tool_calls = if (calls.len > 0) calls else null,
+                    .reasoning = reasoning,
+                    .synthetic = synthetic,
+                    .prompt_index = prompt_index,
+                });
             } else {
-                try transcript.appendAssistantTurn(.{ .content = content, .tool_calls = &.{} });
+                try transcript.appendAssistantTurn(.{ .content = content, .tool_calls = calls });
             }
         },
         .tool => {
             const id_v = obj.get("tool_call_id") orelse return error.InvalidSession;
             if (id_v != .string) return error.InvalidSession;
-            try appendToolWithOwnedId(transcript, id_v.string, content);
+            if (synthetic or prompt_index != null) {
+                try appendOwned(transcript, .{
+                    .role = .tool,
+                    .content = content,
+                    .tool_call_id = id_v.string,
+                    .synthetic = synthetic,
+                    .prompt_index = prompt_index,
+                });
+            } else {
+                try appendToolWithOwnedId(transcript, id_v.string, content);
+            }
         },
     }
+}
+
+/// Append `msg` to `transcript`, duping every string field into the
+/// transcript arena (mirrors the append* helpers). `content_parts` are
+/// dropped on load per existing behavior.
+fn appendOwned(
+    transcript: *transcript_mod.Transcript,
+    msg: message.Message,
+) Error!void {
+    const content = transcript.arena.dupe(u8, msg.content) catch return error.OutOfMemory;
+    const reasoning = if (msg.reasoning) |r|
+        transcript.arena.dupe(u8, r) catch return error.OutOfMemory
+    else
+        null;
+    const tool_call_id = if (msg.tool_call_id) |id|
+        transcript.arena.dupe(u8, id) catch return error.OutOfMemory
+    else
+        null;
+    var calls: ?[]message.ToolCall = null;
+    if (msg.tool_calls) |tcs| {
+        if (tcs.len > 0) {
+            const arr = transcript.arena.alloc(message.ToolCall, tcs.len) catch
+                return error.OutOfMemory;
+            for (tcs, 0..) |c, i| {
+                arr[i] = .{
+                    .id = transcript.arena.dupe(u8, c.id) catch return error.OutOfMemory,
+                    .name = transcript.arena.dupe(u8, c.name) catch return error.OutOfMemory,
+                    .arguments = transcript.arena.dupe(u8, c.arguments) catch return error.OutOfMemory,
+                };
+            }
+            calls = arr;
+        }
+    }
+    transcript.messages.append(transcript.arena, .{
+        .role = msg.role,
+        .content = content,
+        .content_parts = null,
+        .tool_calls = calls,
+        .tool_call_id = tool_call_id,
+        .reasoning = reasoning,
+        .synthetic = msg.synthetic,
+        .prompt_index = msg.prompt_index,
+    }) catch return error.OutOfMemory;
+}
+
+fn parseSynthetic(obj: std.json.ObjectMap) Error!bool {
+    const sv = obj.get("synthetic") orelse return false;
+    if (sv != .bool) return error.InvalidSession;
+    return sv.bool;
+}
+
+fn parsePromptIndex(obj: std.json.ObjectMap) Error!?u32 {
+    const pv = obj.get("prompt_index") orelse return null;
+    if (pv != .integer) return error.InvalidSession;
+    const i = pv.integer;
+    if (i < 0 or i > std.math.maxInt(u32)) return error.InvalidSession;
+    return @intCast(i);
+}
+
+fn parseReasoning(obj: std.json.ObjectMap) Error!?[]const u8 {
+    const rv = obj.get("reasoning") orelse return null;
+    if (rv == .string) return rv.string;
+    if (rv == .null) return null;
+    return error.InvalidSession;
 }
 
 fn appendToolWithOwnedId(
@@ -1412,6 +1547,164 @@ test "Writer create/resume/save roundtrip" {
     defer writer2.deinit();
 
     try std.testing.expectEqual(@as(usize, 3), t2.items().len);
+}
+
+// ── session-item-001: reasoning / synthetic / prompt_index persistence ──────
+
+test "session-item: save/load round-trip preserves reasoning, synthetic, prompt_index" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t1 = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t1.appendSystem("sys");
+    try t1.appendUser("hello");
+    // Assistant turn with reasoning + tool calls.
+    const calls = [_]message.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    try t1.appendAssistantTurn(.{
+        .content = "calling",
+        .tool_calls = &calls,
+        .reasoning = "hidden think",
+    });
+    // Synthetic user row with prompt_index (direct append; arena-owned strings).
+    const synth_content = try t1.arena.dupe(u8, "interjection");
+    try t1.messages.append(t1.arena, .{
+        .role = .user,
+        .content = synth_content,
+        .synthetic = true,
+        .prompt_index = 1,
+    });
+    // Tool row with prompt_index.
+    try t1.appendToolResult("c1", "dir-out");
+    const last = t1.items().len - 1;
+    t1.messages.items[last].prompt_index = 1;
+
+    var writer = try createNewUnredacted(gpa, io, tmp.dir, "s.jsonl", t1.items(), .{});
+    try writer.saveUnredacted(t1.items(), .{});
+    writer.deinit();
+
+    var arena2: std.heap.ArenaAllocator = .init(gpa);
+    defer arena2.deinit();
+    var t2 = transcript_mod.Transcript.init(arena2.allocator());
+    var writer2 = try resumeExisting(gpa, io, tmp.dir, "s.jsonl", &t2, null);
+    defer writer2.deinit();
+
+    try std.testing.expectEqual(t1.items().len, t2.items().len);
+
+    const a = t2.items()[2];
+    try std.testing.expectEqualStrings("calling", a.content);
+    try std.testing.expectEqualStrings("hidden think", a.reasoning.?);
+    try std.testing.expectEqualStrings("c1", a.tool_calls.?[0].id);
+    try std.testing.expect(!a.synthetic);
+
+    const s = t2.items()[3];
+    try std.testing.expectEqualStrings("interjection", s.content);
+    try std.testing.expect(s.synthetic);
+    try std.testing.expectEqual(@as(?u32, 1), s.prompt_index);
+    try std.testing.expect(s.reasoning == null);
+
+    const tr = t2.items()[4];
+    try std.testing.expect(tr.role == .tool);
+    try std.testing.expectEqualStrings("dir-out", tr.content);
+    try std.testing.expectEqual(@as(?u32, 1), tr.prompt_index);
+
+    // Rows without the new fields stay default.
+    try std.testing.expect(t2.items()[1].reasoning == null);
+    try std.testing.expect(!t2.items()[1].synthetic);
+    try std.testing.expect(t2.items()[1].prompt_index == null);
+}
+
+test "session-item: legacy rows without new fields load as null/false" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const raw =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"old-u"}
+        \\{"role":"assistant","content":"old-a","tool_calls":[{"id":"c1","name":"list_dir","arguments":"{}"}]}
+        \\{"role":"tool","tool_call_id":"c1","content":"out"}
+        \\
+    ;
+    _ = try parseSessionBytes(gpa, &t, raw);
+    try std.testing.expectEqual(@as(usize, 3), t.items().len);
+    for (t.items()) |m| {
+        try std.testing.expect(m.reasoning == null);
+        try std.testing.expect(!m.synthetic);
+        try std.testing.expect(m.prompt_index == null);
+    }
+    // content_parts behavior unchanged (absent → null; parts dropped on load).
+    try std.testing.expectEqualStrings("old-u", t.items()[0].content);
+    try std.testing.expectEqualStrings("c1", t.items()[1].tool_calls.?[0].id);
+    try std.testing.expectEqualStrings("out", t.items()[2].content);
+}
+
+test "session-item: invalid new-field types are rejected fail-closed" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    const bad_synthetic =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"u","synthetic":"yes"}
+        \\
+    ;
+    try std.testing.expectError(error.InvalidSession, parseSessionBytes(gpa, &t, bad_synthetic));
+
+    var t2 = transcript_mod.Transcript.init(arena_impl.allocator());
+    const bad_prompt_index =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"user","content":"u","prompt_index":1.5}
+        \\
+    ;
+    try std.testing.expectError(error.InvalidSession, parseSessionBytes(gpa, &t2, bad_prompt_index));
+
+    var t3 = transcript_mod.Transcript.init(arena_impl.allocator());
+    const bad_reasoning =
+        \\{"schema_version":1,"type":"zag_session"}
+        \\{"role":"assistant","content":"a","reasoning":[1,2]}
+        \\
+    ;
+    try std.testing.expectError(error.InvalidSession, parseSessionBytes(gpa, &t3, bad_reasoning));
+}
+
+test "session-item: reasoning is redacted like content on save" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = redact_mod.testing.fake_api_key;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var r = try redact_mod.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var t = transcript_mod.Transcript.init(arena_impl.allocator());
+    try t.appendUser("hello");
+    try t.appendAssistantTurn(.{
+        .content = "hi",
+        .tool_calls = &.{},
+        .reasoning = "the key is " ++ secret ++ " end",
+    });
+
+    var writer = try createNewWithRedactor(gpa, io, tmp.dir, "r.jsonl", t.items(), .{}, &r);
+    try writer.save(t.items(), .{}, &r);
+    writer.deinit();
+
+    const bytes = try tmp.dir.readFileAlloc(io, "r.jsonl", gpa, .limited(1024 * 1024));
+    defer gpa.free(bytes);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, redact_mod.marker) != null);
+    // In-memory reasoning untouched (redaction never mutates the transcript).
+    try std.testing.expect(std.mem.indexOf(u8, t.items()[1].reasoning.?, secret) != null);
 }
 
 test "session path rejects absolute and escape" {

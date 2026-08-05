@@ -696,6 +696,12 @@ pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletion
     };
 
     const content = try arena.dupe(u8, optionalSlice(msg.content));
+    // Provider thinking: captured as a user-visible audit artifact; never
+    // replayed to a provider (v1 stream path ignores reasoning deltas).
+    const reasoning = if (msg.reasoning_content) |r|
+        try arena.dupe(u8, r)
+    else
+        null;
     var tool_calls: []types.ToolCall = &.{};
     if (msg.tool_calls) |tcs| {
         if (tcs.len > 0) {
@@ -718,6 +724,7 @@ pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletion
         .tool_calls = tool_calls,
         .finish_reason = finish_reason,
         .usage = usage,
+        .reasoning = reasoning,
     };
 }
 
@@ -1000,6 +1007,45 @@ test "turnFromResponse tool_calls and usage" {
     try std.testing.expectEqual(@as(u32, 8), u.completion_tokens);
     try std.testing.expectEqual(@as(u32, 20), u.total_tokens);
     try std.testing.expectEqual(@as(u32, 3), u.reasoning_tokens);
+}
+
+test "turnFromResponse captures reasoning_content into reasoning" {
+    const gpa = std.testing.allocator;
+    const turn = try turnFromResponse(gpa, .{
+        .choices = &.{
+            .{
+                .finish_reason = "stop",
+                .message = .{
+                    .content = "hello",
+                    .reasoning_content = "think through details",
+                },
+            },
+        },
+    });
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+        gpa.free(turn.reasoning.?);
+    }
+    try std.testing.expectEqualStrings("hello", turn.content);
+    try std.testing.expectEqualStrings("think through details", turn.reasoning.?);
+}
+
+test "turnFromResponse reasoning null when wire omits it" {
+    const gpa = std.testing.allocator;
+    const turn = try turnFromResponse(gpa, .{
+        .choices = &.{
+            .{
+                .finish_reason = "stop",
+                .message = .{ .content = "plain" },
+            },
+        },
+    });
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+    }
+    try std.testing.expect(turn.reasoning == null);
 }
 
 test "buildRequestBody includes options" {

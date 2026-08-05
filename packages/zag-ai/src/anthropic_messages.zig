@@ -695,6 +695,8 @@ pub fn turnFromAnthropicValue(arena: std.mem.Allocator, root: std.json.Value) Er
 
     var content_buf: std.ArrayList(u8) = .empty;
     defer content_buf.deinit(arena);
+    var reasoning_buf: std.ArrayList(u8) = .empty;
+    defer reasoning_buf.deinit(arena);
     var tool_calls: std.ArrayList(types.ToolCall) = .empty;
     defer tool_calls.deinit(arena);
 
@@ -707,6 +709,14 @@ pub fn turnFromAnthropicValue(arena: std.mem.Allocator, root: std.json.Value) Er
                 if (std.mem.eql(u8, typ, "text")) {
                     if (b.get("text")) |tx| {
                         if (tx == .string) try content_buf.appendSlice(arena, tx.string);
+                    }
+                } else if (std.mem.eql(u8, typ, "thinking")) {
+                    if (b.get("thinking")) |tx| {
+                        if (tx == .string) try appendReasoningLine(arena, &reasoning_buf, tx.string);
+                    }
+                } else if (std.mem.eql(u8, typ, "redacted_thinking")) {
+                    if (b.get("data")) |tx| {
+                        if (tx == .string) try appendReasoningLine(arena, &reasoning_buf, tx.string);
                     }
                 } else if (std.mem.eql(u8, typ, "tool_use")) {
                     const id = if (b.get("id")) |v| (if (v == .string) v.string else "") else "";
@@ -752,7 +762,22 @@ pub fn turnFromAnthropicValue(arena: std.mem.Allocator, root: std.json.Value) Er
             &.{},
         .finish_reason = try arena.dupe(u8, finish),
         .usage = usage,
+        .reasoning = if (reasoning_buf.items.len > 0)
+            try arena.dupe(u8, reasoning_buf.items)
+        else
+            null,
     };
+}
+
+/// Append a thinking/redacted_thinking block's text to the reasoning buffer,
+/// joining blocks with a single `\n` (per binding: text joined "\n").
+fn appendReasoningLine(
+    arena: std.mem.Allocator,
+    buf: *std.ArrayList(u8),
+    text: []const u8,
+) Error!void {
+    if (buf.items.len > 0) try buf.append(arena, '\n');
+    try buf.appendSlice(arena, text);
 }
 
 fn mapStopReason(sr: []const u8) []const u8 {
@@ -850,6 +875,52 @@ test "anthropic turnFrom response tool_use" {
     try std.testing.expectEqualStrings("list_dir", turn.tool_calls[0].name);
     try std.testing.expect(std.mem.indexOf(u8, turn.tool_calls[0].arguments, "path") != null);
     try std.testing.expectEqual(@as(u32, 15), turn.usage.?.total_tokens);
+}
+
+test "anthropic turnFrom response captures thinking + redacted_thinking joined" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{
+        \\  "content": [
+        \\    {"type": "thinking", "thinking": "first thought", "signature": "sig-1"},
+        \\    {"type": "redacted_thinking", "data": "opaque-block"},
+        \\    {"type": "text", "text": "visible answer"}
+        \\  ],
+        \\  "stop_reason": "end_turn",
+        \\  "usage": {"input_tokens": 10, "output_tokens": 5}
+        \\}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, raw, .{});
+    defer parsed.deinit();
+    const turn = try turnFromAnthropicValue(gpa, parsed.value);
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+        gpa.free(turn.reasoning.?);
+    }
+    try std.testing.expectEqualStrings("visible answer", turn.content);
+    try std.testing.expectEqualStrings("first thought\nopaque-block", turn.reasoning.?);
+    try std.testing.expectEqualStrings("stop", turn.finish_reason);
+    try std.testing.expect(!turn.wantsTools());
+}
+
+test "anthropic turnFrom response reasoning null when no thinking blocks" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{
+        \\  "content": [{"type": "text", "text": "plain"}],
+        \\  "stop_reason": "end_turn"
+        \\}
+    ;
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, raw, .{});
+    defer parsed.deinit();
+    const turn = try turnFromAnthropicValue(gpa, parsed.value);
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+    }
+    try std.testing.expect(turn.reasoning == null);
+    try std.testing.expectEqualStrings("plain", turn.content);
 }
 
 test "anthropic request body stream true" {
