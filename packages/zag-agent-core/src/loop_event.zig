@@ -30,6 +30,16 @@ pub const LoopEvent = union(enum) {
         text: []const u8,
         has_tools: bool,
     },
+    /// One content delta from the in-flight streaming assistant turn
+    /// (tui-streaming-001). Borrowed, synchronous, in-order — same discipline
+    /// as every other variant. UI-visible only: never persisted (Session v1 /
+    /// Trace v1 / headless-v1 unchanged).
+    assistant_delta: []const u8,
+    /// Attempt boundary (tui-streaming-001): a provider attempt failed, so any
+    /// accumulated UI text from `assistant_delta` must be erased. Emitted
+    /// exactly once per failed attempt, before the retry/terminal. Never
+    /// persisted.
+    assistant_delta_clear,
     /// Provider-reported usage for the just-appended assistant turn.
     usage: message.Usage,
     /// Tool dispatch start (observer `tool_call` + trace `tool_call`).

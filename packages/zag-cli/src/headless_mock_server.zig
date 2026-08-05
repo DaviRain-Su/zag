@@ -17,14 +17,17 @@ const json_response_body =
 
 const stream_response_body =
     \\data: {"id":"mock-1","object":"chat.completion.chunk","created":1,"model":"mock-model","choices":[{"index":0,"delta":{"role":"assistant","content":"Hello from mock"},"finish_reason":null}]}
+    \\
     \\data: {"id":"mock-1","object":"chat.completion.chunk","created":1,"model":"mock-model","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+    \\
     \\data: [DONE]
     \\
 ;
 
 fn buildResponse(gpa: std.mem.Allocator, stream: bool) ![]u8 {
     const body = if (stream) stream_response_body else json_response_body;
-    return std.fmt.allocPrint(gpa,
+    return std.fmt.allocPrint(
+        gpa,
         "HTTP/1.1 200 OK\r\nContent-Type: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
         .{
             if (stream) "text/event-stream" else "application/json",
@@ -92,6 +95,7 @@ pub fn main(init: std.process.Init) !void {
     var req_buf: [8192]u8 = undefined;
     var reader = std.Io.net.Stream.reader(conn, io, &req_buf);
     var expect_100_continue = false;
+    var content_length: usize = 0;
     while (true) {
         const line = reader.interface.takeDelimiterInclusive('\n') catch |err| switch (err) {
             error.EndOfStream => break,
@@ -101,8 +105,15 @@ pub fn main(init: std.process.Init) !void {
         const is_empty_crlf = line.len == 2 and std.mem.eql(u8, line, "\r\n");
         if (is_empty_crlf) break;
         if (line.len == 1 and line[0] == '\n') break;
-        if (std.mem.indexOf(u8, line, "Expect: 100-continue") != null) {
+        if (std.ascii.indexOfIgnoreCase(line, "expect: 100-continue") != null) {
             expect_100_continue = true;
+        }
+        if (std.ascii.indexOfIgnoreCase(line, "content-length:")) |idx| {
+            content_length = std.fmt.parseInt(
+                usize,
+                std.mem.trim(u8, line[idx + "content-length:".len ..], " \r\n"),
+                10,
+            ) catch 0;
         }
     }
 
@@ -117,7 +128,28 @@ pub fn main(init: std.process.Init) !void {
         try continue_writer.interface.flush();
     }
 
-    const response = try buildResponse(gpa, force_stream);
+    // Mirror real providers: the client streams by default (tui-streaming-001),
+    // so a request asking for `"stream":true` gets the SSE response. `--stream`
+    // still forces SSE regardless of the request body.
+    var wants_stream = force_stream;
+    if (content_length > 0 and content_length <= 1024 * 1024) {
+        const body = try gpa.alloc(u8, content_length);
+        defer gpa.free(body);
+        const full_body = blk: {
+            reader.interface.readSliceAll(body) catch |err| switch (err) {
+                error.EndOfStream => break :blk false,
+                else => return err,
+            };
+            break :blk true;
+        };
+        if (full_body) {
+            wants_stream = wants_stream or
+                std.mem.indexOf(u8, body, "\"stream\":true") != null or
+                std.mem.indexOf(u8, body, "\"stream\": true") != null;
+        }
+    }
+
+    const response = try buildResponse(gpa, wants_stream);
     defer gpa.free(response);
 
     var writer = std.Io.net.Stream.writer(conn, io, &write_buf);

@@ -593,6 +593,24 @@ const ChatOutcome = union(enum) {
     unsupported_control: void,
 };
 
+/// Context for the loop-owned delta handler: the event sink plus a latch for
+/// the first sink failure (the handler itself is infallible `void`; the error
+/// is propagated by chatWithRetry after the provider call returns — the sink
+/// contract says emit errors stop the run, never swallow).
+const DeltaEmitCtx = struct {
+    sink: LoopEventSink,
+    err: ?loop_event_mod.SinkError = null,
+};
+
+/// Loop-owned content-delta handler: forwards each delta to the event sink.
+fn deltaHandler(ctx: *anyopaque, content_delta: []const u8) void {
+    const self: *DeltaEmitCtx = @ptrCast(@alignCast(ctx));
+    if (self.err != null) return; // first error wins; sink already failing
+    self.sink.emit(.{ .assistant_delta = content_delta }) catch |err| {
+        self.err = err;
+    };
+}
+
 fn chatWithRetry(
     deps: Deps,
     scratch: std.mem.Allocator,
@@ -615,15 +633,35 @@ fn chatWithRetry(
             error.Timeout => return .{ .timeout = {} },
         };
 
-        const result = deps.provider.chat(
-            scratch,
-            messages,
-            defs,
-            control,
-        );
+        // tui-streaming-001: use chat_stream whenever present (falls back to
+        // chat — byte-identical — when the slot is absent). Deltas are emitted
+        // synchronously, in-order, through the same event sink; a sink failure
+        // during delta emission aborts the run like any other sink failure.
+        const streaming_attempt = deps.provider.vtable.chat_stream != null;
+        const result = if (deps.provider.vtable.chat_stream) |chat_stream| blk: {
+            var emit_ctx = DeltaEmitCtx{ .sink = deps.event_sink };
+            const r = chat_stream(
+                deps.provider.ptr,
+                scratch,
+                messages,
+                defs,
+                control,
+                deltaHandler,
+                &emit_ctx,
+            );
+            if (emit_ctx.err) |serr| return mapSinkEmit(serr);
+            break :blk r;
+        } else deps.provider.chat(scratch, messages, defs, control);
         if (result) |turn| {
             return .{ .turn = turn };
         } else |err| {
+            // Retry honesty (tui-streaming-001): erase any deltas the failed
+            // attempt streamed — exactly once, before retry or terminal — so
+            // retry garbage never accumulates in the UI. Guarded to streaming
+            // attempts so a chat-only provider stays facade byte-identical.
+            if (streaming_attempt) {
+                deps.event_sink.emit(.{ .assistant_delta_clear = {} }) catch |serr| return mapSinkEmit(serr);
+            }
             switch (err) {
                 error.Cancelled => return .{ .cancelled = {} },
                 error.Timeout => return .{ .timeout = {} },
@@ -728,6 +766,16 @@ const RecordingSink = struct {
     turn_starts: u32 = 0,
     assistant_messages: u32 = 0,
     last_assistant_has_tools: bool = false,
+    /// assistant_delta count / assistant_delta_clear count (tui-streaming-001).
+    assistant_deltas: u32 = 0,
+    delta_clears: u32 = 0,
+    /// In-order delta-path tags: 'd' delta, 'c' clear, 'm' assistant_message.
+    delta_tags: [64]u8 = undefined,
+    delta_tags_len: usize = 0,
+    /// Captured delta content (copy made at emit time — proves borrowed
+    /// slices were valid during emit even when the provider reuses a buffer).
+    delta_buf: [512]u8 = undefined,
+    delta_buf_len: usize = 0,
     /// OR of every assistant_message.has_tools (multi-turn runs may end text-only).
     any_assistant_has_tools: bool = false,
     usages: u32 = 0,
@@ -756,6 +804,13 @@ const RecordingSink = struct {
         return .{ .ptr = self, .vtable = &recording_vtable };
     }
 
+    fn recordDeltaTag(self: *RecordingSink, tag: u8) void {
+        if (self.delta_tags_len < self.delta_tags.len) {
+            self.delta_tags[self.delta_tags_len] = tag;
+            self.delta_tags_len += 1;
+        }
+    }
+
     fn emit(ptr: ?*anyopaque, event: LoopEvent) loop_event_mod.SinkError!void {
         const self: *RecordingSink = @ptrCast(@alignCast(ptr.?));
         if (self.fail_next) |e| {
@@ -768,6 +823,18 @@ const RecordingSink = struct {
                 self.assistant_messages += 1;
                 self.last_assistant_has_tools = am.has_tools;
                 if (am.has_tools) self.any_assistant_has_tools = true;
+                self.recordDeltaTag('m');
+            },
+            .assistant_delta => |d| {
+                self.assistant_deltas += 1;
+                self.recordDeltaTag('d');
+                const cap = @min(d.len, self.delta_buf.len - self.delta_buf_len);
+                @memcpy(self.delta_buf[self.delta_buf_len..][0..cap], d[0..cap]);
+                self.delta_buf_len += cap;
+            },
+            .assistant_delta_clear => {
+                self.delta_clears += 1;
+                self.recordDeltaTag('c');
             },
             .usage => self.usages += 1,
             .tool_start => self.tool_starts += 1,
@@ -805,6 +872,30 @@ const RecordingSink = struct {
 
 const recording_vtable: loop_event_mod.LoopEventSinkVTable = .{
     .emit = RecordingSink.emit,
+};
+
+/// Sink that fails once on the first assistant_delta (tui-streaming-001:
+/// a delta-emit sink failure must abort the run, never be swallowed).
+const FailDeltaSink = struct {
+    fail_on_delta: bool = true,
+    fn sink(self: *@This()) LoopEventSink {
+        return .{ .ptr = self, .vtable = &fail_delta_vtable };
+    }
+    fn emit(ptr: ?*anyopaque, event: LoopEvent) loop_event_mod.SinkError!void {
+        const self: *FailDeltaSink = @ptrCast(@alignCast(ptr.?));
+        switch (event) {
+            .assistant_delta => {
+                if (self.fail_on_delta) {
+                    self.fail_on_delta = false;
+                    return error.OutOfMemory;
+                }
+            },
+            else => {},
+        }
+    }
+};
+const fail_delta_vtable: loop_event_mod.LoopEventSinkVTable = .{
+    .emit = FailDeltaSink.emit,
 };
 
 fn defaultDeps(
@@ -945,6 +1036,60 @@ fn denyDangerousDeniedBody(
     return shell_policy_mod.genericDeniedBody(allocator, command);
 }
 
+test "sink failure during assistant_delta aborts the run" {
+    // The delta handler is infallible `void`; a sink failure during a delta
+    // emit must still stop the run (never swallowed) — the latch propagates
+    // through chatWithRetry like any other sink failure.
+    const gpa = std.testing.allocator;
+
+    const StreamMock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "hi"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            handler(handler_ctx, "delta");
+            return .{
+                .content = try arena.dupe(u8, "hi"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = StreamMock.chat, .chat_stream = StreamMock.chatStream },
+    };
+
+    var sink: FailDeltaSink = .{};
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+    try std.testing.expectError(error.OutOfMemory, result);
+}
+
 test "loop stops when model returns text only" {
     const gpa = std.testing.allocator;
 
@@ -983,6 +1128,213 @@ test "loop stops when model returns text only" {
     try std.testing.expectEqual(@as(u32, 1), result.turns);
     try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
     try std.testing.expect(!sink.last_assistant_has_tools);
+    // Provider fallback (tui-streaming-001): no chat_stream slot → no delta
+    // events at all; the complete assistant_message path is byte-identical.
+    try std.testing.expectEqual(@as(u32, 0), sink.assistant_deltas);
+    try std.testing.expectEqual(@as(u32, 0), sink.delta_clears);
+    try std.testing.expectEqualStrings("m", sink.delta_tags[0..sink.delta_tags_len]);
+}
+
+test "chat_stream forwards deltas in order before assistant_message" {
+    const gpa = std.testing.allocator;
+
+    const StreamingMock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "Hello world"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            // Reuse ONE buffer per chunk: the handler must consume the slice
+            // during emit (borrowed validity) — the sink copies at emit time.
+            const chunks = [_][]const u8{ "Hel", "lo ", "wor", "ld" };
+            var buf: [16]u8 = undefined;
+            for (chunks) |ch| {
+                @memcpy(buf[0..ch.len], ch);
+                handler(handler_ctx, buf[0..ch.len]);
+            }
+            return .{
+                .content = try arena.dupe(u8, "Hello world"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = StreamingMock.chat, .chat_stream = StreamingMock.chatStream },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+
+    try std.testing.expectEqualStrings("Hello world", result.final_text);
+    // 4 deltas, in order, then exactly one complete assistant_message.
+    try std.testing.expectEqual(@as(u32, 4), sink.assistant_deltas);
+    try std.testing.expectEqual(@as(u32, 0), sink.delta_clears);
+    try std.testing.expectEqualStrings("ddddm", sink.delta_tags[0..sink.delta_tags_len]);
+    // The sink copied at emit time from a buffer the provider reused per
+    // chunk; the captured concatenation proves per-emit borrow validity.
+    try std.testing.expectEqualStrings("Hello world", sink.delta_buf[0..sink.delta_buf_len]);
+    try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
+}
+
+test "failed streaming attempt emits delta_clear before retry deltas" {
+    const gpa = std.testing.allocator;
+
+    const RetryStreamMock = struct {
+        attempts: u32 = 0,
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "final answer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chatStream(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.attempts += 1;
+            if (self.attempts == 1) {
+                // Attempt 1: 3 deltas, then a retryable failure.
+                for ([_][]const u8{ "one", " two", " three" }) |ch| {
+                    handler(handler_ctx, ch);
+                }
+                return error.RateLimited;
+            }
+            // Attempt 2: 2 deltas, then success.
+            handler(handler_ctx, "final");
+            handler(handler_ctx, " answer");
+            return .{
+                .content = try arena.dupe(u8, "final answer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: RetryStreamMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = RetryStreamMock.chat, .chat_stream = RetryStreamMock.chatStream },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+
+    try std.testing.expectEqualStrings("final answer", result.final_text);
+    try std.testing.expectEqual(@as(u32, 5), sink.assistant_deltas);
+    try std.testing.expectEqual(@as(u32, 1), sink.delta_clears);
+    // Order: attempt-1 deltas → clear → attempt-2 deltas → complete message.
+    // No delta after the terminal message ('m' is last).
+    try std.testing.expectEqualStrings("dddcddm", sink.delta_tags[0..sink.delta_tags_len]);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+    // Captured delta content: attempt-1 deltas are erased from the UI, but the
+    // sink still observed them (honest stream). The complete turn is correct.
+    try std.testing.expectEqualStrings("one two threefinal answer", sink.delta_buf[0..sink.delta_buf_len]);
+    try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
+}
+
+test "cancelled streaming attempt emits delta_clear (no partial text under terminal)" {
+    const gpa = std.testing.allocator;
+
+    const CancelStreamMock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "never"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            // Partial deltas, then a user cancel (non-retryable).
+            handler(handler_ctx, "partial ");
+            handler(handler_ctx, "text");
+            _ = arena;
+            return error.Cancelled;
+        }
+    };
+
+    var mock: CancelStreamMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = CancelStreamMock.chat, .chat_stream = CancelStreamMock.chatStream },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+
+    // Cancelled run: the loop reports cancellation truthfully; the sink saw
+    // the partial deltas AND the clear that erases them; no assistant_message
+    // terminal (the run did not complete).
+    try std.testing.expect(result.stop_reason == .cancelled);
+    try std.testing.expectEqual(@as(u32, 2), sink.assistant_deltas);
+    try std.testing.expectEqual(@as(u32, 1), sink.delta_clears);
+    try std.testing.expectEqualStrings("ddc", sink.delta_tags[0..sink.delta_tags_len]);
+    try std.testing.expectEqual(@as(u32, 0), sink.assistant_messages);
 }
 
 test "permission deny yields tool error without executing" {

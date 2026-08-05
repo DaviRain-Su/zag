@@ -67,7 +67,10 @@ pub const version = "0.5.4";
 /// Resolved endpoint + file/env chat knobs for the agent harness.
 pub const ResolveResult = struct {
     resolved: registry.Resolved,
-    stream: bool = false,
+    /// Streaming is the default transport (tui-streaming-001); explicit
+    /// `"stream": false` config / `ZAG_STREAM=false` / absence of `chat_stream`
+    /// still route to the non-streaming path.
+    stream: bool = true,
     chat_options: ChatOptions = .{},
     model_info: ?ModelInfo = null,
     chat_retries: u8 = 2,
@@ -101,7 +104,7 @@ pub fn resolve(
 ) !ResolveResult {
     var result: ResolveResult = .{
         .resolved = try registry.resolveFromEnv(env),
-        .stream = false,
+        .stream = true,
     };
 
     const path = config_path orelse env.get("ZAG_CONFIG");
@@ -212,6 +215,8 @@ fn applyEnvChatOverrides(env: *const std.process.Environ.Map, result: *ResolveRe
     if (env.get("ZAG_STREAM")) |s| {
         if (std.mem.eql(u8, s, "1") or std.mem.eql(u8, s, "true")) {
             result.stream = true;
+        } else if (std.mem.eql(u8, s, "0") or std.mem.eql(u8, s, "false")) {
+            result.stream = false;
         }
     }
     if (env.get("ZAG_API_STYLE")) |s| {
@@ -236,6 +241,71 @@ const EnvMap = struct {
         return self.env.get(key);
     }
 };
+
+test "resolve defaults to stream=true without config file" {
+    const gpa = std.testing.allocator;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("DEEPSEEK_API_KEY", "sk-deep");
+
+    var rr = try resolve(gpa, std.testing.io, &env, null);
+    defer rr.deinit(gpa);
+    try std.testing.expect(rr.stream);
+}
+
+test "resolve explicit stream:false config wins" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+    try env.put("DEEPSEEK_API_KEY", "sk-deep");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "zag.json", .data = "{\"stream\":false}" });
+    var buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    const n = try tmp.dir.realPathFile(io, "zag.json", &buf);
+    const cfg_path = try gpa.dupe(u8, buf[0..n]);
+    defer gpa.free(cfg_path);
+
+    var rr = try resolve(gpa, io, &env, cfg_path);
+    defer rr.deinit(gpa);
+    try std.testing.expect(!rr.stream);
+}
+
+test "resolve ZAG_STREAM env overrides default both ways" {
+    const gpa = std.testing.allocator;
+
+    {
+        var env = std.process.Environ.Map.init(gpa);
+        defer env.deinit();
+        try env.put("DEEPSEEK_API_KEY", "sk-deep");
+        try env.put("ZAG_STREAM", "false");
+        var rr = try resolve(gpa, std.testing.io, &env, null);
+        defer rr.deinit(gpa);
+        try std.testing.expect(!rr.stream);
+    }
+
+    {
+        var env = std.process.Environ.Map.init(gpa);
+        defer env.deinit();
+        try env.put("DEEPSEEK_API_KEY", "sk-deep");
+        try env.put("ZAG_STREAM", "0");
+        var rr = try resolve(gpa, std.testing.io, &env, null);
+        defer rr.deinit(gpa);
+        try std.testing.expect(!rr.stream);
+    }
+
+    {
+        var env = std.process.Environ.Map.init(gpa);
+        defer env.deinit();
+        try env.put("DEEPSEEK_API_KEY", "sk-deep");
+        try env.put("ZAG_STREAM", "true");
+        var rr = try resolve(gpa, std.testing.io, &env, null);
+        defer rr.deinit(gpa);
+        try std.testing.expect(rr.stream);
+    }
+}
 
 test {
     std.testing.refAllDecls(@This());

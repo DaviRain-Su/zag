@@ -278,6 +278,10 @@ pub const HeadlessWriter = struct {
     pub fn dispatchEvent(self: *Self, event: observer_mod.Event) !void {
         switch (event) {
             .assistant_text => |t| try self.emitAssistantDelta(t),
+            // Deltas are UI-visible only: headless-v1 output stays byte-identical
+            // (tui-streaming-001 — the complete assistant_text still carries the
+            // full text in the existing event).
+            .assistant_delta, .assistant_delta_clear => {},
             .usage => |u| try self.emitUsage(u),
             .tool_call => |c| try self.emitToolCall(c),
             .tool_result => |r| try self.emitToolResult(r.name, r.body),

@@ -11,6 +11,11 @@ const redact_mod = @import("redact.zig");
 
 pub const Event = union(enum) {
     assistant_text: []const u8,
+    /// One content delta from the in-flight streaming turn (tui-streaming-001).
+    /// Borrowed, synchronous, in-order; UI-visible only (never persisted).
+    assistant_delta: []const u8,
+    /// Attempt boundary: erase any accumulated UI delta text (tui-streaming-001).
+    assistant_delta_clear,
     usage: message.Usage,
     tool_call: message.ToolCall,
     tool_result: struct {
@@ -59,6 +64,9 @@ fn logEventRaw(event: Event) void {
         .assistant_text => |text| {
             if (text.len > 0) std.log.info("assistant: {s}", .{text});
         },
+        // Verbose logging skips deltas (too chatty); the complete
+        // assistant_message line is unchanged (tui-streaming-001).
+        .assistant_delta, .assistant_delta_clear => {},
         .usage => |u| {
             std.log.info(
                 "usage prompt={d} completion={d} total={d}",
@@ -125,6 +133,9 @@ pub fn prepareEventLogLine(
             gpa.free(red);
             return .{ .kind = .assistant, .text = line };
         },
+        // Verbose log lines are dropped for deltas (too chatty) and the
+        // attempt-boundary clear (no payload) — tui-streaming-001.
+        .assistant_delta, .assistant_delta_clear => return null,
         .usage => |u| {
             return .{ .kind = .usage, .usage = u };
         },

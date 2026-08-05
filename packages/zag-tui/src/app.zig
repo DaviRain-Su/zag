@@ -34,6 +34,13 @@ pub const OpenDisplay = enum {
 
 pub const BindError = error{ MissingRedactor, MissingSignalHost, MissingAgent, MissingSession };
 
+/// Card-title identity constants (tui-streaming-001): delta replaces match
+/// `TITLE_PROGRESSIVE` ONLY so a finalized "assistant turn=N" card is never
+/// clobbered by partial text; lifecycle uses the turn format. Kept in one
+/// place so the prefix rules stay in lockstep with `cards.zig:124`.
+pub const TITLE_PROGRESSIVE = "assistant progressive";
+pub const TITLE_TURN_FMT = "assistant turn={d}";
+
 /// Test-only teardown observer (no product effect when null).
 pub const TeardownProbe = struct {
     steps: []u8,
@@ -93,6 +100,13 @@ pub const App = struct {
     in_len: usize = 0,
     snap_buf: [c.card_slots]cards_mod.CardSlot = undefined,
     last_run_started: bool = false,
+    /// Streaming delta accumulator (tui-streaming-001): grows per
+    /// `assistant_delta` up to `card_body_max_bytes` (4096); reset on
+    /// `assistant_delta_clear` and on complete `assistant_message` (turn
+    /// boundary). App-owned, worker-thread written, UI-thread read via the
+    /// card ring snapshot (fixed copy under the ring lock).
+    delta_buf: [c.card_body_max_bytes]u8 = undefined,
+    delta_len: usize = 0,
 
     /// Optional teardown probe (tests).
     teardown_probe: ?*TeardownProbe = null,
@@ -257,9 +271,12 @@ pub const App = struct {
                 );
             },
             .assistant_message => |m| {
+                // Turn boundary: the complete message arrived; next turn's
+                // deltas start clean.
+                self.delta_len = 0;
                 // Lifecycle is card identity for assistant (turn/has_tools).
                 var title_buf: [64]u8 = undefined;
-                const title = std.fmt.bufPrint(&title_buf, "assistant turn={d}", .{m.turn}) catch "assistant";
+                const title = std.fmt.bufPrint(&title_buf, TITLE_TURN_FMT, .{m.turn}) catch "assistant";
                 // Replace-style: drop any open progressive "assistant" body card.
                 self.card_ring.replaceNewestOrdinaryTitlePrefix(self.gpa, red, "assistant", title, m.text);
             },
@@ -297,7 +314,14 @@ pub const App = struct {
                 const title = std.fmt.bufPrint(&title_buf, "control kind={s} next_turn={d}", .{ kind, ctrl.next_turn }) catch "control";
                 self.card_ring.publishOrdinary(self.gpa, red, title, ctrl.text);
             },
+            // Deltas are UI-visible only and handled by onObserver; the
+            // lifecycle path does not paint per-chunk text.
+            .assistant_delta, .assistant_delta_clear => {},
             .run_terminal => |term| {
+                // Belt-and-braces: a sink-failure edge can terminate the run
+                // with the accumulator holding partial text (the clear event
+                // itself failed); reset here so the next reply starts clean.
+                self.delta_len = 0;
                 var body_buf: [128]u8 = undefined;
                 const stop = @tagName(term.stop_reason);
                 const body = std.fmt.bufPrint(&body_buf, "ok={any} stop={s} turns={d} p={d} c={d} t={d}", .{
@@ -318,6 +342,9 @@ pub const App = struct {
         const self: *App = @ptrCast(@alignCast(ptr.?));
         switch (event) {
             .assistant_text => |text| {
+                // Turn boundary: the complete message arrived; next turn's
+                // deltas start clean.
+                self.delta_len = 0;
                 // Progressive full-body snapshot: replace open assistant card only.
                 // Do NOT create a second lifecycle identity card — lifecycle
                 // `assistant_message` owns turn identity; this updates body only.
@@ -325,13 +352,59 @@ pub const App = struct {
                     self.gpa,
                     self.redactor,
                     "assistant",
-                    "assistant progressive",
+                    TITLE_PROGRESSIVE,
                     text,
+                );
+                self.wake();
+            },
+            .assistant_delta => |delta| {
+                // Accumulate and repaint the progressive card (Grok-Build-style
+                // incremental text). Card identity: delta replaces match
+                // TITLE_PROGRESSIVE ONLY — a new turn's first delta publishes a
+                // fresh progressive card; the finalized "assistant turn=N" card
+                // is never clobbered by partial text. Redaction runs per replace
+                // through the existing whole-body path (redact outside lock).
+                self.appendDelta(delta);
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(
+                    self.gpa,
+                    self.redactor,
+                    TITLE_PROGRESSIVE,
+                    TITLE_PROGRESSIVE,
+                    self.delta_buf[0..self.delta_len],
+                );
+                self.wake();
+            },
+            .assistant_delta_clear => {
+                // Attempt boundary: a failed attempt's deltas vanish — reset
+                // the accumulator and repaint with an empty body. Progressive
+                // prefix only (never blanks a finalized turn card).
+                self.delta_len = 0;
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(
+                    self.gpa,
+                    self.redactor,
+                    TITLE_PROGRESSIVE,
+                    TITLE_PROGRESSIVE,
+                    self.delta_buf[0..0],
                 );
                 self.wake();
             },
             else => {},
         }
+    }
+
+    /// Append one content delta to the accumulator, truncating at the cap on
+    /// a UTF-8 codepoint boundary (cap = `card_body_max_bytes`).
+    fn appendDelta(self: *App, delta: []const u8) void {
+        if (self.delta_len >= self.delta_buf.len) return;
+        const cap = self.delta_buf.len - self.delta_len;
+        if (delta.len <= cap) {
+            @memcpy(self.delta_buf[self.delta_len..][0..delta.len], delta);
+            self.delta_len += delta.len;
+            return;
+        }
+        const prefix = present.utf8Prefix(delta, cap);
+        @memcpy(self.delta_buf[self.delta_len..][0..prefix.len], prefix);
+        self.delta_len += prefix.len;
     }
 
     pub fn run(self: *App) u8 {
@@ -771,4 +844,158 @@ test "app create preallocates and destroy frees" {
     try std.testing.expect(app.editor_storage.len == c.editor_max_bytes);
     try std.testing.expect(app.wake_r >= 0);
     app.destroy();
+}
+
+// ── tui-streaming-001 fixtures: delta accumulation / clear / cap / redaction /
+// turn boundary on the progressive assistant card ────────────────────────────
+
+fn newTestApp(gpa: std.mem.Allocator, redactor: *const coding.redact.Redactor) !*App {
+    const app = try App.create(gpa);
+    app.redactor = redactor;
+    return app;
+}
+
+/// Newest ordinary card whose title starts with "assistant" (the progressive /
+/// turn card), or null.
+fn newestAssistantCard(app: *App) ?cards_mod.CardSlot {
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var i: usize = n;
+    while (i > 0) {
+        i -= 1;
+        const slot = &snap[i];
+        if (slot.occupied and std.mem.startsWith(u8, slot.titleSlice(), "assistant")) {
+            return slot.*;
+        }
+    }
+    return null;
+}
+
+test "tui-streaming: deltas accumulate in order into the progressive card" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    App.onObserver(app, .{ .assistant_delta = "Hel" });
+    App.onObserver(app, .{ .assistant_delta = "lo " });
+    App.onObserver(app, .{ .assistant_delta = "world" });
+
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("assistant progressive", card.titleSlice());
+    try std.testing.expectEqualStrings("Hello world", card.bodySlice());
+    try std.testing.expectEqual(@as(usize, 11), app.delta_len);
+}
+
+test "tui-streaming: delta_clear resets the accumulated body" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    App.onObserver(app, .{ .assistant_delta = "attempt one" });
+    App.onObserver(app, .{ .assistant_delta_clear = {} });
+    try std.testing.expectEqual(@as(usize, 0), app.delta_len);
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("", card.bodySlice());
+    // Accumulation continues cleanly after the clear.
+    App.onObserver(app, .{ .assistant_delta = "attempt two" });
+    const card2 = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("attempt two", card2.bodySlice());
+}
+
+test "tui-streaming: cap 4096 truncates the accumulator" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    const big = "a" ** (c.card_body_max_bytes + 1000);
+    App.onObserver(app, .{ .assistant_delta = big });
+    try std.testing.expectEqual(c.card_body_max_bytes, app.delta_len);
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(c.card_body_max_bytes, card.bodySlice().len);
+    // Further deltas are dropped at the cap (no overflow).
+    App.onObserver(app, .{ .assistant_delta = "more" });
+    try std.testing.expectEqual(c.card_body_max_bytes, app.delta_len);
+}
+
+test "tui-streaming: cap cut lands on a UTF-8 codepoint boundary" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    App.onObserver(app, .{ .assistant_delta = "a" ** (c.card_body_max_bytes - 1) });
+    // "é" is 2 bytes; only 1 byte remains at the cap → the whole codepoint is
+    // dropped, the buffer stays valid UTF-8.
+    App.onObserver(app, .{ .assistant_delta = "\xc3\xa9" });
+    try std.testing.expectEqual(c.card_body_max_bytes - 1, app.delta_len);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(app.delta_buf[0..app.delta_len]));
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(c.card_body_max_bytes - 1, card.bodySlice().len);
+    try std.testing.expectEqual(@as(u8, 'a'), card.bodySlice()[card.bodySlice().len - 1]);
+}
+
+test "tui-streaming: delta body is redacted in the card" {
+    const gpa = std.testing.allocator;
+    const secret = coding.redact.testing.fake_api_key;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    App.onObserver(app, .{ .assistant_delta = "hold " });
+    App.onObserver(app, .{ .assistant_delta = secret });
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(std.mem.indexOf(u8, card.bodySlice(), secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, card.bodySlice(), coding.redact.marker) != null);
+}
+
+test "tui-streaming: complete assistant_message resets at turn boundary" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    App.onObserver(app, .{ .assistant_delta = "one" });
+    App.onObserver(app, .{ .assistant_delta = " two" });
+    // Complete message: observer full-text snapshot, then lifecycle turn card.
+    App.onObserver(app, .{ .assistant_text = "one two" });
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 1, .text = "one two", .has_tools = false } });
+    try std.testing.expectEqual(@as(usize, 0), app.delta_len);
+    const turn_card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("assistant turn=1", turn_card.titleSlice());
+    try std.testing.expectEqualStrings("one two", turn_card.bodySlice());
+    // Next turn's deltas start clean (no cross-turn accumulation) AND the
+    // finalized turn-1 card survives: the first delta of turn 2 publishes a
+    // FRESH progressive card (progressive-only prefix), never clobbering the
+    // completed "assistant turn=1" card with partial text.
+    App.onObserver(app, .{ .assistant_delta = "next" });
+    try std.testing.expectEqual(@as(usize, 4), app.delta_len);
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var saw_turn1: usize = 0;
+    var saw_progressive: usize = 0;
+    var i: usize = n;
+    while (i > 0) {
+        i -= 1;
+        const slot = &snap[i];
+        if (!slot.occupied) continue;
+        if (std.mem.eql(u8, slot.titleSlice(), "assistant turn=1")) {
+            saw_turn1 += 1;
+            // Finalized body unchanged by the turn-2 delta.
+            try std.testing.expectEqualStrings("one two", slot.bodySlice());
+        }
+        if (std.mem.eql(u8, slot.titleSlice(), TITLE_PROGRESSIVE)) saw_progressive += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), saw_turn1);
+    try std.testing.expectEqual(@as(usize, 1), saw_progressive);
+    const newest = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("next", newest.bodySlice());
 }

@@ -1031,6 +1031,17 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
                 tr.emitAssistant(am.text) catch |err| return mapTraceToSink(err);
             }
         },
+        .assistant_delta => |delta| {
+            // Observer first, then lifecycle (same order as assistant_message).
+            // No Trace kind: deltas are UI-visible only (tui-streaming-001).
+            emitObserver(a, .{ .assistant_delta = delta });
+            a.emitLifecycle(.{ .assistant_delta = delta });
+        },
+        .assistant_delta_clear => {
+            // Observer first, then lifecycle. No Trace kind, no persistence.
+            emitObserver(a, .{ .assistant_delta_clear = {} });
+            a.emitLifecycle(.{ .assistant_delta_clear = {} });
+        },
         .usage => |u| {
             // Trace usage, then user Observer/ledger/verbose/cost.
             if (bridge.trace) |tr| {
@@ -6564,6 +6575,8 @@ test "core-policy-ownership-001: remember alias still re-enters Guard" {
 const LifecycleKind = enum {
     run_start,
     assistant_message,
+    assistant_delta,
+    assistant_delta_clear,
     tool_start,
     tool_end,
     control_applied,
@@ -6655,6 +6668,14 @@ const LifecycleRecorder = struct {
                     .has_tools = am.has_tools,
                 };
             },
+            .assistant_delta => |d| blk: {
+                const text = self.gpa.dupe(u8, d) catch return;
+                break :blk .{
+                    .kind = .assistant_delta,
+                    .text = text,
+                };
+            },
+            .assistant_delta_clear => .{ .kind = .assistant_delta_clear },
             .tool_start => |ts| blk: {
                 const id = self.gpa.dupe(u8, ts.id) catch return;
                 const name = self.gpa.dupe(u8, ts.name) catch {
@@ -7255,6 +7276,126 @@ test "harness-events: provider/session/timeout/unsupported terminals are exact-o
         try std.testing.expect(!rec.after_terminal);
         try expectRunEnd(&(agent.trace.?), false, "session_error");
     }
+}
+
+test "tui-streaming: facade forwards deltas observer-first, clear before retry deltas" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    // Streaming provider: attempt 1 streams 2 deltas then fails (retryable);
+    // attempt 2 streams 1 delta then completes.
+    const StreamMock = struct {
+        attempts: u32 = 0,
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "final"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chatStream(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.attempts += 1;
+            if (self.attempts == 1) {
+                handler(handler_ctx, "part1");
+                handler(handler_ctx, " part2");
+                return error.RateLimited;
+            }
+            handler(handler_ctx, "final");
+            return .{
+                .content = try arena.dupe(u8, "final"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    // Combined recorder: lowercase = observer fact, uppercase = lifecycle fact.
+    // Proves per-fact order (observer first) and cross-fact order (clear
+    // before attempt-2 deltas; complete message after all deltas).
+    const Rec = struct {
+        tags: [64]u8 = undefined,
+        len: usize = 0,
+        fn note(self: *@This(), tag: u8) void {
+            if (self.len < self.tags.len) {
+                self.tags[self.len] = tag;
+                self.len += 1;
+            }
+        }
+        fn count(self: *const @This(), tag: u8) u32 {
+            var n: u32 = 0;
+            for (self.tags[0..self.len]) |t| {
+                if (t == tag) n += 1;
+            }
+            return n;
+        }
+        fn onObserver(ptr: ?*anyopaque, event: observer_mod.Event) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .assistant_delta => self.note('d'),
+                .assistant_delta_clear => self.note('c'),
+                .assistant_text => self.note('m'),
+                else => self.note('x'),
+            }
+        }
+        fn onLifecycle(ptr: ?*anyopaque, event: lifecycle_mod.LifecycleEvent) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .assistant_delta => self.note('D'),
+                .assistant_delta_clear => self.note('C'),
+                .assistant_message => self.note('M'),
+                else => self.note('y'),
+            }
+        }
+    };
+    var rec: Rec = .{};
+
+    var mock: StreamMock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = StreamMock.chat, .chat_stream = StreamMock.chatStream },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .chat_retries = 1,
+        .retry_base_delay_ms = 0,
+        .observer = .{ .ptr = &rec, .on_event = Rec.onObserver },
+        .lifecycle = .{ .ptr = &rec, .on_event = Rec.onLifecycle },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqualStrings("final", result.final_text);
+
+    // run_start (lifecycle) → attempt-1 deltas (observer+lifecycle each) →
+    // clear → attempt-2 delta → complete message → run_terminal. No delta
+    // after the terminal message.
+    try std.testing.expectEqualStrings("ydDdDcCdDmMy", rec.tags[0..rec.len]);
+    try std.testing.expectEqual(@as(u32, 3), rec.count('D'));
+    try std.testing.expectEqual(@as(u32, 1), rec.count('C'));
+    try std.testing.expectEqual(@as(u32, 1), rec.count('M'));
+    // Deltas never reach the durable Trace (UI-visible only).
+    try std.testing.expectEqual(@as(u32, 1), agent.trace.?.countKind("assistant"));
 }
 
 test "harness-events: invalid_toolset + invalid_context post-start terminals" {

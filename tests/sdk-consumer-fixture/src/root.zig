@@ -169,6 +169,9 @@ test "low-level zag-types + zag-agent-core composition" {
 
 const ObservedEvent = union(enum) {
     assistant_text,
+    // tui-streaming-001: UI-visible streaming facts (not persisted anywhere).
+    assistant_delta,
+    assistant_delta_clear,
     usage,
     tool_call: []const u8,
     tool_result: []const u8,
@@ -210,6 +213,8 @@ const RecordingObserver = struct {
         const self: *RecordingObserver = @ptrCast(@alignCast(ptr.?));
         const observed: ObservedEvent = switch (event) {
             .assistant_text => .assistant_text,
+            .assistant_delta => .assistant_delta,
+            .assistant_delta_clear => .assistant_delta_clear,
             .usage => .usage,
             .tool_call => |c| .{ .tool_call = self.gpa.dupe(u8, c.name) catch return },
             .tool_result => |r| .{ .tool_result = self.gpa.dupe(u8, r.name) catch return },
@@ -1154,7 +1159,7 @@ test "borrowed LoopEvent assistant_message is owned-safe after source mutation" 
 // Low-level Core sink fixtures above stay independent (no lifecycle pollution).
 
 const SdkLifecycleOwned = struct {
-    kind: enum { run_start, assistant_message, tool_start, tool_end, control_applied, run_terminal },
+    kind: enum { run_start, assistant_message, assistant_delta, assistant_delta_clear, tool_start, tool_end, control_applied, run_terminal },
     turn: u32 = 0,
     call_index: u32 = 0,
     text: ?[]u8 = null,
@@ -1230,6 +1235,11 @@ const SdkLifecycleRecorder = struct {
                     .has_tools = am.has_tools,
                 };
             },
+            .assistant_delta => |d| blk: {
+                const text = self.gpa.dupe(u8, d) catch return;
+                break :blk .{ .kind = .assistant_delta, .text = text };
+            },
+            .assistant_delta_clear => .{ .kind = .assistant_delta_clear },
             .tool_start => |ts| blk: {
                 const id = self.gpa.dupe(u8, ts.id) catch return;
                 const name = self.gpa.dupe(u8, ts.name) catch {

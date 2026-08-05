@@ -52,7 +52,10 @@ pub const WireProvider = struct {
         return self.asProvider();
     }
 
-    const vtable: provider_mod.VTable = .{ .chat = chatImpl };
+    const vtable: provider_mod.VTable = .{
+        .chat = chatImpl,
+        .chat_stream = chatStreamImpl,
+    };
 
     fn chatImpl(
         ptr: *anyopaque,
@@ -87,6 +90,77 @@ pub const WireProvider = struct {
             );
         }
         return self.wire.chat(arena, messages, tools, opts);
+    }
+
+    /// Streaming port (tui-streaming-001). The loop calls this slot whenever
+    /// present, so it must work regardless of the config `stream` flag:
+    /// `stream` false routes to the non-streaming `wire.chat` (no deltas —
+    /// `--stream`/config semantics unchanged, headless-v1 byte-identical);
+    /// `stream` true streams and forwards ONLY content deltas to the Core
+    /// handler, while tool_call_delta / finish_reason / done stay inside the
+    /// wire stream state machine (already accumulated into the returned turn).
+    fn chatStreamImpl(
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+        messages: []const message.Message,
+        tools: []const tool.Definition,
+        control: provider_mod.RequestControl,
+        handler: provider_mod.DeltaHandler,
+        handler_ctx: *anyopaque,
+    ) ChatError!message.AssistantTurn {
+        const self: *WireProvider = @ptrCast(@alignCast(ptr));
+        var opts = self.chat_options;
+        // Merge loop control with optional WireProvider timeout (mirror chatImpl).
+        var c = control;
+        if (c.deadline_mono_ns == null) {
+            if (self.timeout_ms) |ms| {
+                c.deadline_mono_ns = ai.types.RequestControl.withTimeoutMs(
+                    ai.types.monoNowNs(),
+                    ms,
+                ).deadline_mono_ns;
+            }
+        }
+        opts.control = c;
+        if (!self.stream) {
+            return self.wire.chat(arena, messages, tools, opts);
+        }
+        var shim = StreamShim{
+            .core_handler = handler,
+            .core_ctx = handler_ctx,
+            .wire_handler = self.on_event,
+            .wire_ctx = self.on_event_ctx,
+        };
+        return self.wire.chatStream(
+            arena,
+            messages,
+            tools,
+            StreamShim.onWireEvent,
+            &shim,
+            opts,
+        );
+    }
+};
+
+/// Wire-level handler shim for the streaming port: forwards content deltas to
+/// the Core delta handler, and preserves the pre-existing direct wire
+/// `on_event` consumer (CLI verbose diagnostics) unchanged for ALL events.
+/// `tool_call_delta` / `finish_reason` / `done` never reach the Core handler
+/// (tui-streaming-001 delta scope).
+const StreamShim = struct {
+    core_handler: provider_mod.DeltaHandler,
+    core_ctx: *anyopaque,
+    wire_handler: ?ai.types.StreamHandler,
+    wire_ctx: ?*anyopaque,
+
+    fn onWireEvent(ctx: ?*anyopaque, event: ai.types.StreamEvent) anyerror!void {
+        const self: *StreamShim = @ptrCast(@alignCast(ctx.?));
+        // Wire consumer first: its error semantics (fail the stream) are
+        // unchanged from the pre-streaming path.
+        if (self.wire_handler) |h| try h(self.wire_ctx, event);
+        switch (event) {
+            .content_delta => |delta| self.core_handler(self.core_ctx, delta),
+            else => {},
+        }
     }
 };
 
@@ -234,4 +308,264 @@ test "loop via WireProvider forwards only ToolDefinition to WireAdapter" {
     try std.testing.expect(fake.clean_payload);
     try std.testing.expectEqual(@as(usize, 1), fake.tool_count);
     try std.testing.expectEqualStrings("wire-ok", result.final_text);
+}
+
+test "loop chat_stream forwards only content_delta (stream=true)" {
+    // Streaming fake wire emits content_delta + tool_call_delta + finish_reason
+    // + done. The Core loop must observe ONLY the content deltas (in order,
+    // before the complete assistant_message); tool deltas/finish stay inside
+    // the wire state machine.
+    const gpa = std.testing.allocator;
+    const loop = core.loop;
+    const transcript_mod = core.transcript;
+
+    const FakeWire = struct {
+        fn apiStyle(_: *anyopaque) ai.wire.ApiStyle {
+            return .openai_compat;
+        }
+        fn name(_: *anyopaque) []const u8 {
+            return "fake-stream";
+        }
+        fn deinitFn(_: *anyopaque) void {}
+        fn embed(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const []const u8,
+            _: ai.EmbedOptions,
+        ) ai.wire.Error!ai.EmbeddingResult {
+            return error.NotSupported;
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const ai.types.Message,
+            _: []const ai.ToolDefinition,
+            handler: ?ai.types.StreamHandler,
+            handler_ctx: ?*anyopaque,
+            _: ai.ChatOptions,
+        ) ai.wire.Error!ai.types.AssistantTurn {
+            const events = [_]ai.types.StreamEvent{
+                .{ .content_delta = "Hel" },
+                .{ .tool_call_delta = .{ .index = 0, .arguments_delta = "{}" } },
+                .{ .content_delta = "lo " },
+                .{ .finish_reason = "stop" },
+                .{ .done = {} },
+            };
+            for (events) |ev| {
+                if (handler) |h| h(handler_ctx, ev) catch return error.StreamFailed;
+            }
+            return .{
+                .content = try arena.dupe(u8, "Hello "),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const ai.types.Message,
+            _: []const ai.ToolDefinition,
+            _: ai.ChatOptions,
+        ) ai.wire.Error!ai.types.AssistantTurn {
+            return error.NotSupported;
+        }
+
+        const vtable: ai.wire.VTable = .{
+            .api_style = apiStyle,
+            .name = name,
+            .deinit = deinitFn,
+            .chat = chat,
+            .chat_stream = chatStream,
+            .embed = embed,
+        };
+
+        fn asWire(self: *@This()) ai.WireAdapter {
+            return .{ .ptr = self, .vtable = &vtable };
+        }
+    };
+
+    const DeltaSink = struct {
+        deltas: u32 = 0,
+        clears: u32 = 0,
+        text: [64]u8 = undefined,
+        text_len: usize = 0,
+        fn emit(ptr: ?*anyopaque, event: loop.LoopEvent) core.loop_event.SinkError!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .assistant_delta => |d| {
+                    self.deltas += 1;
+                    const cap = @min(d.len, self.text.len - self.text_len);
+                    @memcpy(self.text[self.text_len..][0..cap], d[0..cap]);
+                    self.text_len += cap;
+                },
+                .assistant_delta_clear => self.clears += 1,
+                else => {},
+            }
+        }
+    };
+    const delta_vtable: core.loop_event.LoopEventSinkVTable = .{ .emit = DeltaSink.emit };
+
+    var fake: FakeWire = .{};
+    var wire_prov = WireProvider.init(fake.asWire(), true, false);
+    defer wire_prov.deinit();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var sink: DeltaSink = .{};
+    const result = try loop.run(.{
+        .gpa = gpa,
+        .provider = wire_prov.asProvider(),
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .tool_policy = loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = loop.ContextView.identity(),
+        .event_sink = .{ .ptr = &sink, .vtable = &delta_vtable },
+        .control_input = loop.ControlInput.none(),
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("Hello ", result.final_text);
+    // Only the two content_delta chunks reached the loop; tool_call_delta /
+    // finish_reason / done were absorbed by the wire state machine.
+    try std.testing.expectEqual(@as(u32, 2), sink.deltas);
+    try std.testing.expectEqual(@as(u32, 0), sink.clears);
+    try std.testing.expectEqualStrings("Hello ", sink.text[0..sink.text_len]);
+}
+
+test "chat_stream chains wire on_event: both consumers receive deltas" {
+    // tui-streaming-001 B8: with wire_prov.on_event set (CLI --stream --verbose
+    // diagnostics), the pre-existing wire consumer keeps receiving ALL wire
+    // events while the Core handler receives only content deltas.
+    const gpa = std.testing.allocator;
+    const loop = core.loop;
+    const transcript_mod = core.transcript;
+
+    const FakeWire = struct {
+        fn apiStyle(_: *anyopaque) ai.wire.ApiStyle {
+            return .openai_compat;
+        }
+        fn name(_: *anyopaque) []const u8 {
+            return "fake-chain";
+        }
+        fn deinitFn(_: *anyopaque) void {}
+        fn embed(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const []const u8,
+            _: ai.EmbedOptions,
+        ) ai.wire.Error!ai.EmbeddingResult {
+            return error.NotSupported;
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const ai.types.Message,
+            _: []const ai.ToolDefinition,
+            handler: ?ai.types.StreamHandler,
+            handler_ctx: ?*anyopaque,
+            _: ai.ChatOptions,
+        ) ai.wire.Error!ai.types.AssistantTurn {
+            const events = [_]ai.types.StreamEvent{
+                .{ .content_delta = "Hel" },
+                .{ .tool_call_delta = .{ .index = 0, .arguments_delta = "{}" } },
+                .{ .content_delta = "lo" },
+                .{ .finish_reason = "stop" },
+                .{ .done = {} },
+            };
+            for (events) |ev| {
+                if (handler) |h| h(handler_ctx, ev) catch return error.StreamFailed;
+            }
+            return .{
+                .content = try arena.dupe(u8, "Hello"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const ai.types.Message,
+            _: []const ai.ToolDefinition,
+            _: ai.ChatOptions,
+        ) ai.wire.Error!ai.types.AssistantTurn {
+            return error.NotSupported;
+        }
+
+        const vtable: ai.wire.VTable = .{
+            .api_style = apiStyle,
+            .name = name,
+            .deinit = deinitFn,
+            .chat = chat,
+            .chat_stream = chatStream,
+            .embed = embed,
+        };
+
+        fn asWire(self: *@This()) ai.WireAdapter {
+            return .{ .ptr = self, .vtable = &vtable };
+        }
+    };
+
+    const WireDiag = struct {
+        events: u32 = 0,
+        fn onEvent(ctx: ?*anyopaque, _: ai.types.StreamEvent) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            self.events += 1;
+        }
+    };
+
+    const DeltaSink = struct {
+        deltas: u32 = 0,
+        fn emit(ptr: ?*anyopaque, event: loop.LoopEvent) core.loop_event.SinkError!void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .assistant_delta => self.deltas += 1,
+                else => {},
+            }
+        }
+    };
+    const delta_vtable: core.loop_event.LoopEventSinkVTable = .{ .emit = DeltaSink.emit };
+
+    var fake: FakeWire = .{};
+    var wire_prov = WireProvider.init(fake.asWire(), true, false);
+    defer wire_prov.deinit();
+    var diag: WireDiag = .{};
+    wire_prov.on_event = WireDiag.onEvent;
+    wire_prov.on_event_ctx = &diag;
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var sink: DeltaSink = .{};
+    const result = try loop.run(.{
+        .gpa = gpa,
+        .provider = wire_prov.asProvider(),
+        .toolset = .{ .tools = &.{} },
+        .tool_ctx = .{
+            .allocator = gpa,
+            .io = std.testing.io,
+            .cwd = std.Io.Dir.cwd(),
+        },
+        .tool_policy = loop.ToolPolicy.allowAllForTrustedHost(),
+        .jail = loop.Jail.allowAllForTrustedHost(),
+        .shell_policy = loop.ShellPolicy.allowAllForTrustedHost(),
+        .context_view = loop.ContextView.identity(),
+        .event_sink = .{ .ptr = &sink, .vtable = &delta_vtable },
+        .control_input = loop.ControlInput.none(),
+    }, &transcript);
+
+    try std.testing.expectEqualStrings("Hello", result.final_text);
+    // Wire diagnostics consumer saw ALL five wire events (chained first);
+    // the Core handler saw only the two content deltas.
+    try std.testing.expectEqual(@as(u32, 5), diag.events);
+    try std.testing.expectEqual(@as(u32, 2), sink.deltas);
 }

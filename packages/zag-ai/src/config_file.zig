@@ -13,7 +13,9 @@ pub const FileConfig = struct {
     provider: ?[]const u8 = null,
     model: ?[]const u8 = null,
     base_url: ?[]const u8 = null,
-    stream: bool = false,
+    /// Streaming is the default transport; an explicit `"stream": false` key
+    /// still disables it (tui-streaming-001).
+    stream: bool = true,
     api_key_env: ?[]const u8 = null,
 
     // Transport / client
@@ -197,6 +199,24 @@ test "parse config json basic" {
     try std.testing.expectEqualStrings("deepseek", cfg.provider.?);
     try std.testing.expectEqualStrings("deepseek-v4-pro", cfg.model.?);
     try std.testing.expect(cfg.stream);
+}
+
+test "parse config defaults to stream=true when key absent" {
+    const gpa = std.testing.allocator;
+    var cfg = try parseOwned(gpa,
+        \\{"provider":"deepseek","model":"deepseek-v4-pro"}
+    );
+    defer cfg.deinit(gpa);
+    try std.testing.expect(cfg.stream);
+}
+
+test "parse config explicit stream false wins" {
+    const gpa = std.testing.allocator;
+    var cfg = try parseOwned(gpa,
+        \\{"provider":"deepseek","model":"deepseek-v4-pro","stream":false}
+    );
+    defer cfg.deinit(gpa);
+    try std.testing.expect(!cfg.stream);
 }
 
 test "parse config chat and transport options" {

@@ -26,7 +26,9 @@ pub fn copyTruncated(dst: []u8, src: []const u8) usize {
     return prefix.len + c.truncation_marker_len;
 }
 
-fn utf8Prefix(src: []const u8, max_bytes: usize) []const u8 {
+/// Longest prefix of `src` within `max_bytes` that ends on a UTF-8 codepoint
+/// boundary (drops an incomplete trailing multi-byte sequence).
+pub fn utf8Prefix(src: []const u8, max_bytes: usize) []const u8 {
     if (max_bytes == 0) return src[0..0];
     var end = @min(src.len, max_bytes);
     while (end > 0 and (src[end - 1] & 0xC0) == 0x80) {

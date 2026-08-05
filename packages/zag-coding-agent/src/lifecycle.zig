@@ -53,6 +53,11 @@ pub const LifecycleEvent = union(enum) {
         text: []const u8,
         has_tools: bool,
     },
+    /// One content delta from the in-flight streaming turn (tui-streaming-001).
+    /// Borrowed, synchronous, in-order; UI-visible only (never persisted).
+    assistant_delta: []const u8,
+    /// Attempt boundary: erase any accumulated UI delta text (tui-streaming-001).
+    assistant_delta_clear,
     /// Emitted when an accepted Tool call enters serial execution.
     /// `turn` is the current 1-based turn; `call_index` is the 0-based index
     /// within the turn's tool-call batch.

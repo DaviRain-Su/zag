@@ -102,7 +102,7 @@ pub const Client = struct {
     ) Error!types.AssistantTurn {
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
-        const req = try buildChatRequest(self.config.model, chat_messages, chat_tools, opts, false);
+        const req = try buildChatRequest(arena, self.config.model, chat_messages, chat_tools, opts, false);
 
         // Agent path: loop owns retries (exactly chat_retries+1 network attempts).
         const saved_retries = self.sdk.transport.max_retries;
@@ -135,7 +135,7 @@ pub const Client = struct {
     ) Error!types.AssistantTurn {
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
-        const req = try buildChatRequest(self.config.model, chat_messages, chat_tools, opts, true);
+        const req = try buildChatRequest(arena, self.config.model, chat_messages, chat_tools, opts, true);
 
         var state: OpenAiStreamState = .{
             .arena = arena,
@@ -335,6 +335,9 @@ const OpenAiStreamState = struct {
     tool_names: std.ArrayList([]const u8) = .empty,
     tool_args: std.ArrayList(std.ArrayList(u8)) = .empty,
     finish_reason: []const u8 = "",
+    /// Usage from the final stream chunk (`stream_options.include_usage`).
+    /// Null when the provider never sends usage.
+    usage: ?types.Usage = null,
     /// Set only on explicit SSE `[DONE]` via on_done (never fabricated).
     saw_protocol_done: bool = false,
     err: ?Error = null,
@@ -351,7 +354,7 @@ const OpenAiStreamState = struct {
         const content = try self.arena.dupe(u8, self.content.items);
         const fr = try self.arena.dupe(u8, self.finish_reason);
         if (self.tool_ids.items.len == 0) {
-            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr, .usage = null };
+            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr, .usage = self.usage };
         }
         const calls = try self.arena.alloc(types.ToolCall, self.tool_ids.items.len);
         for (0..self.tool_ids.items.len) |i| {
@@ -361,7 +364,7 @@ const OpenAiStreamState = struct {
                 .arguments = try self.arena.dupe(u8, self.tool_args.items[i].items),
             };
         }
-        return .{ .content = content, .tool_calls = calls, .finish_reason = fr, .usage = null };
+        return .{ .content = content, .tool_calls = calls, .finish_reason = fr, .usage = self.usage };
     }
 };
 
@@ -462,6 +465,12 @@ fn onOpenAiSdkEvent(
             }
         }
     }
+
+    // Final chunk carries usage when the request asked for
+    // `stream_options.include_usage`; providers that omit it leave null.
+    if (event.value.usage) |u| {
+        state.usage = usageFromCompletionUsage(u);
+    }
 }
 
 fn onOpenAiSdkDone(user_ctx: ?*anyopaque) openai.errors.Error!void {
@@ -480,6 +489,7 @@ pub const EmbedOptions = types.EmbedOptions;
 pub const EmbeddingResult = types.EmbeddingResult;
 
 pub fn buildChatRequest(
+    arena: std.mem.Allocator,
     model: []const u8,
     messages: []const chat_res.ChatMessage,
     tools: []const chat_res.ChatTool,
@@ -500,6 +510,13 @@ pub fn buildChatRequest(
         .seed = opts.seed,
         .extra_body = opts.extra_body,
     };
+    // Ask the provider to include usage in the final stream chunk so the
+    // always-stream path keeps usage accounting identical to non-streaming.
+    if (stream) {
+        var stream_options: std.json.ObjectMap = .empty;
+        try stream_options.put(arena, "include_usage", .{ .bool = true });
+        req.stream_options = .{ .object = stream_options };
+    }
     if (opts.tool_choice) |tc| {
         req.tool_choice = try toolChoiceToChat(tc);
     }
@@ -667,8 +684,7 @@ fn optionalSlice(value: anytype) []const u8 {
     return "";
 }
 
-fn usageFromResponse(resp: gen.CreateChatCompletionResponse) ?types.Usage {
-    const u = resp.usage orelse return null;
+fn usageFromCompletionUsage(u: gen.CompletionUsage) types.Usage {
     var out = types.Usage.fromCounts(u.prompt_tokens, u.completion_tokens, u.total_tokens);
     if (u.completion_tokens_details) |d| {
         if (d.reasoning_tokens) |rt| {
@@ -678,6 +694,11 @@ fn usageFromResponse(resp: gen.CreateChatCompletionResponse) ?types.Usage {
         }
     }
     return out;
+}
+
+fn usageFromResponse(resp: gen.CreateChatCompletionResponse) ?types.Usage {
+    const u = resp.usage orelse return null;
+    return usageFromCompletionUsage(u);
 }
 
 pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletionResponse) Error!types.AssistantTurn {
@@ -756,6 +777,11 @@ pub fn buildRequestBody(
     if (stream) {
         s.objectField("stream") catch return error.WriteFailed;
         s.write(true) catch return error.WriteFailed;
+        s.objectField("stream_options") catch return error.WriteFailed;
+        s.beginObject() catch return error.WriteFailed;
+        s.objectField("include_usage") catch return error.WriteFailed;
+        s.write(true) catch return error.WriteFailed;
+        s.endObject() catch return error.WriteFailed;
     }
     if (opts.temperature) |t| {
         s.objectField("temperature") catch return error.WriteFailed;
@@ -1071,12 +1097,82 @@ test "buildRequestBody includes options" {
     try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\"") == null);
 }
 
-test "buildRequestBodyForStream sets stream true" {
+test "buildRequestBodyForStream sets stream true and include_usage" {
     const gpa = std.testing.allocator;
     const msgs = [_]types.Message{types.Message.user("hi")};
     const body = try buildRequestBodyForStream(gpa, "m", &msgs, &.{});
     defer gpa.free(body);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"stream_options\":{\"include_usage\":true}") != null);
+}
+
+test "buildChatRequest stream sets stream_options include_usage" {
+    const gpa = std.testing.allocator;
+    const msgs = [_]types.Message{types.Message.user("hi")};
+    const chat_msgs = try toChatMessages(gpa, &msgs);
+    defer gpa.free(chat_msgs);
+
+    const stream_req = try buildChatRequest(gpa, "m", chat_msgs, &.{}, .{}, true);
+    const stream_options = stream_req.stream_options orelse return error.TestUnexpectedResult;
+    var so = stream_options.object;
+    defer so.deinit(gpa);
+    try std.testing.expectEqual(@as(bool, true), so.get("include_usage").?.bool);
+
+    const plain_req = try buildChatRequest(gpa, "m", chat_msgs, &.{}, .{}, false);
+    try std.testing.expect(plain_req.stream_options == null);
+}
+
+test "SSE stream chunk usage captured into turn" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"id":"chatcmpl_1","object":"chat.completion.chunk","created":1720000000,"model":"gpt-4o",
+        \\"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}],
+        \\"usage":{"prompt_tokens":12,"completion_tokens":8,"total_tokens":20,
+        \\"completion_tokens_details":{"reasoning_tokens":3}}}
+    ;
+    const parsed = try std.json.parseFromSlice(chat_res.CreateChatCompletionStreamResponse, gpa, raw, .{});
+    // onOpenAiSdkEvent owns + deinits the parsed event.
+    var state: OpenAiStreamState = .{ .arena = gpa, .handler = null, .handler_ctx = null };
+    try onOpenAiSdkEvent(&state, parsed);
+    defer {
+        state.content.deinit(gpa);
+        if (state.finish_reason.len > 0) gpa.free(state.finish_reason);
+    }
+
+    const turn = try state.finish();
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+    }
+    try std.testing.expectEqualStrings("hi", turn.content);
+    try std.testing.expectEqualStrings("stop", turn.finish_reason);
+    const u = turn.usage.?;
+    try std.testing.expectEqual(@as(u32, 12), u.prompt_tokens);
+    try std.testing.expectEqual(@as(u32, 8), u.completion_tokens);
+    try std.testing.expectEqual(@as(u32, 20), u.total_tokens);
+    try std.testing.expectEqual(@as(u32, 3), u.reasoning_tokens);
+}
+
+test "SSE stream chunk without usage leaves turn usage null" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"id":"chatcmpl_1","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}
+    ;
+    const parsed = try std.json.parseFromSlice(chat_res.CreateChatCompletionStreamResponse, gpa, raw, .{});
+    var state: OpenAiStreamState = .{ .arena = gpa, .handler = null, .handler_ctx = null };
+    try onOpenAiSdkEvent(&state, parsed);
+    defer {
+        state.content.deinit(gpa);
+        if (state.finish_reason.len > 0) gpa.free(state.finish_reason);
+    }
+
+    const turn = try state.finish();
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+    }
+    try std.testing.expectEqualStrings("ok", turn.content);
+    try std.testing.expect(turn.usage == null);
 }
 
 test "mapSdkError classifies auth and rate limit" {
