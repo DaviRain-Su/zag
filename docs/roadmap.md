@@ -67,7 +67,7 @@ M2 — selected daily UX ✅
         ▼                            ▼                            ▼
   Host-shell polish            Evidence / Gate              D-012 coding route
   tui-vaxis-001                post-tui-remote-             edit-transaction-001
-   (backend; in flight /         dual-backend-gate-001       **contract-draft** @ cd55b2d
+   (backend; in flight /         dual-backend-gate-001       **ready** (contract PASS)
     not closed)                  (Phase A in-progress)            │
         │                            │                            ▼
   theme-001 (ready;              (orthogonal)               process-supervisor
@@ -84,7 +84,7 @@ Two **parallel** delivery lanes after M2 (do not serialize them):
 
 1. **Host shell** — finish quarantined vaxis backend → Theme impl (reuse/adapt
    unmerged `ff509a6` candidate only after vaxis) → richer views later.
-2. **D-012 coding agent** — edit transaction → supervisor → long-lived clients
+2. **D-012 coding agent** — edit transaction (**ready** for impl Goal) → supervisor → long-lived clients
    / intelligence / extensions. Does **not** wait on Theme or remote `-Dtui`.
 
 ## D-012 capability route
@@ -94,7 +94,7 @@ Pi/OMP/Hyper parity). Dependency order from
 [analysis](./plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md):
 
 ```text
-edit-transaction-001 (contract-draft @ cd55b2d; binding edit-transaction.md)
+edit-transaction-001 (ready; contract PASS; binding edit-transaction.md)
   └─► process-supervisor-001 (not drafted)
         ├─► rpc-v1
         ├─► LSP / workspace service
@@ -107,12 +107,12 @@ E3 WASM — only after E2 semantics + capability Gates
 
 | Node | Status |
 |------|--------|
-| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **contract-draft** — dual review next; no impl yet |
+| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **ready** — dual review PASS; impl needs fresh Goal |
 | process-supervisor / `rpc-v1` / LSP / ACP / subagents / MCP / session-tree / model-data / E2–E3 | **roadmap only** — each needs its own contract + Gate |
 
 `process-supervisor` and everything under it remain **not task-ready** until
-drafted. Edit-transaction is the only D-012 coding node with a binding draft
-today.
+drafted. Edit-transaction is the only D-012 coding node **ready** for an
+implementation Goal today.
 
 ### M0 — Interaction reliability
 
@@ -194,7 +194,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest + review ([tools-edit](./modules/tools-edit.md)) | no multi-file txn (that is `edit-transaction-001`); Tools write/edit stays L2 |
-| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **contract-draft** @ `cd55b2d` ([edit-transaction.md](./modules/edit-transaction.md)); D-012 item 1 | dual review next; no product code; orthogonal to TUI/Theme |
+| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **ready** — contract **PASS** (dual reviews zero blockers); binding [edit-transaction.md](./modules/edit-transaction.md); D-012 item 1 | dual review done; **fresh Goal** required for impl; orthogonal to TUI/Theme |
 | [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55`; streaming @ `2d57e84`; layout @ `189de9e` | host shell only; no maturity raise |
 | tui-vaxis-001 | **in flight** (binding draft + WIP; not closed) | quarantined backend only; no vxfw wholesale |
 | [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** Phase A; TARGET `f352b60…`; Gate green **No** | docs evidence; **no** remote `-Dtui`; no Phase B grant |

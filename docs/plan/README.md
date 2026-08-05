@@ -158,7 +158,7 @@ completed foundation
            ┌───────────────┼───────────────────────────────┐
            ▼               ▼                               ▼
    tui-streaming ✅   post-tui-remote-gate            edit-transaction-001
-   tui-layout ✅        (Phase A in-progress)          **contract-draft** @ cd55b2d
+   tui-layout ✅        (Phase A in-progress)          **ready** (contract PASS)
            │               │                               │
    tui-vaxis-001           │                         (D-012 → supervisor…)
     (in flight;            ├─ orthogonal
@@ -231,9 +231,9 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 |--------------|--------|-------|
 | [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** (rebind PASS @ `7f9cfa4`) | Docs-first post-TUI **default-path** remote dual-OS dual-backend Gate; TARGET `f352b60…` (OLD_TARGET `b151307` abandoned); no run id; no push; no Phase B grant; Gate green No; **no** remote `-Dtui`; **no** maturity raise |
 | [theme-001](./tasks/theme-001.md) | **ready** (contract PASS @ `9e1b9f9`; dual re-reviews zero blockers) | Host-shell Theme binding [theme.md](../modules/theme.md); docs only; depends-on `tui-minimal-001`; eligible for **fresh** implementation Goal; **no** product code yet; **orthogonal** to post-TUI remote Gate; **no** maturity raise |
-| [edit-transaction-001](./tasks/edit-transaction-001.md) | **contract-draft** | C4 second slice / D-012 item 1: multi-file `apply_transaction` all-or-nothing; binding [edit-transaction.md](../modules/edit-transaction.md); **orthogonal** to TUI vaxis/Theme; **no** implementation; **no** maturity raise |
+| [edit-transaction-001](./tasks/edit-transaction-001.md) | **ready** (contract PASS; dual reviews zero blockers) | C4 second slice / D-012 item 1: multi-file `apply_transaction`; binding [edit-transaction.md](../modules/edit-transaction.md); eligible for **fresh** implementation Goal; **no** product code yet; **orthogonal** to TUI vaxis/Theme; **no** maturity raise |
 | RPC / ACP / extension-UI | **pending** (not ready) | **fresh Goal** still required; Theme contract does **not** auto-select or package them |
-| D-012 local coding-agent route | **roadmap target; first node drafted** | edit-transaction-001 (draft) → process supervisor → `rpc-v1` / LSP / ACP / typed subagents / MCP-E2; each node requires its own contract and Gate |
+| D-012 local coding-agent route | **roadmap; first node ready** | edit-transaction-001 (**ready**, contract PASS) → process supervisor → `rpc-v1` / LSP / ACP / typed subagents / MCP-E2; each later node requires its own contract and Gate |
 
 ### Completed foundation
 
