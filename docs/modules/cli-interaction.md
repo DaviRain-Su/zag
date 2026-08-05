@@ -86,6 +86,21 @@ claimed).
 - A handler performs only async-signal-safe atomic state changes and self-pipe wake-up.
   It performs no allocation, logging, formatting, or buffered I/O.
 
+## Progressive assistant stdout (human modes)
+
+Default interactive REPL and one-shot (not `--tui`, not `--json` /
+`--json-stream`) paint provider `assistant_delta` chunks to stdout as they
+arrive — same loop events as [tui-streaming.md](./tui-streaming.md), host-side
+only.
+
+| Rule | Binding |
+|------|---------|
+| When | human CLI only (`observer` = `CliStreamStdout`) |
+| Paint | redacted delta → stdout → flush |
+| Retry | `assistant_delta_clear` erases the attempt on TTY (ANSI); pipes leave bytes |
+| Finish | if any delta painted, do **not** reprint `final_text`; else print full text (non-stream fallback) |
+| Headless / TUI | unchanged (`--json` observer none; `--json-stream` NDJSON; `--tui` App observer) |
+
 ## Ctrl+C contract
 
 ### Idle REPL
