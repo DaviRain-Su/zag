@@ -9,6 +9,7 @@ const core = @import("zag-agent-core");
 const coding = @import("zag-coding-agent");
 const hw = @import("headless_writer.zig");
 const sigint = @import("sigint.zig");
+const cli_stream = @import("cli_stream.zig");
 const build_options = @import("build_options");
 const tui_enabled: bool = build_options.tui_enabled;
 const tui_entry = if (tui_enabled) @import("tui_entry.zig") else struct {};
@@ -445,6 +446,7 @@ pub fn run(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writer(io, &stdout_buf);
     var headless_writer: hw.HeadlessWriter = undefined;
     var headless_observer: HeadlessObserver = undefined;
+    var human_stream = cli_stream.CliStreamStdout.init(gpa, io);
     if (headless_mode) |mode| {
         headless_writer = hw.HeadlessWriter.init(gpa, io, &stdout_writer.interface, mode, null);
         if (mode == .json_stream) {
@@ -503,7 +505,12 @@ pub fn run(init: std.process.Init) !void {
         .model_info = resolve_result.model_info,
         .secrets = &secret_slots,
         .pattern_redaction = true,
-        .observer = if (headless_mode == .json_stream) headless_observer.asObserver() else .none(),
+        .observer = if (headless_mode == .json_stream)
+            headless_observer.asObserver()
+        else if (headless_mode == null)
+            human_stream.asObserver()
+        else
+            .none(),
         .hunk_reviewer = bound_hunk_reviewer,
         .post_edit_verifier = null,
     };
@@ -578,6 +585,8 @@ pub fn run(init: std.process.Init) !void {
         std.process.exit(1);
     };
     defer agent.deinit();
+    // Progressive human CLI: redact deltas with the agent-owned redactor.
+    human_stream.setRedactor(agent.activeRedactor());
     // Wire cancel only after Agent address is stable (B6 cancel-before-decision → reject).
     interactive_hunk_reviewer.cancel = &agent.cancel;
     // cli-sigint-001: CLI owns the SIGINT handler.
@@ -602,11 +611,11 @@ pub fn run(init: std.process.Init) !void {
 
     if (prompt_parts.items.len > 0) {
         const prompt = try std.mem.join(arena, " ", prompt_parts.items);
-        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project, host_opts);
+        try runOneShot(&agent, prompt, verbose, session_path, open_mode, !no_project, host_opts, &human_stream);
         return;
     }
 
-    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, host_opts, &sigint_guard);
+    try runRepl(&agent, io, permission_mode, session_path, open_mode, !no_project, host_opts, &sigint_guard, &human_stream);
 }
 
 const HostResourceOptions = struct {
@@ -732,6 +741,7 @@ fn runOneShot(
     open_mode: coding.OpenMode,
     load_project: bool,
     host_opts: HostResourceOptions,
+    stream: *cli_stream.CliStreamStdout,
 ) !void {
     // skills-001 + prompt-templates-001: expand before reply; local errors → no provider.
     var session = coding.Session.start(agent.gpa, agent.io, .{
@@ -776,10 +786,7 @@ fn runOneShot(
         std.log.warn("stopped: cancelled (SIGINT)", .{});
     }
 
-    try writeStdout(agent.io, result.final_text);
-    if (result.final_text.len == 0 or result.final_text[result.final_text.len - 1] != '\n') {
-        try writeStdout(agent.io, "\n");
-    }
+    try stream.finishReply(result.final_text);
 }
 
 const ResolvedPrompt = struct {
@@ -908,6 +915,7 @@ fn runRepl(
     load_project: bool,
     host_opts: HostResourceOptions,
     guard: *sigint.Guard,
+    stream: *cli_stream.CliStreamStdout,
 ) !void {
     try writeStdout(io, "zag (jail + policy + trace, permission=");
     try writeStdout(io, mode.name());
@@ -985,11 +993,13 @@ fn runRepl(
         };
         defer if (reply_text.owned) agent.gpa.free(reply_text.text);
 
+        try writeStdout(io, "zag> ");
         const result = agent.reply(&session, reply_text.text) catch |err| {
             std.log.err("agent failed: {s}", .{@errorName(err)});
             // Acknowledge any SIGINT-driven cancel so the next Ctrl+C works
             // afresh; the flag was cleared at the reply completion boundary.
             guard.acknowledgeCancel();
+            try writeStdout(io, "\n");
             continue;
         };
 
@@ -1002,11 +1012,7 @@ fn runRepl(
             agent.logCostSummary();
         }
 
-        try writeStdout(io, "zag> ");
-        try writeStdout(io, result.final_text);
-        if (result.final_text.len == 0 or result.final_text[result.final_text.len - 1] != '\n') {
-            try writeStdout(io, "\n");
-        }
+        try stream.finishReply(result.final_text);
     }
 
     // Session-end cost line (even without -v) when any usage was recorded.
