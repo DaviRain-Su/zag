@@ -96,8 +96,6 @@ pub const App = struct {
     worker_finished: std.atomic.Value(bool) = .init(false),
     worker_had_error: std.atomic.Value(bool) = .init(false),
 
-    in_buf: [512]u8 = undefined,
-    in_len: usize = 0,
     snap_buf: [c.card_slots]cards_mod.CardSlot = undefined,
     last_run_started: bool = false,
     /// Streaming delta accumulator (tui-streaming-001): grows per
@@ -424,17 +422,21 @@ pub const App = struct {
         }
         if (self.quiesced) return 1;
 
-        var term = terminal_mod.Terminal.open() catch {
+        var term = terminal_mod.Terminal.open(self.gpa, self.wake_w) catch {
             self.fixedStderr("tui: not a tty\n");
             return 2;
         };
         const sz0 = term.size();
         if (sz0.isBelowMinimum()) {
+            // Tty.init already applied raw termios; restore before exiting so
+            // the terminal is never left raw on the geometry-failure path.
+            term.restore() catch {};
             self.fixedStderr("tui: terminal too small (need ≥ 20×5)\n");
             return 1;
         }
 
         term.enterRawAlt() catch {
+            term.restore() catch {};
             self.fixedStderr("tui: raw mode failed\n");
             return 1;
         };
@@ -464,25 +466,40 @@ pub const App = struct {
         };
 
         while (self.state != .closed) {
+            // Poll set (tui-vaxis-001): [wake_r, host]. stdin is gone — the
+            // vaxis input thread owns the tty and the bridge thread delivers
+            // key/winsize events through the wake pipe + ring.
             var pollfds = [_]posix.pollfd{
-                .{ .fd = posix.STDIN_FILENO, .events = posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.wake_r, .events = posix.POLL.IN, .revents = 0 },
                 .{ .fd = self.host.?.wakeFd(), .events = posix.POLL.IN, .revents = 0 },
             };
-            if (pollfds[2].fd < 0) {
-                pollfds[2].fd = -1;
-                pollfds[2].events = 0;
+            if (pollfds[1].fd < 0) {
+                pollfds[1].fd = -1;
+                pollfds[1].events = 0;
             }
 
             _ = posix.poll(&pollfds, c.poll_timeout_ms) catch {};
 
-            if (pollfds[1].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
-                // Worker wake: cards/modal may have changed (join handled
-                // below); a permission modal pending change lands here too.
-                self.dirty = true;
+            if (pollfds[0].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
+                // Worker wakes and bridge events share the pipe: drain it,
+                // then process bridge-ring events (keys / winsize) in order.
                 terminal_mod.drainPipe(self.wake_r);
+                self.dirty = true;
+                const action = self.drainBridgeEvents(&term);
+                switch (action) {
+                    .none => {},
+                    .quit_0 => {
+                        exit_code = 0;
+                        self.state = .closed;
+                    },
+                    .quit_1 => {
+                        exit_code = 1;
+                        self.state = .closed;
+                    },
+                    .closing => self.enterClosing(),
+                }
             }
-            if (pollfds[2].fd >= 0 and pollfds[2].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
+            if (pollfds[1].fd >= 0 and pollfds[1].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
                 self.dirty = true;
                 self.host.?.drainWake();
             }
@@ -507,35 +524,6 @@ pub const App = struct {
                     // Fail-closed: deny any pending AskFn so worker cannot hang.
                     self.permission.denyAndClose();
                     self.enterClosing();
-                }
-            }
-
-            if (pollfds[0].revents & posix.POLL.IN != 0) {
-                // Any key input (including EOF) is a change worth repainting.
-                self.dirty = true;
-                const action = self.readAndHandleKeys() catch {
-                    self.permission.denyAndClose();
-                    self.markHostFatal(1);
-                    self.fixedStderr("tui: read failed\n");
-                    if (self.state == .busy) {
-                        self.enterClosing();
-                    } else {
-                        exit_code = 1;
-                        self.state = .closed;
-                    }
-                    continue;
-                };
-                switch (action) {
-                    .none => {},
-                    .quit_0 => {
-                        exit_code = 0;
-                        self.state = .closed;
-                    },
-                    .quit_1 => {
-                        exit_code = 1;
-                        self.state = .closed;
-                    },
-                    .closing => self.enterClosing(),
                 }
             }
 
@@ -603,55 +591,46 @@ pub const App = struct {
 
     const KeyAction = enum { none, quit_0, quit_1, closing };
 
-    fn readAndHandleKeys(self: *App) error{ReadFailed}!KeyAction {
-        var tmp: [256]u8 = undefined;
-        const n = posix.read(posix.STDIN_FILENO, &tmp) catch |err| switch (err) {
-            error.WouldBlock => return .none,
-            else => return error.ReadFailed,
-        };
-        if (n == 0) {
-            if (self.permission.isPending()) self.permission.decide(.deny);
-            if (self.state == .busy or self.state == .closing) return .closing;
-            if (self.editor.len == 0) return .quit_0;
-            return .none;
-        }
-        if (self.in_len + n > self.in_buf.len) {
-            self.in_len = 0;
-            if (self.permission.isPending()) self.permission.decide(.deny);
-            return .none;
-        }
-        @memcpy(self.in_buf[self.in_len..][0..n], tmp[0..n]);
-        self.in_len += n;
-
+    /// Drain the bridge ring (tui-vaxis-001): map each vaxis key event to an
+    /// AppKey and handle it; winsize events resize the vaxis screen and mark
+    /// dirty. Non-blocking; returns the first terminal KeyAction (if any).
+    fn drainBridgeEvents(self: *App, term: *terminal_mod.Terminal) KeyAction {
         var action: KeyAction = .none;
-        var off: usize = 0;
-        while (off < self.in_len) {
-            const rem = self.in_buf[off..self.in_len];
-            const dec = keys_mod.decode(rem) orelse break;
-            off += dec.n;
-            action = self.handleKey(dec.key);
-            if (action != .none) break;
-        }
-        if (off > 0) {
-            const left = self.in_len - off;
-            if (left > 0) std.mem.copyForwards(u8, self.in_buf[0..left], self.in_buf[off..][0..left]);
-            self.in_len = left;
+        while (term.popEvent()) |ev| {
+            switch (ev) {
+                .key_press => |key| {
+                    var utf8_buf: [4]u8 = undefined;
+                    const mapped = keys_mod.mapKey(key, &utf8_buf);
+                    const a = self.handleKey(mapped);
+                    if (a != .none) {
+                        action = a;
+                        break;
+                    }
+                },
+                .winsize => |ws| {
+                    term.resize(ws);
+                    self.dirty = true;
+                },
+                .quit => {},
+            }
         }
         return action;
     }
 
-    fn handleKey(self: *App, key: keys_mod.Key) KeyAction {
+    fn handleKey(self: *App, key: keys_mod.AppKey) KeyAction {
         // Any decoded key is a change worth repainting (no-op keys included —
         // batching is per-iteration, so this costs at most one frame).
         self.dirty = true;
         if (self.permission.isPending()) {
             switch (key) {
                 .char => |ch| {
-                    if (ch == 'a' or ch == 'A') {
+                    if (std.mem.eql(u8, ch, "a") or std.mem.eql(u8, ch, "A")) {
                         self.permission.decide(.allow);
                         return .none;
                     }
-                    if (ch == 'd' or ch == 'D' or ch == 'n' or ch == 'N') {
+                    if (std.mem.eql(u8, ch, "d") or std.mem.eql(u8, ch, "D") or
+                        std.mem.eql(u8, ch, "n") or std.mem.eql(u8, ch, "N"))
+                    {
                         self.permission.decide(.deny);
                         return .none;
                     }
@@ -745,8 +724,8 @@ pub const App = struct {
                 return .none;
             },
             .char => |ch| {
-                var b = [_]u8{ch};
-                _ = self.editor.insert(&b);
+                // UTF-8-encoded codepoint (multi-byte in one insert).
+                _ = self.editor.insert(ch);
                 return .none;
             },
             .unknown => return .none,
@@ -1031,113 +1010,148 @@ test "tui-streaming: complete assistant_message resets at turn boundary" {
     try std.testing.expectEqualStrings("next", newest.bodySlice());
 }
 
-// ── tui-layout-001 fixtures: dirty-flag presenter ───────────────────────────
+// ── tui-layout-001 fixtures: dirty-flag presenter (cell-diff assertions) ────
 
-/// Pipe-backed recording terminal for paint fixtures. `term.size()` on pipe
-/// fds falls back to the 80×24 default; `drainCount()` reports how many
-/// bytes a paint actually wrote (0 ⇒ paint skipped).
+/// Offscreen vaxis-backed recording terminal (tui-vaxis-001 RecTerm rework):
+/// `paint()` renders into the standalone offscreen screen; tests assert cells
+/// (byte-drain is gone — vaxis's diff owns the byte stream).
 const RecTerm = struct {
-    term: terminal_mod.Terminal,
-    fds: [2]posix.fd_t,
+    pt: terminal_mod.PaintTerminal,
 
-    fn init() !RecTerm {
-        const fds = try terminal_mod.makeWakePipe();
-        return .{ .term = .{ .in_fd = fds[0], .out_fd = fds[1], .orig_in = undefined }, .fds = fds };
+    fn init(gpa: std.mem.Allocator) !RecTerm {
+        return .{ .pt = try terminal_mod.PaintTerminal.init(gpa) };
     }
 
-    fn drainCount(self: *RecTerm) usize {
-        var buf: [2048]u8 = undefined;
-        var total: usize = 0;
-        while (true) {
-            const n = posix.read(self.fds[0], &buf) catch break;
-            if (n == 0) break;
-            total += n;
-        }
-        return total;
+    fn deinit(self: *RecTerm, gpa: std.mem.Allocator) void {
+        self.pt.deinit(gpa);
     }
 
-    fn deinit(self: *RecTerm) void {
-        terminal_mod.closeFd(self.fds[0]);
-        terminal_mod.closeFd(self.fds[1]);
+    fn writeCell(self: *RecTerm, col: u16, row: u16, grapheme: []const u8) void {
+        self.pt.writeCell(col, row, grapheme);
+    }
+
+    fn cellText(self: *const RecTerm, col: u16, row: u16, buf: []u8) []const u8 {
+        return self.pt.cellText(col, row, buf);
     }
 };
+
+fn expectCellText(rec: *const RecTerm, col: u16, row: u16, expected: []const u8) !void {
+    var buf: [16]u8 = undefined;
+    try std.testing.expectEqualStrings(expected, rec.cellText(col, row, &buf));
+}
 
 test "tui-layout: first paint always happens" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    var rec = try RecTerm.init();
-    defer rec.deinit();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
 
     app.dirty = false; // explicitly clean — first paint must still run
-    try app.paint(&rec.term);
-    try std.testing.expect(rec.drainCount() > 0);
+    try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
     try std.testing.expect(app.last_painted_size != null);
+    // Cell proof: the full frame was drawn into the offscreen screen.
+    try expectCellText(&rec, 0, 0, "┌");
+    try expectCellText(&rec, 1, 0, "─");
+    try expectCellText(&rec, 0, 1, "│");
+    try expectCellText(&rec, 2, 1, "i");
 }
 
-test "tui-layout: no-change poll skips write (0 bytes)" {
+test "tui-layout: no-change poll skips render (canary survives)" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    var rec = try RecTerm.init();
-    defer rec.deinit();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
 
-    try app.paint(&rec.term); // first paint
-    _ = rec.drainCount();
+    try app.paint(&rec.pt.term); // first paint
     try std.testing.expect(!app.dirty);
-    // Poll-timeout-only iteration: no handler ran, dirty stays false → paint
-    // early-returns without writing a single byte.
-    try app.paint(&rec.term);
-    try std.testing.expectEqual(@as(usize, 0), rec.drainCount());
+    // Canary: a real paint clears the whole screen (root.clear), so a
+    // surviving canary proves the no-change paint early-returned.
+    rec.writeCell(79, 39, "X");
+    try app.paint(&rec.pt.term);
+    try expectCellText(&rec, 79, 39, "X");
 }
 
 test "tui-layout: key input paints once" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    var rec = try RecTerm.init();
-    defer rec.deinit();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
 
-    _ = app.handleKey(.{ .char = 'x' });
+    _ = app.handleKey(.{ .char = "x" });
     try std.testing.expect(app.dirty);
-    try app.paint(&rec.term);
-    try std.testing.expect(rec.drainCount() > 0);
+    rec.writeCell(79, 39, "X");
+    try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
+    try expectCellText(&rec, 79, 39, " ");
 }
 
 test "tui-layout: worker join paints" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    var rec = try RecTerm.init();
-    defer rec.deinit();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
 
     app.afterWorkerJoin();
     try std.testing.expect(app.dirty);
-    try app.paint(&rec.term);
-    try std.testing.expect(rec.drainCount() > 0);
+    rec.writeCell(79, 39, "X");
+    try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
+    try expectCellText(&rec, 79, 39, " ");
 }
 
 test "tui-layout: idle-terminal resize repaints (size re-read in paint)" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    var rec = try RecTerm.init();
-    defer rec.deinit();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
 
-    try app.paint(&rec.term); // first paint; pipe term.size() == 80×24
-    _ = rec.drainCount();
-    app.dirty = false;
+    try app.paint(&rec.pt.term); // first paint; TestTty term.size() == 80×40
+    try std.testing.expect(!app.dirty);
     // Simulate a resize between polls: last painted size no longer matches
     // the size paint() re-reads, so the size check fires and repaints.
     app.last_painted_size = .{ .cols = 79, .rows = 23 };
-    try app.paint(&rec.term);
-    try std.testing.expect(rec.drainCount() > 0);
+    rec.writeCell(79, 39, "X");
+    try app.paint(&rec.pt.term);
+    try expectCellText(&rec, 79, 39, " "); // repainted → canary erased
     const last = app.last_painted_size orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 80), last.cols);
-    try std.testing.expectEqual(@as(u16, 24), last.rows);
+    try std.testing.expectEqual(@as(u16, 40), last.rows);
+}
+
+test "tui-layout: winsize event resizes vaxis screen and repaints" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
+
+    try app.paint(&rec.pt.term); // first paint
+    try std.testing.expect(!app.dirty);
+
+    // Simulate a bridge-delivered winsize event.
+    _ = rec.pt.term.ring.tryPush(.{ .winsize = .{
+        .rows = 30,
+        .cols = 100,
+        .x_pixel = 0,
+        .y_pixel = 0,
+    } }) catch {};
+    _ = app.drainBridgeEvents(&rec.pt.term);
+    try std.testing.expect(app.dirty);
+    try std.testing.expectEqual(@as(u16, 100), rec.pt.term.vx.screen.width);
+    try std.testing.expectEqual(@as(u16, 30), rec.pt.term.vx.screen.height);
+
+    // Repaint reconciles geometry (dirty cleared; frame drawn at the tty
+    // size the paint re-reads).
+    try app.paint(&rec.pt.term);
+    try std.testing.expect(!app.dirty);
+    try std.testing.expectEqual(@as(u16, 80), rec.pt.term.vx.screen.width);
+    try std.testing.expectEqual(@as(u16, 40), rec.pt.term.vx.screen.height);
 }
 
 test "tui-layout: note update sets dirty" {

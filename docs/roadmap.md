@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 first edit slice + minimal TUI(+streaming/layout) landed. **Host-shell track:** vaxis backend in flight (not merged as done); Theme `ready` but adapt-after-vaxis; post-TUI remote Gate still Phase A. **D-012 coding track:** `edit-transaction-001` **contract-draft** @ `cd55b2d`; supervisor / `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
+| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 first edit slice + minimal TUI(+streaming/layout) landed. **Host-shell track:** vaxis backend in flight (not merged as done); Theme `ready` but adapt-after-vaxis; post-TUI remote Gate still Phase A. **D-012 coding track:** `edit-transaction-001` **ready** (contract PASS); supervisor / `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 

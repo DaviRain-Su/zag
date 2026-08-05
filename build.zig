@@ -58,6 +58,7 @@ pub fn build(b: *std.Build) void {
 
     // Lazy: only resolve/build zag-tui when -Dtui=true.
     var tui_mod: ?*std.Build.Module = null;
+    var vaxis_mod: ?*std.Build.Module = null;
     if (tui) {
         const tui_dep = b.lazyDependency("zag_tui", .{
             .target = target,
@@ -65,6 +66,13 @@ pub fn build(b: *std.Build) void {
             .http_backend = http_backend,
         }) orelse return;
         tui_mod = tui_dep.module("zag-tui");
+        // Quarantined backend dep (tui-vaxis-001): vaxis resolves lazily with
+        // the zag-tui graph (zigimg/uucode from the local zig cache).
+        const vaxis_dep = b.lazyDependency("vaxis", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return;
+        vaxis_mod = vaxis_dep.module("vaxis");
     }
 
     const cli_dep = b.dependency("zag_cli", .{
@@ -161,6 +169,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zag-coding-agent", .module = coding_mod },
                 .{ .name = "zag-agent-core", .module = core_mod },
                 .{ .name = "zag-types", .module = types_mod },
+                .{ .name = "vaxis", .module = vaxis_mod.? },
             },
         });
         _ = tm;
@@ -302,6 +311,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "zag-coding-agent", .module = coding_mod },
                     .{ .name = "zag-agent-core", .module = core_mod },
                     .{ .name = "zag-types", .module = types_mod },
+                    .{ .name = "vaxis", .module = vaxis_mod.? },
                 },
             }),
         });

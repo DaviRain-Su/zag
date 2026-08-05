@@ -13,6 +13,9 @@
         .zag_types = .{
             .path = "../zag-types",
         },
+        .vaxis = .{
+            .path = "../third_party/vaxis",
+        },
     },
     .paths = .{
         "build.zig",

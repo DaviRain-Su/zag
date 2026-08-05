@@ -1,9 +1,18 @@
-//! Bounded key decoder for raw-mode stdin bytes.
+//! vaxis.Key → AppKey translation (tui-vaxis-001).
+//!
+//! Hand-rolled byte decoding is gone: vaxis's parser produces `vaxis.Key`
+//! events (codepoint + modifiers + UTF-8 text). This module maps those into
+//! the app's key vocabulary. Printable codepoints are UTF-8-encoded into the
+//! caller-provided `out` buffer (4 bytes max) so multi-byte input like "你"
+//! inserts as one codepoint instead of byte-by-byte.
 
 const std = @import("std");
+const vaxis = @import("vaxis");
 
-pub const Key = union(enum) {
-    char: u8,
+pub const AppKey = union(enum) {
+    /// UTF-8 encoding of a printable codepoint; slice borrows `out` from
+    /// `mapKey` and is valid until the next `mapKey` call.
+    char: []const u8,
     enter,
     alt_enter,
     escape,
@@ -21,64 +30,109 @@ pub const Key = union(enum) {
     unknown,
 };
 
-/// Decode one key from a byte stream buffer. Returns key + bytes consumed.
-/// Incomplete escape sequences return null (wait for more input).
-pub fn decode(buf: []const u8) ?struct { key: Key, n: usize } {
-    if (buf.len == 0) return null;
-    const b0 = buf[0];
+/// Map a vaxis key event to an AppKey. `out` receives the UTF-8 encoding for
+/// `.char` results (4 bytes max — one codepoint).
+pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
+    const cp = key.codepoint;
+    const mods = key.mods;
 
-    // C0 controls
-    if (b0 == 0x03) return .{ .key = .ctrl_c, .n = 1 };
-    if (b0 == 0x04) return .{ .key = .ctrl_d, .n = 1 };
-    if (b0 == 0x0a or b0 == 0x0d) return .{ .key = .enter, .n = 1 };
-    if (b0 == 0x0a) return .{ .key = .ctrl_j, .n = 1 }; // unreachable after above; keep Ctrl+J as enter-class
-    if (b0 == 0x7f or b0 == 0x08) return .{ .key = .backspace, .n = 1 };
-    if (b0 == 0x1b) {
-        if (buf.len == 1) {
-            // Could be bare Esc or incomplete sequence — treat single Esc after
-            // no further bytes as Escape only when caller flushes; here wait if
-            // we cannot know. For poll-driven UI, lone ESC is Escape.
-            return .{ .key = .escape, .n = 1 };
+    // Alt+Enter and Alt+<char> arrive as ESC-prefixed sequences.
+    if (mods.alt and cp == vaxis.Key.enter) return .alt_enter;
+    if (mods.alt and (cp == 's' or cp == 'S')) return .alt_s;
+    if (mods.alt and (cp == 'f' or cp == 'F')) return .alt_f;
+
+    // Ctrl+letter (vaxis maps C0 controls to lowercase letters with ctrl).
+    if (mods.ctrl) {
+        switch (cp) {
+            'j' => return .ctrl_j,
+            'c' => return .ctrl_c, // defensive — ISIG normally routes Ctrl+C to SIGINT
+            'd' => return .ctrl_d,
+            else => {},
         }
-        // Alt+key: ESC + printable
-        if (buf[1] != '[') {
-            const ch = buf[1];
-            if (ch == '\r' or ch == '\n') return .{ .key = .alt_enter, .n = 2 };
-            if (ch == 's' or ch == 'S') return .{ .key = .alt_s, .n = 2 };
-            if (ch == 'f' or ch == 'F') return .{ .key = .alt_f, .n = 2 };
-            // Alt+Enter sometimes as ESC then enter already handled.
-            return .{ .key = .{ .char = ch }, .n = 2 };
-        }
-        // CSI sequences
-        if (buf.len < 3) return null; // incomplete
-        if (buf[1] == '[') {
-            switch (buf[2]) {
-                'A' => return .{ .key = .up, .n = 3 },
-                'B' => return .{ .key = .down, .n = 3 },
-                'C' => return .{ .key = .right, .n = 3 },
-                'D' => return .{ .key = .left, .n = 3 },
-                '3' => {
-                    if (buf.len < 4) return null;
-                    if (buf[3] == '~') return .{ .key = .delete, .n = 4 };
-                    return .{ .key = .unknown, .n = 4 };
-                },
-                else => return .{ .key = .unknown, .n = 3 },
-            }
-        }
-        return .{ .key = .escape, .n = 1 };
     }
 
-    // Printable / UTF-8 lead — emit single byte; multi-byte UTF-8 inserted as bytes.
-    if (b0 >= 0x20) return .{ .key = .{ .char = b0 }, .n = 1 };
-    if (b0 == 0x09) return .{ .key = .{ .char = '\t' }, .n = 1 };
-    return .{ .key = .unknown, .n = 1 };
+    switch (cp) {
+        vaxis.Key.enter => return .enter,
+        vaxis.Key.escape => return .escape,
+        vaxis.Key.backspace => return .backspace,
+        0x08 => return .backspace, // vaxis maps 0x08 to 0x7F; keep legacy BS
+        vaxis.Key.up => return .up,
+        vaxis.Key.down => return .down,
+        vaxis.Key.left => return .left,
+        vaxis.Key.right => return .right,
+        vaxis.Key.delete => return .delete,
+        else => {},
+    }
+
+    // Printable: encode the codepoint (multi-byte UTF-8 in one insert).
+    // vaxis encodes special keys (arrows etc.) in the private-use area
+    // starting at Key.insert; those are handled above and must not map here.
+    if (cp >= 0x20 and cp < vaxis.Key.insert and cp <= 0x10FFFF) {
+        const n = std.unicode.utf8Encode(cp, out) catch return .unknown;
+        return .{ .char = out[0..n] };
+    }
+    return .unknown;
 }
 
-test "decode arrows and enter" {
-    const up = decode("\x1b[A").?;
-    try std.testing.expect(up.key == .up);
-    const ent = decode("\r").?;
-    try std.testing.expect(ent.key == .enter);
-    const alt_s = decode("\x1bs").?;
-    try std.testing.expect(alt_s.key == .alt_s);
+// ── fixtures (tui-vaxis-001) ────────────────────────────────────────────────
+
+fn k(cp: u21) vaxis.Key {
+    return .{ .codepoint = cp };
+}
+
+test "mapKey: enter / escape / backspace / delete" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(k(vaxis.Key.enter), &out) == .enter);
+    try std.testing.expect(mapKey(k(vaxis.Key.escape), &out) == .escape);
+    try std.testing.expect(mapKey(k(vaxis.Key.backspace), &out) == .backspace);
+    try std.testing.expect(mapKey(k(0x08), &out) == .backspace);
+    try std.testing.expect(mapKey(k(vaxis.Key.delete), &out) == .delete);
+}
+
+test "mapKey: arrows" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(k(vaxis.Key.up), &out) == .up);
+    try std.testing.expect(mapKey(k(vaxis.Key.down), &out) == .down);
+    try std.testing.expect(mapKey(k(vaxis.Key.left), &out) == .left);
+    try std.testing.expect(mapKey(k(vaxis.Key.right), &out) == .right);
+}
+
+test "mapKey: alt chords" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(.{ .codepoint = vaxis.Key.enter, .mods = .{ .alt = true } }, &out) == .alt_enter);
+    try std.testing.expect(mapKey(.{ .codepoint = 's', .mods = .{ .alt = true } }, &out) == .alt_s);
+    try std.testing.expect(mapKey(.{ .codepoint = 'S', .mods = .{ .alt = true } }, &out) == .alt_s);
+    try std.testing.expect(mapKey(.{ .codepoint = 'f', .mods = .{ .alt = true } }, &out) == .alt_f);
+    try std.testing.expect(mapKey(.{ .codepoint = 'F', .mods = .{ .alt = true } }, &out) == .alt_f);
+}
+
+test "mapKey: ctrl chords" {
+    var out: [4]u8 = undefined;
+    // vaxis parses Ctrl+J as codepoint 'j' with ctrl mod (0x0A → 'j').
+    try std.testing.expect(mapKey(.{ .codepoint = 'j', .mods = .{ .ctrl = true } }, &out) == .ctrl_j);
+    try std.testing.expect(mapKey(.{ .codepoint = 'c', .mods = .{ .ctrl = true } }, &out) == .ctrl_c);
+    try std.testing.expect(mapKey(.{ .codepoint = 'd', .mods = .{ .ctrl = true } }, &out) == .ctrl_d);
+}
+
+test "mapKey: printable ASCII encodes one byte" {
+    var out: [4]u8 = undefined;
+    const key = mapKey(k('x'), &out);
+    try std.testing.expect(key == .char);
+    try std.testing.expectEqualStrings("x", key.char);
+}
+
+test "mapKey: multi-byte codepoint is one UTF-8 insert (你)" {
+    var out: [4]u8 = undefined;
+    const key = mapKey(k(0x4F60), &out); // U+4F60 你
+    try std.testing.expect(key == .char);
+    try std.testing.expectEqualStrings("你", key.char);
+    // One codepoint → exactly one 3-byte slice (never byte-by-byte).
+    try std.testing.expectEqual(@as(usize, 3), key.char.len);
+}
+
+test "mapKey: unknown inputs" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(k(vaxis.Key.f1), &out) == .unknown);
+    try std.testing.expect(mapKey(k(0x00), &out) == .unknown);
+    try std.testing.expect(mapKey(.{ .codepoint = vaxis.Key.multicodepoint }, &out) == .unknown);
 }

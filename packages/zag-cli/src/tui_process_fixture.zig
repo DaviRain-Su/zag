@@ -284,22 +284,36 @@ fn startSlowMock(io: Io, cwd: Io.Dir, stall_ms: u64, want_ready: bool) !struct {
     return .{ .pid = pid, .port = port };
 }
 
-fn waitRequestReady(io: Io, cwd: Io.Dir, bound_ms: u64) !void {
+/// Wait for the mock's ready-file while CONTINUING TO DRAIN the PTY master.
+///
+/// The ready-file is the deterministic "request consumed, about to stall"
+/// handshake; but between the preceding waitMarker returning and this poll
+/// loop, the child may paint more (winsize repaint, busy chrome). An undrained
+/// master fills the PTY output buffer (~1KB) and blocks the child's write in
+/// paint() — which would stall the Enter→HTTP→ready chain past the bound. Same
+/// drain discipline as `waitBoundedDrain` (SIGINT/exit path).
+fn waitRequestReady(io: Io, cwd: Io.Dir, bound_ms: u64, pty: *PtySession) !void {
     var elapsed: u64 = 0;
-    const step_ms: u64 = 5;
+    const step_ms: i32 = 5;
     while (elapsed < bound_ms) {
+        var pfds = [_]posix.pollfd{.{ .fd = pty.master, .events = posix.POLL.IN, .revents = 0 }};
+        _ = posix.poll(&pfds, step_ms) catch {};
+        var chunk: [4096]u8 = undefined;
+        while (true) {
+            const rc = std.c.read(pty.master, &chunk, chunk.len);
+            if (rc <= 0) break;
+            pty.acc.appendSlice(pty.gpa, chunk[0..@intCast(rc)]) catch {};
+        }
         const content = cwd.readFileAlloc(io, ready_file_name, std.heap.page_allocator, .limited(16)) catch |err| switch (err) {
             error.FileNotFound => {
-                std.Io.sleep(io, std.Io.Duration.fromMilliseconds(step_ms), .real) catch {};
-                elapsed += step_ms;
+                elapsed += @intCast(step_ms);
                 continue;
             },
             else => return err,
         };
         defer std.heap.page_allocator.free(content);
         if (std.mem.indexOf(u8, content, "ready") != null) return;
-        std.Io.sleep(io, std.Io.Duration.fromMilliseconds(step_ms), .real) catch {};
-        elapsed += step_ms;
+        elapsed += @intCast(step_ms);
     }
     return error.RequestReadyTimeout;
 }
@@ -596,7 +610,7 @@ test "gate31_pty_busy_first_sigint_closing_alive_std_second_130" {
     pty.writeAll("hello-busy\r");
 
     // Deterministic: mock consumed request and is about to stall.
-    try waitRequestReady(io, tmp.dir, 8000);
+    try waitRequestReady(io, tmp.dir, 8000, &pty);
 
     // Optional: busy chrome if paint landed.
     _ = try pty.waitMarker(io, state_busy, 1500);
@@ -726,7 +740,7 @@ test "gate18_pty_blocked_provider_closing_no_fake_success_std_130" {
 
     try std.testing.expect(try pty.waitMarker(io, state_idle, 12_000));
     pty.writeAll("block-me\r");
-    try waitRequestReady(io, tmp.dir, 8000);
+    try waitRequestReady(io, tmp.dir, 8000, &pty);
 
     const pid = pty.pid orelse return error.NoPid;
     try std.posix.kill(pid, std.posix.SIG.INT);

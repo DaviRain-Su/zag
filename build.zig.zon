@@ -54,6 +54,10 @@
             .path = "packages/zag-tui",
             .lazy = true,
         },
+        .vaxis = .{
+            .path = "packages/third_party/vaxis",
+            .lazy = true,
+        },
         .sdk_consumer_fixture = .{
             .path = "tests/sdk-consumer-fixture",
         },

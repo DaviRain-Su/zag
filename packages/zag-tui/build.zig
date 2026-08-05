@@ -32,6 +32,15 @@ pub fn build(b: *std.Build) void {
     });
     const types_mod = types_dep.module("zag-types");
 
+    // Quarantined terminal backend (tui-vaxis-001): vaxis is visible only to
+    // terminal.zig / keys.zig / render.zig. zigimg/uucode resolve from the
+    // local zig cache (offline).
+    const vaxis_dep = b.dependency("vaxis", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const vaxis_mod = vaxis_dep.module("vaxis");
+
     const mod = b.addModule("zag-tui", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -39,6 +48,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-coding-agent", .module = coding_mod },
             .{ .name = "zag-agent-core", .module = core_mod },
             .{ .name = "zag-types", .module = types_mod },
+            .{ .name = "vaxis", .module = vaxis_mod },
         },
     });
 
@@ -51,6 +61,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zag-coding-agent", .module = coding_mod },
                 .{ .name = "zag-agent-core", .module = core_mod },
                 .{ .name = "zag-types", .module = types_mod },
+                .{ .name = "vaxis", .module = vaxis_mod },
             },
         }),
     });

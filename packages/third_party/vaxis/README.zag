@@ -1,0 +1,27 @@
+# vaxis (Zag third_party)
+
+Upstream: https://github.com/rockorager/vaxis v0.6.0 (MIT, see LICENSE)
+
+Source: copied verbatim from the vendored copy at
+`pi-mono-zig/zig/vendor/vaxis` (its checkout of vaxis 0.6.0, zig 0.16
+std.Io-era), commit state as of 2026-08-06. Read-only: never edit these
+files; changes come from upstream.
+
+Zag: path-vendored under `packages/third_party/vaxis`; imported ONLY into
+the `zag-tui` module graph (`-Dtui=true`). Hard imports `zigimg` + `uucode`
+resolve from the local zig cache (offline; tarballs already present).
+
+Deviation from upstream `src/tty.zig` (PosixTty only, marked
+"Zag deviation (tui-vaxis-001)" in the source): `Tty.init` prefers the stdin
+terminal when stdin is a tty, falling back to `/dev/tty`. Upstream opens
+only `/dev/tty` (the controlling terminal); zag's terminal contract is
+stdin/stdout-based and the PTY process fixture runs the child WITHOUT a
+controlling terminal (macOS teardown constraint), where `/dev/tty` would
+resolve to the test runner's terminal instead of the PTY slave. A matching
+`owned_fd` guard keeps deinit from closing a borrowed stdin fd. Everything
+else is byte-identical to the pi-mono-zig vendored copy.
+
+Bump: replace the directory from the upstream release (or the pi-mono-zig
+vendored copy), re-apply the two PosixTty deviation hunks above, keep
+LICENSE + build.zig + build.zig.zon + src/, and re-run the four zag matrices
+including `-Dtui=true`.
