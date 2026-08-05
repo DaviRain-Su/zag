@@ -78,7 +78,7 @@ Contract PASS alone does **not** ship product code.
 - [x] Task frontmatter `status: ready`
 - [x] Independent **architecture/ownership** review PASS (zero blockers)
 - [x] Independent **safety/atomicity/restore** review PASS (zero blockers)
-- [ ] Docs lint / score / `git diff --check` on contract docs path (this tip)
+- [x] Docs lint / `git diff --check` on contract docs path (this tip)
 - [x] Scope: docs only on this tip
 - [x] No maturity raise; no remote Gate claim; no TUI coupling
 - [ ] Implementation Goal / product code (later)
