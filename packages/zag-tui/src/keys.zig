@@ -30,6 +30,8 @@ pub const AppKey = union(enum) {
     ctrl_w,
     ctrl_u,
     ctrl_k,
+    /// Toggle the permission mode (hyper: Ctrl+O toggles always-approve).
+    ctrl_o,
     alt_s,
     alt_f,
     page_up,
@@ -61,6 +63,7 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
             'w' => return .ctrl_w,
             'u' => return .ctrl_u,
             'k' => return .ctrl_k,
+            'o' => return .ctrl_o,
             else => {},
         }
     }

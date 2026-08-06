@@ -10,6 +10,27 @@ const coding = @import("zag-coding-agent");
 const c = @import("constants.zig");
 const present = @import("present.zig");
 
+/// Interactive permission modes (hyper/grok naming: default → ask,
+/// auto → auto-approve, bypassPermissions → bypass). The mode is
+/// UI-thread written, worker-thread read (atomic).
+pub const Mode = enum {
+    /// Prompt per tool call (a=allow / d=deny modal).
+    ask,
+    /// Auto-approve every tool call without prompting.
+    auto,
+    /// Always-approve (hyper bypassPermissions): same v1 behavior as auto,
+    /// kept as a distinct label for future risk-tiering.
+    bypass,
+
+    pub fn label(self: Mode) []const u8 {
+        return switch (self) {
+            .ask => "ask",
+            .auto => "auto",
+            .bypass => "bypass",
+        };
+    }
+};
+
 pub const ModalSnapshot = struct {
     pending: bool = false,
     risk_label: [16]u8 = undefined,
@@ -28,6 +49,9 @@ pub const ModalSnapshot = struct {
 
 pub const PermissionSlot = struct {
     mu: std.atomic.Mutex = .unlocked,
+    /// UI-thread set, worker-thread read (tui-perm-modes-001). u8 because
+    /// std.atomic.Value requires extern-compatible types.
+    mode_raw: std.atomic.Value(u8) = .init(@intFromEnum(Mode.ask)),
     pending: bool = false,
     decided: bool = false,
     decision: coding.permissions.Decision = .deny,
@@ -57,6 +81,13 @@ pub const PermissionSlot = struct {
         wake_ctx: *anyopaque,
     ) coding.permissions.Decision {
         if (!ask_ctx_ok or redactor == null) return .deny;
+
+        // Mode short-circuit (tui-perm-modes-001): auto/bypass approve
+        // without publishing a modal or blocking the worker.
+        switch (self.mode()) {
+            .ask => {},
+            .auto, .bypass => return .allow,
+        }
 
         // ── Outside lock: redact + truncate tool name; risk/args_len fixed ──
         const risk = descriptor.capabilities.risk.label();
@@ -120,6 +151,18 @@ pub const PermissionSlot = struct {
         self.decided = true;
     }
 
+    /// UI-thread mode switch; pending requests are NOT auto-decided here —
+    /// the caller decides (the app approves a pending modal when leaving
+    /// ask mode).
+    pub fn setMode(self: *PermissionSlot, m: Mode) void {
+        self.mode_raw.store(@intFromEnum(m), .release);
+    }
+
+    /// Worker/UI read of the current mode.
+    pub fn mode(self: *const PermissionSlot) Mode {
+        return @enumFromInt(self.mode_raw.load(.acquire));
+    }
+
     pub fn denyAndClose(self: *PermissionSlot) void {
         self.lock();
         defer self.unlock();
@@ -153,6 +196,15 @@ pub const PermissionSlot = struct {
         return self.snapshot().pending;
     }
 
+    /// Test-only: force a pending modal without a worker (app-level mode
+    /// cycle tests). Never used in production paths.
+    pub fn setPendingForTest(self: *PermissionSlot, pending: bool) void {
+        self.lock();
+        defer self.unlock();
+        self.pending = pending;
+        self.decided = false;
+    }
+
     pub fn resetClosing(self: *PermissionSlot) void {
         self.lock();
         defer self.unlock();
@@ -160,8 +212,58 @@ pub const PermissionSlot = struct {
     }
 };
 
-test "permission slot second request denies" {
+test "permission mode auto/bypass short-circuits ask" {
     var slot = PermissionSlot{};
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .patterns = false });
+    defer r.deinit();
+    const desc = coding.permissions.testDescriptor("write_file", .write);
+    const Wake = struct {
+        fn f(_: *anyopaque) void {}
+    };
+    var dummy: u8 = 0;
+
+    // auto: returns allow immediately, never publishes a modal.
+    slot.setMode(.auto);
+    try std.testing.expectEqual(
+        coding.permissions.Decision.allow,
+        slot.ask(gpa, &r, true, desc, "{}", Wake.f, &dummy),
+    );
+    try std.testing.expect(!slot.snapshot().pending);
+
+    // bypass: same.
+    slot.setMode(.bypass);
+    try std.testing.expectEqual(
+        coding.permissions.Decision.allow,
+        slot.ask(gpa, &r, true, desc, "{}", Wake.f, &dummy),
+    );
+
+    // ask: publishes a modal and blocks until decided.
+    slot.setMode(.ask);
+    var result: coding.permissions.Decision = .deny;
+    const t = try std.Thread.spawn(.{}, struct {
+        fn run(s: *PermissionSlot, desc2: zt.ToolDescriptor, out: *coding.permissions.Decision) void {
+            const gpa2 = std.testing.allocator;
+            var r2 = coding.redact.Redactor.init(gpa2, .{ .patterns = false }) catch unreachable;
+            defer r2.deinit();
+            var dummy2: u8 = 0;
+            out.* = s.ask(gpa2, &r2, true, desc2, "{}", Wake.f, &dummy2);
+        }
+    }.run, .{&slot, desc, &result});
+    // Give the worker time to publish the modal.
+    var spins: usize = 0;
+    while (!slot.snapshot().pending and spins < 10_000) : (spins += 1) {
+        var ts: std.c.timespec = .{ .sec = 0, .nsec = 100 * std.time.ns_per_us };
+        _ = std.c.nanosleep(&ts, null);
+    }
+    try std.testing.expect(slot.snapshot().pending);
+    slot.decide(.allow);
+    t.join();
+    try std.testing.expectEqual(coding.permissions.Decision.allow, result);
+    try std.testing.expect(!slot.snapshot().pending);
+}
+
+test "permission slot second request denies" {    var slot = PermissionSlot{};
     const gpa = std.testing.allocator;
     var r = try coding.redact.Redactor.init(gpa, .{ .patterns = false });
     defer r.deinit();

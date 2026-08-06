@@ -734,6 +734,15 @@ pub const App = struct {
                     return .none;
                 },
                 .ctrl_c => return .none,
+                .ctrl_o => {
+                    // A permission modal is up: switch straight to auto and
+                    // approve the waiting request (the user asked to stop
+                    // being prompted).
+                    self.permission.setMode(.auto);
+                    self.permission.decide(.allow);
+                    self.perm_label = "auto";
+                    return .none;
+                },
                 else => return .none,
             }
         }
@@ -856,6 +865,23 @@ pub const App = struct {
             },
             .alt_f => {
                 self.enqueueControl(.follow_up);
+                return .none;
+            },
+            .ctrl_o => {
+                // Permission mode cycle (hyper Ctrl+O): ask → auto → bypass.
+                // Leaving ask mode approves any modal currently waiting, so
+                // the worker never hangs on a prompt the user just bypassed.
+                const cur = self.permission.mode();
+                const next: permission_mod.Mode = switch (cur) {
+                    .ask => .auto,
+                    .auto => .bypass,
+                    .bypass => .ask,
+                };
+                self.permission.setMode(next);
+                if (next != .ask and self.permission.isPending()) {
+                    self.permission.decide(.allow);
+                }
+                self.perm_label = next.label();
                 return .none;
             },
             .char => |ch| {
@@ -1656,6 +1682,29 @@ test "tui-input: mouse wheel scrolls the transcript rows" {
     try std.testing.expect(app.sb.follow_mode);
     try std.testing.expectEqual(bottom, app.sb.scroll_offset);
     try std.testing.expect(up > 0);
+}
+
+test "tui-input: ctrl+o cycles permission modes and auto-approves pending" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    // ask → auto → bypass → ask.
+    _ = app.handleKey(.ctrl_o);
+    try std.testing.expectEqual(permission_mod.Mode.auto, app.permission.mode());
+    try std.testing.expectEqualStrings("auto", app.perm_label);
+    _ = app.handleKey(.ctrl_o);
+    try std.testing.expectEqual(permission_mod.Mode.bypass, app.permission.mode());
+    try std.testing.expectEqualStrings("bypass", app.perm_label);
+    _ = app.handleKey(.ctrl_o);
+    try std.testing.expectEqual(permission_mod.Mode.ask, app.permission.mode());
+    try std.testing.expectEqualStrings("ask", app.perm_label);
+
+    // Modal pending + Ctrl+O → auto mode + the waiting request approves.
+    app.permission.setPendingForTest(true);
+    try std.testing.expect(app.permission.isPending());
+    _ = app.handleKey(.ctrl_o);
+    try std.testing.expectEqual(permission_mod.Mode.auto, app.permission.mode());
+    try std.testing.expect(!app.permission.isPending());
 }
 
 test "tui-input: paint records the cards viewport height for paging" {
