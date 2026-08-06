@@ -914,6 +914,16 @@ pub const App = struct {
                 return .none;
             },
             .unknown => return .none,
+            .f1 => {
+                // Toggle the shortcut reference (same as /help).
+                if (self.overlay.kind == .help) {
+                    self.overlay.close();
+                } else {
+                    self.overlay.open(.help);
+                    _ = self.rebuildOverlayLines();
+                }
+                return .none;
+            },
         }
     }
 
@@ -984,7 +994,11 @@ pub const App = struct {
         const line = self.overlay_line_ptrs[self.overlay.cursor];
         switch (self.overlay.kind) {
             .none => {},
-            .help, .slash_palette => {
+            .help => {
+                // Read-only reference: Enter/Esc close, nothing executes.
+                self.overlay.close();
+            },
+            .slash_palette => {
                 if (overlay_mod.Builtin.fromName(line)) |b| {
                     self.overlay.open(b.overlayKind());
                     _ = self.rebuildOverlayLines();
@@ -1043,12 +1057,29 @@ pub const App = struct {
         switch (self.overlay.kind) {
             .none => {},
             .help => {
-                push(self, "help", &n);
-                push(self, "settings", &n);
-                push(self, "model", &n);
-                push(self, "theme", &n);
-                push(self, "skill:name", &n);
-                push(self, "(templates: /name)", &n);
+                // Shortcut reference (read-only; Enter/Esc close). Lines
+                // are display-only — never routed into the editor.
+                push(self, "Enter          发送消息", &n);
+                push(self, "/              命令面板", &n);
+                push(self, "F1 / /help     本帮助", &n);
+                push(self, "── 权限 / 显示 ──", &n);
+                push(self, "Ctrl+O         权限模式 ask/auto/bypass", &n);
+                push(self, "Ctrl+T         thinking 显示开关", &n);
+                push(self, "── 滚动 ──", &n);
+                push(self, "PgUp/PgDn      滚动 transcript（行）", &n);
+                push(self, "鼠标滚轮        滚动 transcript", &n);
+                push(self, "── 编辑器 ──", &n);
+                push(self, "↑/↓            输入历史", &n);
+                push(self, "Home/End       光标 行首/行尾", &n);
+                push(self, "Ctrl+A/E       光标 行首/行尾", &n);
+                push(self, "Ctrl+W         删除前一个词", &n);
+                push(self, "Ctrl+U/K       删除至 行首/行尾", &n);
+                push(self, "── 会话 ──", &n);
+                push(self, "Alt+S          打断（steering）", &n);
+                push(self, "Alt+F          追问（follow-up）", &n);
+                push(self, "Ctrl+C         取消运行 / 再按退出", &n);
+                push(self, "Ctrl+D         退出", &n);
+                push(self, "Esc            关闭面板", &n);
             },
             .slash_palette => {
                 const filter = slash_route.slashFilter(self.editor.slice()) orelse "";
@@ -1735,7 +1766,7 @@ test "tui-input: page keys scroll rows and re-engage follow" {
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
     try app.paint(&rec.pt.term); // 80×40 → viewport 29
-    try std.testing.expectEqual(@as(usize, 29), app.last_viewport_h);
+    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
     try std.testing.expect(app.sb.total_height > 29); // overflows
     try std.testing.expect(app.sb.follow_mode); // fresh paint follows
     const bottom = app.sb.scroll_offset;
@@ -1821,16 +1852,16 @@ test "tui-input: paint records the cards viewport height for paging" {
     try app.paint(&rec.pt.term); // 80×40
     try std.testing.expect(app.last_viewport_h > 0);
     // 80×40: cards region h = 30 → interior viewport = 30 - 1 = 29.
-    try std.testing.expectEqual(@as(usize, 29), app.last_viewport_h);
+    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
 }
 
 test "tui-input: overlay home/end/page keys navigate" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    app.overlay.open(.help); // 6 lines
+    app.overlay.open(.help); // shortcut reference: 21 lines
     _ = app.handleKey(.end);
-    try std.testing.expectEqual(@as(usize, 5), app.overlay.cursor);
+    try std.testing.expectEqual(@as(usize, 20), app.overlay.cursor);
     _ = app.handleKey(.home);
     try std.testing.expectEqual(@as(usize, 0), app.overlay.cursor);
     _ = app.handleKey(.page_down);

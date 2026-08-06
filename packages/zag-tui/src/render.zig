@@ -591,7 +591,7 @@ fn drawStatus(
                 col += win.gwidth(n);
             }
         }
-        if (store.format(" [PgUp/Dn 滚动 · / 命令]", .{})) |n| {
+        if (store.format(" [F1 帮助 · PgUp/Dn 滚动 · / 命令]", .{})) |n| {
             _ = win.printSegment(.{ .text = n, .style = palette.style(.muted_fg) }, .{
                 .row_offset = 0,
                 .col_offset = @intCast(col + 1),
@@ -660,7 +660,8 @@ fn drawHostOverlay(
 ) void {
     _ = store;
     const style = palette.style(.modal_fg);
-    const h: u16 = @min(12, @max(layout.cards.h, 4));
+    // Help is a full reference list (~20 rows); other overlays are short.
+    const h: u16 = @min(24, @max(layout.cards.h -| 1, 4));
     const w: u16 = @min(root.width, 60);
     const y: u16 = layout.cards.y + 1; // skip the cards region's `├ … ┤` separator row
     const x: u16 = if (root.width > w) (root.width - w) / 2 else 0;
@@ -1044,9 +1045,8 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     // transcript — the markdown body IS the entry).
     try expectBorderedRow(&cs.screen, 5, "hello world");
     var row: u16 = 6;
-    while (row < 15) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
-    // Row 15 is the gap between the cards region and the modal (blank).
-    try expectRowEquals(&cs.screen, 15, "");
+    while (row <= 15) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
+    // Row 16 begins the modal; nothing sits between cards and modal.
     // Modal: rounded border at rows 16-19 (full width), title + two rows.
     try expectModalTopRow(&cs.screen, 16);
     try expectBorderedRow(&cs.screen, 17, "risk:medium  args_len:23  tool:write_file");
@@ -1396,7 +1396,7 @@ test "md transcript: tall assistant body clips at the cards region height" {
     var buf: [512]u8 = undefined;
     var found_tail = false;
     var r: u16 = 2;
-    while (r <= 14) : (r += 1) {
+    while (r <= 19) : (r += 1) {
         const text = rowText(&cs.screen, r, &buf);
         if (std.mem.indexOf(u8, text, "line 30") != null) {
             found_tail = true;

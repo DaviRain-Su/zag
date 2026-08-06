@@ -40,6 +40,8 @@ pub const AppKey = union(enum) {
     page_down,
     home,
     end,
+    /// F1 opens the shortcut reference (/help).
+    f1,
     unknown,
 };
 
@@ -85,6 +87,7 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
         vaxis.Key.page_down, vaxis.Key.kp_page_down => return .page_down,
         vaxis.Key.home, vaxis.Key.kp_home => return .home,
         vaxis.Key.end, vaxis.Key.kp_end => return .end,
+        vaxis.Key.f1 => return .f1,
         else => {},
     }
 
@@ -173,7 +176,8 @@ test "mapKey: multi-byte codepoint is one UTF-8 insert (你)" {
 
 test "mapKey: unknown inputs" {
     var out: [4]u8 = undefined;
-    try std.testing.expect(mapKey(k(vaxis.Key.f1), &out) == .unknown);
+    try std.testing.expect(mapKey(k(vaxis.Key.f2), &out) == .unknown);
+    try std.testing.expect(mapKey(k(vaxis.Key.f1), &out) == .f1); // help
     try std.testing.expect(mapKey(k(0x00), &out) == .unknown);
     try std.testing.expect(mapKey(.{ .codepoint = vaxis.Key.multicodepoint }, &out) == .unknown);
 }
