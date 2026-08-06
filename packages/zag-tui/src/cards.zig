@@ -176,6 +176,34 @@ pub const CardRing = struct {
         self.ordinary_count += 1;
     }
 
+    /// Remove the newest ordinary card whose title starts with `title_prefix`
+    /// (tui-thinking-streaming-001: a turn that completes without reasoning
+    /// drops its progressive thinking card). Newer cards shift down one slot
+    /// so the FIFO stays dense. Returns true when a card was removed.
+    pub fn removeNewestOrdinaryTitlePrefix(self: *CardRing, title_prefix: []const u8) bool {
+        self.lock();
+        defer self.unlock();
+        var i: usize = self.ordinary_count;
+        while (i > 0) {
+            i -= 1;
+            const idx = (self.ordinary_start + i) % ordinary_end;
+            if (self.slots[idx].occupied and std.mem.startsWith(u8, self.slots[idx].titleSlice(), title_prefix)) {
+                var j: usize = i;
+                while (j + 1 < self.ordinary_count) : (j += 1) {
+                    const cur = (self.ordinary_start + j) % ordinary_end;
+                    const nxt = (self.ordinary_start + j + 1) % ordinary_end;
+                    self.slots[cur] = self.slots[nxt];
+                }
+                const last = (self.ordinary_start + self.ordinary_count - 1) % ordinary_end;
+                self.slots[last].occupied = false;
+                self.ordinary_count -= 1;
+                self.ui_seq += 1;
+                return true;
+            }
+        }
+        return false;
+    }
+
     /// Allocation-free terminal reserve (numeric/enum fixed fields only).
     pub fn publishTerminalFixed(self: *CardRing, title: []const u8, body: []const u8) void {
         // Fixed codes — copyTruncated is O(n) but n ≤ fixed small; no heap/redact.

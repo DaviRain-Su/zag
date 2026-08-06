@@ -39,8 +39,16 @@ pub const LoopEvent = union(enum) {
     /// as every other variant. UI-visible only: never persisted (Session v1 /
     /// Trace v1 / headless-v1 unchanged).
     assistant_delta: []const u8,
+    /// One reasoning/thinking delta from the in-flight streaming assistant
+    /// turn (tui-thinking-streaming-001). Borrowed, synchronous, in-order —
+    /// emitted between `assistant_delta`s as the provider sends them.
+    /// UI-visible only, never persisted. There is NO separate clear event:
+    /// `assistant_delta_clear` clears BOTH content and thinking UI text (the
+    /// TUI resets both accumulators on it).
+    thinking_delta: []const u8,
     /// Attempt boundary (tui-streaming-001): a provider attempt failed, so any
-    /// accumulated UI text from `assistant_delta` must be erased. Emitted
+    /// accumulated UI text from `assistant_delta` (and, since
+    /// tui-thinking-streaming-001, `thinking_delta`) must be erased. Emitted
     /// exactly once per failed attempt, before the retry/terminal. Never
     /// persisted.
     assistant_delta_clear,

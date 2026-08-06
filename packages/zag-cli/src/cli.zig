@@ -1290,6 +1290,9 @@ pub fn formatStreamLogEvent(buf: []u8, event: ai.StreamEvent) ?[]const u8 {
             if (d.len == 0) return null;
             return std.fmt.bufPrint(buf, "stream content_delta bytes={d}", .{d.len}) catch null;
         },
+        // Reasoning deltas are lifecycle-visible only (tui-thinking-streaming-001);
+        // the stream stdout/verbose path is unchanged (no log line).
+        .reasoning_delta => null,
         .finish_reason => std.fmt.bufPrint(buf, "stream finish_reason", .{}) catch null,
         .tool_call_delta => |tc| std.fmt.bufPrint(buf, "stream tool_call_delta index={d}", .{tc.index}) catch null,
         .done => std.fmt.bufPrint(buf, "stream done", .{}) catch null,

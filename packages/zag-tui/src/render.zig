@@ -726,6 +726,7 @@ fn drawHostOverlay(
         .settings => "settings",
         .model => "model",
         .theme => "theme",
+        .@"resume" => "resume",
     };
     _ = root.printSegment(.{ .text = title, .style = style }, .{
         .col_offset = x + 2,

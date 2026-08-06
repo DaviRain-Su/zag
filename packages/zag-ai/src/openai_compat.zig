@@ -331,6 +331,10 @@ const OpenAiStreamState = struct {
     handler: ?types.StreamHandler,
     handler_ctx: ?*anyopaque,
     content: std.ArrayList(u8) = .empty,
+    /// Reasoning/thinking accumulator (tui-thinking-streaming-001): grows per
+    /// `reasoning_content` delta, joined with no separator (the provider emits
+    /// complete segments); final turn `.reasoning` comes from here.
+    reasoning: std.ArrayList(u8) = .empty,
     tool_ids: std.ArrayList([]const u8) = .empty,
     tool_names: std.ArrayList([]const u8) = .empty,
     tool_args: std.ArrayList(std.ArrayList(u8)) = .empty,
@@ -353,8 +357,14 @@ const OpenAiStreamState = struct {
     fn finish(self: *OpenAiStreamState) !types.AssistantTurn {
         const content = try self.arena.dupe(u8, self.content.items);
         const fr = try self.arena.dupe(u8, self.finish_reason);
+        // Reasoning from the accumulated buffer; null when the provider never
+        // sent reasoning deltas (tui-thinking-streaming-001).
+        const reasoning = if (self.reasoning.items.len > 0)
+            try self.arena.dupe(u8, self.reasoning.items)
+        else
+            null;
         if (self.tool_ids.items.len == 0) {
-            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr, .usage = self.usage };
+            return .{ .content = content, .tool_calls = &.{}, .finish_reason = fr, .usage = self.usage, .reasoning = reasoning };
         }
         const calls = try self.arena.alloc(types.ToolCall, self.tool_ids.items.len);
         for (0..self.tool_ids.items.len) |i| {
@@ -364,7 +374,7 @@ const OpenAiStreamState = struct {
                 .arguments = try self.arena.dupe(u8, self.tool_args.items[i].items),
             };
         }
-        return .{ .content = content, .tool_calls = calls, .finish_reason = fr, .usage = self.usage };
+        return .{ .content = content, .tool_calls = calls, .finish_reason = fr, .usage = self.usage, .reasoning = reasoning };
     }
 };
 
@@ -390,6 +400,23 @@ fn onOpenAiSdkEvent(
                 };
                 if (state.handler) |h| {
                     h(state.handler_ctx, .{ .content_delta = content }) catch {
+                        state.err = error.StreamFailed;
+                        return openai.errors.Error.HttpError;
+                    };
+                }
+            }
+        }
+
+        // Reasoning deltas (tui-thinking-streaming-001): accumulate + emit.
+        // Guard len > 0 — empty chunks never produce a reasoning_delta event.
+        if (choice.delta.reasoning_content) |rc| {
+            if (rc.len > 0) {
+                state.reasoning.appendSlice(state.arena, rc) catch {
+                    state.err = error.OutOfMemory;
+                    return openai.errors.Error.HttpError;
+                };
+                if (state.handler) |h| {
+                    h(state.handler_ctx, .{ .reasoning_delta = rc }) catch {
                         state.err = error.StreamFailed;
                         return openai.errors.Error.HttpError;
                     };
@@ -1173,6 +1200,78 @@ test "SSE stream chunk without usage leaves turn usage null" {
     }
     try std.testing.expectEqualStrings("ok", turn.content);
     try std.testing.expect(turn.usage == null);
+}
+
+test "SSE stream reasoning_content accumulates and emits reasoning_delta" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"id":"chatcmpl_1","choices":[{"index":0,"delta":{"content":"Hi","reasoning_content":"step "},"finish_reason":null}]}
+    ;
+    const parsed = try std.json.parseFromSlice(chat_res.CreateChatCompletionStreamResponse, gpa, raw, .{});
+    // Handler records reasoning deltas in order (borrowed during emit).
+    const Rec = struct {
+        saw_reasoning: bool = false,
+        text: []const u8 = "",
+        fn onEvent(ctx: ?*anyopaque, event: types.StreamEvent) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            switch (event) {
+                .reasoning_delta => |rd| {
+                    self.saw_reasoning = true;
+                    self.text = rd;
+                },
+                else => {},
+            }
+        }
+    };
+    var rec: Rec = .{};
+    var state: OpenAiStreamState = .{ .arena = gpa, .handler = Rec.onEvent, .handler_ctx = &rec };
+    try onOpenAiSdkEvent(&state, parsed);
+    defer {
+        state.content.deinit(gpa);
+        state.reasoning.deinit(gpa);
+        if (state.finish_reason.len > 0) gpa.free(state.finish_reason);
+    }
+    try std.testing.expect(rec.saw_reasoning);
+    try std.testing.expectEqualStrings("step ", rec.text);
+
+    // Second chunk appends raw (no separator) and emits again.
+    const raw2 =
+        \\{"id":"chatcmpl_1","choices":[{"index":0,"delta":{"reasoning_content":"by step"},"finish_reason":null}]}
+    ;
+    const parsed2 = try std.json.parseFromSlice(chat_res.CreateChatCompletionStreamResponse, gpa, raw2, .{});
+    try onOpenAiSdkEvent(&state, parsed2);
+
+    const turn = try state.finish();
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+        gpa.free(turn.reasoning.?);
+    }
+    try std.testing.expectEqualStrings("Hi", turn.content);
+    try std.testing.expectEqualStrings("step by step", turn.reasoning.?);
+}
+
+test "SSE stream reasoning null when reasoning_content absent" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"id":"chatcmpl_1","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}
+    ;
+    const parsed = try std.json.parseFromSlice(chat_res.CreateChatCompletionStreamResponse, gpa, raw, .{});
+    var state: OpenAiStreamState = .{ .arena = gpa, .handler = null, .handler_ctx = null };
+    try onOpenAiSdkEvent(&state, parsed);
+    defer {
+        state.content.deinit(gpa);
+        state.reasoning.deinit(gpa);
+        if (state.finish_reason.len > 0) gpa.free(state.finish_reason);
+    }
+
+    const turn = try state.finish();
+    defer {
+        gpa.free(turn.content);
+        gpa.free(turn.finish_reason);
+    }
+    try std.testing.expectEqualStrings("ok", turn.content);
+    try std.testing.expect(turn.reasoning == null);
 }
 
 test "mapSdkError classifies auth and rate limit" {

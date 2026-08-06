@@ -569,6 +569,39 @@ pub fn loadWithMeta(
     return parseSessionBytes(gpa, transcript, raw);
 }
 
+/// Read-only listing of persisted sessions: one owned label per `*.jsonl`
+/// entry under `dir` (relative to `cwd`), with the `.jsonl` suffix stripped.
+/// Lock sidecars (`*.lock`) and non-session files are excluded by the suffix
+/// check; empty stems and non-file entries are skipped. Missing/empty dir →
+/// empty list (no error). Caller owns every item (free each + deinit).
+pub fn listSessions(
+    gpa: std.mem.Allocator,
+    io: Io,
+    cwd: Io.Dir,
+    dir: []const u8,
+    out: *std.ArrayList([]u8),
+) Error!void {
+    var d = cwd.openDir(io, dir, .{ .iterate = true }) catch |err| switch (err) {
+        // No sessions dir yet → nothing to list (not an error).
+        error.FileNotFound => return,
+        else => return error.IoFailed,
+    };
+    defer d.close(io);
+    var it = d.iterate();
+    while (true) {
+        const entry = (it.next(io) catch return error.IoFailed) orelse break;
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".jsonl")) continue;
+        const stem = entry.name[0 .. entry.name.len - ".jsonl".len];
+        if (stem.len == 0) continue;
+        const owned = gpa.dupe(u8, stem) catch return error.OutOfMemory;
+        out.append(gpa, owned) catch {
+            gpa.free(owned);
+            return error.OutOfMemory;
+        };
+    }
+}
+
 /// Parse session file bytes (exported for tests of the strict header contract).
 pub fn parseSessionBytes(
     gpa: std.mem.Allocator,
@@ -2308,4 +2341,60 @@ test "resumeExisting allocation-index sweep: source intact, lease recoverable" {
         }
     }
     if (!saw_success) return error.TestUnexpectedResult;
+}
+
+test "listSessions: jsonl stems only, sidecars excluded" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/alpha.jsonl", .data = "x\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/beta.jsonl", .data = "y\n" });
+    // Sidecar + non-session entries must never surface as labels.
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/alpha.jsonl.lock", .data = "" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/notes.txt", .data = "" });
+    // Empty stem (file literally named `.jsonl`) is skipped.
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/.jsonl", .data = "" });
+    // Subdirectory named `x.jsonl` is not a file → skipped.
+    try tmp.dir.createDirPath(io, "sessions/sub.jsonl");
+
+    var out: std.ArrayList([]u8) = .empty;
+    defer {
+        for (out.items) |s| gpa.free(s);
+        out.deinit(gpa);
+    }
+    try listSessions(gpa, io, tmp.dir, "sessions", &out);
+    try std.testing.expectEqual(@as(usize, 2), out.items.len);
+    var saw_alpha = false;
+    var saw_beta = false;
+    for (out.items) |label| {
+        try std.testing.expect(std.mem.indexOf(u8, label, ".jsonl") == null);
+        try std.testing.expect(std.mem.indexOf(u8, label, ".lock") == null);
+        if (std.mem.eql(u8, label, "alpha")) saw_alpha = true;
+        if (std.mem.eql(u8, label, "beta")) saw_beta = true;
+    }
+    try std.testing.expect(saw_alpha and saw_beta);
+}
+
+test "listSessions: missing and empty dirs yield empty lists" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var out: std.ArrayList([]u8) = .empty;
+    defer {
+        for (out.items) |s| gpa.free(s);
+        out.deinit(gpa);
+    }
+    // No sessions dir at all → empty listing (not an error).
+    try listSessions(gpa, io, tmp.dir, "sessions", &out);
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
+
+    // Existing but empty dir → empty listing.
+    try tmp.dir.createDirPath(io, "sessions");
+    try listSessions(gpa, io, tmp.dir, "sessions", &out);
+    try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }

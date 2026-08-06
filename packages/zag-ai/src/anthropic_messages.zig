@@ -225,6 +225,11 @@ pub const StreamState = struct {
     handler_ctx: ?*anyopaque,
     line_buf: std.ArrayList(u8) = .empty,
     content: std.ArrayList(u8) = .empty,
+    /// Reasoning/thinking accumulator (tui-thinking-streaming-001): thinking
+    /// block-start text joined with `\n` (mirrors non-stream
+    /// appendReasoningLine), thinking_delta text appended raw; final turn
+    /// `.reasoning` comes from here (null when empty).
+    reasoning: std.ArrayList(u8) = .empty,
     /// Partial tool_use blocks keyed by content block index.
     tool_ids: std.ArrayList([]const u8) = .empty,
     tool_names: std.ArrayList([]const u8) = .empty,
@@ -253,12 +258,19 @@ pub const StreamState = struct {
         }
         const fr = try self.arena.dupe(u8, if (self.finish_reason.len > 0) self.finish_reason else "end_turn");
         const content = try self.arena.dupe(u8, self.content.items);
+        // Reasoning from the accumulated buffer; null when the stream carried
+        // no thinking blocks (tui-thinking-streaming-001).
+        const reasoning = if (self.reasoning.items.len > 0)
+            try self.arena.dupe(u8, self.reasoning.items)
+        else
+            null;
         if (self.tool_ids.items.len == 0) {
             return .{
                 .content = content,
                 .tool_calls = &.{},
                 .finish_reason = fr,
                 .usage = self.usage,
+                .reasoning = reasoning,
             };
         }
         const calls = try self.arena.alloc(types.ToolCall, self.tool_ids.items.len);
@@ -274,6 +286,7 @@ pub const StreamState = struct {
             .tool_calls = calls,
             .finish_reason = fr,
             .usage = self.usage,
+            .reasoning = reasoning,
         };
     }
 };
@@ -368,6 +381,34 @@ fn handleSseEvent(state: *StreamState, root: std.json.Value) Error!void {
                             state.err = error.StreamFailed;
                         };
                     }
+                } else if (std.mem.eql(u8, bt, "thinking")) {
+                    // Block-initial thinking text (some providers put the first
+                    // segment here, rest arrives as thinking_delta). Join rule:
+                    // `\n` before block-initial text when the buffer is
+                    // non-empty; deltas append raw.
+                    if (cbo.get("thinking")) |tx| {
+                        if (tx == .string and tx.string.len > 0) {
+                            try appendReasoningLine(state.arena, &state.reasoning, tx.string);
+                            if (state.handler) |h| {
+                                h(state.handler_ctx, .{ .reasoning_delta = tx.string }) catch {
+                                    state.err = error.StreamFailed;
+                                };
+                            }
+                        }
+                    }
+                } else if (std.mem.eql(u8, bt, "redacted_thinking")) {
+                    // Redacted thinking blocks carry their payload in `data`
+                    // (opaque base64-ish text); same join rule as thinking.
+                    if (cbo.get("data")) |tx| {
+                        if (tx == .string and tx.string.len > 0) {
+                            try appendReasoningLine(state.arena, &state.reasoning, tx.string);
+                            if (state.handler) |h| {
+                                h(state.handler_ctx, .{ .reasoning_delta = tx.string }) catch {
+                                    state.err = error.StreamFailed;
+                                };
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -382,6 +423,21 @@ fn handleSseEvent(state: *StreamState, root: std.json.Value) Error!void {
                             try state.content.appendSlice(state.arena, tx.string);
                             if (state.handler) |h| {
                                 h(state.handler_ctx, .{ .content_delta = tx.string }) catch {
+                                    state.err = error.StreamFailed;
+                                };
+                            }
+                        }
+                    }
+                } else if (std.mem.eql(u8, dtyp, "thinking_delta")) {
+                    // Continuation of a thinking block (tui-thinking-streaming-001):
+                    // appended raw (no separator — the block-start join rule owns
+                    // inter-block spacing). content_block_stop for thinking blocks
+                    // is a no-op (already falls through below).
+                    if (d.object.get("thinking")) |tx| {
+                        if (tx == .string and tx.string.len > 0) {
+                            try state.reasoning.appendSlice(state.arena, tx.string);
+                            if (state.handler) |h| {
+                                h(state.handler_ctx, .{ .reasoning_delta = tx.string }) catch {
                                     state.err = error.StreamFailed;
                                 };
                             }
@@ -979,4 +1035,105 @@ test "anthropic SSE text and tool_use assembly" {
     try std.testing.expectEqualStrings("{\"path\":\".\"}", turn.tool_calls[0].arguments);
     try std.testing.expectEqual(@as(u32, 3), turn.usage.?.prompt_tokens);
     try std.testing.expectEqual(@as(u32, 8), turn.usage.?.completion_tokens);
+}
+
+test "anthropic SSE thinking deltas assemble reasoning joined by newline" {
+    const gpa = std.testing.allocator;
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+
+    // Deltas are borrowed only during the callback (the per-line JSON parse
+    // is freed right after); copy into fixed buffers at emit time.
+    const Rec = struct {
+        reasoning_deltas: [8][64]u8 = undefined,
+        reasoning_lens: [8]usize = [_]usize{0} ** 8,
+        n: usize = 0,
+        content_deltas: [8][64]u8 = undefined,
+        content_lens: [8]usize = [_]usize{0} ** 8,
+        cn: usize = 0,
+        fn onEvent(ctx: ?*anyopaque, event: types.StreamEvent) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(ctx.?));
+            switch (event) {
+                .reasoning_delta => |rd| {
+                    if (self.n < self.reasoning_deltas.len) {
+                        const cap = @min(rd.len, self.reasoning_deltas[self.n].len);
+                        @memcpy(self.reasoning_deltas[self.n][0..cap], rd[0..cap]);
+                        self.reasoning_lens[self.n] = cap;
+                        self.n += 1;
+                    }
+                },
+                .content_delta => |cd| {
+                    if (self.cn < self.content_deltas.len) {
+                        const cap = @min(cd.len, self.content_deltas[self.cn].len);
+                        @memcpy(self.content_deltas[self.cn][0..cap], cd[0..cap]);
+                        self.content_lens[self.cn] = cap;
+                        self.cn += 1;
+                    }
+                },
+                else => {},
+            }
+        }
+    };
+
+    var rec: Rec = .{};
+    var state: StreamState = .{
+        .arena = arena,
+        .handler = Rec.onEvent,
+        .handler_ctx = &rec,
+    };
+
+    const sse =
+        \\event: message_start
+        \\data: {"type":"message_start","message":{"usage":{"input_tokens":3}}}
+        \\
+        \\event: content_block_start
+        \\data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"first thought"}}
+        \\
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" continues"}}
+        \\
+        \\event: content_block_stop
+        \\data: {"type":"content_block_stop","index":0}
+        \\
+        \\event: content_block_start
+        \\data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}
+        \\
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hi"}}
+        \\
+        \\event: content_block_start
+        \\data: {"type":"content_block_start","index":2,"content_block":{"type":"redacted_thinking","data":"opaque-block"}}
+        \\
+        \\event: content_block_start
+        \\data: {"type":"content_block_start","index":3,"content_block":{"type":"tool_use","id":"tu1","name":"list_dir"}}
+        \\
+        \\event: content_block_delta
+        \\data: {"type":"content_block_delta","index":3,"delta":{"type":"input_json_delta","partial_json":"{\"path\":\".\"}"}}
+        \\
+        \\event: message_delta
+        \\data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":8}}
+        \\
+        \\event: message_stop
+        \\data: {"type":"message_stop"}
+        \\
+    ;
+    try feedSseBytes(&state, sse);
+    // Turn bytes are arena-allocated (state.finish uses state.arena); the
+    // arena deinit below frees everything.
+    const turn = try state.finish();
+    // Thinking blocks joined with '\n'; text deltas unaffected; tool_use
+    // ordering preserved (thinking came first on the wire).
+    try std.testing.expectEqualStrings("Hi", turn.content);
+    try std.testing.expectEqualStrings("first thought continues\nopaque-block", turn.reasoning.?);
+    try std.testing.expectEqualStrings("tool_calls", turn.finish_reason);
+    try std.testing.expectEqual(@as(usize, 1), turn.tool_calls.len);
+    try std.testing.expectEqualStrings("list_dir", turn.tool_calls[0].name);
+    // Handler saw reasoning deltas in wire order (block-start + delta + redacted).
+    try std.testing.expectEqual(@as(usize, 3), rec.n);
+    try std.testing.expectEqualStrings("first thought", rec.reasoning_deltas[0][0..rec.reasoning_lens[0]]);
+    try std.testing.expectEqualStrings(" continues", rec.reasoning_deltas[1][0..rec.reasoning_lens[1]]);
+    try std.testing.expectEqualStrings("opaque-block", rec.reasoning_deltas[2][0..rec.reasoning_lens[2]]);
+    try std.testing.expectEqual(@as(usize, 1), rec.cn);
+    try std.testing.expectEqualStrings("Hi", rec.content_deltas[0][0..rec.content_lens[0]]);
 }

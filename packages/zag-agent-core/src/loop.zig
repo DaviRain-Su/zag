@@ -603,13 +603,23 @@ const DeltaEmitCtx = struct {
     err: ?loop_event_mod.SinkError = null,
 };
 
-/// Loop-owned content-delta handler: forwards each delta to the event sink.
-fn deltaHandler(ctx: *anyopaque, content_delta: []const u8) void {
+/// Loop-owned content/thinking-delta handler: forwards each delta to the
+/// event sink. `reasoning_delta` null → content-only chunk (no thinking
+/// event); non-null → emit `thinking_delta` (tui-thinking-streaming-001).
+fn deltaHandler(ctx: *anyopaque, content_delta: []const u8, reasoning_delta: ?[]const u8) void {
     const self: *DeltaEmitCtx = @ptrCast(@alignCast(ctx));
     if (self.err != null) return; // first error wins; sink already failing
-    self.sink.emit(.{ .assistant_delta = content_delta }) catch |err| {
-        self.err = err;
-    };
+    if (content_delta.len > 0) {
+        self.sink.emit(.{ .assistant_delta = content_delta }) catch |err| {
+            self.err = err;
+            return;
+        };
+    }
+    if (reasoning_delta) |rd| {
+        self.sink.emit(.{ .thinking_delta = rd }) catch |err| {
+            self.err = err;
+        };
+    }
 }
 
 fn chatWithRetry(
@@ -666,10 +676,10 @@ fn chatWithRetry(
             switch (err) {
                 error.Cancelled => return .{ .cancelled = {} },
                 error.Timeout => return .{ .timeout = {} },
-                error.UnsupportedControl, error.NotSupported => return .{ .unsupported_control = {} },
+                error.UnsupportedControl => return .{ .unsupported_control = {} },
                 else => {},
             }
-            const retryable = zt.isRetryableError(err);
+            const retryable = shouldRetry(err);
             const more = attempt + 1 < max_attempts;
             if (!retryable or !more) {
                 // Surface the real ChatError tag once before collapsing to
@@ -702,6 +712,30 @@ fn chatWithRetry(
         .provider_failed = .{ .err_name = "ProviderFailed" },
     }) catch |serr| return mapSinkEmit(serr);
     return error.ProviderFailed;
+}
+
+/// Total retry decision table over every ChatError tag (m4-sampler-resilience-001).
+///
+/// Retryable: rate-limit (429/529 → ServerError class), 5xx, and transient
+/// transport failures (HttpFailed network class, BadStatus, WriteFailed,
+/// Unexpected, NotSupported, StreamFailed — hyper retries mid-stream).
+/// Terminal: auth (401/403), BadRequest (invalid request), InvalidResponse
+/// (fatal), Timeout (isRetryableError(Timeout)=false today AND the shared
+/// end-to-end deadline makes retry meaningless), Cancelled,
+/// UnsupportedControl, OutOfMemory (sink-level, never retried).
+///
+/// Cancelled / Timeout / UnsupportedControl return their clean ChatOutcome in
+/// chatWithRetry before this table runs. Exhaustive over the closed ChatError
+/// set — no else fallthrough: a tag added to ChatError without a prong here
+/// is a compile error.
+pub fn shouldRetry(err: zt.ChatError) bool {
+    return switch (err) {
+        error.HttpFailed, error.BadStatus, error.WriteFailed, error.Unexpected,
+        error.StreamFailed, error.RateLimited, error.ServerError, error.NotSupported => true,
+        error.InvalidResponse, error.OutOfMemory, error.AuthenticationFailed,
+        error.PermissionDenied, error.Timeout, error.Cancelled, error.BadRequest,
+        error.UnsupportedControl => false,
+    };
 }
 
 fn retryDelayMsSaturating(base_ms: u64, attempt: u32) u64 {
@@ -781,13 +815,25 @@ const RecordingSink = struct {
     /// assistant_delta count / assistant_delta_clear count (tui-streaming-001).
     assistant_deltas: u32 = 0,
     delta_clears: u32 = 0,
-    /// In-order delta-path tags: 'd' delta, 'c' clear, 'm' assistant_message.
+    /// thinking_delta count (tui-thinking-streaming-001).
+    thinking_deltas: u32 = 0,
+    /// In-order delta-path tags: 'd' delta, 't' thinking delta, 'c' clear,
+    /// 'm' assistant_message.
     delta_tags: [64]u8 = undefined,
     delta_tags_len: usize = 0,
     /// Captured delta content (copy made at emit time — proves borrowed
     /// slices were valid during emit even when the provider reuses a buffer).
     delta_buf: [512]u8 = undefined,
     delta_buf_len: usize = 0,
+    /// Captured thinking-delta content (same borrow-validity discipline).
+    think_buf: [256]u8 = undefined,
+    think_buf_len: usize = 0,
+    /// Captured assistant_message reasoning (copy made at emit time — the
+    /// turn arena is freed when run() returns, so borrowed pointers must not
+    /// survive the assertion).
+    reason_buf: [128]u8 = undefined,
+    reason_buf_len: usize = 0,
+    last_reasoning_set: bool = false,
     /// OR of every assistant_message.has_tools (multi-turn runs may end text-only).
     any_assistant_has_tools: bool = false,
     usages: u32 = 0,
@@ -837,6 +883,14 @@ const RecordingSink = struct {
                 self.assistant_messages += 1;
                 self.last_assistant_has_tools = am.has_tools;
                 if (am.has_tools) self.any_assistant_has_tools = true;
+                self.last_reasoning_set = am.reasoning != null;
+                if (am.reasoning) |r| {
+                    const cap = @min(r.len, self.reason_buf.len);
+                    @memcpy(self.reason_buf[0..cap], r[0..cap]);
+                    self.reason_buf_len = cap;
+                } else {
+                    self.reason_buf_len = 0;
+                }
                 self.recordDeltaTag('m');
             },
             .assistant_delta => |d| {
@@ -845,6 +899,13 @@ const RecordingSink = struct {
                 const cap = @min(d.len, self.delta_buf.len - self.delta_buf_len);
                 @memcpy(self.delta_buf[self.delta_buf_len..][0..cap], d[0..cap]);
                 self.delta_buf_len += cap;
+            },
+            .thinking_delta => |d| {
+                self.thinking_deltas += 1;
+                self.recordDeltaTag('t');
+                const cap = @min(d.len, self.think_buf.len - self.think_buf_len);
+                @memcpy(self.think_buf[self.think_buf_len..][0..cap], d[0..cap]);
+                self.think_buf_len += cap;
             },
             .assistant_delta_clear => {
                 self.delta_clears += 1;
@@ -1083,7 +1144,7 @@ test "sink failure during assistant_delta aborts the run" {
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
         ) provider_mod.ChatError!message.AssistantTurn {
-            handler(handler_ctx, "delta");
+            handler(handler_ctx, "delta", null);
             return .{
                 .content = try arena.dupe(u8, "hi"),
                 .tool_calls = &.{},
@@ -1185,7 +1246,7 @@ test "chat_stream forwards deltas in order before assistant_message" {
             var buf: [16]u8 = undefined;
             for (chunks) |ch| {
                 @memcpy(buf[0..ch.len], ch);
-                handler(handler_ctx, buf[0..ch.len]);
+                handler(handler_ctx, buf[0..ch.len], null);
             }
             return .{
                 .content = try arena.dupe(u8, "Hello world"),
@@ -1288,13 +1349,13 @@ test "failed streaming attempt emits delta_clear before retry deltas" {
             if (self.attempts == 1) {
                 // Attempt 1: 3 deltas, then a retryable failure.
                 for ([_][]const u8{ "one", " two", " three" }) |ch| {
-                    handler(handler_ctx, ch);
+                    handler(handler_ctx, ch, null);
                 }
                 return error.RateLimited;
             }
             // Attempt 2: 2 deltas, then success.
-            handler(handler_ctx, "final");
-            handler(handler_ctx, " answer");
+            handler(handler_ctx, "final", null);
+            handler(handler_ctx, " answer", null);
             return .{
                 .content = try arena.dupe(u8, "final answer"),
                 .tool_calls = &.{},
@@ -1358,8 +1419,8 @@ test "cancelled streaming attempt emits delta_clear (no partial text under termi
             handler_ctx: *anyopaque,
         ) provider_mod.ChatError!message.AssistantTurn {
             // Partial deltas, then a user cancel (non-retryable).
-            handler(handler_ctx, "partial ");
-            handler(handler_ctx, "text");
+            handler(handler_ctx, "partial ", null);
+            handler(handler_ctx, "text", null);
             _ = arena;
             return error.Cancelled;
         }
@@ -1388,6 +1449,464 @@ test "cancelled streaming attempt emits delta_clear (no partial text under termi
     try std.testing.expectEqual(@as(u32, 1), sink.delta_clears);
     try std.testing.expectEqualStrings("ddc", sink.delta_tags[0..sink.delta_tags_len]);
     try std.testing.expectEqual(@as(u32, 0), sink.assistant_messages);
+}
+
+// ── m4-sampler-resilience-001: total retry decision table ───────────────────
+
+test "shouldRetry is total over all ChatError tags" {
+    // Retryable: rate-limit / 5xx / transient transport (incl. HttpFailed
+    // network class and NotSupported, which now reaches the table instead of
+    // the clean-outcome intercept).
+    try std.testing.expect(shouldRetry(error.HttpFailed));
+    try std.testing.expect(shouldRetry(error.BadStatus));
+    try std.testing.expect(shouldRetry(error.WriteFailed));
+    try std.testing.expect(shouldRetry(error.Unexpected));
+    try std.testing.expect(shouldRetry(error.StreamFailed));
+    try std.testing.expect(shouldRetry(error.RateLimited));
+    try std.testing.expect(shouldRetry(error.ServerError));
+    try std.testing.expect(shouldRetry(error.NotSupported));
+    // Terminal: auth, invalid request/response, cancel/deadline control, OOM.
+    try std.testing.expect(!shouldRetry(error.AuthenticationFailed));
+    try std.testing.expect(!shouldRetry(error.PermissionDenied));
+    try std.testing.expect(!shouldRetry(error.BadRequest));
+    try std.testing.expect(!shouldRetry(error.InvalidResponse));
+    try std.testing.expect(!shouldRetry(error.OutOfMemory));
+    try std.testing.expect(!shouldRetry(error.Timeout));
+    try std.testing.expect(!shouldRetry(error.Cancelled));
+    try std.testing.expect(!shouldRetry(error.UnsupportedControl));
+    // Equivalence: the previously-retried set keeps the old verdict (no regression).
+    try std.testing.expectEqual(zt.isRetryableError(error.RateLimited), shouldRetry(error.RateLimited));
+    try std.testing.expectEqual(zt.isRetryableError(error.ServerError), shouldRetry(error.ServerError));
+    try std.testing.expectEqual(zt.isRetryableError(error.HttpFailed), shouldRetry(error.HttpFailed));
+}
+
+test "retryable error exhausts attempts then provider_failed once" {
+    const gpa = std.testing.allocator;
+
+    const RetryFailMock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return error.RateLimited;
+        }
+    };
+
+    var mock: RetryFailMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = RetryFailMock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.chat_retries = 2; // 3 attempts total
+    deps.options.retry_base_delay_ms = 1; // keep the backoff slices fast
+    try std.testing.expectError(error.ProviderFailed, run(deps, &transcript));
+    // Attempt accounting: 3 calls, 2 provider_retry, exactly one provider_failed.
+    try std.testing.expectEqual(@as(u32, 3), mock.calls);
+    try std.testing.expectEqual(@as(u32, 2), sink.provider_retries);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_faileds);
+    try std.testing.expectEqualStrings("RateLimited", sink.last_provider_failed_err);
+}
+
+test "newly retryable tags reach the table and retry to success" {
+    const gpa = std.testing.allocator;
+
+    const RetryThenOkMock = struct {
+        err: zt.ChatError,
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) return self.err;
+            return .{
+                .content = try arena.dupe(u8, "recovered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    // BadStatus was terminal under the old isRetryableError gate; NotSupported
+    // was a clean unsupported_control outcome. Both are retryable per the
+    // contract's transient transport class and must reach the table.
+    const cases = [_]zt.ChatError{ error.BadStatus, error.NotSupported };
+    for (cases) |err| {
+        var mock: RetryThenOkMock = .{ .err = err };
+        const provider = provider_mod.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = RetryThenOkMock.chat },
+        };
+
+        var sink: RecordingSink = .{};
+
+        var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_impl.deinit();
+        var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+        try transcript.appendUser("hi");
+
+        var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+        deps.options.retry_base_delay_ms = 1;
+        const result = try run(deps, &transcript);
+
+        try std.testing.expectEqualStrings("recovered", result.final_text);
+        try std.testing.expectEqual(@as(u32, 2), mock.calls);
+        try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+        try std.testing.expectEqual(@as(u32, 0), sink.provider_faileds);
+    }
+}
+
+test "terminal error-set tag emits provider_failed once with retry budget available" {
+    const gpa = std.testing.allocator;
+
+    const FailMock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return error.InvalidResponse;
+        }
+    };
+
+    var mock: FailMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = FailMock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.chat_retries = 2; // budget exists but a terminal tag must not use it
+    try std.testing.expectError(error.ProviderFailed, run(deps, &transcript));
+    try std.testing.expectEqual(@as(u32, 1), mock.calls);
+    try std.testing.expectEqual(@as(u32, 0), sink.provider_retries);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_faileds);
+    try std.testing.expectEqualStrings("InvalidResponse", sink.last_provider_failed_err);
+}
+
+test "clean ChatOutcomes never emit provider_failed" {
+    const gpa = std.testing.allocator;
+
+    const ErrMock = struct {
+        err: zt.ChatError,
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            return self.err;
+        }
+    };
+
+    const cases = [_]struct { err: zt.ChatError, want: StopReason }{
+        .{ .err = error.Cancelled, .want = .cancelled },
+        .{ .err = error.Timeout, .want = .timeout },
+        .{ .err = error.UnsupportedControl, .want = .unsupported_control },
+    };
+    for (cases) |c| {
+        var mock: ErrMock = .{ .err = c.err };
+        const provider = provider_mod.Provider{
+            .ptr = &mock,
+            .vtable = &.{ .chat = ErrMock.chat },
+        };
+
+        var sink: RecordingSink = .{};
+
+        var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+        defer arena_impl.deinit();
+        var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+        try transcript.appendUser("hi");
+
+        var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+        deps.options.chat_retries = 2; // retry budget exists but must not be touched
+        const result = try run(deps, &transcript);
+
+        try std.testing.expect(result.stop_reason == c.want);
+        try std.testing.expectEqual(@as(u32, 1), mock.calls);
+        try std.testing.expectEqual(@as(u32, 0), sink.provider_retries);
+        try std.testing.expectEqual(@as(u32, 0), sink.provider_faileds);
+    }
+}
+
+test "cancel during backoff returns cancelled" {
+    const gpa = std.testing.allocator;
+
+    const RetryMock = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return error.RateLimited;
+        }
+    };
+
+    var cancel_flag: cancel_mod.Flag = .{};
+    const provider = provider_mod.Provider{
+        .ptr = undefined,
+        .vtable = &.{ .chat = RetryMock.chat },
+    };
+
+    // Arm a thread that flips the flag ~10ms into the 500ms backoff sleep
+    // (first slice is 25ms, so the cancel lands mid-sleep deterministically).
+    const Arm = struct {
+        flag: *cancel_mod.Flag,
+        fn go(self: *@This()) void {
+            var ts: std.c.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            self.flag.request();
+        }
+    };
+    var arm: Arm = .{ .flag = &cancel_flag };
+    const thr = try std.Thread.spawn(.{}, Arm.go, .{&arm});
+    defer thr.join();
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.cancel = &cancel_flag;
+    const result = try run(deps, &transcript);
+
+    try std.testing.expect(result.stop_reason == .cancelled);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+    try std.testing.expectEqual(@as(u32, 0), sink.provider_faileds);
+}
+
+// ── tui-thinking-streaming-001: reasoning deltas through the loop ───────────
+
+test "thinking deltas emit in order with content deltas" {
+    const gpa = std.testing.allocator;
+
+    const ThinkingStreamMock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "Hello world"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "Why then"),
+            };
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            // Interleaved content + reasoning chunks, in provider order.
+            handler(handler_ctx, "Hel", null);
+            handler(handler_ctx, "", "Why");
+            handler(handler_ctx, "lo", null);
+            handler(handler_ctx, "", " then");
+            handler(handler_ctx, " world", null);
+            return .{
+                .content = try arena.dupe(u8, "Hello world"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "Why then"),
+            };
+        }
+    };
+
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = ThinkingStreamMock.chat, .chat_stream = ThinkingStreamMock.chatStream },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+
+    try std.testing.expectEqualStrings("Hello world", result.final_text);
+    // In-order interleave: content, thinking, content, thinking, content, message.
+    try std.testing.expectEqual(@as(u32, 3), sink.assistant_deltas);
+    try std.testing.expectEqual(@as(u32, 2), sink.thinking_deltas);
+    try std.testing.expectEqual(@as(u32, 0), sink.delta_clears);
+    try std.testing.expectEqualStrings("dtdtdm", sink.delta_tags[0..sink.delta_tags_len]);
+    try std.testing.expectEqualStrings("Hello world", sink.delta_buf[0..sink.delta_buf_len]);
+    try std.testing.expectEqualStrings("Why then", sink.think_buf[0..sink.think_buf_len]);
+    // The complete turn still carries reasoning on assistant_message.
+    try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
+    try std.testing.expect(sink.last_reasoning_set);
+    try std.testing.expectEqualStrings("Why then", sink.reason_buf[0..sink.reason_buf_len]);
+}
+
+test "failed streaming attempt clears thinking deltas with ONE clear" {
+    const gpa = std.testing.allocator;
+
+    const RetryThinkMock = struct {
+        attempts: u32 = 0,
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "final answer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "think b"),
+            };
+        }
+        fn chatStream(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.attempts += 1;
+            if (self.attempts == 1) {
+                // Attempt 1: thinking + content deltas, then a retryable failure.
+                handler(handler_ctx, "", "think a");
+                handler(handler_ctx, "partial", null);
+                return error.RateLimited;
+            }
+            // Attempt 2: thinking + content deltas, then success.
+            handler(handler_ctx, "", "think b");
+            handler(handler_ctx, "final answer", null);
+            return .{
+                .content = try arena.dupe(u8, "final answer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "think b"),
+            };
+        }
+    };
+
+    var mock: RetryThinkMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = RetryThinkMock.chat, .chat_stream = RetryThinkMock.chatStream },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+
+    try std.testing.expectEqualStrings("final answer", result.final_text);
+    // ONE clear erases BOTH content and thinking UI text between attempts.
+    try std.testing.expectEqual(@as(u32, 1), sink.delta_clears);
+    try std.testing.expectEqual(@as(u32, 2), sink.thinking_deltas);
+    try std.testing.expectEqual(@as(u32, 2), sink.assistant_deltas);
+    try std.testing.expectEqualStrings("tdctdm", sink.delta_tags[0..sink.delta_tags_len]);
+    try std.testing.expectEqualStrings("think athink b", sink.think_buf[0..sink.think_buf_len]);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+    try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
+    try std.testing.expect(sink.last_reasoning_set);
+    try std.testing.expectEqualStrings("think b", sink.reason_buf[0..sink.reason_buf_len]);
+}
+
+test "non-stream provider emits no thinking deltas; turn reasoning on assistant_message" {
+    const gpa = std.testing.allocator;
+
+    const ThinkChatOnlyMock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "done"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "offline thinking"),
+            };
+        }
+    };
+
+    var mock_state: u8 = 0;
+    const provider = provider_mod.Provider{
+        .ptr = &mock_state,
+        .vtable = &.{ .chat = ThinkChatOnlyMock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    const result = try run(defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink()), &transcript);
+
+    try std.testing.expectEqualStrings("done", result.final_text);
+    // No chat_stream slot → no delta events at all (byte-identical fallback).
+    try std.testing.expectEqual(@as(u32, 0), sink.assistant_deltas);
+    try std.testing.expectEqual(@as(u32, 0), sink.thinking_deltas);
+    try std.testing.expectEqualStrings("m", sink.delta_tags[0..sink.delta_tags_len]);
+    // Turn reasoning still flows through assistant_message.
+    try std.testing.expect(sink.last_reasoning_set);
+    try std.testing.expectEqualStrings("offline thinking", sink.reason_buf[0..sink.reason_buf_len]);
 }
 
 test "permission deny yields tool error without executing" {

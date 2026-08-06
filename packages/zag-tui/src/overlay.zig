@@ -10,6 +10,8 @@ pub const Kind = enum {
     settings,
     model,
     theme,
+    /// `resume` is a Zig keyword — escaped identifier (session-resume-tui-001).
+    @"resume",
 };
 
 pub const Overlay = struct {
@@ -60,12 +62,15 @@ pub const Builtin = enum {
     settings,
     model,
     theme,
+    /// `resume` is a Zig keyword — escaped identifier (session-resume-tui-001).
+    @"resume",
 
     pub fn fromName(name: []const u8) ?Builtin {
         if (std.mem.eql(u8, name, "help")) return .help;
         if (std.mem.eql(u8, name, "settings")) return .settings;
         if (std.mem.eql(u8, name, "model")) return .model;
         if (std.mem.eql(u8, name, "theme")) return .theme;
+        if (std.mem.eql(u8, name, "resume")) return .@"resume";
         return null;
     }
 
@@ -75,6 +80,7 @@ pub const Builtin = enum {
             .settings => "/settings",
             .model => "/model",
             .theme => "/theme",
+            .@"resume" => "/resume",
         };
     }
 
@@ -84,11 +90,12 @@ pub const Builtin = enum {
             .settings => .settings,
             .model => .model,
             .theme => .theme,
+            .@"resume" => .@"resume",
         };
     }
 };
 
-pub const builtin_names = [_][]const u8{ "help", "settings", "model", "theme" };
+pub const builtin_names = [_][]const u8{ "help", "settings", "model", "theme", "resume" };
 
 /// Match builtins whose name starts with `prefix` (no leading slash).
 pub fn matchBuiltins(prefix: []const u8, out: *[builtin_names.len][]const u8) usize {
@@ -117,12 +124,15 @@ test "overlay open close cursor wrap" {
 
 test "builtin fromName" {
     try std.testing.expect(Builtin.fromName("help").? == .help);
+    try std.testing.expect(Builtin.fromName("resume").? == .@"resume");
     try std.testing.expect(Builtin.fromName("nope") == null);
 }
 
 test "matchBuiltins prefix" {
-    var buf: [4][]const u8 = undefined;
+    var buf: [builtin_names.len][]const u8 = undefined;
     try std.testing.expectEqual(@as(usize, 1), matchBuiltins("mod", &buf));
     try std.testing.expectEqualStrings("model", buf[0]);
-    try std.testing.expectEqual(@as(usize, 4), matchBuiltins("", &buf));
+    try std.testing.expectEqual(@as(usize, 1), matchBuiltins("res", &buf));
+    try std.testing.expectEqualStrings("resume", buf[0]);
+    try std.testing.expectEqual(@as(usize, builtin_names.len), matchBuiltins("", &buf));
 }

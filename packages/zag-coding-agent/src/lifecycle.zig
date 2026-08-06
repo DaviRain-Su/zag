@@ -59,6 +59,11 @@ pub const LifecycleEvent = union(enum) {
     /// One content delta from the in-flight streaming turn (tui-streaming-001).
     /// Borrowed, synchronous, in-order; UI-visible only (never persisted).
     assistant_delta: []const u8,
+    /// One reasoning/thinking delta from the in-flight streaming turn
+    /// (tui-thinking-streaming-001). Borrowed, synchronous, in-order.
+    /// UI-visible only (never persisted). No separate clear event:
+    /// `assistant_delta_clear` covers both (host UI resets both).
+    thinking_delta: []const u8,
     /// Attempt boundary: erase any accumulated UI delta text (tui-streaming-001).
     assistant_delta_clear,
     /// Emitted when an accepted Tool call enters serial execution.

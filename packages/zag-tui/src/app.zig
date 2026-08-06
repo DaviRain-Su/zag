@@ -44,8 +44,14 @@ pub const BindError = error{ MissingRedactor, MissingSignalHost, MissingAgent, M
 /// `TITLE_PROGRESSIVE` ONLY so a finalized "assistant turn=N" card is never
 /// clobbered by partial text; lifecycle uses the turn format. Kept in one
 /// place so the prefix rules stay in lockstep with `cards.zig:124`.
+/// Thinking progressive (tui-thinking-streaming-001) uses its own prefix:
+/// it keeps the "thinking" prefix for render body painting (render.zig
+/// paints cards whose title starts with "thinking"), yet is distinct from
+/// the final "thinking" title so turn N+1 deltas never retitle turn N's
+/// finalized card ("thinking" does not start with "thinking progressive").
 pub const TITLE_PROGRESSIVE = "assistant progressive";
 pub const TITLE_TURN_FMT = "assistant turn={d}";
+pub const TITLE_THINKING_PROGRESSIVE = "thinking progressive";
 
 /// Test-only teardown observer (no product effect when null).
 pub const TeardownProbe = struct {
@@ -111,6 +117,12 @@ pub const App = struct {
     /// card ring snapshot (fixed copy under the ring lock).
     delta_buf: [c.card_body_max_bytes]u8 = undefined,
     delta_len: usize = 0,
+    /// Reasoning delta accumulator (tui-thinking-streaming-001): grows per
+    /// `thinking_delta` up to `card_body_max_bytes`; reset on
+    /// `assistant_delta_clear` (clears BOTH content and thinking — single
+    /// clear event) and on complete `assistant_message` (turn boundary).
+    thinking_buf: [c.card_body_max_bytes]u8 = undefined,
+    thinking_len: usize = 0,
 
     /// Optional teardown probe (tests).
     teardown_probe: ?*TeardownProbe = null,
@@ -159,6 +171,19 @@ pub const App = struct {
     overlay_line_count: usize = 0,
     /// Io handle for Theme FS discovery (set by applyHostPresentation).
     host_io: ?Io = null,
+    /// Resume overlay FS base: `resume_cwd` + `resume_root` are scanned for
+    /// `*.jsonl` sessions (session-resume-tui-001). Product defaults:
+    /// `Io.Dir.cwd()` + dirname of the bound session path (`.zag/sessions`
+    /// for ephemeral). Tests may point both at a tmp dir; the cwd handle is
+    /// borrowed (never closed here).
+    resume_cwd: Io.Dir = undefined,
+    resume_root: []const u8 = ".zag/sessions",
+    /// Raw (unredacted) session stems backing the resume overlay rows —
+    /// parallel to overlay_line_bufs so a selection maps back to the real
+    /// filename even though the displayed label went through the redaction
+    /// pipeline (filenames can embed secrets).
+    resume_stem_bufs: [24][96]u8 = undefined,
+    resume_stem_lens: [24]usize = [_]usize{0} ** 24,
 
     pub fn create(gpa: std.mem.Allocator) error{ OutOfMemory, PipeFailed }!*App {
         const app = try gpa.create(App);
@@ -194,6 +219,7 @@ pub const App = struct {
             .wake_r = pipe[0],
             .wake_w = pipe[1],
             .sb = scrollback_mod.Scrollback.init(gpa),
+            .resume_cwd = Io.Dir.cwd(),
         };
         return app;
     }
@@ -378,15 +404,31 @@ pub const App = struct {
                 // Turn boundary: the complete message arrived; next turn's
                 // deltas start clean.
                 self.delta_len = 0;
-                // Thinking visibility toggle: publish the model's reasoning
-                // as its own card (before the assistant turn card) when the
-                // user has thinking on and the provider sent reasoning.
-                if (self.show_thinking) {
-                    if (m.reasoning) |r| {
-                        if (r.len > 0) {
-                            self.card_ring.publishOrdinary(self.gpa, self.redactor, "thinking", r);
-                        }
-                    }
+                self.thinking_len = 0;
+                // Thinking final-replace rule (tui-thinking-streaming-001):
+                // - progressive thinking card exists → replace + retitle to
+                //   "thinking" (its partial text becomes this turn's reasoning);
+                // - else reasoning non-empty → publish fresh (non-stream
+                //   fallback path — no deltas were streamed);
+                // - reasoning null/empty → drop the progressive card if present
+                //   (the turn completed without thinking).
+                // Toggle off → thinking cards never exist; a stale progressive
+                // (toggled off mid-turn) is dropped at the turn boundary.
+                const wants_thinking = self.show_thinking and
+                    (if (m.reasoning) |r| r.len > 0 else false);
+                if (wants_thinking) {
+                    // Replace-or-publish: the progressive prefix is a strict
+                    // refinement of "thinking", so a finalized prior-turn
+                    // card ("thinking") is never retitled here.
+                    self.card_ring.replaceNewestOrdinaryTitlePrefix(
+                        self.gpa,
+                        self.redactor,
+                        TITLE_THINKING_PROGRESSIVE,
+                        "thinking",
+                        m.reasoning.?,
+                    );
+                } else {
+                    _ = self.card_ring.removeNewestOrdinaryTitlePrefix(TITLE_THINKING_PROGRESSIVE);
                 }
                 // Lifecycle is card identity for assistant (turn/has_tools).
                 var title_buf: [64]u8 = undefined;
@@ -430,14 +472,35 @@ pub const App = struct {
                 // No card (tui-polish-001 compaction): steering/follow-up are
                 // already surfaced by the header S:/F: counters.
             },
-            // Deltas are UI-visible only and handled by onObserver; the
-            // lifecycle path does not paint per-chunk text.
+            // Content deltas are UI-visible only and handled by onObserver;
+            // the lifecycle path does not paint per-chunk text. Thinking
+            // deltas arrive ONLY via lifecycle (tui-thinking-streaming-001:
+            // the observer is unchanged — headless/CLI stdout byte-identity),
+            // so the progressive thinking card is painted here.
+            .thinking_delta => |delta| {
+                if (self.show_thinking) {
+                    // Replace the newest "thinking progressive" card only — a
+                    // finalized "thinking" card from a prior turn is never
+                    // clobbered (distinct prefix keeps turn N+1 deltas off
+                    // turn N's final card). Publish if none. Redaction runs
+                    // per replace through the existing whole-body path.
+                    self.appendThinking(delta);
+                    self.card_ring.replaceNewestOrdinaryTitlePrefix(
+                        self.gpa,
+                        self.redactor,
+                        TITLE_THINKING_PROGRESSIVE,
+                        TITLE_THINKING_PROGRESSIVE,
+                        self.thinking_buf[0..self.thinking_len],
+                    );
+                }
+            },
             .assistant_delta, .assistant_delta_clear => {},
             .run_terminal => |term| {
                 // Belt-and-braces: a sink-failure edge can terminate the run
                 // with the accumulator holding partial text (the clear event
                 // itself failed); reset here so the next reply starts clean.
                 self.delta_len = 0;
+                self.thinking_len = 0;
                 var body_buf: [128]u8 = undefined;
                 const stop = @tagName(term.stop_reason);
                 const body = std.fmt.bufPrint(&body_buf, "ok={any} stop={s} turns={d} p={d} c={d} t={d}", .{
@@ -492,15 +555,24 @@ pub const App = struct {
             },
             .assistant_delta_clear => {
                 // Attempt boundary: a failed attempt's deltas vanish — reset
-                // the accumulator and repaint with an empty body. Progressive
-                // prefix only (never blanks a finalized turn card).
+                // BOTH accumulators (content + thinking; single clear event,
+                // tui-thinking-streaming-001) and repaint with empty bodies.
+                // Progressive prefixes only (never blanks finalized cards).
                 self.delta_len = 0;
+                self.thinking_len = 0;
                 self.card_ring.replaceNewestOrdinaryTitlePrefix(
                     self.gpa,
                     self.redactor,
                     TITLE_PROGRESSIVE,
                     TITLE_PROGRESSIVE,
                     self.delta_buf[0..0],
+                );
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(
+                    self.gpa,
+                    self.redactor,
+                    TITLE_THINKING_PROGRESSIVE,
+                    TITLE_THINKING_PROGRESSIVE,
+                    self.thinking_buf[0..0],
                 );
                 self.wake();
             },
@@ -521,6 +593,21 @@ pub const App = struct {
         const prefix = present.utf8Prefix(delta, cap);
         @memcpy(self.delta_buf[self.delta_len..][0..prefix.len], prefix);
         self.delta_len += prefix.len;
+    }
+
+    /// Append one thinking delta to the accumulator (same cap discipline as
+    /// `appendDelta`, tui-thinking-streaming-001).
+    fn appendThinking(self: *App, delta: []const u8) void {
+        if (self.thinking_len >= self.thinking_buf.len) return;
+        const cap = self.thinking_buf.len - self.thinking_len;
+        if (delta.len <= cap) {
+            @memcpy(self.thinking_buf[self.thinking_len..][0..delta.len], delta);
+            self.thinking_len += delta.len;
+            return;
+        }
+        const prefix = present.utf8Prefix(delta, cap);
+        @memcpy(self.thinking_buf[self.thinking_len..][0..prefix.len], prefix);
+        self.thinking_len += prefix.len;
     }
 
     pub fn run(self: *App) u8 {
@@ -1074,7 +1161,139 @@ pub const App = struct {
                 self.setNote("theme_selected");
                 self.overlay.close();
             },
+            .@"resume" => {
+                // The overlay line is the REDACTED label; the raw stem
+                // backing this row lives in the parallel scratch (stems can
+                // embed secrets). An empty stem = the "(no sessions)" row
+                // (or a stale row) → close without acting.
+                if (self.resume_stem_lens[self.overlay.cursor] == 0) {
+                    self.overlay.close();
+                    return;
+                }
+                const stem = self.resume_stem_bufs[self.overlay.cursor][0..self.resume_stem_lens[self.overlay.cursor]];
+                self.replaySession(stem);
+            },
         }
+    }
+
+    /// Session dir for the resume overlay: dirname of the bound session path
+    /// (the `-c` root), or the default `.zag/sessions` for ephemeral sessions.
+    fn sessionRoot(self: *const App) []const u8 {
+        if (self.session) |s| {
+            if (s.path) |p| {
+                return std.fs.path.dirname(p) orelse ".";
+            }
+        }
+        return self.resume_root;
+    }
+
+    /// Read-only replay of one persisted session into the card ring
+    /// (session-resume-tui-001). The active bound Session is never swapped:
+    /// a new turn after replay appends to the ACTIVE session as today.
+    ///
+    /// Selected == active session → replay from the already-loaded live
+    /// transcript (no re-load — a second lease would hit SessionBusy).
+    /// Otherwise the file is loaded into a fresh arena-owned Transcript
+    /// (deinited after replay; no leak). All failures are fail-closed:
+    /// note "resume_failed" + close, never crash.
+    fn replaySession(self: *App, stem: []const u8) void {
+        const io = self.host_io orelse {
+            self.setNote("resume_failed");
+            self.overlay.close();
+            return;
+        };
+        const dir = self.sessionRoot();
+        const path = std.fmt.allocPrint(self.gpa, "{s}/{s}.jsonl", .{ dir, stem }) catch {
+            self.setNote("resume_failed");
+            self.overlay.close();
+            return;
+        };
+        defer self.gpa.free(path);
+
+        var arena_impl: std.heap.ArenaAllocator = .init(self.gpa);
+        defer arena_impl.deinit();
+        const arena = arena_impl.allocator();
+        var transcript = coding.transcript.Transcript.init(arena);
+
+        var msgs: []const coding.message.Message = undefined;
+        var from_active = false;
+        if (self.session) |s| {
+            if (s.path) |p| {
+                if (std.mem.eql(u8, p, path)) {
+                    msgs = s.transcript.items();
+                    from_active = true;
+                }
+            }
+        }
+        if (!from_active) {
+            const meta = coding.session_store.loadWithMeta(self.gpa, io, self.resume_cwd, path, &transcript) catch {
+                // Missing/corrupt/unsupported → fail closed, never crash.
+                self.setNote("resume_failed");
+                self.overlay.close();
+                return;
+            };
+            _ = meta;
+            msgs = transcript.items();
+        }
+
+        // Tool rows carry only tool_call_id; the tool NAME lives on the
+        // carrier assistant's tool_calls (arena-owned for this replay).
+        const ToolName = struct { id: []const u8, name: []const u8 };
+        var tool_names: std.ArrayListUnmanaged(ToolName) = .empty;
+
+        var turn: usize = 0;
+        for (msgs) |m| {
+            switch (m.role) {
+                .system => {},
+                .user => self.card_ring.publishUser(self.gpa, self.redactor, m.content),
+                .assistant => {
+                    if (m.tool_calls) |calls| {
+                        for (calls) |call| {
+                            tool_names.append(arena, .{ .id = call.id, .name = call.name }) catch {
+                                self.setNote("resume_failed");
+                                self.overlay.close();
+                                return;
+                            };
+                        }
+                    }
+                    turn += 1;
+                    // Thinking visibility toggle gates the reasoning card.
+                    if (self.show_thinking) {
+                        if (m.reasoning) |r| {
+                            if (r.len > 0) {
+                                self.card_ring.publishOrdinary(self.gpa, self.redactor, "thinking", r);
+                            }
+                        }
+                    }
+                    var title_buf: [64]u8 = undefined;
+                    const title = std.fmt.bufPrint(&title_buf, TITLE_TURN_FMT, .{turn}) catch "assistant";
+                    self.card_ring.publishOrdinary(self.gpa, self.redactor, title, m.content);
+                },
+                .tool => {
+                    var name: []const u8 = "?";
+                    if (m.tool_call_id) |tid| {
+                        for (tool_names.items) |tn| {
+                            if (std.mem.eql(u8, tn.id, tid)) {
+                                name = tn.name;
+                                break;
+                            }
+                        }
+                    }
+                    var title_buf: [c.card_title_max_bytes]u8 = undefined;
+                    const title = std.fmt.bufPrint(&title_buf, "tool {s}", .{name}) catch "tool";
+                    self.card_ring.publishOrdinary(self.gpa, self.redactor, title, m.content);
+                },
+            }
+        }
+
+        // Post-replay surface: editor cleared, scrollback reset to follow,
+        // state stays idle. The ACTIVE session is untouched (v1 read-only).
+        self.editor.clear();
+        self.delta_len = 0;
+        self.overlay.close();
+        self.sb.gotoBottom(self.last_viewport_h);
+        self.dirty = true;
+        self.setNote(if (from_active) "resume_active" else "resume_browsing");
     }
 
     fn rebuildOverlayLines(self: *App) usize {
@@ -1166,6 +1385,38 @@ pub const App = struct {
                         if (std.mem.eql(u8, id, theme_mod.builtin_id)) continue;
                         if (n >= self.overlay_line_bufs.len) break;
                         push(self, id, &n);
+                    }
+                }
+            },
+            .@"resume" => {
+                // Session labels go through the SAME redaction pipeline as
+                // setIdentity (filenames can embed secrets); the raw stem is
+                // kept in parallel scratch so selection maps back to the
+                // real file. Cap 24 rows (overlay_line_bufs capacity).
+                @memset(&self.resume_stem_lens, 0);
+                var list: std.ArrayList([]u8) = .empty;
+                defer {
+                    for (list.items) |item| self.gpa.free(item);
+                    list.deinit(self.gpa);
+                }
+                if (self.host_io) |io| {
+                    coding.session_store.listSessions(self.gpa, io, self.resume_cwd, self.sessionRoot(), &list) catch {
+                        // Fail closed: a listing I/O error is an empty list.
+                        list.clearRetainingCapacity();
+                    };
+                }
+                if (list.items.len == 0) {
+                    push(self, "(no sessions)", &n);
+                } else {
+                    var stem_buf: [96]u8 = undefined;
+                    var i: usize = 0;
+                    while (i < list.items.len and n < self.overlay_line_bufs.len) : (i += 1) {
+                        const stem = list.items[i];
+                        const redacted = present.presentInto(self.gpa, self.redactor, &stem_buf, stem);
+                        const take = @min(stem.len, self.resume_stem_bufs[n].len);
+                        @memcpy(self.resume_stem_bufs[n][0..take], stem[0..take]);
+                        self.resume_stem_lens[n] = take;
+                        push(self, stem_buf[0..redacted], &n);
                     }
                 }
             },
@@ -1539,6 +1790,171 @@ test "tui-thinking: meta line shows the toggle state" {
     try app.paint(&rec.pt.term);
     const on = readRow(&rec, 38, &buf);
     try std.testing.expect(std.mem.indexOf(u8, on, "think:on") != null);
+}
+
+/// Newest card whose title starts with "thinking" (progressive or final), or null.
+fn newestThinkingCard(app: *App) ?cards_mod.CardSlot {
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var i: usize = n;
+    while (i > 0) {
+        i -= 1;
+        const slot = &snap[i];
+        if (slot.occupied and std.mem.startsWith(u8, slot.titleSlice(), "thinking")) {
+            return slot.*;
+        }
+    }
+    return null;
+}
+
+test "tui-thinking-streaming: thinking_delta builds progressive card gated by toggle" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    // Toggle off (default): thinking deltas are ignored — no card at all.
+    App.onLifecycle(app, .{ .thinking_delta = "hidden" });
+    try std.testing.expect(newestThinkingCard(app) == null);
+    try std.testing.expectEqual(@as(usize, 0), app.thinking_len);
+
+    // Toggle on: deltas accumulate into a "thinking progressive" card.
+    _ = app.handleKey(.ctrl_t);
+    try std.testing.expect(app.show_thinking);
+    App.onLifecycle(app, .{ .thinking_delta = "step " });
+    App.onLifecycle(app, .{ .thinking_delta = "one" });
+    try std.testing.expectEqual(@as(usize, 8), app.thinking_len);
+    const card = newestThinkingCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(TITLE_THINKING_PROGRESSIVE, card.titleSlice());
+    try std.testing.expectEqualStrings("step one", card.bodySlice());
+}
+
+test "tui-thinking-streaming: assistant_message replaces progressive with final card" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    _ = app.handleKey(.ctrl_t);
+    App.onLifecycle(app, .{ .thinking_delta = "step " });
+    App.onLifecycle(app, .{ .thinking_delta = "one" });
+    // Complete turn: progressive is replaced + retitled to "thinking".
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 1, .text = "answer", .has_tools = false, .reasoning = "step one" } });
+    try std.testing.expectEqual(@as(usize, 0), app.thinking_len);
+    const card = newestThinkingCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("thinking", card.titleSlice());
+    try std.testing.expectEqualStrings("step one", card.bodySlice());
+    // No duplicate: the progressive card was consumed, not re-published.
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var thinking_cards: usize = 0;
+    for (snap[0..n]) |*slot| {
+        if (!slot.occupied) continue;
+        if (std.mem.startsWith(u8, slot.titleSlice(), "thinking")) thinking_cards += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), thinking_cards);
+}
+
+test "tui-thinking-streaming: reasoning null drops the progressive card" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    _ = app.handleKey(.ctrl_t);
+    App.onLifecycle(app, .{ .thinking_delta = "partial" });
+    try std.testing.expect(newestThinkingCard(app) != null);
+    // The turn completed without reasoning: the partial card is dropped.
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 1, .text = "answer", .has_tools = false, .reasoning = null } });
+    try std.testing.expect(newestThinkingCard(app) == null);
+    // Empty (non-null) reasoning drops too.
+    App.onLifecycle(app, .{ .thinking_delta = "stale" });
+    try std.testing.expect(newestThinkingCard(app) != null);
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 2, .text = "answer two", .has_tools = false, .reasoning = "" } });
+    try std.testing.expect(newestThinkingCard(app) == null);
+}
+
+test "tui-thinking-streaming: non-stream reasoning publishes a fresh thinking card" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    _ = app.handleKey(.ctrl_t);
+    // No deltas streamed (non-stream fallback): the complete turn's reasoning
+    // publishes fresh (replace-or-publish fallback).
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 1, .text = "answer", .has_tools = false, .reasoning = "planning the reply" } });
+    const card = newestThinkingCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("thinking", card.titleSlice());
+    try std.testing.expectEqualStrings("planning the reply", card.bodySlice());
+}
+
+test "tui-thinking-streaming: multi-turn thinking never clobbers prior turn card" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    _ = app.handleKey(.ctrl_t);
+    // Turn 1: streamed thinking finalized as a "thinking" card.
+    App.onLifecycle(app, .{ .thinking_delta = "turn one thought" });
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 1, .text = "one", .has_tools = false, .reasoning = "turn one thought" } });
+    // Turn 2: new deltas publish a FRESH progressive card (the prefix
+    // "thinking progressive" never matches the finalized "thinking" card).
+    App.onLifecycle(app, .{ .thinking_delta = "turn two" });
+    App.onLifecycle(app, .{ .thinking_delta = " thought" });
+    var prog = newestThinkingCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings(TITLE_THINKING_PROGRESSIVE, prog.titleSlice());
+    try std.testing.expectEqualStrings("turn two thought", prog.bodySlice());
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 2, .text = "two", .has_tools = false, .reasoning = "turn two thought" } });
+
+    // Exactly two finalized thinking cards; bodies per turn; no progressive.
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var saw_t1 = false;
+    var saw_t2 = false;
+    var saw_progressive = false;
+    for (snap[0..n]) |*slot| {
+        if (!slot.occupied) continue;
+        if (std.mem.eql(u8, slot.titleSlice(), "thinking")) {
+            if (std.mem.eql(u8, slot.bodySlice(), "turn one thought")) saw_t1 = true;
+            if (std.mem.eql(u8, slot.bodySlice(), "turn two thought")) saw_t2 = true;
+        }
+        if (std.mem.eql(u8, slot.titleSlice(), TITLE_THINKING_PROGRESSIVE)) saw_progressive = true;
+    }
+    try std.testing.expect(saw_t1);
+    try std.testing.expect(saw_t2);
+    try std.testing.expect(!saw_progressive);
+}
+
+test "tui-thinking-streaming: delta_clear resets both progressive cards" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    _ = app.handleKey(.ctrl_t);
+    App.onLifecycle(app, .{ .thinking_delta = "attempt one" });
+    App.onObserver(app, .{ .assistant_delta = "partial " });
+    App.onObserver(app, .{ .assistant_delta_clear = {} });
+    // ONE clear resets BOTH accumulators and repaints both progressive cards
+    // with empty bodies.
+    try std.testing.expectEqual(@as(usize, 0), app.thinking_len);
+    try std.testing.expectEqual(@as(usize, 0), app.delta_len);
+    const think = newestThinkingCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("", think.bodySlice());
+    const asst = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("", asst.bodySlice());
+    // Accumulation continues cleanly after the clear.
+    App.onLifecycle(app, .{ .thinking_delta = "attempt two" });
+    const think2 = newestThinkingCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("attempt two", think2.bodySlice());
 }
 
 /// Read one full row into `buf` (RecTerm.cellText is single-cell).
@@ -1984,3 +2400,395 @@ test "tui-input: overlay home/end/page keys navigate" {
     _ = app.handleKey(.page_up);
     try std.testing.expectEqual(@as(usize, 0), app.overlay.cursor); // 5× moveUp
 }
+
+// ── session-resume-tui-001 fixtures: listing / replay / redaction / fail-closed
+// ────────────────────────────────────────────────────────────────────────────
+
+const session_header_line = "{\"schema_version\":1,\"v\":1,\"type\":\"zag_session\",\"compaction_gen\":0}\n";
+
+/// Point the app's resume overlay at `tmp.dir/sessions` (product path is
+/// Io.Dir.cwd() + dirname of the bound session path; tests use a tmp dir).
+fn wireResumeFixture(app: *App, tmp: *std.testing.TmpDir, io: Io) void {
+    app.host_io = io;
+    app.resume_cwd = tmp.dir;
+    app.resume_root = "sessions";
+}
+
+/// Assert the next occupied card in `snap` (walking from `idx`) matches.
+fn expectCard(
+    snap: []const cards_mod.CardSlot,
+    idx: *usize,
+    n: usize,
+    kind: cards_mod.CardKind,
+    title: []const u8,
+    body: []const u8,
+) !void {
+    try std.testing.expect(idx.* < n);
+    const slot = &snap[idx.*];
+    idx.* += 1;
+    try std.testing.expect(slot.occupied);
+    try std.testing.expectEqual(kind, slot.kind);
+    try std.testing.expectEqualStrings(title, slot.titleSlice());
+    try std.testing.expectEqualStrings(body, slot.bodySlice());
+}
+
+test "tui-resume: slash palette routes /resume to the resume overlay" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    _ = app.handleKey(.{ .char = "/" });
+    for ("resume") |ch| {
+        _ = app.handleKey(.{ .char = &[_]u8{ch} });
+    }
+    try std.testing.expectEqual(overlay_mod.Kind.slash_palette, app.overlay.kind);
+    _ = app.handleKey(.enter);
+    try std.testing.expectEqual(overlay_mod.Kind.@"resume", app.overlay.kind);
+}
+
+test "tui-resume: listing caps at 24 rows; empty dir shows placeholder" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    try tmp.dir.createDirPath(io, "sessions");
+    var i: usize = 0;
+    while (i < 26) : (i += 1) {
+        var name_buf: [64]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "sessions/s{d}.jsonl", .{i});
+        try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "x\n" });
+    }
+
+    app.overlay.open(.@"resume");
+    const n = app.rebuildOverlayLines();
+    try std.testing.expectEqual(@as(usize, 24), n); // cap 24 rows
+    try std.testing.expectEqual(@as(usize, 24), app.overlay_line_count);
+    // Raw stems backing the rows map to real files (selection works).
+    try std.testing.expect(app.resume_stem_lens[0] > 0);
+    for (app.overlay_line_ptrs[0..n]) |line| {
+        try std.testing.expect(line.len > 0);
+    }
+
+    // Empty dir → "(no sessions)" + Enter closes without acting.
+    var empty = std.testing.tmpDir(.{});
+    defer empty.cleanup();
+    wireResumeFixture(app, &empty, io);
+    app.overlay.open(.@"resume");
+    try std.testing.expectEqual(@as(usize, 1), app.rebuildOverlayLines());
+    try std.testing.expectEqualStrings("(no sessions)", app.overlay_line_ptrs[0]);
+    try std.testing.expectEqual(@as(usize, 0), app.resume_stem_lens[0]);
+    _ = app.handleKey(.enter);
+    try std.testing.expect(!app.overlay.isOpen());
+}
+
+test "tui-resume: secret-bearing filenames redact in the listing" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = coding.redact.testing.fake_api_key;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    try tmp.dir.createDirPath(io, "sessions");
+    var name_buf: [256]u8 = undefined;
+    const name = try std.fmt.bufPrint(&name_buf, "sessions/{s}.jsonl", .{secret});
+    try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "x\n" });
+
+    app.overlay.open(.@"resume");
+    try std.testing.expectEqual(@as(usize, 1), app.rebuildOverlayLines());
+    const line = app.overlay_line_ptrs[0];
+    try std.testing.expect(std.mem.indexOf(u8, line, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, line, coding.redact.marker) != null);
+    // Raw stem still resolves to the real filename.
+    const raw = app.resume_stem_bufs[0][0..app.resume_stem_lens[0]];
+    try std.testing.expect(std.mem.eql(u8, raw, secret));
+}
+
+test "tui-resume: selection replays cards in order with turn numbering" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    const fixture =
+        session_header_line ++
+        \\{"role":"user","content":"first question"}
+        \\{"role":"assistant","content":"answer one","reasoning":"think about one"}
+        \\{"role":"user","content":"second question"}
+        \\{"role":"assistant","content":"answer two"}
+        \\{"role":"assistant","content":"calling tool","tool_calls":[{"id":"t1","name":"write_file","arguments":"{}"}]}
+        \\{"role":"tool","tool_call_id":"t1","content":"wrote ok"}
+        \\{"role":"user","content":"third question"}
+        \\{"role":"assistant","content":"final answer"}
+    ;
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/alpha.jsonl", .data = fixture });
+
+    // Thinking on: reasoning publishes as a `thinking` card before the turn.
+    _ = app.handleKey(.ctrl_t);
+    try std.testing.expect(app.show_thinking);
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    _ = app.handleKey(.enter);
+
+    try std.testing.expect(!app.overlay.isOpen());
+    try std.testing.expectEqualStrings("resume_browsing", app.noteSlice());
+    try std.testing.expectEqualStrings("", app.editor.slice());
+    try std.testing.expectEqual(UiState.idle, app.state);
+
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var idx: usize = 0;
+    try expectCard(&snap, &idx, n, .user, "user", "first question");
+    try expectCard(&snap, &idx, n, .ordinary, "thinking", "think about one");
+    try expectCard(&snap, &idx, n, .ordinary, "assistant turn=1", "answer one");
+    try expectCard(&snap, &idx, n, .user, "user", "second question");
+    try expectCard(&snap, &idx, n, .ordinary, "assistant turn=2", "answer two");
+    try expectCard(&snap, &idx, n, .ordinary, "assistant turn=3", "calling tool");
+    try expectCard(&snap, &idx, n, .ordinary, "tool write_file", "wrote ok");
+    try expectCard(&snap, &idx, n, .user, "user", "third question");
+    try expectCard(&snap, &idx, n, .ordinary, "assistant turn=4", "final answer");
+    try std.testing.expectEqual(idx, n);
+}
+
+test "tui-resume: thinking card gated by the toggle (off = no card)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    const fixture =
+        session_header_line ++
+        \\{"role":"user","content":"ask"}
+        \\{"role":"assistant","content":"reply","reasoning":"hidden reasoning"}
+    ;
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/gated.jsonl", .data = fixture });
+
+    try std.testing.expect(!app.show_thinking); // default off
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    _ = app.handleKey(.enter);
+
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var idx: usize = 0;
+    try expectCard(&snap, &idx, n, .user, "user", "ask");
+    try expectCard(&snap, &idx, n, .ordinary, "assistant turn=1", "reply");
+    try std.testing.expectEqual(idx, n);
+    var saw_thinking: usize = 0;
+    for (snap[0..n]) |*slot| {
+        if (slot.occupied and std.mem.eql(u8, slot.titleSlice(), "thinking")) saw_thinking += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), saw_thinking);
+}
+
+test "tui-resume: replayed bodies and titles run the redaction pipeline" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = coding.redact.testing.fake_api_key;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    const fixture = try std.fmt.allocPrint(gpa,
+        \\{{"schema_version":1,"v":1,"type":"zag_session","compaction_gen":0}}
+        \\{{"role":"user","content":"key {s}"}}
+        \\{{"role":"assistant","content":"answer {s}","reasoning":"think {s}"}}
+        \\{{"role":"assistant","content":"","tool_calls":[{{"id":"t1","name":"read_file","arguments":"{{}}"}}]}}
+        \\{{"role":"tool","tool_call_id":"t1","content":"result {s}"}}
+        ,
+        .{ secret, secret, secret, secret },
+    );
+    defer gpa.free(fixture);
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/red.jsonl", .data = fixture });
+
+    _ = app.handleKey(.ctrl_t); // thinking on — reasoning card must redact too
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    _ = app.handleKey(.enter);
+
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    try std.testing.expect(n >= 4);
+    var secret_hits: usize = 0;
+    var marker_hits: usize = 0;
+    for (snap[0..n]) |*slot| {
+        if (!slot.occupied) continue;
+        if (std.mem.indexOf(u8, slot.titleSlice(), secret) != null) secret_hits += 1;
+        if (std.mem.indexOf(u8, slot.bodySlice(), secret) != null) secret_hits += 1;
+        if (std.mem.indexOf(u8, slot.bodySlice(), coding.redact.marker) != null) marker_hits += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), secret_hits);
+    // User body, thinking body, assistant body and tool body all redacted.
+    try std.testing.expect(marker_hits >= 4);
+}
+
+test "tui-resume: corrupt session fails closed with resume_failed" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/corrupt.jsonl", .data = "not json\n" });
+
+    app.overlay.open(.@"resume");
+    try std.testing.expectEqual(@as(usize, 1), app.rebuildOverlayLines());
+    _ = app.handleKey(.enter);
+
+    try std.testing.expect(!app.overlay.isOpen());
+    try std.testing.expectEqualStrings("resume_failed", app.noteSlice());
+    try std.testing.expectEqual(UiState.idle, app.state);
+    try std.testing.expectEqual(@as(usize, 0), app.card_ring.ordinary_count); // nothing published
+}
+
+test "tui-resume: replay respects the ring cap with the existing drop note" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    var lines: std.ArrayList(u8) = .empty;
+    defer lines.deinit(gpa);
+    try lines.appendSlice(gpa, session_header_line);
+    var t: usize = 0;
+    while (t < 130) : (t += 1) {
+        var line_buf: [128]u8 = undefined;
+        const line = try std.fmt.bufPrint(&line_buf, "{{\"role\":\"assistant\",\"content\":\"body {d}\"}}\n", .{t});
+        try lines.appendSlice(gpa, line);
+    }
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/big.jsonl", .data = lines.items });
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    _ = app.handleKey(.enter);
+
+    try std.testing.expectEqual(@as(usize, 125), app.card_ring.ordinary_count);
+    try std.testing.expectEqual(@as(u32, 5), app.card_ring.cards_dropped);
+    try std.testing.expect(app.card_ring.slots[cards_mod.CardRing.drop_note_idx].occupied);
+    try std.testing.expectEqualStrings("cards_dropped=5", app.card_ring.slots[cards_mod.CardRing.drop_note_idx].bodySlice());
+}
+
+test "tui-resume: same-session replay uses the live transcript (no re-load)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    // Active session: ephemeral Session whose path matches the fixture stem.
+    // The live transcript holds a message the on-disk file does NOT contain —
+    // a disk re-load would replay "on-disk" instead of "live-only-message".
+    var session = try coding.Session.start(gpa, io, .{
+        .base_system = "",
+        .path = null,
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    defer session.deinit();
+    session.path = try gpa.dupe(u8, "sessions/active.jsonl");
+    try session.transcript.appendUser("live-only-message");
+    app.session = &session;
+
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/active.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"on-disk\"}\n",
+    });
+
+    app.overlay.open(.@"resume");
+    try std.testing.expectEqual(@as(usize, 1), app.rebuildOverlayLines());
+    _ = app.handleKey(.enter);
+
+    try std.testing.expectEqualStrings("resume_active", app.noteSlice());
+    try std.testing.expect(!app.overlay.isOpen());
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var saw_live = false;
+    var saw_disk = false;
+    for (snap[0..n]) |*slot| {
+        if (!slot.occupied) continue;
+        if (std.mem.eql(u8, slot.bodySlice(), "live-only-message")) saw_live = true;
+        if (std.mem.eql(u8, slot.bodySlice(), "on-disk")) saw_disk = true;
+    }
+    try std.testing.expect(saw_live);
+    try std.testing.expect(!saw_disk);
+}
+
+test "tui-resume: replay is read-only; session file bytes preserved, active unchanged" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    const fixture =
+        session_header_line ++
+        \\{"role":"user","content":"before"}
+        \\{"role":"assistant","content":"after"}
+    ;
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/keep.jsonl", .data = fixture });
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    _ = app.handleKey(.enter);
+
+    // Read-only replay: the on-disk session is byte-identical afterwards.
+    const after = try tmp.dir.readFileAlloc(io, "sessions/keep.jsonl", gpa, .limited(1024 * 1024));
+    defer gpa.free(after);
+    try std.testing.expectEqualStrings(fixture, after);
+    // Active session untouched (never bound/swapped in v1 read-only browsing),
+    // editor cleared, state stays idle — a new turn appends to ACTIVE as today.
+    try std.testing.expect(app.session == null);
+    try std.testing.expectEqualStrings("", app.editor.slice());
+    try std.testing.expectEqual(UiState.idle, app.state);
+    try std.testing.expectEqualStrings("resume_browsing", app.noteSlice());
+}
+

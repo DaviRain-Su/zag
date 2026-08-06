@@ -1043,6 +1043,13 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             emitObserver(a, .{ .assistant_delta_clear = {} });
             a.emitLifecycle(.{ .assistant_delta_clear = {} });
         },
+        .thinking_delta => |delta| {
+            // Lifecycle only (tui-thinking-streaming-001): the observer stays
+            // unchanged so headless/CLI stdout is byte-identical — thinking is
+            // UI-visible only, same discipline as assistant_delta. No Trace
+            // kind, no persistence.
+            a.emitLifecycle(.{ .thinking_delta = delta });
+        },
         .usage => |u| {
             // Trace usage, then user Observer/ledger/verbose/cost.
             if (bridge.trace) |tr| {
@@ -6592,6 +6599,7 @@ const LifecycleKind = enum {
     run_start,
     assistant_message,
     assistant_delta,
+    thinking_delta,
     assistant_delta_clear,
     tool_start,
     tool_end,
@@ -6698,6 +6706,15 @@ const LifecycleRecorder = struct {
                 const text = self.gpa.dupe(u8, d) catch return;
                 break :blk .{
                     .kind = .assistant_delta,
+                    .text = text,
+                };
+            },
+            .thinking_delta => |d| blk: {
+                // Recorder owns an independent copy (tui-thinking-streaming-001);
+                // freed by OwnedLifecycleEvent.deinit like every other payload.
+                const text = self.gpa.dupe(u8, d) catch return;
+                break :blk .{
+                    .kind = .thinking_delta,
                     .text = text,
                 };
             },
@@ -7337,11 +7354,11 @@ test "tui-streaming: facade forwards deltas observer-first, clear before retry d
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.attempts += 1;
             if (self.attempts == 1) {
-                handler(handler_ctx, "part1");
-                handler(handler_ctx, " part2");
+                handler(handler_ctx, "part1", null);
+                handler(handler_ctx, " part2", null);
                 return error.RateLimited;
             }
-            handler(handler_ctx, "final");
+            handler(handler_ctx, "final", null);
             return .{
                 .content = try arena.dupe(u8, "final"),
                 .tool_calls = &.{},
@@ -7422,6 +7439,135 @@ test "tui-streaming: facade forwards deltas observer-first, clear before retry d
     try std.testing.expectEqual(@as(u32, 1), rec.count('M'));
     // Deltas never reach the durable Trace (UI-visible only).
     try std.testing.expectEqual(@as(u32, 1), agent.trace.?.countKind("assistant"));
+}
+
+test "tui-thinking-streaming: facade forwards thinking_delta to lifecycle only" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    const ThinkStreamMock = struct {
+        fn chat(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return .{
+                .content = try arena.dupe(u8, "answer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "chain of thought"),
+            };
+        }
+        fn chatStream(
+            _: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            handler: provider_mod.DeltaHandler,
+            handler_ctx: *anyopaque,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            handler(handler_ctx, "", "chain");
+            handler(handler_ctx, " of", null);
+            handler(handler_ctx, "", " thought");
+            return .{
+                .content = try arena.dupe(u8, "answer"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+                .reasoning = try arena.dupe(u8, "chain of thought"),
+            };
+        }
+    };
+
+    const Rec = struct {
+        tags: [64]u8 = undefined,
+        len: usize = 0,
+        fn note(self: *@This(), tag: u8) void {
+            if (self.len < self.tags.len) {
+                self.tags[self.len] = tag;
+                self.len += 1;
+            }
+        }
+        fn count(self: *const @This(), tag: u8) u32 {
+            var n: u32 = 0;
+            for (self.tags[0..self.len]) |t| {
+                if (t == tag) n += 1;
+            }
+            return n;
+        }
+        fn onObserver(ptr: ?*anyopaque, event: observer_mod.Event) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .assistant_delta => self.note('d'),
+                .assistant_text => self.note('m'),
+                else => self.note('x'),
+            }
+        }
+        fn onLifecycle(ptr: ?*anyopaque, event: lifecycle_mod.LifecycleEvent) void {
+            const self: *@This() = @ptrCast(@alignCast(ptr.?));
+            switch (event) {
+                .thinking_delta => self.note('T'),
+                .assistant_delta => self.note('D'),
+                .assistant_message => self.note('M'),
+                else => self.note('y'),
+            }
+        }
+    };
+    var rec: Rec = .{};
+
+    var mock: ThinkStreamMock = .{};
+    var agent = try Agent.init(gpa, io, .{
+        .ptr = &mock,
+        .vtable = &.{ .chat = ThinkStreamMock.chat, .chat_stream = ThinkStreamMock.chatStream },
+    }, .{
+        .permission_mode = .yolo,
+        .verbose = false,
+        .observer = .{ .ptr = &rec, .on_event = Rec.onObserver },
+        .lifecycle = .{ .ptr = &rec, .on_event = Rec.onLifecycle },
+    });
+    defer agent.deinit();
+    agent.trace = trace_mod.Trace.init(gpa, io, null, Io.Dir.cwd());
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    const result = try agent.reply(&session, "hi");
+    try std.testing.expectEqualStrings("answer", result.final_text);
+
+    // run_start → thinking delta (lifecycle ONLY — observer gets no 't') →
+    // content delta (observer+lifecycle) → thinking delta (lifecycle only) →
+    // complete message (observer text + lifecycle) → run_terminal.
+    try std.testing.expectEqualStrings("yTdDTmMy", rec.tags[0..rec.len]);
+    try std.testing.expectEqual(@as(u32, 2), rec.count('T'));
+    // Observer saw exactly the content delta + full text — byte-identical to
+    // the pre-thinking stream surface (headless/CLI stdout unchanged).
+    try std.testing.expectEqual(@as(u32, 0), rec.count('t'));
+    try std.testing.expectEqual(@as(u32, 1), rec.count('d'));
+    try std.testing.expectEqual(@as(u32, 1), rec.count('m'));
+}
+
+test "tui-thinking-streaming: lifecycle recorder owns thinking_delta text" {
+    const gpa = std.testing.allocator;
+    var rec = LifecycleRecorder.init(gpa);
+    defer rec.deinit();
+
+    const obs = rec.observer();
+    obs.emit(.{ .run_start = .{ .session_configured = false } });
+    obs.emit(.{ .thinking_delta = "chain" });
+    obs.emit(.{ .thinking_delta = " of thought" });
+    obs.emit(.{ .assistant_message = .{ .turn = 1, .text = "answer", .has_tools = false, .reasoning = "chain of thought" } });
+    obs.emit(.{ .run_terminal = .{ .turns = 1, .ok = true, .stop_reason = .completed, .usage = .{} } });
+
+    try std.testing.expectEqual(@as(u32, 2), rec.countKind(.thinking_delta));
+    // Independent owned copies (recorder memory, not the borrowed callback).
+    try std.testing.expectEqualStrings("chain", rec.events.items[1].text.?);
+    try std.testing.expectEqualStrings(" of thought", rec.events.items[2].text.?);
+    try std.testing.expectEqualStrings("chain of thought", rec.events.items[3].reasoning.?);
+    // deinit frees every owned payload without double-free (leak-checked by GPA).
 }
 
 test "harness-events: invalid_toolset + invalid_context post-start terminals" {

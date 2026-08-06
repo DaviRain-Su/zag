@@ -3204,6 +3204,12 @@ pub const ChatCompletionStreamOptions = std.json.Value;
 
 pub const ChatCompletionStreamResponseDelta = struct {
     content: ?[]const u8 = null,
+    // Manual addition (tui-thinking-streaming-001): the generator currently
+    // emits no reasoning_content for the stream delta, but the non-stream
+    // message type above carries it and reasoning models stream thinking via
+    // this field. Keep in lockstep with ChatCompletionResponseMessage until
+    // the generator is updated. Absent on the wire → null.
+    reasoning_content: ?[]const u8 = null,
     function_call: ?struct {
     arguments: ?[]const u8 = null,
     name: ?[]const u8 = null,

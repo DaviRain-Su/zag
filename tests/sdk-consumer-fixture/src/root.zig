@@ -1159,7 +1159,7 @@ test "borrowed LoopEvent assistant_message is owned-safe after source mutation" 
 // Low-level Core sink fixtures above stay independent (no lifecycle pollution).
 
 const SdkLifecycleOwned = struct {
-    kind: enum { run_start, assistant_message, assistant_delta, assistant_delta_clear, tool_start, tool_end, control_applied, run_terminal },
+    kind: enum { run_start, assistant_message, assistant_delta, thinking_delta, assistant_delta_clear, tool_start, tool_end, control_applied, run_terminal },
     turn: u32 = 0,
     call_index: u32 = 0,
     text: ?[]u8 = null,
@@ -1238,6 +1238,10 @@ const SdkLifecycleRecorder = struct {
             .assistant_delta => |d| blk: {
                 const text = self.gpa.dupe(u8, d) catch return;
                 break :blk .{ .kind = .assistant_delta, .text = text };
+            },
+            .thinking_delta => |d| blk: {
+                const text = self.gpa.dupe(u8, d) catch return;
+                break :blk .{ .kind = .thinking_delta, .text = text };
             },
             .assistant_delta_clear => .{ .kind = .assistant_delta_clear },
             .tool_start => |ts| blk: {

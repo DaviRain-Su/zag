@@ -554,6 +554,12 @@ pub const ChatOptions = struct {
 
 pub const StreamEvent = union(enum) {
     content_delta: []const u8,
+    /// One reasoning/thinking delta from the in-flight assistant turn
+    /// (tui-thinking-streaming-001). Borrowed, synchronous, in-order — same
+    /// discipline as `content_delta`. Empty chunks are never emitted (wire
+    /// adapters guard len > 0); the final turn reasoning still arrives via
+    /// `AssistantTurn.reasoning`.
+    reasoning_delta: []const u8,
     tool_call_delta: struct {
         index: usize,
         id: []const u8 = "",

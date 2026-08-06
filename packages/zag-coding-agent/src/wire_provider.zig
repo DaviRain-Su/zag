@@ -141,11 +141,12 @@ pub const WireProvider = struct {
     }
 };
 
-/// Wire-level handler shim for the streaming port: forwards content deltas to
-/// the Core delta handler, and preserves the pre-existing direct wire
-/// `on_event` consumer (CLI verbose diagnostics) unchanged for ALL events.
-/// `tool_call_delta` / `finish_reason` / `done` never reach the Core handler
-/// (tui-streaming-001 delta scope).
+/// Wire-level handler shim for the streaming port: forwards content deltas and
+/// reasoning deltas to the Core delta handler, and preserves the pre-existing
+/// direct wire `on_event` consumer (CLI verbose diagnostics) unchanged for ALL
+/// events. `tool_call_delta` / `finish_reason` / `done` never reach the Core
+/// handler (tui-streaming-001 delta scope; tui-thinking-streaming-001 adds
+/// reasoning_delta to the forwarded set).
 const StreamShim = struct {
     core_handler: provider_mod.DeltaHandler,
     core_ctx: *anyopaque,
@@ -158,7 +159,9 @@ const StreamShim = struct {
         // unchanged from the pre-streaming path.
         if (self.wire_handler) |h| try h(self.wire_ctx, event);
         switch (event) {
-            .content_delta => |delta| self.core_handler(self.core_ctx, delta),
+            .content_delta => |delta| self.core_handler(self.core_ctx, delta, null),
+            // Reasoning-only chunk: empty content, non-null reasoning slot.
+            .reasoning_delta => |delta| self.core_handler(self.core_ctx, "", delta),
             else => {},
         }
     }

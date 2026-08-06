@@ -21,7 +21,11 @@ pub const RequestControl = zt.RequestControl;
 /// Handler for one content delta from a streaming chat (tui-streaming-001).
 /// `content_delta` is borrowed and valid only during the call; consumers that
 /// retain it must copy. Called synchronously, in-order, once per chunk.
-pub const DeltaHandler = *const fn (ctx: *anyopaque, content_delta: []const u8) void;
+/// `reasoning_delta` (tui-thinking-streaming-001) is the optional
+/// reasoning/thinking chunk for the same callback slot: null → this call
+/// carries no thinking text (no thinking event); non-null → the chunk carries
+/// reasoning text (content_delta may be empty for reasoning-only chunks).
+pub const DeltaHandler = *const fn (ctx: *anyopaque, content_delta: []const u8, reasoning_delta: ?[]const u8) void;
 
 pub const VTable = struct {
     chat: *const fn (
