@@ -440,10 +440,13 @@ pub fn measureCardHeight(gpa: std.mem.Allocator, card: *const cards.CardSlot, co
     }
     var h: u16 = 1;
     if (card.kind == .user and card.body_len > 0) {
+        // The body renders indented (x_off=2) at width content_width-2 —
+        // measure at the SAME width or the last wrapped line would clip.
+        const body_w = content_width -| 2;
         const body_h = if (md_parse.parseMarkdown(agpa, card.bodySlice())) |doc|
-            md_render.measureMarkdownIntoStyled(agpa, mwin, doc, md_style)
+            md_render.measureMarkdownIntoStyled(agpa, measureWindow(body_w), doc, md_style)
         else
-            md_render.measureRawIntoStyled(agpa, mwin, card.bodySlice(), md_style);
+            md_render.measureRawIntoStyled(agpa, measureWindow(body_w), card.bodySlice(), md_style);
         h +|= body_h;
     }
     return h;
@@ -489,7 +492,7 @@ fn cardStyle(kind: cards.CardKind, palette: *const theme_mod.Palette) vaxis.Styl
 fn drawScrollbar(win: vaxis.Window, sb: *const scrollback_mod.Scrollback, palette: *const theme_mod.Palette) void {
     const total: usize = sb.total_height;
     const viewport: usize = win.height;
-    if (total <= viewport or viewport == 0 or win.width == 0) return;
+    if (total <= viewport or viewport == 0 or win.width <= 2) return;
     const col: u16 = win.width - 1;
     const thumb_h: usize = @max(1, @as(usize, @intCast((@as(u128, viewport) * viewport) / total)));
     const thumb_y: usize = @as(usize, @intCast((@as(u128, sb.scroll_offset) * viewport) / total));

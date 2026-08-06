@@ -23,12 +23,16 @@ pub const max_draw_offset: usize = 65535;
 /// next scroll-up lands exact (hyper: MEASURE_MARGIN_ENTRIES = 8).
 pub const measure_margin_entries: usize = 8;
 
-/// Per-card geometry cache. Indexed by SLOT index (keyed with ui_seq by
-/// the caller via `ensureMeasured` — see `sync`).
+/// Per-card geometry cache. Indexed by VIS index; the `seq` field carries
+/// the card's ui_seq at measurement time — the identity key for per-card
+/// invalidation (a changed card re-measures; unchanged cards keep their
+/// exact height across streaming deltas).
 pub const CardGeo = struct {
     /// Height in rows: exact when `measured`, else an estimate.
     h: u16 = 0,
     measured: bool = false,
+    /// ui_seq of the card this geometry was measured/estimated for.
+    seq: u64 = 0,
 };
 
 pub const EstimateFn = *const fn (slot: *const cards.CardSlot, content_width: u16, assistant: bool) u16;
@@ -94,10 +98,10 @@ pub const Scrollback = struct {
 
     /// Rebuild the visible-card list from the snapshot (O(slots)); mark
     /// geometry dirty when the visible composition or any card identity
-    /// (ui_seq) changed. Called once per frame before prepare.
+    /// (ui_seq) changed. Called once per frame before prepare. On OOM the
+    /// old list stays and `seen` is NOT committed, so the next frame
+    /// re-detects the change (no permanent staleness).
     pub fn sync(self: *Scrollback, snap: []const cards.CardSlot) void {
-        var new_vis: std.ArrayListUnmanaged(u16) = .empty;
-        // Compare against `seen`; only rebuild when something changed.
         var changed = false;
         var i: usize = 0;
         while (i < snap.len) : (i += 1) {
@@ -106,11 +110,10 @@ pub const Scrollback = struct {
             if (occ != self.seen_occ[i] or (occ and slot.ui_seq != self.seen[i])) {
                 changed = true;
             }
-            self.seen_occ[i] = occ;
-            if (occ) self.seen[i] = slot.ui_seq;
         }
         if (!changed and self.vis.items.len > 0) return;
 
+        var new_vis: std.ArrayListUnmanaged(u16) = .empty;
         new_vis.ensureTotalCapacity(self.gpa, snap.len) catch return;
         for (snap, 0..) |*slot, si| {
             if (slot.occupied and slot.kind != .terminal) {
@@ -119,7 +122,15 @@ pub const Scrollback = struct {
         }
         self.vis.deinit(self.gpa);
         self.vis = new_vis;
-        // Geometry parallel array is rebuilt below (prepare); mark dirty.
+        // Commit seen only after the rebuild succeeded.
+        i = 0;
+        while (i < snap.len) : (i += 1) {
+            const slot = &snap[i];
+            const occ = slot.occupied and slot.kind != .terminal;
+            self.seen_occ[i] = occ;
+            if (occ) self.seen[i] = slot.ui_seq;
+        }
+        // Geometry is rebuilt below (prepare); mark dirty.
         self.geometry_dirty = true;
     }
 
@@ -159,15 +170,32 @@ pub const Scrollback = struct {
     ) PrepareResult {
         self.sync(snap);
 
-        // Geometry parallel to vis: rebuild when the visible list changed.
+        // Geometry parallel to vis: rebuild when the visible list changed,
+        // PRESERVING exact heights for cards whose ui_seq is unchanged
+        // (streaming deltas re-measure only the one changed card — the
+        // O(1) delta patch, hyper prepare_layout Case 2).
         if (self.geometry_dirty) {
-            self.geo.clearRetainingCapacity();
-            self.geo.ensureTotalCapacity(self.gpa, self.vis.items.len) catch return .{ .start = 0, .end = 0, .content_y0 = 0 };
-            for (self.vis.items) |si| {
+            var old_geo = self.geo;
+            self.geo = .empty;
+            self.geo.ensureTotalCapacity(self.gpa, self.vis.items.len) catch {
+                self.geo = old_geo;
+                return .{ .start = 0, .end = 0, .content_y0 = 0 };
+            };
+            for (self.vis.items, 0..) |si, vi| {
                 const slot = &snap[si];
-                const assistant = std.mem.startsWith(u8, slot.titleSlice(), "assistant");
-                self.geo.appendAssumeCapacity(.{ .h = est(slot, width, assistant), .measured = false });
+                if (vi < old_geo.items.len and old_geo.items[vi].seq == slot.ui_seq) {
+                    // Unchanged card: keep its exact geometry.
+                    self.geo.appendAssumeCapacity(old_geo.items[vi]);
+                } else {
+                    const assistant = std.mem.startsWith(u8, slot.titleSlice(), "assistant");
+                    self.geo.appendAssumeCapacity(.{
+                        .h = est(slot, width, assistant),
+                        .measured = false,
+                        .seq = slot.ui_seq,
+                    });
+                }
             }
+            old_geo.deinit(self.gpa);
             self.geometry_dirty = false;
         }
         if (width != self.last_width) {
@@ -235,6 +263,7 @@ pub const Scrollback = struct {
             const slot = &snap[self.vis.items[i]];
             g.h = measure(self.gpa, slot, width);
             g.measured = true;
+            g.seq = slot.ui_seq;
             any = true;
         }
         if (any) self.rebuildVy();
@@ -607,6 +636,31 @@ test "scrollback: terminal cards invisible (no rows)" {
     try testing.expectEqual(@as(usize, 2), sb.vis.items[1]);
     // Gaps only between visible cards: total = 3 + 1 + 3 + 1 = 8.
     try testing.expectEqual(@as(usize, 8), sb.total_height);
+}
+
+test "scrollback: streaming delta re-measures only the changed card" {
+    const gpa = testing.allocator;
+    var sb = Scrollback.init(gpa);
+    defer sb.deinit();
+    var snap = fakeSnap(3, 30, .ordinary, 100); // 3 rows each
+    _ = sb.prepare(&snap, 80, 20, fakeMeasure, fakeEstimate);
+    for (sb.geo.items) |g| try testing.expect(g.measured);
+    // Replace card 1 (streaming delta): only its geometry re-measures;
+    // cards 0 and 2 keep their exact heights (O(1) delta patch).
+    snap[1].ui_seq = 999;
+    _ = sb.prepare(&snap, 80, 20, fakeMeasure, fakeEstimate);
+    try testing.expect(sb.geo.items[0].measured);
+    try testing.expect(sb.geo.items[1].measured);
+    try testing.expect(sb.geo.items[2].measured);
+    try testing.expectEqual(@as(u64, 999), sb.geo.items[1].seq);
+    try testing.expectEqual(@as(usize, 12), sb.total_height);
+    // Height change on the replaced card shifts later vy (delta patch).
+    snap[1].body_len = 60; // exact 6 rows now
+    snap[1].ui_seq = 1000;
+    _ = sb.prepare(&snap, 80, 20, fakeMeasure, fakeEstimate);
+    // vy: 0, 3+1=4, 4+6+1=11 → total = 11+3+1 = 15.
+    try testing.expectEqual(@as(usize, 15), sb.total_height);
+    try testing.expectEqual(@as(usize, 11), sb.vy.items[2]);
 }
 
 test "scrollback: ring wrap — earliest changed = 0 rebuilds O(n)" {
