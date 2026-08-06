@@ -26,7 +26,8 @@ fn styleBg(color: vaxis.Color) vaxis.Style {
 }
 
 /// Assemble a palette from explicit per-role colors (fg roles → .fg,
-/// `*_bg`/`bg` roles → .bg).
+/// `*_bg`/`bg` roles → .bg). Optional highlight roles are filled from the
+/// core colors so every builtin stays complete without repeating them.
 fn buildPalette(
     id: []const u8,
     fg: vaxis.Color,
@@ -57,7 +58,34 @@ fn buildPalette(
     styles[@intFromEnum(Role.error_fg)] = styleFg(error_fg);
     styles[@intFromEnum(Role.muted_fg)] = styleFg(muted_fg);
     styles[@intFromEnum(Role.accent_fg)] = styleFg(accent_fg);
+    fillHighlightDefaults(&styles, status_fg, editor_fg, error_fg, accent_fg, muted_fg, fg, bg);
     return .{ .id = id, .styles = styles };
+}
+
+/// omp-inspired defaults for the optional highlight roles.
+fn fillHighlightDefaults(
+    styles: *[Role.count]vaxis.Style,
+    status_fg: vaxis.Color,
+    editor_fg: vaxis.Color,
+    error_fg: vaxis.Color,
+    accent_fg: vaxis.Color,
+    muted_fg: vaxis.Color,
+    fg: vaxis.Color,
+    bg: vaxis.Color,
+) void {
+    styles[@intFromEnum(Role.tool_fg)] = styleFg(status_fg);
+    styles[@intFromEnum(Role.tool_success_fg)] = styleFg(editor_fg);
+    styles[@intFromEnum(Role.tool_error_fg)] = styleFg(error_fg);
+    styles[@intFromEnum(Role.tool_running_fg)] = styleFg(accent_fg);
+    styles[@intFromEnum(Role.md_heading_fg)] = styleFg(accent_fg);
+    styles[@intFromEnum(Role.md_code_fg)] = styleFg(status_fg);
+    styles[@intFromEnum(Role.md_code_bg)] = styleBg(bg);
+    styles[@intFromEnum(Role.md_link_fg)] = styleFg(status_fg);
+    styles[@intFromEnum(Role.md_quote_fg)] = styleFg(muted_fg);
+    styles[@intFromEnum(Role.syntax_keyword_fg)] = styleFg(status_fg);
+    styles[@intFromEnum(Role.syntax_string_fg)] = styleFg(editor_fg);
+    styles[@intFromEnum(Role.syntax_comment_fg)] = styleFg(muted_fg);
+    _ = fg;
 }
 
 pub const ThemeHostOptions = struct {
@@ -79,8 +107,37 @@ pub const Role = enum {
     error_fg,
     muted_fg,
     accent_fg,
+    // ── optional highlight roles (omp-inspired; fall back when absent) ──
+    /// Tool call title / icon (default: status_fg cyan).
+    tool_fg,
+    /// Successful tool completion (default: editor_fg green).
+    tool_success_fg,
+    /// Failed tool / host error body tint (default: error_fg).
+    tool_error_fg,
+    /// In-flight tool start (default: accent_fg yellow).
+    tool_running_fg,
+    /// Markdown heading (default: accent_fg + bold applied in renderer).
+    md_heading_fg,
+    /// Inline / fenced code foreground (default: bright cyan/magenta).
+    md_code_fg,
+    /// Fenced code block background tint (default: dim black).
+    md_code_bg,
+    /// Markdown links (default: accent_fg).
+    md_link_fg,
+    /// Blockquote text (default: muted_fg).
+    md_quote_fg,
+    /// Lightweight syntax: keywords (default: status_fg).
+    syntax_keyword_fg,
+    /// Lightweight syntax: strings (default: editor_fg).
+    syntax_string_fg,
+    /// Lightweight syntax: comments (default: muted_fg).
+    syntax_comment_fg,
 
     pub const count = @typeInfo(Role).@"enum".fields.len;
+
+    /// Required roles in theme JSON (legacy set). Optional highlight roles
+    /// fill from defaults when missing so old themes keep working.
+    pub const required_count: usize = 13;
 };
 
 pub const ColorSpec = union(enum) {
@@ -112,6 +169,19 @@ pub fn builtinDefault() Palette {
     styles[@intFromEnum(Role.error_fg)] = .{ .fg = .{ .index = 1 } };
     styles[@intFromEnum(Role.muted_fg)] = .{ .fg = .{ .index = 8 } };
     styles[@intFromEnum(Role.accent_fg)] = .{ .fg = .{ .index = 3 } }; // yellow — distinct from status cyan
+    fillHighlightDefaults(
+        &styles,
+        .{ .index = 6 },
+        .{ .index = 2 },
+        .{ .index = 1 },
+        .{ .index = 3 },
+        .{ .index = 8 },
+        .{ .index = 7 },
+        .{ .index = 0 },
+    );
+    // Code block: bright cyan on black so fenced code reads as a band.
+    styles[@intFromEnum(Role.md_code_fg)] = .{ .fg = .{ .index = 14 } };
+    styles[@intFromEnum(Role.md_code_bg)] = .{ .bg = .{ .index = 0 } };
     return .{ .id = builtin_id, .styles = styles };
 }
 
@@ -254,9 +324,24 @@ const role_names = [_]struct { []const u8, Role }{
     .{ "error_fg", .error_fg },
     .{ "muted_fg", .muted_fg },
     .{ "accent_fg", .accent_fg },
+    // optional highlight roles (omp-inspired)
+    .{ "tool_fg", .tool_fg },
+    .{ "tool_success_fg", .tool_success_fg },
+    .{ "tool_error_fg", .tool_error_fg },
+    .{ "tool_running_fg", .tool_running_fg },
+    .{ "md_heading_fg", .md_heading_fg },
+    .{ "md_code_fg", .md_code_fg },
+    .{ "md_code_bg", .md_code_bg },
+    .{ "md_link_fg", .md_link_fg },
+    .{ "md_quote_fg", .md_quote_fg },
+    .{ "syntax_keyword_fg", .syntax_keyword_fg },
+    .{ "syntax_string_fg", .syntax_string_fg },
+    .{ "syntax_comment_fg", .syntax_comment_fg },
 };
 
 /// Parse a theme JSON object. On any schema/role failure returns null (caller falls back).
+/// Core 13 roles are required; optional highlight roles inherit builtin defaults
+/// when omitted so existing theme JSON keeps working.
 pub fn parseThemeJson(allocator: std.mem.Allocator, bytes: []const u8) ?struct { id: []u8, palette: Palette } {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{}) catch return null;
     defer parsed.deinit();
@@ -290,7 +375,8 @@ pub fn parseThemeJson(allocator: std.mem.Allocator, bytes: []const u8) ?struct {
         styles[idx] = if (is_bg_role) .{ .bg = color } else .{ .fg = color };
         seen[idx] = true;
     }
-    for (role_names) |rn| {
+    // Only the legacy core roles are required.
+    for (role_names[0..Role.required_count]) |rn| {
         if (!seen[@intFromEnum(rn[1])]) return null;
     }
 

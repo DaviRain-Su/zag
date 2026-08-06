@@ -120,9 +120,17 @@ pub const Terminal = struct {
 
         // ISIG shim: makeRaw cleared ISIG; the Guard Ctrl+C path requires it
         // ON. Everything else stays raw (ICANON/ECHO/IXON off etc.).
+        // Product Tty: `fd: std.Io.File` → `.handle`. TestTty: bare `posix.fd_t`.
         const T = @TypeOf(tty.*);
         if (@hasField(T, "fd")) {
-            reenableIsig(tty.fd.handle) catch {};
+            const FdT = @TypeOf(tty.fd);
+            const fd: posix.fd_t = if (comptime FdT == posix.fd_t)
+                tty.fd
+            else if (comptime @hasField(FdT, "handle"))
+                tty.fd.handle
+            else
+                @compileError("unexpected Tty.fd type");
+            reenableIsig(fd) catch {};
         }
 
         var env_map = try gpa.create(std.process.Environ.Map);

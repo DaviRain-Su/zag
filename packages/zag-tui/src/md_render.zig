@@ -11,15 +11,15 @@
 //! resets continuation lines to column 0, which would destroy list/quote
 //! hanging indents).
 //!
-//! Style mapping (frozen theme roles, no new roles):
+//! Style mapping (omp-inspired theme roles + md-phase2 token tint):
 //!   base      → caller-supplied card base (card_fg / user accent)
-//!   heading   → accent_fg + bold (h1-h6 uniform)
-//!   code      → base fg dimmed + fixed bg tint (index 0); fenced blocks
-//!               with a non-empty `info` word highlight per token (md-phase2-001):
-//!               keyword → accent_fg, string → editor_fg, comment → muted_fg,
-//!               number → status_fg (code bg/dim kept for the whole block)
-//!   quote     → muted_fg (`│ ` prefix per line)
-//!   link      → accent_fg + Cell.link (OSC 8); URL in `cell.link.uri`
+//!   heading   → md_heading_fg + bold
+//!   code      → md_code_fg on md_code_bg; fenced blocks with a non-empty
+//!               `info` word highlight per token (md-phase2-001):
+//!               keyword → syntax_keyword_fg, string → syntax_string_fg,
+//!               comment → syntax_comment_fg, number → status_fg
+//!   quote     → md_quote_fg (`│ ` prefix per line)
+//!   link      → md_link_fg + Cell.link (OSC 8); URL in `cell.link.uri`
 //!   hr        → muted_fg (`─` fill)
 //!   table     → header row (.TableRow = .Header) base + bold; koino
 //!               alignments pad right/center/left per column
@@ -35,12 +35,9 @@ const koino = @import("koino");
 const theme_mod = @import("theme.zig");
 const md_parse = @import("md_parse.zig");
 
-/// Derived markdown styles. `forCard` builds them from the frozen theme
-/// roles plus the card's base style (assistant → card_fg, user → accent_fg).
-/// Syntax-highlight colors DERIVE from existing roles (no new roles):
-/// keyword → accent_fg, string → editor_fg, comment → muted_fg, number →
-/// status_fg; the token styles' fg replaces the code block's base fg while
-/// the code tint (bg index 0 + dim) is kept for the whole block.
+/// Derived markdown styles. `forCard` builds them from theme roles
+/// plus the card's base style (assistant → card_fg, user → accent_fg).
+/// Token tint (md-phase2-001) uses syntax_* / status roles.
 pub const MdStyle = struct {
     base: vaxis.Style,
     heading: vaxis.Style,
@@ -54,22 +51,25 @@ pub const MdStyle = struct {
     number: vaxis.Style,
 
     pub fn forCard(palette: *const theme_mod.Palette, base: vaxis.Style) MdStyle {
-        const accent = palette.style(.accent_fg);
+        const heading = palette.style(.md_heading_fg);
+        const code_fg = palette.style(.md_code_fg);
+        const code_bg = palette.style(.md_code_bg);
+        const quote = palette.style(.md_quote_fg);
+        const link = palette.style(.md_link_fg);
         const muted = palette.style(.muted_fg);
         return .{
             .base = base,
-            .heading = .{ .fg = accent.fg, .bold = true },
-            // v1 fixed tint: dimmed base fg on index-0 background (theme
-            // role set is frozen; no code role exists).
-            .code = .{ .fg = base.fg, .bg = .{ .index = 0 }, .dim = true },
-            .quote = muted,
-            .link = accent,
+            .heading = .{ .fg = heading.fg, .bold = true },
+            .code = .{
+                .fg = code_fg.fg,
+                .bg = if (code_bg.bg != .default) code_bg.bg else .{ .index = 0 },
+            },
+            .quote = quote,
+            .link = link,
             .hr = muted,
-            // Syntax highlight (md-phase2-001): derived from the frozen
-            // theme roles — no new roles, no theme file changes.
-            .keyword = accent,
-            .string = palette.style(.editor_fg),
-            .comment = muted,
+            .keyword = palette.style(.syntax_keyword_fg),
+            .string = palette.style(.syntax_string_fg),
+            .comment = palette.style(.syntax_comment_fg),
             .number = palette.style(.status_fg),
         };
     }
@@ -1029,11 +1029,15 @@ const TestScreen = struct {
 };
 
 const test_palette = theme_mod.builtinDefault();
-const accent_idx: u8 = 3; // builtin accent_fg (yellow)
-const muted_idx: u8 = 8; // builtin muted_fg (brightBlack)
+const accent_idx: u8 = 3; // builtin accent_fg / md_heading_fg (yellow)
+const muted_idx: u8 = 8; // builtin muted_fg / md_quote_fg / syntax_comment
 const base_idx: u8 = 7; // builtin card_fg (white)
-const editor_idx: u8 = 2; // builtin editor_fg (green)
-const status_idx: u8 = 6; // builtin status_fg (cyan)
+const editor_idx: u8 = 2; // builtin editor_fg / syntax_string (green)
+const status_idx: u8 = 6; // builtin status_fg / syntax_keyword / md_link
+const code_fg_idx: u8 = 14; // builtin md_code_fg (brightCyan)
+const code_bg_idx: u8 = 0; // builtin md_code_bg (black)
+const keyword_idx: u8 = 6; // syntax_keyword_fg
+const link_idx: u8 = 6; // md_link_fg
 
 fn expectTextAt(ts: *const TestScreen, col: u16, row: u16, expected: []const u8) !void {
     var buf: [16]u8 = undefined;
@@ -1151,15 +1155,14 @@ test "md block: fenced code renders tinted literal lines without wrap" {
     try std.testing.expectEqual(@as(u16, 2), rows);
     try expectRowEquals(&ts, 0, "fn main() {}");
     try expectRowEquals(&ts, 1, "const x = 1;");
-    // Code tint kept on every cell: dim + fixed bg index 0.
-    try expectFlag(&ts, 0, 0, .dim, true);
-    try expectBgIndex(&ts, 0, 0, 0);
-    // Highlight (md-phase2-001): `fn` / `const` are zig keywords → accent fg;
-    // `main` / `x` stay base; `1` is a number → status fg.
-    try expectFgIndex(&ts, 0, 0, accent_idx);
-    try expectFgIndex(&ts, 3, 0, base_idx);
-    try expectFgIndex(&ts, 0, 1, accent_idx);
-    try expectFgIndex(&ts, 6, 1, base_idx);
+    // Code tint: md_code_fg on md_code_bg (no dim).
+    try expectFlag(&ts, 0, 0, .dim, false);
+    try expectBgIndex(&ts, 0, 0, code_bg_idx);
+    // Highlight: keywords → syntax_keyword; ids → md_code_fg; numbers → status.
+    try expectFgIndex(&ts, 0, 0, keyword_idx);
+    try expectFgIndex(&ts, 3, 0, code_fg_idx);
+    try expectFgIndex(&ts, 0, 1, keyword_idx);
+    try expectFgIndex(&ts, 6, 1, code_fg_idx);
     try expectFgIndex(&ts, 10, 1, status_idx);
 }
 
@@ -1548,12 +1551,12 @@ test "md highlight: zig fence cells carry the derived fg indices" {
     const md = "```zig\nfn main() {}\nconst s = \"hi\"; // note\nconst n = 42;\n```\n";
     const rows = try ts.render(md, &test_palette);
     try std.testing.expectEqual(@as(u16, 3), rows);
-    // Keyword `fn` / `const` → accent fg.
-    try expectFgIndex(&ts, 0, 0, accent_idx);
-    try expectFgIndex(&ts, 0, 1, accent_idx);
-    try expectFgIndex(&ts, 0, 2, accent_idx);
-    // Identifier `main` stays the code base fg.
-    try expectFgIndex(&ts, 3, 0, base_idx);
+    // Keyword `fn` / `const` → syntax_keyword_fg.
+    try expectFgIndex(&ts, 0, 0, keyword_idx);
+    try expectFgIndex(&ts, 0, 1, keyword_idx);
+    try expectFgIndex(&ts, 0, 2, keyword_idx);
+    // Identifier `main` stays md_code_fg.
+    try expectFgIndex(&ts, 3, 0, code_fg_idx);
     // String `"hi"` → editor fg (both quote cells and the content).
     try expectFgIndex(&ts, 10, 1, editor_idx);
     try expectFgIndex(&ts, 13, 1, editor_idx);
@@ -1562,8 +1565,8 @@ test "md highlight: zig fence cells carry the derived fg indices" {
     // Number 42 → status fg.
     try expectFgIndex(&ts, 10, 2, status_idx);
     // Code tint kept on every highlighted cell.
-    try expectFlag(&ts, 0, 0, .dim, true);
-    try expectBgIndex(&ts, 16, 1, 0);
+    try expectFlag(&ts, 0, 0, .dim, false);
+    try expectBgIndex(&ts, 16, 1, code_bg_idx);
     try expectRowEquals(&ts, 0, "fn main() {}");
     try expectRowEquals(&ts, 1, "const s = \"hi\"; // note");
     try expectRowEquals(&ts, 2, "const n = 42;");
@@ -1576,10 +1579,10 @@ test "md highlight: bare fence (null info) renders plain" {
     const rows = try ts.render("```\nfn main() {}\n```\n", &test_palette);
     try std.testing.expectEqual(@as(u16, 1), rows);
     try expectRowEquals(&ts, 0, "fn main() {}");
-    // No highlight: every cell keeps the plain code tint (base fg).
-    try expectFgIndex(&ts, 0, 0, base_idx);
-    try expectFgIndex(&ts, 3, 0, base_idx);
-    try expectFlag(&ts, 0, 0, .dim, true);
+    // No highlight: every cell keeps md_code_fg on md_code_bg.
+    try expectFgIndex(&ts, 0, 0, code_fg_idx);
+    try expectFgIndex(&ts, 3, 0, code_fg_idx);
+    try expectFlag(&ts, 0, 0, .dim, false);
 }
 
 test "md highlight: unknown info word renders default (strings/numbers only)" {
@@ -1589,13 +1592,13 @@ test "md highlight: unknown info word renders default (strings/numbers only)" {
     const md = "```cobol\nDATA 42 \"x\" // nope\n```\n";
     const rows = try ts.render(md, &test_palette);
     try std.testing.expectEqual(@as(u16, 1), rows);
-    // `DATA` is not a keyword in the default table → base fg.
-    try expectFgIndex(&ts, 0, 0, base_idx);
+    // `DATA` is not a keyword in the default table → md_code_fg.
+    try expectFgIndex(&ts, 0, 0, code_fg_idx);
     // `42` number → status fg; `"x"` string → editor fg.
     try expectFgIndex(&ts, 5, 0, status_idx);
     try expectFgIndex(&ts, 8, 0, editor_idx);
-    // `//` is NOT a comment in the default table → base fg.
-    try expectFgIndex(&ts, 12, 0, base_idx);
+    // `//` is NOT a comment in the default table → md_code_fg.
+    try expectFgIndex(&ts, 12, 0, code_fg_idx);
 }
 
 test "md highlight: indented code block stays plain" {
@@ -1606,9 +1609,9 @@ test "md highlight: indented code block stays plain" {
     try std.testing.expectEqual(@as(u16, 1), rows);
     try expectRowEquals(&ts, 0, "fn main() {}");
     // Unfenced (indented) blocks never highlight, even with zig-looking code.
-    try expectFgIndex(&ts, 0, 0, base_idx);
-    try expectFgIndex(&ts, 3, 0, base_idx);
-    try expectFlag(&ts, 0, 0, .dim, true);
+    try expectFgIndex(&ts, 0, 0, code_fg_idx);
+    try expectFgIndex(&ts, 3, 0, code_fg_idx);
+    try expectFlag(&ts, 0, 0, .dim, false);
 }
 
 test "md measure: row counts identical with and without highlight" {
@@ -1654,14 +1657,15 @@ test "md inline: italic cells carry the italic attribute" {
     try expectFlag(&ts, 5, 0, .italic, true);
 }
 
-test "md inline: code cells carry the dim bg tint" {
+test "md inline: code cells carry the md_code tint" {
     const gpa = std.testing.allocator;
     var ts = try TestScreen.init(gpa, 40, 8);
     defer ts.deinit(gpa);
     _ = try ts.render("`code`\n", &test_palette);
     try expectRowEquals(&ts, 0, "code");
-    try expectFlag(&ts, 0, 0, .dim, true);
-    try expectBgIndex(&ts, 0, 0, 0);
+    try expectFgIndex(&ts, 0, 0, code_fg_idx);
+    try expectBgIndex(&ts, 0, 0, code_bg_idx);
+    try expectFlag(&ts, 0, 0, .dim, false);
 }
 
 test "md inline: link cells carry accent fg and the URI" {
@@ -1670,7 +1674,7 @@ test "md inline: link cells carry accent fg and the URI" {
     defer ts.deinit(gpa);
     _ = try ts.render("[link](/url)\n", &test_palette);
     try expectRowEquals(&ts, 0, "link");
-    try expectFgIndex(&ts, 0, 0, accent_idx);
+    try expectFgIndex(&ts, 0, 0, link_idx);
     try expectLinkUri(&ts, 0, 0, "/url");
     try expectLinkUri(&ts, 3, 0, "/url");
 }
@@ -1708,13 +1712,14 @@ test "md inline: mixed paragraph assigns per-cell attributes" {
     // "*em*" — literal text (koino leaves it raw next to the strong run).
     try expectTextAt(&ts, 9, 0, "*");
     try expectFlag(&ts, 9, 0, .italic, false);
-    // "code" — inline code tint.
+    // "code" — md_code tint.
     try expectTextAt(&ts, 16, 0, "c");
-    try expectFlag(&ts, 16, 0, .dim, true);
-    try expectBgIndex(&ts, 16, 0, 0);
-    // "link" — accent + OSC 8 URI on every cell.
+    try expectFgIndex(&ts, 16, 0, code_fg_idx);
+    try expectBgIndex(&ts, 16, 0, code_bg_idx);
+    try expectFlag(&ts, 16, 0, .dim, false);
+    // "link" — md_link_fg + OSC 8 URI on every cell.
     try expectTextAt(&ts, 23, 0, "l");
-    try expectFgIndex(&ts, 23, 0, accent_idx);
+    try expectFgIndex(&ts, 23, 0, link_idx);
     try expectLinkUri(&ts, 23, 0, "/u");
     try expectLinkUri(&ts, 26, 0, "/u");
     // "strike" — strikethrough.

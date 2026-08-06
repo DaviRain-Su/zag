@@ -1904,13 +1904,13 @@ pub const App = struct {
             .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
             .row_kinds = self.resume_row_kinds[0..self.overlay_line_count],
         };
-        // Compute the layout once here: renderFrame draws it, and the cards
-        // interior (region minus the closed-frame borders) is the scrollback
-        // viewport + page unit. The scroll argument is legacy (card-level
-        // window, used only by constrained mode's newest-3 titles).
+        // Compute the layout once here: renderFrame draws it. Cards region is
+        // borderless; reserve 1 col for the scrollbar track and 1 row for the
+        // scrollback paint window math (viewport_h = h-1 keeps prior paging
+        // contracts).
         const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible);
         const viewport_h: usize = @max(layout.cards.h -| 1, 1);
-        const content_w: u16 = @max(layout.cards.w -| 3, 1);
+        const content_w: u16 = @max(layout.cards.w -| 1, 1);
         self.last_viewport_h = viewport_h;
         // Settle geometry + re-pin follow before painting (review #7 order).
         _ = self.sb.prepare(
@@ -2108,13 +2108,13 @@ test "tui-thinking: meta line shows the toggle state" {
     defer app.destroy();
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40 → status meta line at row 38
+    try app.paint(&rec.pt.term); // 80×40 → editor top border at row 37
     var buf: [512]u8 = undefined;
-    const off = readRow(&rec, 38, &buf);
+    const off = readRow(&rec, 37, &buf);
     try std.testing.expect(std.mem.indexOf(u8, off, "think:off") != null);
     _ = app.handleKey(.ctrl_t);
     try app.paint(&rec.pt.term);
-    const on = readRow(&rec, 38, &buf);
+    const on = readRow(&rec, 37, &buf);
     try std.testing.expect(std.mem.indexOf(u8, on, "think:on") != null);
 }
 
@@ -2383,13 +2383,12 @@ test "tui-layout: first paint always happens" {
     try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
     try std.testing.expect(app.last_painted_size != null);
-    // Cell proof: the full frame was drawn into the offscreen screen.
-    // Minimal frame: row 0 is the top border, row 1 is the transcript
-    // separator (`├─ transcript ─…` with the label starting at col 3).
-    try expectCellText(&rec, 0, 0, "┌");
-    try expectCellText(&rec, 1, 0, "─");
-    try expectCellText(&rec, 0, 1, "├");
-    try expectCellText(&rec, 3, 1, "t");
+    // Cell proof: borderless transcript + rounded editor box at the bottom.
+    // 80×40: editor_y = 37 (h=3). Empty transcript shows the placeholder.
+    try expectCellText(&rec, 0, 0, "("); // "(no events yet)"
+    try expectCellText(&rec, 0, 37, "╭");
+    try expectCellText(&rec, 1, 38, "❯");
+    try expectCellText(&rec, 0, 39, "╰");
 }
 
 test "tui-layout: no-change poll skips render (canary survives)" {
@@ -2602,8 +2601,8 @@ test "tui-input: page keys scroll rows and re-engage follow" {
     }
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40 → viewport 29
-    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
+    try app.paint(&rec.pt.term); // 80×40 → cards 37, viewport 36
+    try std.testing.expectEqual(@as(usize, 36), app.last_viewport_h);
     try std.testing.expect(app.sb.total_height > 29); // overflows
     try std.testing.expect(app.sb.follow_mode); // fresh paint follows
     const bottom = app.sb.scroll_offset;
@@ -2689,17 +2688,17 @@ test "tui-input: alt+enter multiline grows the editor region" {
     try std.testing.expectEqual(@as(usize, 3), app.editor.lineCount());
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40: editor region grew to 4 rows
-    try std.testing.expectEqual(@as(usize, 32), app.last_viewport_h); // transcript shrank (cards 35→33)
-    // All three input lines are on screen (rows 33..35 interior).
+    try app.paint(&rec.pt.term); // 80×40: editor 2+3=5, cards 35, viewport 34
+    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
+    // Prompt glyph is visible in the editor box.
     var buf: [512]u8 = undefined;
-    var found_enter = false;
+    var found_prompt = false;
     var r: u16 = 30;
-    while (r <= 36) : (r += 1) {
+    while (r <= 39) : (r += 1) {
         const row = readRow(&rec, r, &buf);
-        if (std.mem.indexOf(u8, row, " > ") != null) found_enter = true;
+        if (std.mem.indexOf(u8, row, "❯") != null) found_prompt = true;
     }
-    try std.testing.expect(found_enter);
+    try std.testing.expect(found_prompt);
 }
 
 test "tui-input: paint records the cards viewport height for paging" {
@@ -2710,8 +2709,8 @@ test "tui-input: paint records the cards viewport height for paging" {
     defer rec.deinit(gpa);
     try app.paint(&rec.pt.term); // 80×40
     try std.testing.expect(app.last_viewport_h > 0);
-    // 80×40: cards region h = 30 → interior viewport = 30 - 1 = 29.
-    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
+    // 80×40: editor h=3 → cards h=37 → viewport = 37-1 = 36.
+    try std.testing.expectEqual(@as(usize, 36), app.last_viewport_h);
 }
 
 test "tui-input: overlay home/end/page keys navigate" {

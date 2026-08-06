@@ -179,9 +179,12 @@ pub const SubagentRequest = struct {
     description: []const u8,
     /// Subagent specialization.
     subagent_type: SubagentType = .task,
-    /// Maximum turns for the child agent (default 10; grok-build uses
-    /// SubagentExecutionBudget max_turns).
-    max_turns: u32 = 10,
+    /// Maximum turns for the child agent (default 20, matching the parent
+    /// loop's `default_max_turns`; grok-build uses SubagentExecutionBudget
+    /// max_turns). Read-only recon (scout/reviewer) burns turns on tool
+    /// calls, so 10 was too tight and often ended on a tool-call-only
+    /// message with an empty final text.
+    max_turns: u32 = 20,
     /// Parent session depth (0 = top-level). Child depth = parent + 1.
     /// MAX_SUBAGENT_DEPTH = 1 means a child at depth 1 cannot spawn further
     /// subagents.
@@ -206,6 +209,42 @@ pub const SubagentResult = struct {
         return "completed";
     }
 };
+
+// ── Output finalization (budget-exhausted-empty) ────────────────────────────
+
+/// Finalized child output: success flag plus the gpa-owned output body.
+const Finalized = struct {
+    success: bool,
+    output: []u8,
+};
+
+/// Post-process the child's final text into the parent-visible output.
+///
+/// A child that exhausts its turn budget (`max_turns`) with an **empty** final
+/// text — the last assistant message was tool-call-only, so the loop's
+/// `final_text` is "" — previously returned a silent empty body that the
+/// parent read as "the scout did nothing". Replace that with a diagnostic and
+/// mark the delegation failed so the parent re-dispatches with a larger
+/// budget or a narrower task. `max_turns` with real text keeps partial
+/// results (success=true, unchanged), as does every `completed` path.
+fn finalizeChildOutput(
+    gpa: std.mem.Allocator,
+    success: bool,
+    stop_reason: []const u8,
+    final_text: []const u8,
+    max_turns: u32,
+) error{OutOfMemory}!Finalized {
+    if (std.mem.eql(u8, stop_reason, "max_turns") and final_text.len == 0) {
+        const diag = std.fmt.allocPrint(
+            gpa,
+            "child exhausted its {d}-turn budget before producing a final text response (last assistant message was tool-call-only); re-dispatch with a larger max_turns or a narrower task",
+            .{max_turns},
+        ) catch return error.OutOfMemory;
+        return .{ .success = false, .output = diag };
+    }
+    const owned = gpa.dupe(u8, final_text) catch return error.OutOfMemory;
+    return .{ .success = success, .output = owned };
+}
 
 // ── Registry (adapted from oh-my-pi AgentRegistry + grok-build coordinator state) ─
 
@@ -414,7 +453,7 @@ pub const task_def: tool.Definition = .{
     \\    },
     \\    "max_turns": {
     \\      "type": "integer",
-    \\      "description": "Maximum turns for the subagent (default 10)."
+    \\      "description": "Maximum turns for the subagent (default 20)."
     \\    }
     \\  },
     \\  "required": ["prompt", "description"],
@@ -589,20 +628,30 @@ pub fn spawn(ctx: SpawnContext) agent_mod.ReplyError!SubagentResult {
     };
 
     // Dup the final text BEFORE child_session.deinit() (defer above) frees
-    // the transcript arena that owns result.final_text.
-    const owned_output = gpa.dupe(u8, result.final_text) catch {
+    // the transcript arena that owns result.final_text. When the child
+    // exhausted its turn budget on tool calls without producing any text
+    // (last assistant message was tool-call-only), finalizeChildOutput
+    // replaces the silent empty output with a diagnostic and marks the
+    // delegation failed (budget-exhausted-empty).
+    const finalized = finalizeChildOutput(
+        gpa,
+        result.stop_reason == .completed or result.stop_reason == .max_turns,
+        result.stop_reason.name(),
+        result.final_text,
+        ctx.request.max_turns,
+    ) catch {
         return .{
             .success = false,
             .output = "",
             .subagent_type = subagent_type,
-            .error_message = "out of memory duplicating child output",
+            .error_message = "out of memory finalizing child output",
             .stop_reason = "out_of_memory",
         };
     };
 
     return .{
-        .success = result.stop_reason == .completed or result.stop_reason == .max_turns,
-        .output = owned_output,
+        .success = finalized.success,
+        .output = finalized.output,
         .subagent_type = subagent_type,
         .turns = result.turns,
         .stop_reason = result.stop_reason.name(),
@@ -757,6 +806,30 @@ test "Registry snapshotInto returns live entries in order" {
     try std.testing.expectEqual(@as(usize, 2), n);
     try std.testing.expectEqualStrings("first", snap[0].id);
     try std.testing.expectEqualStrings("second", snap[1].id);
+}
+
+test "finalizeChildOutput: max_turns with empty text yields diagnostic + failed" {
+    const gpa = std.testing.allocator;
+    const f = try finalizeChildOutput(gpa, true, "max_turns", "", 10);
+    defer gpa.free(f.output);
+    try std.testing.expect(!f.success);
+    try std.testing.expect(std.mem.indexOf(u8, f.output, "10-turn budget") != null);
+}
+
+test "finalizeChildOutput: completed with text stays success" {
+    const gpa = std.testing.allocator;
+    const f = try finalizeChildOutput(gpa, true, "completed", "findings", 10);
+    defer gpa.free(f.output);
+    try std.testing.expect(f.success);
+    try std.testing.expectEqualStrings("findings", f.output);
+}
+
+test "finalizeChildOutput: max_turns with text keeps partial success" {
+    const gpa = std.testing.allocator;
+    const f = try finalizeChildOutput(gpa, true, "max_turns", "partial notes", 10);
+    defer gpa.free(f.output);
+    try std.testing.expect(f.success);
+    try std.testing.expectEqualStrings("partial notes", f.output);
 }
 
 test "SubagentResult.statusString" {

@@ -240,10 +240,12 @@ without a host-defined form, rgba/hsla strings, gradients, images, font names,
 styles beyond the role set, or any string containing ESC (`0x1B`) / CSI
 introducers.
 
-#### 3.1.2 Role keys (exact v1 set)
+#### 3.1.2 Role keys (v1 core + optional highlight)
 
-Host recognizes **only** these role keys under `"roles"` (all required in a
-user/project Theme document; built-ins supply a complete set):
+Host recognizes these role keys under `"colors"` (implementation field name;
+contract prose historically said `"roles"`). Built-ins supply a complete set.
+
+**Required core roles** (missing → reject document):
 
 | Role key | Presentation use |
 |----------|------------------|
@@ -257,7 +259,23 @@ user/project Theme document; built-ins supply a complete set):
 | `muted_fg` | secondary / constrained chrome |
 | `accent_fg` | non-secret emphasis (ids counters only; not a redaction bypass) |
 
-Unknown role keys → **reject**. Missing required role → **reject**.
+**Optional highlight roles** (omp-inspired; omit → inherit builtin defaults):
+
+| Role key | Presentation use |
+|----------|------------------|
+| `tool_fg` | tool call title / icon |
+| `tool_success_fg` | successful tool completion |
+| `tool_error_fg` | failed tool / host error tint |
+| `tool_running_fg` | in-flight tool start |
+| `md_heading_fg` | markdown headings |
+| `md_code_fg` / `md_code_bg` | inline + fenced code |
+| `md_link_fg` | markdown links |
+| `md_quote_fg` | blockquote text / bar |
+| `syntax_keyword_fg` | lightweight fenced-code keywords |
+| `syntax_string_fg` | lightweight fenced-code strings |
+| `syntax_comment_fg` | lightweight fenced-code comments |
+
+Unknown role keys are ignored (forward-compatible). Missing **required** role → **reject**.
 
 ### 3.2 Naming
 

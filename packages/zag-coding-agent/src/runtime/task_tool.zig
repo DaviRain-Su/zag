@@ -94,8 +94,8 @@ pub fn handleTask(
     else
         .task;
 
-    // Optional max_turns (default 10).
-    const max_turns: u32 = parseMaxTurns(ctx.allocator, arguments_json) catch 10;
+    // Optional max_turns (default 20, matching SubagentRequest default).
+    const max_turns: u32 = parseMaxTurns(ctx.allocator, arguments_json) catch default_max_turns;
 
     if (prompt.len == 0) return softError(ctx.allocator, "invalid_arguments", "prompt must not be empty");
     if (description.len == 0) return softError(ctx.allocator, "invalid_arguments", "description must not be empty");
@@ -156,10 +156,12 @@ pub fn handleTask(
         return softError(ctx.allocator, "spawn_failed", @errorName(err));
     };
 
-    // NOTE: result.output is gpa-allocated by spawn() on success paths.
-    // It must remain valid until both registry recording and formatResult
-    // are done. Free it after formatResult returns.
-    // (Error paths return a literal "" that must not be freed.)
+    // NOTE: result.output is gpa-allocated by spawn() for every non-empty
+    // body — including the budget-exhausted diagnostic that carries
+    // success=false (subagent.zig finalizeChildOutput). It must remain valid
+    // until both registry recording and formatResult are done. Free it after
+    // formatResult returns. Literal "" error outputs have len 0 and are never
+    // freed, so the gate is len > 0, not success.
 
     // Record result in registry.
     if (reg_idx) |idx| {
@@ -181,7 +183,9 @@ pub fn handleTask(
     // Format the tool result body (uses result.output before free).
     const body = formatResult(ctx.allocator, result);
     // Free spawn-allocated output after all uses (registry + format).
-    if (result.success and result.output.len > 0) state.gpa.free(result.output);
+    // success=false may still own a diagnostic body (len > 0); the only
+    // non-owned outputs are literal "" (len 0).
+    if (result.output.len > 0) state.gpa.free(result.output);
     return body;
 }
 
@@ -225,13 +229,20 @@ fn softError(allocator: std.mem.Allocator, code: []const u8, detail: []const u8)
     return std.fmt.allocPrint(allocator, "error: {s}\ndetail: {s}", .{ code, detail }) catch return error.OutOfMemory;
 }
 
-/// Parse optional max_turns from arguments JSON (default 10, clamped 1..50).
+/// Default child turn budget for the `task` tool. Kept in sync with
+/// `subagent_mod.SubagentRequest.max_turns` (both 20, matching the parent
+/// loop's `default_max_turns`). Read-only recon (scout/reviewer) burns turns
+/// on tool calls, so the old 10 was too tight and often ended on a
+/// tool-call-only message with an empty final text.
+const default_max_turns: u32 = 20;
+
+/// Parse optional max_turns from arguments JSON (default 20, clamped 1..50).
 fn parseMaxTurns(allocator: std.mem.Allocator, arguments_json: []const u8) !u32 {
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch return 10;
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch return default_max_turns;
     defer parsed.deinit();
-    if (parsed.value != .object) return 10;
-    const val = parsed.value.object.get("max_turns") orelse return 10;
-    if (val != .integer) return 10;
+    if (parsed.value != .object) return default_max_turns;
+    const val = parsed.value.object.get("max_turns") orelse return default_max_turns;
+    if (val != .integer) return default_max_turns;
     const v: u32 = @intCast(@max(1, @min(50, val.integer)));
     return v;
 }
@@ -243,10 +254,10 @@ fn nowMs() u64 {
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
-test "parseMaxTurns defaults to 10" {
+test "parseMaxTurns defaults to 20" {
     const gpa = std.testing.allocator;
-    try std.testing.expectEqual(@as(u32, 10), try parseMaxTurns(gpa, "{}"));
-    try std.testing.expectEqual(@as(u32, 10), try parseMaxTurns(gpa, "not-json"));
+    try std.testing.expectEqual(@as(u32, 20), try parseMaxTurns(gpa, "{}"));
+    try std.testing.expectEqual(@as(u32, 20), try parseMaxTurns(gpa, "not-json"));
 }
 
 test "parseMaxTurns clamps to 1..50" {
