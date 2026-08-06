@@ -1,7 +1,7 @@
 ---
 id: retry-after-wire-001
 scope: core/retry-after
-status: contract-draft
+status: implemented
 priority: P1
 depends-on:
   - m4-sampler-resilience-001
