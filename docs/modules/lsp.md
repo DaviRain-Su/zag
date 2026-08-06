@@ -10,6 +10,14 @@
 >
 > **Status:** contract **draft** (not ready for impl Goal until dual review
 > PASS). Zig 0.16 (`std.Io` era) APIs assumed throughout.
+>
+> **Update (2026-08-07):** implemented per this binding by lsp-001
+> (status: implemented) — see the task's implementation log. The
+> documented deviations are (1) the §5.1 env allow-list is deferred
+> (v1 inherits the parent env; §12 Q2 stays open) and (2) Zig 0.16 has
+> no `Child.terminate` — teardown sends SIGTERM via `std.posix.kill`.
+> §10 fixture classes 1–15, 17–20 are green; class 16 (real zls smoke)
+> remains deferred (zls not installed on this host).
 
 ## 1. Principles
 
