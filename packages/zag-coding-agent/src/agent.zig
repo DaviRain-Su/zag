@@ -20,6 +20,7 @@ const prompt_templates_mod = @import("prompt_templates.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
 const subagent_mod = @import("subagent.zig");
 const task_tool = @import("runtime/task_tool.zig");
+const code_intel_tool = @import("runtime/code_intel_tool.zig");
 
 const message = core.message;
 const tool = core.tool;
@@ -1240,6 +1241,9 @@ pub const Agent = struct {
     apply_hunk_state: *edit_tools.ApplyHunkState,
     /// Heap-stable state for the `task` tool (subagent dispatch).
     task_tool_state: *task_tool.TaskToolState,
+    /// Heap-stable LSP session state for the `code_intel` tool (lsp-001).
+    /// Kills any live server children on Agent deinit.
+    code_intel_state: *code_intel_tool.CodeIntelState,
     /// Subagent registry (tracks all subagents spawned by this agent).
     subagent_registry: *subagent_mod.Registry,
     /// Heap-stable scratch arena for LLM compaction-summary responses
@@ -1317,6 +1321,15 @@ pub const Agent = struct {
         subagent_reg.* = subagent_mod.Registry.init(gpa);
         task_state.registry = subagent_reg;
 
+        // lsp-001: heap-stable CodeIntelState for the code_intel tool.
+        // Agent.deinit tears down any live LSP server children.
+        const code_intel_state = try gpa.create(code_intel_tool.CodeIntelState);
+        errdefer {
+            code_intel_state.deinit();
+            gpa.destroy(code_intel_state);
+        }
+        code_intel_state.* = .{ .gpa = gpa, .io = io };
+
         // compaction-llm-001: per-Agent scratch for summarizer provider
         // responses (reset per summarize call; deinit'd with the Agent).
         const summary_scratch = try gpa.create(std.heap.ArenaAllocator);
@@ -1327,9 +1340,10 @@ pub const Agent = struct {
             .gpa = gpa,
             .io = io,
             .provider = provider,
-            .tools_storage = .init(apply_state, task_state),
+            .tools_storage = .init(apply_state, task_state, code_intel_state),
             .apply_hunk_state = apply_state,
             .task_tool_state = task_state,
+            .code_intel_state = code_intel_state,
             .subagent_registry = subagent_reg,
             .summary_scratch = summary_scratch,
             .options = options,
@@ -1360,6 +1374,9 @@ pub const Agent = struct {
         self.subagent_registry.deinit();
         self.gpa.destroy(self.subagent_registry);
         self.gpa.destroy(self.task_tool_state);
+        // lsp-001: tear down LSP server children before freeing the state.
+        self.code_intel_state.deinit();
+        self.gpa.destroy(self.code_intel_state);
         self.owned_redactor.deinit();
         self.gpa.destroy(self.apply_hunk_state);
         self.summary_scratch.deinit();

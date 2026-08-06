@@ -48,6 +48,7 @@ pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
 pub const subagent = @import("subagent.zig");
 pub const task_tool = @import("runtime/task_tool.zig");
+pub const code_intel_tool = @import("runtime/code_intel_tool.zig");
 pub const golden_tests = @import("golden_tests.zig");
 
 // skills-001: public activation + options surface
@@ -132,6 +133,11 @@ pub const SubagentStatus = subagent.Status;
 pub const SubagentSpawnContext = subagent.SpawnContext;
 pub const TaskToolState = task_tool.TaskToolState;
 pub const makeTaskTool = task_tool.makeTaskTool;
+
+// lsp-001: public surface
+pub const CodeIntelState = code_intel_tool.CodeIntelState;
+pub const makeCodeIntelTool = code_intel_tool.makeCodeIntelTool;
+pub const code_intel_def = code_intel_tool.code_intel_def;
 
 // session-fork-001: Gate fixtures (module §8 items 1–29)
 test {

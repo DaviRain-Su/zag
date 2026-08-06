@@ -6,6 +6,7 @@ const tool = core.tool;
 const fs_tools = @import("runtime/fs_tools.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
 const task_tool = @import("runtime/task_tool.zig");
+const code_intel_tool = @import("runtime/code_intel_tool.zig");
 
 pub const Toolset = tool.Toolset;
 
@@ -22,12 +23,13 @@ pub const Phase0Storage = struct {
     }
 };
 
-/// Default coding toolset: explore + search + edit + apply_hunk + apply_transaction + shell.
-/// `apply_hunk` / `apply_transaction` share Agent-owned `ApplyHunkState` (B7).
+/// Default coding toolset: explore + search + edit + apply_hunk + apply_transaction + shell + task + code_intel.
+/// `apply_hunk` / `apply_transaction` share Agent-owned `ApplyHunkState` (B7);
+/// `code_intel` owns the Agent-level LSP session state (lsp-001).
 pub const Phase1Storage = struct {
-    tools: [10]tool.Tool,
+    tools: [11]tool.Tool,
 
-    pub fn init(apply_hunk_state: *edit_tools.ApplyHunkState, task_state: *task_tool.TaskToolState) Phase1Storage {
+    pub fn init(apply_hunk_state: *edit_tools.ApplyHunkState, task_state: *task_tool.TaskToolState, code_intel_state: *code_intel_tool.CodeIntelState) Phase1Storage {
         const ro = fs_tools.phase0Tools();
         const search = fs_tools.searchTools();
         const rw = edit_tools.phase1ExtraTools();
@@ -43,6 +45,7 @@ pub const Phase1Storage = struct {
                 edit_tools.makeApplyTransactionTool(apply_hunk_state),
                 rw[2], // run_shell
                 task_tool.makeTaskTool(task_state), // task (subagent dispatch)
+                code_intel_tool.makeCodeIntelTool(code_intel_state), // code_intel (LSP-backed)
             },
         };
     }
@@ -56,7 +59,9 @@ test "every built-in declares complete descriptor capabilities" {
     const gpa = std.testing.allocator;
     var apply_state: edit_tools.ApplyHunkState = .{};
     var task_state: task_tool.TaskToolState = undefined;
-    const storage = Phase1Storage.init(&apply_state, &task_state);
+    var code_intel_state: code_intel_tool.CodeIntelState = .{ .gpa = gpa, .io = std.testing.io };
+    defer code_intel_state.deinit();
+    const storage = Phase1Storage.init(&apply_state, &task_state, &code_intel_state);
     const tools = storage.tools;
     try tool.validateTools(gpa, &tools);
 
@@ -78,6 +83,7 @@ test "every built-in declares complete descriptor capabilities" {
         .{ .name = "apply_transaction", .risk = .write, .uses_path = false, .shell = .none, .stateful = true },
         .{ .name = "run_shell", .risk = .execute, .uses_path = false, .shell = .command_argument },
         .{ .name = "task", .risk = .execute, .uses_path = false, .shell = .none },
+        .{ .name = "code_intel", .risk = .read, .uses_path = true, .shell = .none },
     };
 
     try std.testing.expectEqual(expected.len, tools.len);
@@ -103,6 +109,10 @@ test "every built-in declares complete descriptor capabilities" {
             // The task tool's instance is the Agent-owned TaskToolState
             // (non-null, but not apply_state).
             try std.testing.expect(t.instance != null);
+        } else if (std.mem.eql(u8, exp.name, "code_intel")) {
+            // The code_intel tool's instance is the Agent-owned
+            // CodeIntelState (non-null, but not apply_state).
+            try std.testing.expect(t.instance == @as(?*anyopaque, @ptrCast(&code_intel_state)));
         } else {
             try std.testing.expect(t.instance == null);
         }
