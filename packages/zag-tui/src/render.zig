@@ -284,10 +284,10 @@ fn drawCards(
                 }
                 row += 1;
             }
-            // Body preview only for assistant cards (tool/terminal/host-error
-            // rows stay single-title — transcript compaction).
+            // Body preview only for assistant + user cards (tool/terminal/
+            // host-error rows stay single-title — transcript compaction).
             const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
-            if (is_assistant and card.body_len > 0 and row < win.height) {
+            if ((is_assistant or card.kind == .user) and card.body_len > 0 and row < win.height) {
                 const preview = present.utf8Prefix(card.bodySlice(), body_limit);
                 if (store.format("  {s}", .{preview})) |s| {
                     printLineStyled(win, row, s, style);
@@ -312,11 +312,13 @@ fn drawCards(
 }
 
 /// card.kind drives color: host_error → error_fg, terminal/drop_note →
-/// muted_fg, ordinary → card_fg.
+/// muted_fg, user → accent_fg (distinct from assistant output), ordinary →
+/// card_fg.
 fn cardStyle(kind: cards.CardKind, palette: *const theme_mod.Palette) vaxis.Style {
     return switch (kind) {
         .host_error => palette.style(.error_fg),
         .terminal, .drop_note => palette.style(.muted_fg),
+        .user => palette.style(.accent_fg),
         .ordinary => palette.style(.card_fg),
     };
 }

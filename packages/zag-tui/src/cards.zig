@@ -10,6 +10,7 @@ const coding = @import("zag-coding-agent");
 
 pub const CardKind = enum {
     ordinary,
+    user,
     terminal,
     host_error,
     drop_note,
@@ -101,6 +102,22 @@ pub const CardRing = struct {
     }
 
     pub fn publishOrdinaryPrepared(self: *CardRing, prepared: PreparedCard) void {
+        self.publishKindPrepared(.ordinary, prepared);
+    }
+
+    /// User prompt card (tui-polish follow-up): the submitted input shows in
+    /// the transcript paired with the assistant reply that follows.
+    pub fn publishUser(
+        self: *CardRing,
+        gpa: std.mem.Allocator,
+        redactor: ?*const coding.redact.Redactor,
+        body_src: []const u8,
+    ) void {
+        const prepared = PreparedCard.fromSources(gpa, redactor, "user", body_src);
+        self.publishKindPrepared(.user, prepared);
+    }
+
+    fn publishKindPrepared(self: *CardRing, kind: CardKind, prepared: PreparedCard) void {
         self.lock();
         defer self.unlock();
 
@@ -115,7 +132,7 @@ pub const CardRing = struct {
 
         const idx = (self.ordinary_start + self.ordinary_count) % ordinary_end;
         self.ui_seq += 1;
-        self.writePreparedLocked(idx, .ordinary, prepared);
+        self.writePreparedLocked(idx, kind, prepared);
         self.ordinary_count += 1;
     }
 

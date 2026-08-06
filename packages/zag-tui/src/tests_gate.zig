@@ -762,5 +762,64 @@ test "gate_constants_frozen" {
     try std.testing.expectEqualStrings("...[truncated]", c.truncation_marker);
 }
 
+test "gate_submit_publishes_user_card_in_transcript" {
+    // tui-polish follow-up: the submitted input appears as a user card in
+    // the transcript, paired with the assistant reply that follows
+    // (Grok-style input/output correspondence).
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var host = FakeHost{};
+    const app = try app_mod.App.create(gpa);
+    defer app.destroy();
+
+    var mock: MockChat = .{};
+    var agent = try coding.Agent.init(gpa, io, mockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .hunk_reviewer = coding.autoAcceptHunkReviewer(),
+        .lifecycle = app.lifecycleObserver(),
+    });
+    defer agent.deinit();
+    var session = try coding.Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    defer session.deinit();
+    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+
+    _ = app.editor.insert("hello user card");
+    try app.dispatchReply();
+    // Join real worker.
+    while (app.worker_active) {
+        if (app.worker_finished.load(.acquire)) {
+            if (app.worker) |*th| {
+                th.join();
+                app.worker = null;
+            }
+            app.afterWorkerJoin();
+            break;
+        }
+        std.Thread.yield() catch {};
+    }
+
+    // The transcript ring carries the user card with the raw submitted text.
+    var snap: [c.card_slots]cards.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var saw_user = false;
+    var i: usize = n;
+    while (i > 0) {
+        i -= 1;
+        const slot = &snap[i];
+        if (slot.occupied and slot.kind == .user) {
+            saw_user = true;
+            try std.testing.expectEqualStrings("user", slot.titleSlice());
+            try std.testing.expectEqualStrings("hello user card", slot.bodySlice());
+        }
+    }
+    try std.testing.expect(saw_user);
+}
+
 // expose markHostFatal for test — need pub
 // (added as pub in app.zig)

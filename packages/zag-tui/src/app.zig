@@ -1095,6 +1095,14 @@ pub const App = struct {
             },
             .prompt => |p| {
                 self.history.pushAccepted(text);
+                // The submitted input enters the transcript as a user card,
+                // paired with the assistant reply that follows (Grok-style
+                // input/output correspondence). Redaction handled inside.
+                // Guard: an empty/whitespace-only line never publishes a
+                // phantom user card.
+                if (std.mem.trim(u8, text, " \t\r\n").len > 0) {
+                    self.card_ring.publishUser(self.gpa, self.redactor, text);
+                }
                 const owned: []u8 = if (p.owned)
                     @constCast(p.text)
                 else
