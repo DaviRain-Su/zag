@@ -1,0 +1,35 @@
+.{
+    .name = .koino,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.1",
+    .fingerprint = 0x2af09c5b5aeed24b,
+    .dependencies = .{
+        // Zag deviation (tui-markdown-001): upstream pins these by URL+hash;
+        // zag's build environment cannot zig-fetch (proxied network drops
+        // zig's HTTP client), so the deps are path-vendored stock under
+        // ./vendor (same pinned revisions; see README.zag). Upstream's
+        // `clap` dep is omitted: zag replaces src/main.zig with a stub and
+        // the CLI (the only clap consumer) is never built.
+        .libpcre_zig = .{
+            .path = "vendor/libpcre",
+        },
+        .htmlentities_zig = .{
+            .path = "vendor/htmlentities",
+        },
+        .uucode = .{
+            .path = "vendor/uucode",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "Makefile",
+        "build.zig.zon",
+        "src",
+        "examples",
+        "LICENSE",
+        "README.md",
+        "README.zag",
+        "vendor",
+    },
+}

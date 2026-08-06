@@ -1,0 +1,67 @@
+# koino (Zag third_party)
+
+Upstream: https://github.com/kivikakk/koino (MIT, see LICENSE) — GFM-100%,
+Comrak's Zig port, AST output via `src/nodes.zig`.
+
+Source: copied verbatim from a fresh clone of upstream at commit
+`0f10363e02ff575b008f219e54dc30ef8fad55db`
+(`git -C /tmp/koino rev-parse HEAD`, 2026-08-06). Read-only: never edit
+these files; changes come from upstream.
+
+Zag: path-vendored under `packages/third_party/koino`; imported ONLY into
+the `zag-tui` module graph (`-Dtui=true`). `src/` is byte-identical to
+upstream; `build.zig` + `build.zig.zon` are the stock upstream build files.
+
+Dependencies: koino's parse path needs `libpcre_zig` (PCRE1 regexes in
+scanners.zig), `htmlentities_zig` + `uucode` (strings.zig), and `clap`
+(upstream CLI only, declared but never compiled in zag's graph);
+`libpcre_zig` in turn needs `pcre` (kivikakk/pcre-8.45, built from C sources
+with zig cc). Upstream pins these by URL + content hash, but zag's build
+environment cannot `zig fetch` (the proxied network drops zig's HTTP
+client), so they are path-vendored **stock** under `./vendor` at the exact
+pinned revisions:
+
+| Dir | Upstream | Pin |
+|-----|----------|-----|
+| `vendor/clap/` | [Hejsil/zig-clap](https://github.com/Hejsil/zig-clap) 0.11.0 | tag 0.11.0 |
+| `vendor/libpcre/` | [kivikakk/libpcre.zig](https://github.com/kivikakk/libpcre.zig) | 3f61efd01ec45281c4bc6f8f6d0ae7b718e7056e |
+| `vendor/pcre/` | [kivikakk/pcre-8.45](https://github.com/kivikakk/pcre-8.45) | 824efc4ed764ec41cbff54f61a0464a53a6f5350 |
+| `vendor/htmlentities/` | [~talya/htmlentities.zig](https://nossa.ee/~talya/htmlentities.zig) | 50cb7d848e81389c71fc383534ece76a3fc36284 |
+| `vendor/uucode/` | [jacobsandlund/uucode](https://github.com/jacobsandlund/uucode) | 57efdfb7eeb04636aa1069ecb8a65b9c2fcaf4cc |
+
+Zag deviation: `build.zig.zon` (koino + vendor/libpcre) swaps the upstream
+URL+hash dep entries for `.path` entries pointing at the vendored dirs
+(marked "Zag deviation" in the zons). The `pcre` vendored copy trims
+autotools/docs/testdata bloat (the zig build only compiles the listed .c
+files + headers + `sljit/`); nothing the zig build references was removed.
+Everything else is byte-identical to upstream.
+
+zig 0.16 adaptation hunks (marked "Zag deviation (tui-markdown-001)" in the
+files, mirroring the vaxis PosixTty precedent):
+- `src/main.zig` — upstream is the koino CLI (clap) + `testMarkdownToHtml`;
+  zag never builds the CLI, but the vendored parser's tests (analyzed in
+  zag's test builds) reference the helper. The CLI (which does not compile
+  under zig 0.16's std.Io-era APIs without a full port) is replaced by a
+  stub that keeps `testMarkdownToHtml` (ported to 0.16). `clap` is removed
+  from build.zig + build.zig.zon and not vendored.
+- `src/strings.zig` — `mem.trimRight` → `mem.trimEnd` (0.16 rename, same
+  semantics), one line.
+- `vendor/uucode` — uses the revision vaxis already pins (2826a37, from the
+  local zig cache) instead of koino's older pin: koino's pin uses `@Type`
+  (removed in 0.16) in its build-time table generator; the newer revision is
+  API-compatible with koino's `uucode.get(.general_category/.simple_lowercase_mapping)`
+  usage and dedupes with vaxis.
+- `vendor/htmlentities/src/generate_entities.zig` — ported to 0.16
+  (std.process.Init.Minimal args, std.Io.Writer.Allocating, Io file writes).
+- `vendor/pcre/build.zig` + `vendor/uucode/build.zig` — 0.16 build API
+  (root_module.addIncludePath/addCSourceFiles, link_libc, modules.put
+  allocator arg, runAllowFail `.inherit`).
+
+Only the `koino` module (`src/koino.zig`) is consumed (parse + AST); the
+upstream CLI/tests artifacts (`main.zig` stub) are never run by zag.
+
+Bump: replace the directory from the upstream release, keep LICENSE +
+README.md + build.zig + build.zig.zon + src/, re-apply the zon path-dep
+deviation, the pcre trim, the main.zig stub, the strings.zig trim fix, and
+the 0.16 API hunks; update this note with the new commit; re-run the four
+zag matrices including `-Dtui=true`.

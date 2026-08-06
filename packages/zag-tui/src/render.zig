@@ -13,6 +13,8 @@ const c = @import("constants.zig");
 const cards = @import("cards.zig");
 const editor = @import("editor.zig");
 const layout_mod = @import("layout.zig");
+const md_parse = @import("md_parse.zig");
+const md_render = @import("md_render.zig");
 const permission = @import("permission.zig");
 const present = @import("present.zig");
 const terminal = @import("terminal.zig");
@@ -84,17 +86,22 @@ pub fn renderFrame(
         last_drawn_state = facts.state;
     }
     // The vaxis screen borrows cell graphemes from the formatted lines; the
-    // store must outlive `render()` below (and lives across paints).
+    // store must outlive `render()` below (and lives across paints). The
+    // markdown parse arena is retained across frames (see Terminal.md_arena)
+    // so screen/diff cell slices stay valid; reset it for this frame's parses.
     term.scratch.len = 0;
+    _ = term.md_arena.reset(.retain_capacity);
     const root = term.vx.window();
-    drawFrame(root, layout, facts, snap, ed, modal, palette, ov, &term.scratch);
+    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch);
     term.render() catch return error.WriteFailed;
 }
 
 /// Draw a frame into `root` (the vaxis window). Tests draw into an offscreen
 /// window over a `vaxis.Screen` and assert the resulting cells (keeping the
-/// store alive for the cell reads).
+/// store alive for the cell reads). `gpa` backs the per-paint markdown parse
+/// arena (tui-markdown-001).
 fn drawFrame(
+    gpa: std.mem.Allocator,
     root: vaxis.Window,
     layout: layout_mod.Layout,
     facts: StatusFacts,
@@ -110,7 +117,7 @@ fn drawFrame(
         .constrained => {
             drawHeader(childRegion(root, layout.header), layout.mode, facts, palette, store);
             drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, palette, store);
-            drawCards(childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store);
+            drawCards(gpa, childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store);
             drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
         },
         .full => {
@@ -142,7 +149,7 @@ fn drawFrame(
             });
 
             drawHeader(header_win, layout.mode, facts, palette, store);
-            drawCards(cards_win, layout.cards_window, layout.mode, snap, palette, store);
+            drawCards(gpa, cards_win, layout.cards_window, layout.mode, snap, palette, store);
             drawEditor(editor_win, layout.mode, ed, palette);
             drawStatus(status_win, layout.mode, facts, ed, palette, store);
 
@@ -252,6 +259,7 @@ fn mergedFgBg(palette: *const theme_mod.Palette, fg_role: theme_mod.Role, bg_rol
 }
 
 fn drawCards(
+    gpa: std.mem.Allocator,
     win: vaxis.Window,
     window: layout_mod.CardsWindow,
     mode: layout_mod.Mode,
@@ -262,7 +270,6 @@ fn drawCards(
     var row: u16 = 0;
     const w: u16 = win.width;
     const title_limit = @min(@as(usize, 128), @max(@as(usize, w), 2) - 2);
-    const body_limit = @min(@as(usize, 120), @max(@as(usize, w), 3) - 3);
 
     if (mode == .full) {
         // The `├ … ┤` separator row is the region's border (drawFrame); the
@@ -284,15 +291,25 @@ fn drawCards(
                 }
                 row += 1;
             }
-            // Body preview only for assistant + user cards (tool/terminal/
+            // Body rendering only for assistant + user cards (tool/terminal/
             // host-error rows stay single-title — transcript compaction).
+            // The body is the already-redacted card buffer; markdown is
+            // rendered multi-line, clipped to the cards region (tui-markdown-
+            // 001). Fallback on parse failure/OOM: raw text, never blank.
             const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
             if ((is_assistant or card.kind == .user) and card.body_len > 0 and row < win.height) {
-                const preview = present.utf8Prefix(card.bodySlice(), body_limit);
-                if (store.format("  {s}", .{preview})) |s| {
-                    printLineStyled(win, row, s, style);
-                }
-                row += 1;
+                const body_win = win.child(.{
+                    .x_off = 2,
+                    .y_off = row,
+                    .width = if (win.width > 2) win.width - 2 else 1,
+                    .height = win.height - row,
+                });
+                const md_style = md_render.MdStyle.forCard(palette, style);
+                const md_rows: u16 = if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
+                    md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
+                else
+                    md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
+                row += md_rows;
             }
         }
         return;
@@ -483,17 +500,24 @@ fn singleLine(s: []const u8) []const u8 {
 const CellScreen = struct {
     screen: vaxis.Screen,
     store: terminal.LineStore = .{},
+    /// Markdown parse arena (tui-markdown-001): cell graphemes borrow koino
+    /// Text slices, so the arena must outlive the assertions.
+    md_arena: std.heap.ArenaAllocator,
 
     fn init(gpa: std.mem.Allocator, cols: u16, rows: u16) !CellScreen {
-        return .{ .screen = try vaxis.Screen.init(gpa, .{
-            .rows = rows,
-            .cols = cols,
-            .x_pixel = 0,
-            .y_pixel = 0,
-        }) };
+        return .{
+            .screen = try vaxis.Screen.init(gpa, .{
+                .rows = rows,
+                .cols = cols,
+                .x_pixel = 0,
+                .y_pixel = 0,
+            }),
+            .md_arena = std.heap.ArenaAllocator.init(gpa),
+        };
     }
 
     fn deinit(self: *CellScreen, gpa: std.mem.Allocator) void {
+        self.md_arena.deinit();
         self.screen.deinit(gpa);
     }
 
@@ -523,7 +547,7 @@ fn drawFixture(
     cs.* = try CellScreen.init(gpa, cols, rows);
     const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0);
     const palette = theme_mod.builtinDefault();
-    drawFrame(cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store);
 }
 
 /// Cell text of one row (graphemes joined left to right).
@@ -882,9 +906,11 @@ test "render state:{s} text present in header cells (PTY marker contract)" {
 test "render body preview truncated to interior width on UTF-8 boundary" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
-    // 80 cols → interior width 78 → body limit = min(120, 78-3) = 75. A
-    // 2-byte é straddles the cut at byte 74; the whole codepoint must be
-    // dropped (74 a's, no é). Body previews only render for assistant cards.
+    // 80 cols → interior width 78 → body content width 76 (2-space indent).
+    // The markdown renderer wraps by GRAPHEME: the 2-byte é at byte offset 74
+    // survives as a whole cell (74 a's + é + x fill the row; yz wrap to the
+    // next row). The old byte-based preview (which dropped the é) is replaced
+    // by the md render path.
     var long = cards.CardSlot{ .occupied = true, .title_len = 16, .body_len = 79 };
     @memcpy(long.title[0..16], "assistant turn=2");
     @memcpy(long.body[0..74], "a" ** 74);
@@ -895,12 +921,10 @@ test "render body preview truncated to interior width on UTF-8 boundary" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectBorderedRow(&cs.screen, 5, ("  " ++ ("a" ** 74)));
-    var row: u16 = 0;
-    while (row < 24) : (row += 1) {
-        var buf: [512]u8 = undefined;
-        try std.testing.expect(std.mem.indexOf(u8, rowText(&cs.screen, row, &buf), "\xc3\xa9") == null);
-    }
+    // First body row: 2-space indent + 74 a's + é + x (76 content cells).
+    try expectBorderedRow(&cs.screen, 5, ("  " ++ ("a" ** 74) ++ "\xc3\xa9" ++ "x"));
+    // The wrapped tail lands on the next row (no content lost).
+    try expectBorderedRow(&cs.screen, 6, "  yz");
 }
 
 test "render title truncated to interior width (min-cap holds)" {
@@ -1000,4 +1024,159 @@ test "render degenerate 20x5 constrained never overflows" {
     // → cell 19 is the 9th char of "constrained]" ("n").
     try expectCellEquals(&cs.screen, 19, 0, "n");
     try expectRowEquals(&cs.screen, 4, "> ");
+}
+
+// ── tui-markdown-001 fixtures: transcript card bodies ─────────────────────
+//
+// drawCards renders assistant + user card bodies through md_render
+// (multi-line, clipped to the cards region); tool/terminal/host-error rows
+// stay single-title. Geometry at 80x24 (no modal): cards region interior
+// rows 4..16; the assistant title row is 5 and its body starts at row 6,
+// column 2 (border + 1 interior offset).
+
+fn mdCard(title: []const u8, kind: cards.CardKind, body: []const u8) cards.CardSlot {
+    var slot = cards.CardSlot{ .occupied = true, .kind = kind };
+    slot.title_len = @intCast(@min(title.len, slot.title.len));
+    @memcpy(slot.title[0..slot.title_len], title[0..slot.title_len]);
+    slot.body_len = @intCast(@min(body.len, slot.body.len));
+    @memcpy(slot.body[0..slot.body_len], body[0..slot.body_len]);
+    return slot;
+}
+
+test "md transcript: assistant card renders multi-line markdown body" {
+    const gpa = std.testing.allocator;
+    const body = "# Title\n\npara **bold** text.\n\n- one\n- two\n";
+    const snap = [_]cards.CardSlot{
+        mdCard("tool write_file", .ordinary, "id=t1 args={}"),
+        mdCard("assistant turn=1", .ordinary, body),
+    };
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+
+    // Tool row stays single-title; assistant title + formatted body follow.
+    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 5, "· assistant turn=1");
+    // Body row 6 = the H1 heading: accent fg + bold, markers stripped.
+    // Body content starts at absolute col 3 (border + interior + 2 indent).
+    try expectCellEquals(&cs.screen, 3, 6, "T");
+    try expectCellFgIndex(&cs.screen, 3, 6, 3);
+    const h = cs.screen.readCell(3, 6) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(h.style.bold);
+    var buf: [512]u8 = undefined;
+    const r6 = rowText(&cs.screen, 6, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r6, "# Title") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r6, "Title") != null);
+    // Bold inline inside the paragraph row (absolute col 8 = "bold" start).
+    try expectRowContains(&cs.screen, 7, "bold");
+    const bold_cell = cs.screen.readCell(8, 7) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(bold_cell.style.bold);
+    // List rows with bullets.
+    try expectRowContains(&cs.screen, 8, "• one");
+    try expectRowContains(&cs.screen, 9, "• two");
+}
+
+test "md transcript: tall assistant body clips at the cards region height" {
+    const gpa = std.testing.allocator;
+    // 30 paragraphs — far more rows than the 11-row body window.
+    var body_buf: [4096]u8 = undefined;
+    var n: usize = 0;
+    var i: usize = 1;
+    while (i <= 30 and n < body_buf.len) : (i += 1) {
+        const line = std.fmt.bufPrint(body_buf[n..], "line {d} content\n\n", .{i}) catch break;
+        n += line.len;
+    }
+    const body = body_buf[0..n];
+    const snap = [_]cards.CardSlot{mdCard("assistant turn=1", .ordinary, body)};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+
+    // Single-card layout: the body window is 12 rows (region 13 − title row),
+    // so the render clips at "line 12" (screen row 16 = 5 + 11); nothing past
+    // the region.
+    try expectRowContains(&cs.screen, 16, "line 12");
+    var buf: [512]u8 = undefined;
+    const last = rowText(&cs.screen, 17, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, last, "line 13") == null);
+    const r18 = rowText(&cs.screen, 18, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r18, "line 13") == null);
+}
+
+test "md transcript: user card body renders with accent base" {
+    const gpa = std.testing.allocator;
+    const snap = [_]cards.CardSlot{mdCard("user", .user, "# my question\n")};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+
+    // User title row 4; body row 5 = the H1: accent fg (user base accent) +
+    // bold heading, markers stripped.
+    try expectBorderedRow(&cs.screen, 4, "· user");
+    try expectCellEquals(&cs.screen, 3, 5, "m");
+    try expectCellFgIndex(&cs.screen, 3, 5, 3);
+    const h = cs.screen.readCell(3, 5) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(h.style.bold);
+    var buf: [512]u8 = undefined;
+    const r5 = rowText(&cs.screen, 5, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r5, "# my question") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r5, "my question") != null);
+}
+
+test "md transcript: tool rows unchanged (single title, body never rendered)" {
+    const gpa = std.testing.allocator;
+    const snap = [_]cards.CardSlot{
+        mdCard("tool write_file", .ordinary, "id=t1 args={}"),
+        mdCard("tool run_shell", .ordinary, "ok=true"),
+    };
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+
+    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 5, "· tool run_shell");
+    // The bodies never appear as rows (tool rows are single-title).
+    var row: u16 = 6;
+    while (row < 17) : (row += 1) {
+        var buf: [512]u8 = undefined;
+        const text = rowText(&cs.screen, row, &buf);
+        try std.testing.expect(std.mem.indexOf(u8, text, "id=t1") == null);
+        try std.testing.expect(std.mem.indexOf(u8, text, "ok=true") == null);
+    }
 }

@@ -16,6 +16,9 @@
         .vaxis = .{
             .path = "../third_party/vaxis",
         },
+        .koino = .{
+            .path = "../third_party/koino",
+        },
     },
     .paths = .{
         "build.zig",

@@ -41,6 +41,15 @@ pub fn build(b: *std.Build) void {
     });
     const vaxis_mod = vaxis_dep.module("vaxis");
 
+    // Markdown parser (tui-markdown-001): vendored koino (stock, MIT). Its
+    // own deps (libpcre/htmlentities/uucode/clap) fetch into the zig cache on
+    // the first build; only the parse + AST path is consumed.
+    const koino_dep = b.dependency("koino", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const koino_mod = koino_dep.module("koino");
+
     const mod = b.addModule("zag-tui", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -49,6 +58,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-agent-core", .module = core_mod },
             .{ .name = "zag-types", .module = types_mod },
             .{ .name = "vaxis", .module = vaxis_mod },
+            .{ .name = "koino", .module = koino_mod },
         },
     });
 
@@ -62,6 +72,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zag-agent-core", .module = core_mod },
                 .{ .name = "zag-types", .module = types_mod },
                 .{ .name = "vaxis", .module = vaxis_mod },
+                .{ .name = "koino", .module = koino_mod },
             },
         }),
     });

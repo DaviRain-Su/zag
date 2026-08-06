@@ -59,6 +59,7 @@ pub fn build(b: *std.Build) void {
     // Lazy: only resolve/build zag-tui when -Dtui=true.
     var tui_mod: ?*std.Build.Module = null;
     var vaxis_mod: ?*std.Build.Module = null;
+    var koino_mod: ?*std.Build.Module = null;
     if (tui) {
         const tui_dep = b.lazyDependency("zag_tui", .{
             .target = target,
@@ -73,6 +74,14 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }) orelse return;
         vaxis_mod = vaxis_dep.module("vaxis");
+        // Markdown parser dep (tui-markdown-001): koino resolves lazily with
+        // the zag-tui graph; its own deps (libpcre/htmlentities/uucode/clap)
+        // fetch into the zig cache on the first -Dtui=true build.
+        const koino_dep = b.lazyDependency("koino", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return;
+        koino_mod = koino_dep.module("koino");
     }
 
     const cli_dep = b.dependency("zag_cli", .{
@@ -170,6 +179,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "zag-agent-core", .module = core_mod },
                 .{ .name = "zag-types", .module = types_mod },
                 .{ .name = "vaxis", .module = vaxis_mod.? },
+                .{ .name = "koino", .module = koino_mod.? },
             },
         });
         _ = tm;
@@ -312,6 +322,7 @@ pub fn build(b: *std.Build) void {
                     .{ .name = "zag-agent-core", .module = core_mod },
                     .{ .name = "zag-types", .module = types_mod },
                     .{ .name = "vaxis", .module = vaxis_mod.? },
+                    .{ .name = "koino", .module = koino_mod.? },
                 },
             }),
         });

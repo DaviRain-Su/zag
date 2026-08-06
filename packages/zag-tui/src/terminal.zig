@@ -85,6 +85,12 @@ pub const Terminal = struct {
     wake_w: posix.fd_t = -1,
     /// Per-frame line store for renderer cell slices (see LineStore).
     scratch: LineStore = .{},
+    /// Persistent markdown parse arena (tui-markdown-001): the vaxis screen
+    /// and its diff target (`screen_last`) borrow grapheme slices from the
+    /// koino Text nodes, so the arena lives as long as the Terminal and is
+    /// reset (retain_capacity — memory stays mapped) at the top of each
+    /// renderFrame. Old slices therefore always point at valid memory.
+    md_arena: std.heap.ArenaAllocator,
     /// restore() is one-shot teardown.
     closed: bool = false,
 
@@ -139,6 +145,7 @@ pub const Terminal = struct {
             .loop = vaxis.Loop(Event).init(io, tty, vx),
             .ring = vaxis.Queue(Event, ring_capacity).init(io),
             .wake_w = wake_w,
+            .md_arena = std.heap.ArenaAllocator.init(gpa),
         };
     }
 
@@ -186,6 +193,8 @@ pub const Terminal = struct {
         // Restores the exact original termios (ISIG included).
         self.tty.deinit();
         self.env_map.deinit();
+        // The markdown parse arena (grapheme source for the screen cells).
+        self.md_arena.deinit();
     }
 
     /// Live terminal geometry (vaxis dims; ioctl re-read every call so the
@@ -307,6 +316,7 @@ pub const PaintTerminal = struct {
                 .env_map = env_map,
                 .loop = vaxis.Loop(Event).init(std.testing.io, tty, vx),
                 .ring = vaxis.Queue(Event, ring_capacity).init(std.testing.io),
+                .md_arena = std.heap.ArenaAllocator.init(gpa),
             },
             .screen = screen,
         };
@@ -317,6 +327,7 @@ pub const PaintTerminal = struct {
         self.term.tty.deinit();
         self.term.env_map.deinit();
         self.term.threaded.deinit();
+        self.term.md_arena.deinit();
         gpa.destroy(self.term.tty_buf);
         gpa.destroy(self.term.tty);
         gpa.destroy(self.term.vx);

@@ -823,3 +823,186 @@ test "gate_submit_publishes_user_card_in_transcript" {
 
 // expose markHostFatal for test — need pub
 // (added as pub in app.zig)
+
+// ── tui-markdown-001 fixtures: streaming equivalence + redaction ──────────
+
+const md_parse = @import("md_parse.zig");
+const md_render = @import("md_render.zig");
+const theme = @import("theme.zig");
+const vaxis = @import("vaxis");
+
+/// Newest occupied assistant-progressive card (tui-streaming identity).
+fn newestAssistantCard(app: *app_mod.App) ?cards.CardSlot {
+    var snap: [c.card_slots]cards.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var i: usize = n;
+    while (i > 0) {
+        i -= 1;
+        const slot = &snap[i];
+        if (slot.occupied and std.mem.startsWith(u8, slot.titleSlice(), "assistant")) return slot.*;
+    }
+    return null;
+}
+
+/// Offscreen render context mirroring the app's paint path: parse through
+/// md_parse (fallback → raw), render into a vaxis.Screen-backed window. The
+/// arena must outlive the assertions (cell graphemes borrow koino Text
+/// slices), exactly like Terminal.md_arena.
+const RenderCtx = struct {
+    screen: vaxis.Screen,
+    arena: std.heap.ArenaAllocator,
+
+    fn init(gpa: std.mem.Allocator, cols: u16, rows: u16) !RenderCtx {
+        return .{
+            .screen = try vaxis.Screen.init(gpa, .{
+                .rows = rows,
+                .cols = cols,
+                .x_pixel = 0,
+                .y_pixel = 0,
+            }),
+            .arena = std.heap.ArenaAllocator.init(gpa),
+        };
+    }
+
+    fn deinit(self: *RenderCtx, gpa: std.mem.Allocator) void {
+        self.arena.deinit();
+        self.screen.deinit(gpa);
+    }
+
+    fn render(self: *RenderCtx, body: []const u8) void {
+        _ = self.arena.reset(.retain_capacity);
+        const win: vaxis.Window = .{
+            .x_off = 0,
+            .y_off = 0,
+            .parent_x_off = 0,
+            .parent_y_off = 0,
+            .width = self.screen.width,
+            .height = self.screen.height,
+            .screen = &self.screen,
+        };
+        self.screen.clear();
+        const palette = theme.builtinDefault();
+        if (md_parse.parseMarkdown(self.arena.allocator(), body)) |doc| {
+            _ = md_render.renderMarkdownInto(self.arena.allocator(), win, doc, &palette);
+        } else {
+            _ = md_render.renderRawIntoStyled(self.arena.allocator(), win, body, md_render.MdStyle.fromPalette(&palette));
+        }
+    }
+};
+
+fn expectScreensEqual(a: *const vaxis.Screen, b: *const vaxis.Screen) !void {
+    try std.testing.expectEqual(a.width, b.width);
+    try std.testing.expectEqual(a.height, b.height);
+    var row: u16 = 0;
+    while (row < a.height) : (row += 1) {
+        var col: u16 = 0;
+        while (col < a.width) : (col += 1) {
+            const ca = a.readCell(col, row) orelse return error.TestUnexpectedResult;
+            const cb = b.readCell(col, row) orelse return error.TestUnexpectedResult;
+            try std.testing.expectEqualStrings(ca.char.grapheme, cb.char.grapheme);
+            try std.testing.expect(ca.style.eql(cb.style));
+            try std.testing.expectEqualStrings(ca.link.uri, cb.link.uri);
+        }
+    }
+}
+
+test "tui-markdown: delta-accumulated card renders identically to one-shot" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .patterns = false });
+    defer r.deinit();
+    const app = try app_mod.App.create(gpa);
+    defer app.destroy();
+    app.redactor = &r;
+    const obs = app.observer();
+
+    // Deltas accumulate through the App.onObserver path (card identity rules:
+    // progressive prefix, replace-newest-only, no finalized-card clobber).
+    const chunks = [_][]const u8{
+        "# Title\n\n",
+        "Some **bold** text with `code` and [link](/u).\n\n",
+        "- one\n- two\n\n",
+        "> quoted\n",
+    };
+    for (chunks) |ch| obs.emit(.{ .assistant_delta = ch });
+
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("assistant progressive", card.titleSlice());
+    // Accumulation is lossless: the card body equals the concatenated stream.
+    var expect_buf: [512]u8 = undefined;
+    var n: usize = 0;
+    for (chunks) |ch| {
+        @memcpy(expect_buf[n..][0..ch.len], ch);
+        n += ch.len;
+    }
+    try std.testing.expectEqualStrings(expect_buf[0..n], card.bodySlice());
+
+    // Final render (paint path on the accumulated card body) == one-shot
+    // render of the same text — cell text, styles, and link URIs all match.
+    var a = try RenderCtx.init(gpa, 80, 24);
+    defer a.deinit(gpa);
+    var b = try RenderCtx.init(gpa, 80, 24);
+    defer b.deinit(gpa);
+    a.render(card.bodySlice());
+    b.render(expect_buf[0..n]);
+    try expectScreensEqual(&a.screen, &b.screen);
+
+    // The progressive card is FORMATTED markdown (heading accent+bold), not
+    // raw "# Title" source.
+    const h = a.screen.readCell(0, 0) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("T", h.char.grapheme);
+    try std.testing.expect(h.style.bold);
+    switch (h.style.fg) {
+        .index => |i| try std.testing.expectEqual(@as(u8, 3), i),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+test "tui-markdown: secret inside code block redacted before render" {
+    const gpa = std.testing.allocator;
+    const secret = coding.redact.testing.fake_api_key;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = true });
+    defer r.deinit();
+    const app = try app_mod.App.create(gpa);
+    defer app.destroy();
+    app.redactor = &r;
+    const obs = app.observer();
+
+    var body_buf: [256]u8 = undefined;
+    const body = std.fmt.bufPrint(&body_buf, "```\nconst key = \"{s}\";\n```\n", .{secret}) catch
+        return error.TestUnexpectedResult;
+    obs.emit(.{ .assistant_delta = body });
+    const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
+    // The card buffer — the renderer's input — is redacted before render.
+    try std.testing.expect(std.mem.indexOf(u8, card.bodySlice(), secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, card.bodySlice(), coding.redact.marker) != null);
+
+    var rc = try RenderCtx.init(gpa, 80, 24);
+    defer rc.deinit(gpa);
+    rc.render(card.bodySlice());
+
+    // No raw secret leaks into any rendered row (render-from-redacted proves
+    // the renderer never re-materializes the secret).
+    var all_buf: [4096]u8 = undefined;
+    var all_n: usize = 0;
+    var row: u16 = 0;
+    while (row < rc.screen.height) : (row += 1) {
+        var row_buf: [256]u8 = undefined;
+        var rn: usize = 0;
+        var col: u16 = 0;
+        while (col < rc.screen.width) : (col += 1) {
+            const cell = rc.screen.readCell(col, row) orelse break;
+            const g = cell.char.grapheme;
+            if (rn + g.len <= row_buf.len) {
+                @memcpy(row_buf[rn..][0..g.len], g);
+                rn += g.len;
+            }
+        }
+        try std.testing.expect(std.mem.indexOf(u8, row_buf[0..rn], secret) == null);
+        if (all_n + rn <= all_buf.len) {
+            @memcpy(all_buf[all_n..][0..rn], row_buf[0..rn]);
+            all_n += rn;
+        }
+    }
+    // The redaction marker is what the transcript shows instead.
+    try std.testing.expect(std.mem.indexOf(u8, all_buf[0..all_n], coding.redact.marker) != null);
+}

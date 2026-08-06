@@ -58,6 +58,10 @@
             .path = "packages/third_party/vaxis",
             .lazy = true,
         },
+        .koino = .{
+            .path = "packages/third_party/koino",
+            .lazy = true,
+        },
         .sdk_consumer_fixture = .{
             .path = "tests/sdk-consumer-fixture",
         },
