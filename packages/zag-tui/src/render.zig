@@ -286,6 +286,31 @@ fn drawCards(
         while (i < window.count and row < win.height) : (i += 1) {
             const card = &snap[window.start + i];
             const style = cardStyle(card.kind, palette);
+            const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
+            // Terminal-reserve cards (run_terminal) are status noise — never
+            // shown in the transcript (user feedback).
+            if (card.kind == .terminal) continue;
+            if (is_assistant) {
+                // Assistant cards: NO title row — the markdown body IS the
+                // entry (clean transcript without the "assistant turn=N"
+                // header). Rendered flush-left.
+                if (card.body_len > 0 and row < win.height) {
+                    const body_win = win.child(.{
+                        .x_off = 0,
+                        .y_off = row,
+                        .width = win.width,
+                        .height = win.height - row,
+                    });
+                    const md_style = md_render.MdStyle.forCard(palette, style);
+                    const md_rows: u16 = if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
+                        md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
+                    else
+                        md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
+                    row += md_rows;
+                }
+                continue;
+            }
+            // Title row for user/tool/host_error/drop_note cards.
             if (row < win.height) {
                 const title = present.utf8Prefix(card.titleSlice(), title_limit);
                 if (store.format("· {s}", .{title})) |s| {
@@ -293,13 +318,11 @@ fn drawCards(
                 }
                 row += 1;
             }
-            // Body rendering only for assistant + user cards (tool/terminal/
-            // host-error rows stay single-title — transcript compaction).
-            // The body is the already-redacted card buffer; markdown is
-            // rendered multi-line, clipped to the cards region (tui-markdown-
-            // 001). Fallback on parse failure/OOM: raw text, never blank.
-            const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
-            if ((is_assistant or card.kind == .user) and card.body_len > 0 and row < win.height) {
+            // Body rendering only for user cards (tool/host-error rows stay
+            // single-title — transcript compaction). The body is the
+            // already-redacted card buffer; markdown is rendered multi-line,
+            // clipped to the cards region. Fallback: raw text, never blank.
+            if (card.kind == .user and card.body_len > 0 and row < win.height) {
                 const body_win = win.child(.{
                     .x_off = 2,
                     .y_off = row,
@@ -854,9 +877,10 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     // Card rows (tool row single title, assistant title + body preview),
     // then the cards region's side rails to row 14.
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 3, "· assistant turn=1");
-    try expectBorderedRow(&cs.screen, 4, "  hello world");
-    var row: u16 = 5;
+    // Assistant cards render flush-left without a title row (clean
+    // transcript — the markdown body IS the entry).
+    try expectBorderedRow(&cs.screen, 3, "hello world");
+    var row: u16 = 4;
     while (row < 15) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
     // Row 15 is the gap between the cards region and the modal (blank).
     try expectRowEquals(&cs.screen, 15, "");
@@ -909,8 +933,7 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
     try expectSeparatorRow(&cs.screen, 1, " transcript ");
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 3, "· assistant turn=1");
-    try expectBorderedRow(&cs.screen, 4, "  hello world");
+    try expectBorderedRow(&cs.screen, 3, "hello world");
     try expectSeparatorRow(&cs.screen, 20, " editor ");
     // The editor prompt + CJK placeholder (wide glyphs occupy 2 cells each;
     // assert cells individually since expectBorderedRow miscounts width).
@@ -971,11 +994,11 @@ test "render state:{s} text present in the status meta line (PTY marker contract
 test "render body preview truncated to interior width on UTF-8 boundary" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
-    // 80 cols → interior width 78 → body content width 76 (2-space indent).
-    // The markdown renderer wraps by GRAPHEME: the 2-byte é at byte offset 74
-    // survives as a whole cell (74 a's + é + x fill the row; yz wrap to the
-    // next row). The old byte-based preview (which dropped the é) is replaced
-    // by the md render path.
+    // 80 cols → interior width 78, flush-left (assistant cards render with
+    // no title row or indent). The markdown renderer wraps by GRAPHEME: the
+    // 2-byte é at byte offset 74 survives as a whole cell and the full body
+    // (74 a's + é + xyz = 78 cells) fills the row exactly. The old byte-based
+    // preview (which dropped the é) is replaced by the md render path.
     var long = cards.CardSlot{ .occupied = true, .title_len = 16, .body_len = 79 };
     @memcpy(long.title[0..16], "assistant turn=2");
     @memcpy(long.body[0..74], "a" ** 74);
@@ -986,12 +1009,13 @@ test "render body preview truncated to interior width on UTF-8 boundary" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    // First body row: 2-space indent + 74 a's + é + x (76 content cells).
-    // Cards start at row 2 (single-row header), so the title is row 2 and
-    // the body begins at row 3.
-    try expectBorderedRow(&cs.screen, 3, ("  " ++ ("a" ** 74) ++ "\xc3\xa9" ++ "x"));
-    // The wrapped tail lands on the next row (no content lost).
-    try expectBorderedRow(&cs.screen, 4, "  yz");
+    // First body row: the whole 78-cell body (74 a's + é + xyz) fits
+    // flush-left on one row (assistant cards render without a title row or
+    // indent). Cards start at row 2 (single-row header), so the body begins
+    // at row 2; interior width is 78 at 80 cols, so nothing wraps.
+    try expectBorderedRow(&cs.screen, 2, (("a" ** 74) ++ "\xc3\xa9" ++ "xyz"));
+    // Nothing wrapped: the next row is blank (no content lost, no truncation).
+    try expectBorderedRow(&cs.screen, 3, "");
 }
 
 test "render title truncated to interior width (min-cap holds)" {
@@ -1073,16 +1097,18 @@ test "render card kind drives fg style" {
     defer cs.deinit(gpa);
 
     // Title text starts at interior col 2 ("· " prefix) → absolute col 3.
-    // Cards begin at row 2 (single-row header → cards_y = 1).
+    // Cards begin at row 2 (single-row header → cards_y = 1). Terminal
+    // cards (run_terminal) are status noise and are never rendered.
     try expectCellFgIndex(&cs.screen, 3, 2, 7); // ordinary → card_fg
-    try expectCellFgIndex(&cs.screen, 3, 3, 8); // terminal → muted_fg
-    try expectCellFgIndex(&cs.screen, 3, 4, 1); // host_error → error_fg
-    try expectCellFgIndex(&cs.screen, 3, 5, 8); // drop_note → muted_fg
-    // Tool/terminal/host-error cards render as single title rows.
+    try expectCellFgIndex(&cs.screen, 3, 3, 1); // host_error → error_fg
+    try expectCellFgIndex(&cs.screen, 3, 4, 8); // drop_note → muted_fg
+    // Tool/host-error cards render as single title rows. The terminal card
+    // is skipped entirely, so the rows shift up: alpha → 2, host_error → 3,
+    // drop → 4, and row 5 is blank.
     try expectBorderedRow(&cs.screen, 2, "· alpha");
-    try expectBorderedRow(&cs.screen, 3, "· run_terminal");
-    try expectBorderedRow(&cs.screen, 4, "· host_error");
-    try expectBorderedRow(&cs.screen, 5, "· drop");
+    try expectBorderedRow(&cs.screen, 3, "· host_error");
+    try expectBorderedRow(&cs.screen, 4, "· drop");
+    try expectBorderedRow(&cs.screen, 5, "");
 }
 
 test "render degenerate 20x5 constrained never overflows" {
@@ -1101,10 +1127,11 @@ test "render degenerate 20x5 constrained never overflows" {
 // ── tui-markdown-001 fixtures: transcript card bodies ─────────────────────
 //
 // drawCards renders assistant + user card bodies through md_render
-// (multi-line, clipped to the cards region); tool/terminal/host-error rows
-// stay single-title. Geometry at 80x24 (no modal): cards region interior
-// rows 2..14 (single-row header → cards_y = 1); the assistant title row is
-// 3 and its body starts at row 4, column 2 (border + 1 interior offset).
+// (multi-line, clipped to the cards region); tool/host-error rows stay
+// single-title, terminal cards are never rendered. Geometry at 80x24 (no
+// modal): cards region interior rows 2..14 (single-row header → cards_y =
+// 1); the assistant entry has no title row — its body starts at row 2,
+// flush-left at column 1 (border + interior offset).
 
 fn mdCard(title: []const u8, kind: cards.CardKind, body: []const u8) cards.CardSlot {
     var slot = cards.CardSlot{ .occupied = true, .kind = kind };
@@ -1135,27 +1162,28 @@ test "md transcript: assistant card renders multi-line markdown body" {
     try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
 
-    // Tool row stays single-title; assistant title + formatted body follow.
+    // Tool row stays single-title; the assistant entry renders its markdown
+    // body FLUSH-LEFT with no title row (clean transcript).
     // Cards begin at row 2 (single-row header → cards_y = 1).
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 3, "· assistant turn=1");
-    // Body row 4 = the H1 heading: accent fg + bold, markers stripped.
-    // Body content starts at absolute col 3 (border + interior + 2 indent).
-    try expectCellEquals(&cs.screen, 3, 4, "T");
-    try expectCellFgIndex(&cs.screen, 3, 4, 3);
-    const h = cs.screen.readCell(3, 4) orelse return error.TestUnexpectedResult;
+    // Body row 3 = the H1 heading: accent fg + bold, markers stripped.
+    // Body content starts at absolute col 1 (border + interior offset).
+    try expectCellEquals(&cs.screen, 1, 3, "T");
+    try expectCellFgIndex(&cs.screen, 1, 3, 3);
+    const h = cs.screen.readCell(1, 3) orelse return error.TestUnexpectedResult;
     try std.testing.expect(h.style.bold);
     var buf: [512]u8 = undefined;
-    const r4 = rowText(&cs.screen, 4, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, r4, "# Title") == null);
-    try std.testing.expect(std.mem.indexOf(u8, r4, "Title") != null);
-    // Bold inline inside the paragraph row (absolute col 8 = "bold" start).
-    try expectRowContains(&cs.screen, 5, "bold");
-    const bold_cell = cs.screen.readCell(8, 5) orelse return error.TestUnexpectedResult;
+    const r3 = rowText(&cs.screen, 3, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r3, "# Title") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r3, "Title") != null);
+    // Bold inline inside the paragraph row ("para " then bold at interior
+    // col 5 → absolute col 6).
+    try expectRowContains(&cs.screen, 4, "bold");
+    const bold_cell = cs.screen.readCell(6, 4) orelse return error.TestUnexpectedResult;
     try std.testing.expect(bold_cell.style.bold);
     // List rows with bullets.
-    try expectRowContains(&cs.screen, 6, "• one");
-    try expectRowContains(&cs.screen, 7, "• two");
+    try expectRowContains(&cs.screen, 5, "• one");
+    try expectRowContains(&cs.screen, 6, "• two");
 }
 
 test "md transcript: tall assistant body clips at the cards region height" {
@@ -1184,15 +1212,14 @@ test "md transcript: tall assistant body clips at the cards region height" {
     defer cs.deinit(gpa);
 
     // Single-card layout: the cards region is 14 rows (y=1..14, interior
-    // rows 2..14), so the body window is 12 rows (region 14 − title row −
-    // border) and the render clips at "line 12" (screen row 14 = 3 + 11);
-    // nothing past the region.
-    try expectRowContains(&cs.screen, 14, "line 12");
+    // rows 2..14); the assistant body starts at row 2 (no title row) and
+    // clips at "line 13" (screen row 14 = 2 + 12); nothing past the region.
+    try expectRowContains(&cs.screen, 14, "line 13");
     var buf: [512]u8 = undefined;
     const last = rowText(&cs.screen, 15, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, last, "line 13") == null);
+    try std.testing.expect(std.mem.indexOf(u8, last, "line 14") == null);
     const r16 = rowText(&cs.screen, 16, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, r16, "line 13") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r16, "line 14") == null);
 }
 
 test "md transcript: user card body renders with accent base" {
