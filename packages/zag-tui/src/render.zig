@@ -558,16 +558,18 @@ fn drawStatus(
     const status_style = palette.style(.accent_fg);
     if (win.height < 1) return;
     if (mode == .constrained) {
-        if (store.format("state={s} id={s}", .{ stateName(facts.state), facts.id_display })) |s| {
+        if (store.format("state={s} perm:{s} id={s}", .{ stateName(facts.state), facts.perm, facts.id_display })) |s| {
             printLineStyled(win, 0, s, status_style);
         }
         return;
     }
-    // Meta line: model · theme · state (+ scroll feedback + hints). Built
-    // with store (persistent bytes survive render()).
-    if (store.format(" model:{s} theme:{s} state:{s}", .{
+    // Meta line: model · theme · perm · state (+ scroll feedback + hints).
+    // `perm:` shows the active permission mode (ask/auto/bypass) — the
+    // only place the mode is visible (tui-perm-modes-001).
+    if (store.format(" model:{s} theme:{s} perm:{s} state:{s}", .{
         facts.model,
         facts.theme_id,
+        facts.perm,
         stateName(facts.state),
     })) |s| {
         printLineStyled(win, 0, s, status_style);
@@ -1116,7 +1118,8 @@ test "render constrained-mode cells match pre-vaxis golden (30x8)" {
     defer sb.deinit();
 
     try expectRowEquals(&cs.screen, 0, "[zag tui · constrained]");
-    try expectRowEquals(&cs.screen, 1, "state=busy id=sess-abc");
+    // 30-col cap: "state=busy perm:ask id=sess-abc" (31 bytes) min-caps to 30.
+    try expectRowEquals(&cs.screen, 1, "state=busy perm:ask id=sess-ab");
     try expectRowEquals(&cs.screen, 2, "· assistant turn=1");
     try expectRowEquals(&cs.screen, 3, "· tool write_file");
     try expectRowEquals(&cs.screen, 4, "> ");
@@ -1221,8 +1224,9 @@ test "render status strings min-capped to interior width" {
     defer sb.deinit();
 
     // The header is a border row (nothing to cap there); the meta line is
-    // the min-capped string now. Interior is 78 cells: " model:— theme:"
-    // (15 cells / 17 bytes) + 61 x's fills the byte cap exactly.
+    // the min-capped string now. Interior is 78 bytes: " model:— theme:"
+    // (17 bytes) + 61 x's fills the cap exactly — the perm/state fields
+    // sit after the 100-char theme id and are cut by the cap.
     try expectBorderedRow(&cs.screen, 22, (" model:— theme:" ++ ("x" ** 61)));
 }
 
