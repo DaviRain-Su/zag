@@ -129,7 +129,13 @@ pub const App = struct {
     palette: theme_mod.Palette = theme_mod.builtinDefault(),
     owned_theme_id: ?[]u8 = null,
     themes_root: ?[]const u8 = null,
+    /// Chosen theme id. Points at host-provided memory (CLI arena), a
+    /// builtin literal, an owned user-theme id, or — after an overlay
+    /// selection — the persistent copy below (overlay lines are scratch
+    /// buffers that get rewritten every paint).
     theme_selected: []const u8 = theme_mod.builtin_id,
+    theme_sel_buf: [64]u8 = undefined,
+    theme_sel_len: usize = 0,
 
     /// Ctrl+O cycles the permission mode — see handleKey.
     /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
@@ -273,11 +279,19 @@ pub const App = struct {
             .selected_id = self.theme_selected,
         });
         self.palette = resolved;
-        if (!std.mem.eql(u8, resolved.id, theme_mod.builtin_id)) {
-            // resolveActive may return owned id inside palette.id
-            if (resolved.id.ptr != theme_mod.builtin_id.ptr) {
-                self.owned_theme_id = @constCast(resolved.id);
+        // resolveActive returns an OWNED id only for user themes (gpa dupe
+        // inside parseThemeJson); builtin ids are compile-time literals —
+        // registering one in owned_theme_id would free static memory on the
+        // next reload (crash). Own only non-builtin ids.
+        var is_builtin = false;
+        for (theme_mod.builtin_ids) |bid| {
+            if (std.mem.eql(u8, resolved.id, bid)) {
+                is_builtin = true;
+                break;
             }
+        }
+        if (!is_builtin) {
+            self.owned_theme_id = @constCast(resolved.id);
         }
         self.theme_selected = self.palette.id;
     }
@@ -1032,7 +1046,14 @@ pub const App = struct {
                 self.overlay.close();
             },
             .theme => {
-                self.theme_selected = line;
+                // The overlay line points at scratch buffers that are
+                // rewritten every paint (and user-theme ids are freed when
+                // rebuildOverlayLines returns) — copy into App-owned
+                // storage before reloading.
+                const n = @min(line.len, self.theme_sel_buf.len);
+                @memcpy(self.theme_sel_buf[0..n], line[0..n]);
+                self.theme_sel_len = n;
+                self.theme_selected = self.theme_sel_buf[0..n];
                 self.reloadTheme();
                 self.setNote("theme_selected");
                 self.overlay.close();
@@ -1751,6 +1772,36 @@ test "tui-input: ctrl-w/u/k edit the buffer" {
     app.editor.cursor = 6;
     _ = app.handleKey(.ctrl_k);
     try std.testing.expectEqualStrings("one\ntw", app.editor.slice());
+}
+
+test "tui-theme: switching builtins never frees static memory" {
+    // Regression: reloadTheme used to register builtin ids (compile-time
+    // literals) in owned_theme_id and free them on the next switch — crash.
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    app.host_io = std.testing.io; // reloadTheme resolves through resolveActive
+
+    // Simulate /theme selection of each builtin: persist + reload, twice
+    // (the second reload is where the old code freed static memory).
+    for (theme_mod.builtin_ids) |bid| {
+        const n = @min(bid.len, app.theme_sel_buf.len);
+        @memcpy(app.theme_sel_buf[0..n], bid[0..n]);
+        app.theme_sel_len = n;
+        app.theme_selected = app.theme_sel_buf[0..n];
+        app.reloadTheme();
+        try std.testing.expectEqualStrings(bid, app.palette.id);
+        try std.testing.expect(app.owned_theme_id == null); // builtins never owned
+        // Second reload (the free of the stale owned id path).
+        app.reloadTheme();
+        try std.testing.expectEqualStrings(bid, app.palette.id);
+    }
+    // Back to default.
+    app.theme_selected = theme_mod.builtin_id;
+    app.reloadTheme();
+    try std.testing.expectEqualStrings(theme_mod.builtin_id, app.palette.id);
 }
 
 test "tui-input: page keys scroll rows and re-engage follow" {
