@@ -100,4 +100,4 @@ Recon facts (all verified):
 
 # closeout
 
-- Commit: `<hash>` (zag-ai: Retry-After flows into core retry backoff (retry-after-wire-001)) — closeout line lands as a doc-only follow-up.
+- Commit: `1a8ec2b` (zag-ai: Retry-After flows into core retry backoff (retry-after-wire-001)) — code commit; closeout line lands as a doc-only follow-up.
