@@ -665,7 +665,7 @@ fn drawEditorStatusBorder(
     const muted = palette.style(.muted_fg);
     // Leave room for `╭─` and `─╮`.
     const max_w = region.w -| 4;
-    const chips = store.format(" {s} · {s} · perm:{s} · think:{s} · {s} ", .{
+    const chips = store.format(" {s} · {s} · perm:{s} · think:{s} · state:{s} ", .{
         facts.model,
         facts.theme_id,
         facts.perm,
