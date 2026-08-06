@@ -1129,10 +1129,12 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             // Terminal ChatError tag before error.ProviderFailed. Trace reuses
             // provider_retry with attempt=0 so the cause is auditable without a
             // new Trace kind. err_name is a stable @errorName only.
+            // warn (not err): zig test fails the suite on error-level logs even
+            // when assertions pass — provider-failure fixtures would red CI.
             if (bridge.trace) |tr| {
                 tr.emitProviderRetry(0, r.err_name) catch |err| return mapTraceToSink(err);
             }
-            std.log.err("provider failed: {s}", .{r.err_name});
+            std.log.warn("provider failed: {s}", .{r.err_name});
         },
         .context_compaction => |ev| {
             // Session note first, then Trace compaction (h-context-001).

@@ -4625,7 +4625,8 @@ test "edit-sharp §10.4 insert delete exact newline and utf8 bytes" {
 test "edit-sharp §10.5 reject byte-equal no temp verifier not called" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
-    var tmp = std.testing.tmpDir(.{});
+    // iterate=true required for expectDirEntries (Linux BADF without it).
+    var tmp = std.testing.tmpDir(.{ .iterate = true });
     defer tmp.cleanup();
     const original = "alpha OLD omega\n";
     try tmp.dir.writeFile(io, .{ .sub_path = "t.txt", .data = original });
