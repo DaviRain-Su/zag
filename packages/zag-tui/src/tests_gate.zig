@@ -130,6 +130,7 @@ test "gate2_import_scan_no_cli_sigint" {
         @embedFile("terminal.zig"),
         @embedFile("render.zig"),
         @embedFile("layout.zig"),
+        @embedFile("scrollback.zig"),
         @embedFile("constants.zig"),
     };
     for (srcs) |src| {

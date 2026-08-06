@@ -136,6 +136,7 @@ test "layout full mode geometry" {
     // cards region rows = rows - 10 (>12); window = last min(card_count, 14).
     try std.testing.expectEqual(@as(u16, 1), l.cards.y);
     try std.testing.expectEqual(@as(u16, 14), l.cards.h);
+    try std.testing.expectEqual(@as(u16, 80), l.cards.w);
     try std.testing.expectEqual(@as(usize, 5), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 0), l.cards_window.start);
     // Fixed bottom band: 2-row editor (separator + content) + 2-row status

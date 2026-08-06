@@ -19,6 +19,7 @@ const terminal_mod = @import("terminal.zig");
 const theme_mod = @import("theme.zig");
 const overlay_mod = @import("overlay.zig");
 const slash_route = @import("slash_route.zig");
+const scrollback_mod = @import("scrollback.zig");
 
 pub const SignalHost = signal_host.SignalHost;
 pub const UiState = render.UiState;
@@ -131,11 +132,12 @@ pub const App = struct {
     theme_selected: []const u8 = theme_mod.builtin_id,
 
     overlay: overlay_mod.Overlay = .{},
-    /// Transcript scroll: 0 = newest window (tui-transcript-001).
-    scroll_from_bottom: usize = 0,
-    /// Cards region height of the last paint — PgUp/PgDn page by this many
-    /// transcript rows (tui-polish-001 input completeness).
-    last_cards_h: u16 = 0,
+    /// Row-level transcript scrollback (tui-scrollback-001): geometry
+    /// cache + virtual_y + follow mode. Survives frames.
+    sb: scrollback_mod.Scrollback = undefined,
+    /// Transcript interior viewport height at the last paint — PgUp/PgDn
+    /// page by this many rows.
+    last_viewport_h: usize = 0,
 
     model_label: []const u8 = "—",
     /// Borrowed catalog ids from host (CLI arena / static). Cap used at paint.
@@ -181,6 +183,7 @@ pub const App = struct {
             .history = editor_mod.History.init(history_entries, history_lens),
             .wake_r = pipe[0],
             .wake_w = pipe[1],
+            .sb = scrollback_mod.Scrollback.init(gpa),
         };
         return app;
     }
@@ -206,6 +209,7 @@ pub const App = struct {
         self.gpa.free(self.history_lens);
         self.gpa.free(self.history_entries);
         self.gpa.free(self.editor_storage);
+        self.sb.deinit();
         const gpa = self.gpa;
         gpa.destroy(self);
     }
@@ -807,12 +811,13 @@ pub const App = struct {
                 return .none;
             },
             .page_up => {
-                // Page by the transcript window height (not a fixed 3 rows).
-                self.scroll_from_bottom +|= @max(self.last_cards_h, 1);
+                // Page by the transcript viewport height (row-level
+                // scrollback, tui-scrollback-001).
+                self.sb.scrollUp(scrollback_mod.Scrollback.pageRows(self.last_viewport_h));
                 return .none;
             },
             .page_down => {
-                self.scroll_from_bottom -|= @max(self.last_cards_h, 1);
+                self.sb.scrollDown(scrollback_mod.Scrollback.pageRows(self.last_viewport_h), self.last_viewport_h);
                 return .none;
             },
             .up => {
@@ -1113,7 +1118,9 @@ pub const App = struct {
                 self.worker_prompt = owned;
                 self.editor.clear();
                 self.overlay.close();
-                self.scroll_from_bottom = 0;
+                // New turn → re-engage bottom-follow (hyper goto_bottom
+                // semantics); prepare re-pins the offset next paint.
+                self.sb.gotoBottom(self.last_viewport_h);
                 self.state = .busy;
                 self.setNote("(starting…)");
                 self.worker_finished.store(false, .release);
@@ -1176,7 +1183,7 @@ pub const App = struct {
             .followup_pending = follow,
             .model = self.model_label,
             .theme_id = self.palette.id,
-            .scroll = self.scroll_from_bottom,
+            .scroll = self.sb.scroll_offset,
         };
         const ov = render.OverlayPaint{
             .kind = self.overlay.kind,
@@ -1184,10 +1191,22 @@ pub const App = struct {
             .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
         };
         // Compute the layout once here: renderFrame draws it, and the cards
-        // region height is the page unit for PgUp/PgDn transcript scroll.
-        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, self.scroll_from_bottom);
-        self.last_cards_h = layout.cards.h;
-        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov);
+        // interior (region minus the closed-frame borders) is the scrollback
+        // viewport + page unit. The scroll argument is legacy (card-level
+        // window, used only by constrained mode's newest-3 titles).
+        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0);
+        const viewport_h: usize = @max(layout.cards.h -| 1, 1);
+        const content_w: u16 = @max(layout.cards.w -| 3, 1);
+        self.last_viewport_h = viewport_h;
+        // Settle geometry + re-pin follow before painting (review #7 order).
+        _ = self.sb.prepare(
+            self.snap_buf[0..n],
+            content_w,
+            viewport_h,
+            render.measureCardHeight,
+            scrollback_mod.estimateCard,
+        );
+        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb);
         self.dirty = false;
         self.last_painted_size = sz;
     }
@@ -1557,32 +1576,49 @@ test "tui-input: ctrl-w/u/k edit the buffer" {
     try std.testing.expectEqualStrings("one\ntw", app.editor.slice());
 }
 
-test "tui-input: page up/down scroll by the cards region height" {
+test "tui-input: page keys scroll rows and re-engage follow" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    app.last_cards_h = 14;
+    // Fill the ring so the transcript overflows the 40-row viewport.
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        var tbuf: [40]u8 = undefined;
+        const t = std.fmt.bufPrint(&tbuf, "assistant turn={d}", .{i}) catch "assistant";
+        // fromFixed bypasses redaction (no redactor in this test) — a null
+        // redactor would replace the body with the unavailable marker.
+        app.card_ring.publishOrdinaryPrepared(cards_mod.PreparedCard.fromFixed(t, "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four"));
+    }
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
+    try app.paint(&rec.pt.term); // 80×40 → viewport 29
+    try std.testing.expectEqual(@as(usize, 29), app.last_viewport_h);
+    try std.testing.expect(app.sb.total_height > 29); // overflows
+    try std.testing.expect(app.sb.follow_mode); // fresh paint follows
+    const bottom = app.sb.scroll_offset;
     _ = app.handleKey(.page_up);
-    try std.testing.expectEqual(@as(usize, 14), app.scroll_from_bottom);
+    try std.testing.expect(!app.sb.follow_mode); // manual scroll leaves follow
+    try std.testing.expect(app.sb.scroll_offset < bottom); // scrolled toward the top
+    const up_offset = app.sb.scroll_offset;
     _ = app.handleKey(.page_down);
-    try std.testing.expectEqual(@as(usize, 0), app.scroll_from_bottom);
-    _ = app.handleKey(.page_down); // saturates at 0
-    try std.testing.expectEqual(@as(usize, 0), app.scroll_from_bottom);
-    _ = app.handleKey(.page_up);
-    _ = app.handleKey(.page_up);
-    try std.testing.expectEqual(@as(usize, 28), app.scroll_from_bottom);
+    try std.testing.expect(app.sb.scroll_offset > up_offset); // scrolled back
+    // Overscroll at the bottom re-engages follow.
+    _ = app.handleKey(.page_down);
+    _ = app.handleKey(.page_down);
+    try std.testing.expect(app.sb.follow_mode);
+    try std.testing.expectEqual(bottom, app.sb.scroll_offset);
 }
 
-test "tui-input: paint records the cards region height for paging" {
+test "tui-input: paint records the cards viewport height for paging" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
     try app.paint(&rec.pt.term); // 80×40
-    try std.testing.expect(app.last_cards_h > 0);
-    // 80×40: max_cards = 30, cards_gap = 36-3 = 33 → 30.
-    try std.testing.expectEqual(@as(u16, 30), app.last_cards_h);
+    try std.testing.expect(app.last_viewport_h > 0);
+    // 80×40: cards region h = 30 → interior viewport = 30 - 1 = 29.
+    try std.testing.expectEqual(@as(usize, 29), app.last_viewport_h);
 }
 
 test "tui-input: overlay home/end/page keys navigate" {

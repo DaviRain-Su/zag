@@ -125,9 +125,21 @@ const Ctx = struct {
     row: u16 = 0,
     /// Set once `row` reached `win.height`; all rendering stops.
     overflow: bool = false,
+    /// Measure mode (tui-scrollback-001): never stop at `win.height` — row
+    /// keeps counting so the returned count is the UNCLIPPED height; cell
+    /// writes are skipped (putCell no-op). Used by the scrollback's exact
+    /// measurement pass.
+    measure: bool = false,
 
     fn fits(self: *const Ctx) bool {
-        return self.row < self.win.height;
+        return self.measure or self.row < self.win.height;
+    }
+
+    /// Cell write: no-op in measure mode (the write path is bounds-safe,
+    /// but a measure pass must never land cells on the real screen).
+    fn putCell(self: *Ctx, col: u16, row: u16, cell: vaxis.Cell) void {
+        if (self.measure) return;
+        self.win.writeCell(col, row, cell);
     }
 };
 
@@ -153,6 +165,27 @@ pub fn renderMarkdownIntoStyled(alloc: std.mem.Allocator, win: vaxis.Window, doc
 /// renderCode/renderLiteralBlock).
 pub fn renderRawIntoStyled(alloc: std.mem.Allocator, win: vaxis.Window, text: []const u8, style: MdStyle) u16 {
     var ctx = Ctx{ .win = win, .style = style, .alloc = alloc };
+    const body = if (text.len > 0 and text[text.len - 1] == '\n') text[0 .. text.len - 1] else text;
+    var w = Wrap{ .ctx = &ctx, .prefix = .{}, .col = 0, .first = true };
+    w.emit(body, style.base, .{});
+    w.finish();
+    return ctx.row;
+}
+
+/// Measure mode (tui-scrollback-001): render `doc` WITHOUT the window-height
+/// clip — cells are skipped, `row` keeps counting, so the returned count is
+/// the card's unclipped height at this width. `win` only supplies width and
+/// the grapheme metrics.
+pub fn measureMarkdownIntoStyled(alloc: std.mem.Allocator, win: vaxis.Window, doc: *koino.nodes.AstNode, style: MdStyle) u16 {
+    var ctx = Ctx{ .win = win, .style = style, .alloc = alloc, .measure = true };
+    renderBlocks(&ctx, doc, .{});
+    return ctx.row;
+}
+
+/// Measure mode for raw fallback text (same contract as
+/// measureMarkdownIntoStyled).
+pub fn measureRawIntoStyled(alloc: std.mem.Allocator, win: vaxis.Window, text: []const u8, style: MdStyle) u16 {
+    var ctx = Ctx{ .win = win, .style = style, .alloc = alloc, .measure = true };
     const body = if (text.len > 0 and text[text.len - 1] == '\n') text[0 .. text.len - 1] else text;
     var w = Wrap{ .ctx = &ctx, .prefix = .{}, .col = 0, .first = true };
     w.emit(body, style.base, .{});
@@ -246,7 +279,7 @@ fn renderHr(ctx: *Ctx, prefix: Prefix) void {
     const start = prefix.contentCol();
     var c: u16 = start;
     while (c < ctx.win.width) : (c += 1) {
-        ctx.win.writeCell(c, ctx.row, .{
+        ctx.putCell(c, ctx.row, .{
             .char = .{ .grapheme = "─", .width = 1 },
             .style = ctx.style.hr,
         });
@@ -273,11 +306,13 @@ fn renderCode(ctx: *Ctx, prefix: Prefix, cb: koino.nodes.NodeCodeBlock) void {
         }
         _ = drawPrefixCells(ctx, prefix, ctx.row, first);
         first = false;
-        _ = ctx.win.printSegment(.{ .text = line, .style = ctx.style.code }, .{
-            .row_offset = ctx.row,
-            .col_offset = prefix.contentCol(),
-            .wrap = .none,
-        });
+        if (!ctx.measure) {
+            _ = ctx.win.printSegment(.{ .text = line, .style = ctx.style.code }, .{
+                .row_offset = ctx.row,
+                .col_offset = prefix.contentCol(),
+                .wrap = .none,
+            });
+        }
         ctx.row += 1;
     }
 }
@@ -294,11 +329,13 @@ fn renderLiteralBlock(ctx: *Ctx, prefix: Prefix, lit: []const u8, style: vaxis.S
         }
         _ = drawPrefixCells(ctx, prefix, ctx.row, first);
         first = false;
-        _ = ctx.win.printSegment(.{ .text = line, .style = style }, .{
-            .row_offset = ctx.row,
-            .col_offset = prefix.contentCol(),
-            .wrap = .none,
-        });
+        if (!ctx.measure) {
+            _ = ctx.win.printSegment(.{ .text = line, .style = style }, .{
+                .row_offset = ctx.row,
+                .col_offset = prefix.contentCol(),
+                .wrap = .none,
+            });
+        }
         ctx.row += 1;
     }
 }
@@ -429,7 +466,7 @@ const Wrap = struct {
             }
             const gw = self.ctx.win.gwidth(s);
             if (gw == 0) continue;
-            self.ctx.win.writeCell(self.col, self.ctx.row, .{
+            self.ctx.putCell(self.col, self.ctx.row, .{
                 .char = .{ .grapheme = s, .width = @intCast(gw) },
                 .style = style,
                 .link = link,
@@ -480,7 +517,7 @@ fn writeSeg(ctx: *Ctx, col: u16, row: u16, seg: vaxis.Segment) u16 {
         if (c >= ctx.win.width) break;
         const gw = ctx.win.gwidth(s);
         if (gw == 0) continue;
-        ctx.win.writeCell(c, row, .{
+        ctx.putCell(c, row, .{
             .char = .{ .grapheme = s, .width = @intCast(gw) },
             .style = seg.style,
             .link = seg.link,

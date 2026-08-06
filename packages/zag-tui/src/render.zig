@@ -20,6 +20,7 @@ const present = @import("present.zig");
 const terminal = @import("terminal.zig");
 const theme_mod = @import("theme.zig");
 const overlay_mod = @import("overlay.zig");
+const scrollback_mod = @import("scrollback.zig");
 
 pub const UiState = enum {
     idle,
@@ -81,6 +82,7 @@ pub fn renderFrame(
     modal: permission.ModalSnapshot,
     palette: *const theme_mod.Palette,
     ov: OverlayPaint,
+    sb: *scrollback_mod.Scrollback,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
@@ -94,7 +96,7 @@ pub fn renderFrame(
     term.scratch.len = 0;
     _ = term.md_arena.reset(.retain_capacity);
     const root = term.vx.window();
-    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch);
+    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb);
     term.render() catch return error.WriteFailed;
 }
 
@@ -113,13 +115,14 @@ fn drawFrame(
     palette: *const theme_mod.Palette,
     ov: OverlayPaint,
     store: *terminal.LineStore,
+    sb: *scrollback_mod.Scrollback,
 ) void {
     root.clear();
     switch (layout.mode) {
         .constrained => {
             drawHeader(childRegion(root, layout.header), layout.mode, facts, palette, store);
             drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, palette, store);
-            drawCards(gpa, childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store);
+            drawCards(gpa, childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store, sb);
             drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
         },
         .full => {
@@ -151,7 +154,7 @@ fn drawFrame(
             });
 
             drawHeader(header_win, layout.mode, facts, palette, store);
-            drawCards(gpa, cards_win, layout.cards_window, layout.mode, snap, palette, store);
+            drawCards(gpa, cards_win, layout.cards_window, layout.mode, snap, palette, store, sb);
             drawEditor(editor_win, layout.mode, ed, palette);
             drawStatus(status_win, layout.mode, facts, ed, palette, store);
 
@@ -163,6 +166,25 @@ fn drawFrame(
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
     }
+}
+
+/// Test/measurement hook: paint a frame into `root` (tui-scrollback-001
+/// golden updates). Production uses renderFrame (terminal-owned store +
+/// arena); this entry takes them explicitly.
+pub fn drawFrameInto(
+    gpa: std.mem.Allocator,
+    root: vaxis.Window,
+    layout: layout_mod.Layout,
+    facts: StatusFacts,
+    snap: []const cards.CardSlot,
+    ed: *const editor.Editor,
+    modal: permission.ModalSnapshot,
+    palette: *const theme_mod.Palette,
+    ov: OverlayPaint,
+    store: *terminal.LineStore,
+    sb: *scrollback_mod.Scrollback,
+) void {
+    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb);
 }
 
 fn childRegion(root: vaxis.Window, region: layout_mod.Region) vaxis.Window {
@@ -260,6 +282,12 @@ fn mergedFgBg(palette: *const theme_mod.Palette, fg_role: theme_mod.Role, bg_rol
     return .{ .fg = fg.fg, .bg = bg.bg };
 }
 
+/// Row-level transcript drawing (tui-scrollback-001): the paint window
+/// comes from the scrollback (binary search over cumulative rows); each
+/// visible card renders into a child window with a possibly-negative
+/// `y_off` (vaxis bounds-drops rows above the window, so a top-clipped
+/// card shows its tail). The scrollbar track is drawn by drawFrame (it
+/// lives outside the cards region).
 fn drawCards(
     gpa: std.mem.Allocator,
     win: vaxis.Window,
@@ -268,100 +296,177 @@ fn drawCards(
     snap: []const cards.CardSlot,
     palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
+    sb: *scrollback_mod.Scrollback,
 ) void {
-    var row: u16 = 0;
     const w: u16 = win.width;
-    const title_limit = @min(@as(usize, 128), @max(@as(usize, w), 2) - 2);
 
-    if (mode == .full) {
-        // The `├ … ┤` separator row is the region's border (drawFrame); the
-        // interior starts at the first card.
-        if (window.count == 0) {
-            if (row < win.height) {
-                printLineStyled(win, row, "(no events yet)", palette.style(.card_fg));
-            }
-            return;
-        }
-        var i: usize = 0;
-        while (i < window.count and row < win.height) : (i += 1) {
+    if (mode == .constrained) {
+        // Up to 3 one-line titles, NEWEST first (snap[len-1-i]).
+        var row: u16 = 0;
+        var i: usize = window.count;
+        while (i > 0 and row < win.height) {
+            i -= 1;
             const card = &snap[window.start + i];
-            const style = cardStyle(card.kind, palette);
-            const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
             // Terminal-reserve cards (run_terminal) are status noise — never
-            // shown in the transcript (user feedback).
+            // shown, in either mode (user feedback).
             if (card.kind == .terminal) continue;
-            if (is_assistant) {
-                // Assistant cards: NO title row — the markdown body IS the
-                // entry (clean transcript without the "assistant turn=N"
-                // header). Rendered flush-left.
-                if (card.body_len > 0 and row < win.height) {
-                    const body_win = win.child(.{
-                        .x_off = 0,
-                        .y_off = row,
-                        .width = win.width,
-                        .height = win.height - row,
-                    });
-                    const md_style = md_render.MdStyle.forCard(palette, style);
-                    const md_rows: u16 = if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
-                        md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
-                    else
-                        md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
-                    row += md_rows;
-                }
-                continue;
+            const title = present.utf8Prefix(card.titleSlice(), @min(@as(usize, 128), @max(@as(usize, w), 2) - 2));
+            if (store.format("· {s}", .{title})) |s| {
+                printLineStyled(win, row, s, cardStyle(card.kind, palette));
             }
-            // Title row for user/tool/host_error/drop_note cards. The user
-            // marker is a distinct "❯" (vs "·" for tools) plus the accent
-            // color — input vs output is unmistakable.
-            if (row < win.height) {
-                const title = present.utf8Prefix(card.titleSlice(), title_limit);
-                if (card.kind == .user) {
-                    if (store.format("❯ {s}", .{title})) |s| {
-                        printLineStyled(win, row, s, style);
-                    }
-                } else {
-                    if (store.format("· {s}", .{title})) |s| {
-                        printLineStyled(win, row, s, style);
-                    }
-                }
-                row += 1;
-            }
-            // Body rendering only for user cards (tool/host-error rows stay
-            // single-title — transcript compaction). The body is the
-            // already-redacted card buffer; markdown is rendered multi-line,
-            // clipped to the cards region. Fallback: raw text, never blank.
-            if (card.kind == .user and card.body_len > 0 and row < win.height) {
-                const body_win = win.child(.{
-                    .x_off = 2,
-                    .y_off = row,
-                    .width = if (win.width > 2) win.width - 2 else 1,
-                    .height = win.height - row,
-                });
-                const md_style = md_render.MdStyle.forCard(palette, style);
-                const md_rows: u16 = if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
-                    md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
-                else
-                    md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
-                row += md_rows;
-            }
+            row += 1;
         }
         return;
     }
 
-    // Constrained: up to 3 one-line titles, NEWEST first (snap[len-1-i]).
-    var i: usize = window.count;
-    while (i > 0 and row < win.height) {
-        i -= 1;
-        const card = &snap[window.start + i];
-        // Terminal-reserve cards (run_terminal) are status noise — never
-        // shown, in either mode (user feedback).
-        if (card.kind == .terminal) continue;
-        const title = present.utf8Prefix(card.titleSlice(), title_limit);
-        if (store.format("· {s}", .{title})) |s| {
-            printLineStyled(win, row, s, cardStyle(card.kind, palette));
+    // Full mode: row-level scrollback paint. The last column of the cards
+    // interior is the scrollbar track (always reserved — conditional
+    // reservation would be a width↔total feedback loop); content renders
+    // into the remaining width.
+    const content_win = if (win.width > 1) win.child(.{ .width = win.width - 1 }) else win;
+    if (sb.vis.items.len == 0) {
+        if (content_win.height > 0) {
+            printLineStyled(content_win, 0, "(no events yet)", palette.style(.card_fg));
         }
-        row += 1;
+        drawScrollbar(win, sb, palette);
+        return;
     }
+    const pw = sb.paintWindow(content_win.height);
+    var y: i64 = pw.content_y0;
+    var i: usize = pw.start;
+    while (i < pw.end) : (i += 1) {
+        const h: i64 = sb.heightAt(i);
+        if (y + h <= 0) {
+            // Fully above the viewport.
+            y += h + 1;
+            continue;
+        }
+        if (y >= content_win.height) break;
+        const slot = &snap[sb.slotAt(i)];
+        // Negative y_off clips the card's top rows (vaxis writeCell drops
+        // rows above the window); the invariant skip < h ≤ 65535 < |i17
+        // min| keeps the cast safe.
+        const y_off: i17 = @intCast(@min(@max(y, -@as(i64, scrollback_mod.max_draw_offset)), @as(i64, scrollback_mod.max_draw_offset)));
+        const card_win = content_win.child(.{
+            .y_off = y_off,
+            .width = content_win.width,
+            .height = @intCast(@min(@max(h, 1), 65535)),
+        });
+        renderCardInto(gpa, card_win, slot, palette, store);
+        y += h + 1;
+    }
+    drawScrollbar(win, sb, palette);
+}
+
+/// Render one card into `win` (its full height). Assistant cards render the
+/// markdown body flush-left with NO title row; user cards get a `❯ user`
+/// title row + indented body; tool/host_error/drop_note stay single-title.
+fn renderCardInto(
+    gpa: std.mem.Allocator,
+    win: vaxis.Window,
+    card: *const cards.CardSlot,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+) void {
+    const style = cardStyle(card.kind, palette);
+    const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
+    if (is_assistant) {
+        // Assistant cards: NO title row — the markdown body IS the entry
+        // (clean transcript without the "assistant turn=N" header).
+        if (card.body_len > 0) {
+            const md_style = md_render.MdStyle.forCard(palette, style);
+            if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
+                _ = md_render.renderMarkdownIntoStyled(gpa, win, doc, md_style)
+            else
+                _ = md_render.renderRawIntoStyled(gpa, win, card.bodySlice(), md_style);
+        }
+        return;
+    }
+    // Title row for user/tool/host_error/drop_note cards. The user marker
+    // is a distinct "❯" (vs "·" for tools) plus the accent color — input
+    // vs output is unmistakable.
+    const title_limit = @min(@as(usize, 128), @max(@as(usize, win.width), 2) - 2);
+    const title = present.utf8Prefix(card.titleSlice(), title_limit);
+    if (card.kind == .user) {
+        if (store.format("❯ {s}", .{title})) |s| {
+            printLineStyled(win, 0, s, style);
+        }
+    } else {
+        if (store.format("· {s}", .{title})) |s| {
+            printLineStyled(win, 0, s, style);
+        }
+    }
+    // Body rendering only for user cards (tool/host-error rows stay
+    // single-title — transcript compaction). The body is the already-
+    // redacted card buffer; markdown is rendered multi-line, clipped to
+    // the card height. Fallback: raw text, never blank.
+    if (card.kind == .user and card.body_len > 0 and win.height > 1) {
+        const body_win = win.child(.{
+            .x_off = 2,
+            .y_off = 1,
+            .width = if (win.width > 2) win.width - 2 else 1,
+            .height = win.height - 1,
+        });
+        const md_style = md_render.MdStyle.forCard(palette, style);
+        if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
+            _ = md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
+        else
+            _ = md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
+    }
+}
+
+/// Exact card height (tui-scrollback-001 measurement): markdown render in
+/// measure mode (unclipped row count) or the raw fallback. Matches
+/// renderCardInto's row production exactly. Row counts depend only on
+/// width, so the built-in palette suffices (colors never affect wrap).
+pub fn measureCardHeight(gpa: std.mem.Allocator, card: *const cards.CardSlot, content_width: u16) u16 {
+    // Per-call arena: the koino parse allocates through its allocator; a
+    // bare gpa would leak on every measurement (the render path uses the
+    // terminal's retained md_arena instead).
+    var arena = std.heap.ArenaAllocator.init(gpa);
+    defer arena.deinit();
+    const agpa = arena.allocator();
+    const palette = theme_mod.builtinDefault();
+    const style = cardStyle(card.kind, &palette);
+    const md_style = md_render.MdStyle.forCard(&palette, style);
+    const mwin = measureWindow(content_width);
+    const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
+    if (is_assistant) {
+        if (card.body_len == 0) return 0;
+        if (md_parse.parseMarkdown(agpa, card.bodySlice())) |doc|
+            return md_render.measureMarkdownIntoStyled(agpa, mwin, doc, md_style)
+        else
+            return md_render.measureRawIntoStyled(agpa, mwin, card.bodySlice(), md_style);
+    }
+    var h: u16 = 1;
+    if (card.kind == .user and card.body_len > 0) {
+        const body_h = if (md_parse.parseMarkdown(agpa, card.bodySlice())) |doc|
+            md_render.measureMarkdownIntoStyled(agpa, mwin, doc, md_style)
+        else
+            md_render.measureRawIntoStyled(agpa, mwin, card.bodySlice(), md_style);
+        h +|= body_h;
+    }
+    return h;
+}
+
+/// Zero-width offscreen screen for measurement (width_method defaults to
+/// wcwidth, which is all `gwidth` reads). Measure mode never writes cells
+/// (putCell no-op), so this static screen is never touched — it exists
+/// only to give Window its `screen` pointer.
+var measure_screen: vaxis.Screen = .{};
+
+/// A window for measurement: any window works — measure mode never writes
+/// cells, it only reads width + grapheme metrics.
+fn measureWindow(content_width: u16) vaxis.Window {
+    return .{
+        .x_off = 0,
+        .y_off = 0,
+        .parent_x_off = 0,
+        .parent_y_off = 0,
+        .width = @max(content_width, 1),
+        .height = 1,
+        .screen = &measure_screen,
+    };
 }
 
 /// card.kind drives color: host_error → error_fg, terminal/drop_note →
@@ -374,6 +479,34 @@ fn cardStyle(kind: cards.CardKind, palette: *const theme_mod.Palette) vaxis.Styl
         .user => palette.style(.accent_fg),
         .ordinary => palette.style(.card_fg),
     };
+}
+
+/// Scrollbar track (tui-scrollback-001): drawn at the cards interior's
+/// last column only when content overflows (total > viewport); the column
+/// itself is always reserved in full mode. Division-first arithmetic
+/// avoids overflow (u128 intermediates). The thumb is dimmed while
+/// follow_mode (hyper: thumb blends when following).
+fn drawScrollbar(win: vaxis.Window, sb: *const scrollback_mod.Scrollback, palette: *const theme_mod.Palette) void {
+    const total: usize = sb.total_height;
+    const viewport: usize = win.height;
+    if (total <= viewport or viewport == 0 or win.width == 0) return;
+    const col: u16 = win.width - 1;
+    const thumb_h: usize = @max(1, @as(usize, @intCast((@as(u128, viewport) * viewport) / total)));
+    const thumb_y: usize = @as(usize, @intCast((@as(u128, sb.scroll_offset) * viewport) / total));
+    const track_style = palette.style(.muted_fg);
+    const thumb_base = palette.style(.card_fg);
+    const thumb_style: vaxis.Style = if (sb.follow_mode) blk: {
+        var s = thumb_base;
+        s.dim = true;
+        break :blk s;
+    } else thumb_base;
+    var r: usize = 0;
+    while (r < viewport) : (r += 1) {
+        const in_thumb = r >= thumb_y and r < thumb_y + thumb_h;
+        const glyph: []const u8 = if (in_thumb) "█" else "│";
+        const style: vaxis.Style = if (in_thumb) thumb_style else track_style;
+        win.writeCell(col, @intCast(r), .{ .char = .{ .grapheme = glyph, .width = 1 }, .style = style });
+    }
 }
 
 fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor, palette: *const theme_mod.Palette) void {
@@ -622,11 +755,15 @@ fn drawFixture(
     snap: []const cards.CardSlot,
     ed: *const editor.Editor,
     modal: permission.ModalSnapshot,
-) !void {
+) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
     const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0);
     const palette = theme_mod.builtinDefault();
-    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store);
+    var sb = scrollback_mod.Scrollback.init(gpa);
+    errdefer sb.deinit();
+    _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb);
+    return sb;
 }
 
 /// Cell text of one row (graphemes joined left to right).
@@ -877,8 +1014,9 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, f.modal);
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, f.modal);
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     // Minimal frame: row 0 is the top border (title overlaid) — the header
     // is a single border row, so the transcript separator follows directly
@@ -890,8 +1028,8 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
     // Assistant cards render flush-left without a title row (clean
     // transcript — the markdown body IS the entry).
-    try expectBorderedRow(&cs.screen, 3, "hello world");
-    var row: u16 = 4;
+    try expectBorderedRow(&cs.screen, 4, "hello world");
+    var row: u16 = 5;
     while (row < 15) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
     // Row 15 is the gap between the cards region and the modal (blank).
     try expectRowEquals(&cs.screen, 15, "");
@@ -938,13 +1076,14 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 130, 24, f.facts_full, &f.snap, &f.ed, f.modal);
+    var sb = try drawFixture(&cs, gpa, 130, 24, f.facts_full, &f.snap, &f.ed, f.modal);
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
     try expectSeparatorRow(&cs.screen, 1, " transcript ");
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 3, "hello world");
+    try expectBorderedRow(&cs.screen, 4, "hello world");
     try expectSeparatorRow(&cs.screen, 20, " editor ");
     // The editor prompt + CJK placeholder (wide glyphs occupy 2 cells each;
     // assert cells individually since expectBorderedRow miscounts width).
@@ -969,8 +1108,9 @@ test "render constrained-mode cells match pre-vaxis golden (30x8)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 30, 8, f.facts_constrained, &f.snap, &f.ed, f.modal);
+    var sb = try drawFixture(&cs, gpa, 30, 8, f.facts_constrained, &f.snap, &f.ed, f.modal);
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     try expectRowEquals(&cs.screen, 0, "[zag tui · constrained]");
     try expectRowEquals(&cs.screen, 1, "state=busy id=sess-abc");
@@ -988,8 +1128,9 @@ test "render state:{s} text present in the status meta line (PTY marker contract
 
     facts.state = .idle;
     var cs_idle: CellScreen = undefined;
-    try drawFixture(&cs_idle, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
+    var sb = try drawFixture(&cs_idle, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
     defer cs_idle.deinit(gpa);
+    defer sb.deinit();
     // The header is a single border row now; the state text lives in the
     // bottom meta line (status row 22 = rows-2).
     try expectRowContains(&cs_idle.screen, 22, "state:idle");
@@ -997,19 +1138,20 @@ test "render state:{s} text present in the status meta line (PTY marker contract
 
     facts.state = .closing;
     var cs_closing: CellScreen = undefined;
-    try drawFixture(&cs_closing, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
+    var sb2 = try drawFixture(&cs_closing, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
     defer cs_closing.deinit(gpa);
+    defer sb2.deinit();
     try expectRowContains(&cs_closing.screen, 22, "state:closing");
 }
 
 test "render body preview truncated to interior width on UTF-8 boundary" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
-    // 80 cols → interior width 78, flush-left (assistant cards render with
-    // no title row or indent). The markdown renderer wraps by GRAPHEME: the
-    // 2-byte é at byte offset 74 survives as a whole cell and the full body
-    // (74 a's + é + xyz = 78 cells) fills the row exactly. The old byte-based
-    // preview (which dropped the é) is replaced by the md render path.
+    // 80 cols → interior width 77 (cards interior 78 minus the scrollbar
+    // track column), flush-left (assistant cards render with no title row
+    // or indent). The markdown renderer wraps by GRAPHEME: the 2-byte é at
+    // byte offset 74 survives as a whole cell; the body is 78 cells, so the
+    // 77-cell row takes 74 a's + é + x and "yz" wraps to the next row.
     var long = cards.CardSlot{ .occupied = true, .title_len = 16, .body_len = 79 };
     @memcpy(long.title[0..16], "assistant turn=2");
     @memcpy(long.body[0..74], "a" ** 74);
@@ -1017,31 +1159,32 @@ test "render body preview truncated to interior width on UTF-8 boundary" {
     @memcpy(long.body[76..79], "xyz");
     const snap = [_]cards.CardSlot{ long };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
-    // First body row: the whole 78-cell body (74 a's + é + xyz) fits
-    // flush-left on one row (assistant cards render without a title row or
-    // indent). Cards start at row 2 (single-row header), so the body begins
-    // at row 2; interior width is 78 at 80 cols, so nothing wraps.
-    try expectBorderedRow(&cs.screen, 2, (("a" ** 74) ++ "\xc3\xa9" ++ "xyz"));
-    // Nothing wrapped: the next row is blank (no content lost, no truncation).
-    try expectBorderedRow(&cs.screen, 3, "");
+    // First body row: the 77-cell row (74 a's + é + xy) fills flush-left at
+    // row 2; the remaining "z" wraps to row 3. No content is lost — the
+    // UTF-8 é survives as a whole cell.
+    try expectBorderedRow(&cs.screen, 2, (("a" ** 74) ++ "\xc3\xa9" ++ "xy"));
+    try expectBorderedRow(&cs.screen, 3, "z");
 }
 
 test "render title truncated to interior width (min-cap holds)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
-    // 80 cols → interior width 78 → title cap = min(128, 78-2) = 76; the row
-    // clips at the interior width: "· " (3) + 75 t's, then the right rail.
+    // 80 cols → content width 77 (cards interior 78 minus the scrollbar
+    // column) → title cap = min(128, 77-2) = 75; the byte-based row cap
+    // (77 bytes) then drops the final t: "· " (3 bytes) + 74 t's.
     var slot = cards.CardSlot{ .occupied = true, .title_len = 100, .body_len = 0 };
     @memcpy(slot.title[0..100], "t" ** 100);
     const snap = [_]cards.CardSlot{ slot };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
-    try expectBorderedRow(&cs.screen, 2, ("· " ++ ("t" ** 75)));
+    try expectBorderedRow(&cs.screen, 2, ("· " ++ ("t" ** 74)));
     var row: u16 = 0;
     while (row < 24) : (row += 1) {
         var buf: [512]u8 = undefined;
@@ -1055,8 +1198,9 @@ test "render multi-line editor clipped to the fixed content row" {
     var f = fixedFixture();
     _ = f.ed.insert("line1\nline2");
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     try expectBorderedRow(&cs.screen, 21, " > line1");
     // The status meta line no longer carries the byte counter / key hints.
@@ -1069,8 +1213,9 @@ test "render status strings min-capped to interior width" {
     var f = fixedFixture();
     f.facts_full.theme_id = "x" ** 100;
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     // The header is a border row (nothing to cap there); the meta line is
     // the min-capped string now. Interior is 78 cells: " model:— theme:"
@@ -1082,8 +1227,9 @@ test "render no-events frame" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &.{}, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &.{}, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     try expectBorderedRow(&cs.screen, 2, "(no events yet)");
 }
@@ -1104,30 +1250,32 @@ test "render card kind drives fg style" {
     @memcpy(drop_note.title[0..4], "drop");
     const snap = [_]cards.CardSlot{ ordinary, term_card, host_error, drop_note };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     // Title text starts at interior col 2 ("· " prefix) → absolute col 3.
     // Cards begin at row 2 (single-row header → cards_y = 1). Terminal
     // cards (run_terminal) are status noise and are never rendered.
     try expectCellFgIndex(&cs.screen, 3, 2, 7); // ordinary → card_fg
-    try expectCellFgIndex(&cs.screen, 3, 3, 1); // host_error → error_fg
-    try expectCellFgIndex(&cs.screen, 3, 4, 8); // drop_note → muted_fg
-    // Tool/host-error cards render as single title rows. The terminal card
-    // is skipped entirely, so the rows shift up: alpha → 2, host_error → 3,
-    // drop → 4, and row 5 is blank.
+    try expectCellFgIndex(&cs.screen, 3, 4, 1); // host_error → error_fg
+    try expectCellFgIndex(&cs.screen, 3, 6, 8); // drop_note → muted_fg
+    // Tool/host-error cards render as single title rows with a 1-row gap
+    // between visible cards. The terminal card is skipped entirely:
+    // alpha → 2, host_error → 4, drop → 6, and row 7 is blank.
     try expectBorderedRow(&cs.screen, 2, "· alpha");
-    try expectBorderedRow(&cs.screen, 3, "· host_error");
-    try expectBorderedRow(&cs.screen, 4, "· drop");
-    try expectBorderedRow(&cs.screen, 5, "");
+    try expectBorderedRow(&cs.screen, 4, "· host_error");
+    try expectBorderedRow(&cs.screen, 6, "· drop");
+    try expectBorderedRow(&cs.screen, 7, "");
 }
 
 test "render degenerate 20x5 constrained never overflows" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 20, 5, f.facts_constrained, &f.snap, &f.ed, .{});
+    var sb = try drawFixture(&cs, gpa, 20, 5, f.facts_constrained, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
     // Header line clips at 20 cells; no crash, no out-of-bounds write.
     // "[zag tui · constrained]": cells 0-8, "·" 9, " " 10, "constrained]" 11-22
     // → cell 19 is the 9th char of "constrained]" ("n").
@@ -1170,31 +1318,33 @@ test "md transcript: assistant card renders multi-line markdown body" {
         .state = .idle,
     };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     // Tool row stays single-title; the assistant entry renders its markdown
     // body FLUSH-LEFT with no title row (clean transcript).
     // Cards begin at row 2 (single-row header → cards_y = 1).
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    // Body row 3 = the H1 heading: accent fg + bold, markers stripped.
-    // Body content starts at absolute col 1 (border + interior offset).
-    try expectCellEquals(&cs.screen, 1, 3, "T");
-    try expectCellFgIndex(&cs.screen, 1, 3, 3);
-    const h = cs.screen.readCell(1, 3) orelse return error.TestUnexpectedResult;
+    // The 1-row gap after the tool card, then the assistant body starts at
+    // row 4: the H1 heading (accent fg + bold, markers stripped) at
+    // absolute col 1 (border + interior offset).
+    try expectCellEquals(&cs.screen, 1, 4, "T");
+    try expectCellFgIndex(&cs.screen, 1, 4, 3);
+    const h = cs.screen.readCell(1, 4) orelse return error.TestUnexpectedResult;
     try std.testing.expect(h.style.bold);
     var buf: [512]u8 = undefined;
-    const r3 = rowText(&cs.screen, 3, &buf);
+    const r3 = rowText(&cs.screen, 4, &buf);
     try std.testing.expect(std.mem.indexOf(u8, r3, "# Title") == null);
     try std.testing.expect(std.mem.indexOf(u8, r3, "Title") != null);
     // Bold inline inside the paragraph row ("para " then bold at interior
     // col 5 → absolute col 6).
-    try expectRowContains(&cs.screen, 4, "bold");
-    const bold_cell = cs.screen.readCell(6, 4) orelse return error.TestUnexpectedResult;
+    try expectRowContains(&cs.screen, 5, "bold");
+    const bold_cell = cs.screen.readCell(6, 5) orelse return error.TestUnexpectedResult;
     try std.testing.expect(bold_cell.style.bold);
     // List rows with bullets.
-    try expectRowContains(&cs.screen, 5, "• one");
-    try expectRowContains(&cs.screen, 6, "• two");
+    try expectRowContains(&cs.screen, 6, "• one");
+    try expectRowContains(&cs.screen, 7, "• two");
 }
 
 test "md transcript: tall assistant body clips at the cards region height" {
@@ -1219,18 +1369,35 @@ test "md transcript: tall assistant body clips at the cards region height" {
         .state = .idle,
     };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
-    // Single-card layout: the cards region is 14 rows (y=1..14, interior
-    // rows 2..14); the assistant body starts at row 2 (no title row) and
-    // clips at "line 13" (screen row 14 = 2 + 12); nothing past the region.
-    try expectRowContains(&cs.screen, 14, "line 13");
+    // Follow mode: the viewport shows the transcript TAIL (30 paragraphs ×
+    // 2 rows = 60 rows ≫ 13-row viewport → offset pinned at the bottom).
     var buf: [512]u8 = undefined;
+    var found_tail = false;
+    var r: u16 = 2;
+    while (r <= 14) : (r += 1) {
+        const text = rowText(&cs.screen, r, &buf);
+        if (std.mem.indexOf(u8, text, "line 30") != null) {
+            found_tail = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_tail);
     const last = rowText(&cs.screen, 15, &buf);
     try std.testing.expect(std.mem.indexOf(u8, last, "line 14") == null);
-    const r16 = rowText(&cs.screen, 16, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, r16, "line 14") == null);
+    // Scrolling up reveals the head of the transcript (row-level scrollback
+    // — the older turns are reachable, which is the user's blocking ask).
+    sb.scrollUp(200);
+    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0);
+    _ = sb.prepare(&snap, @max(layout2.cards.w -| 3, 1), @max(layout2.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    const palette2 = theme_mod.builtinDefault();
+    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb);
+    try expectRowContains(&cs.screen, 2, "line 1");
+    const head = rowText(&cs.screen, 2, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, head, "line 30") == null);
 }
 
 test "md transcript: user card body renders with accent base" {
@@ -1246,8 +1413,9 @@ test "md transcript: user card body renders with accent base" {
         .state = .idle,
     };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     // User title row 2; body row 3 = the H1: accent fg (user base accent) +
     // bold heading, markers stripped.
@@ -1278,14 +1446,15 @@ test "md transcript: tool rows unchanged (single title, body never rendered)" {
         .state = .idle,
     };
     var cs: CellScreen = undefined;
-    try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
+    defer sb.deinit();
 
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 3, "· tool run_shell");
+    try expectBorderedRow(&cs.screen, 4, "· tool run_shell");
     // The bodies never appear as rows (tool rows are single-title). Scan the
-    // whole cards interior (rows 4..14) plus the gap rows below it.
-    var row: u16 = 4;
+    // whole cards interior (rows 5..14) plus the gap rows below it.
+    var row: u16 = 5;
     while (row < 17) : (row += 1) {
         var buf: [512]u8 = undefined;
         const text = rowText(&cs.screen, row, &buf);
