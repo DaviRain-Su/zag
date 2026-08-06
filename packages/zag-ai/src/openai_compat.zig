@@ -273,8 +273,16 @@ pub const Client = struct {
     }
 
     /// GET /models → arena-owned list of model ids (sorted, capped).
+    /// Bounded: a provider that never answers /models must not stall the
+    /// TUI launch (PTY regression — the slow mock never responds). The std
+    /// backend fails closed on deadlines (UnsupportedControl → catalog
+    /// fallback); curl enforces the 2s deadline. The configured timeout is
+    /// restored afterwards (startup-time, single-threaded).
     pub fn listModels(self: *Client, arena: std.mem.Allocator) Error![]const []const u8 {
         const max_models: usize = 64;
+        const saved_timeout = self.sdk.transport.timeout_ms;
+        self.sdk.transport.timeout_ms = 2000;
+        defer self.sdk.transport.timeout_ms = saved_timeout;
         var parsed = self.sdk.models().list(arena) catch |err| {
             return mapSdkError(err);
         };

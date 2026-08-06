@@ -297,6 +297,10 @@ fn startHeadlessMock(io: Io, cwd: Io.Dir) !struct { pid: posix.pid_t, port: u16 
     try argv.append(std.heap.page_allocator, abs);
     try argv.append(std.heap.page_allocator, "--port-file");
     try argv.append(std.heap.page_allocator, port_file_name);
+    // Serve until killed: the TUI startup /models probe (curl backend)
+    // consumes a request before the fixture's chat request.
+    try argv.append(std.heap.page_allocator, "--max-requests");
+    try argv.append(std.heap.page_allocator, "0");
 
     const child = std.process.spawn(io, .{
         .argv = argv.items,
