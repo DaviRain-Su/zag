@@ -9,6 +9,56 @@ const vaxis = @import("vaxis");
 
 pub const schema_version: []const u8 = "zag-theme-v1";
 pub const builtin_id: []const u8 = "zag-default";
+/// All built-in themes (default first). `/theme` lists these before any
+/// user themes from themes_root.
+pub const builtin_ids = [_][]const u8{ "zag-default", "zag-ocean", "zag-mint", "zag-light" };
+
+fn rgbf(r: u8, g: u8, b: u8) vaxis.Color {
+    return .{ .rgb = .{ r, g, b } };
+}
+
+fn styleFg(color: vaxis.Color) vaxis.Style {
+    return .{ .fg = color };
+}
+
+fn styleBg(color: vaxis.Color) vaxis.Style {
+    return .{ .bg = color };
+}
+
+/// Assemble a palette from explicit per-role colors (fg roles → .fg,
+/// `*_bg`/`bg` roles → .bg).
+fn buildPalette(
+    id: []const u8,
+    fg: vaxis.Color,
+    bg: vaxis.Color,
+    status_fg: vaxis.Color,
+    status_bg: vaxis.Color,
+    card_fg: vaxis.Color,
+    card_border: vaxis.Color,
+    editor_fg: vaxis.Color,
+    editor_bg: vaxis.Color,
+    modal_fg: vaxis.Color,
+    modal_border: vaxis.Color,
+    error_fg: vaxis.Color,
+    muted_fg: vaxis.Color,
+    accent_fg: vaxis.Color,
+) Palette {
+    var styles: [Role.count]vaxis.Style = undefined;
+    styles[@intFromEnum(Role.fg)] = styleFg(fg);
+    styles[@intFromEnum(Role.bg)] = styleBg(bg);
+    styles[@intFromEnum(Role.status_fg)] = styleFg(status_fg);
+    styles[@intFromEnum(Role.status_bg)] = styleBg(status_bg);
+    styles[@intFromEnum(Role.card_fg)] = styleFg(card_fg);
+    styles[@intFromEnum(Role.card_border)] = styleFg(card_border);
+    styles[@intFromEnum(Role.editor_fg)] = styleFg(editor_fg);
+    styles[@intFromEnum(Role.editor_bg)] = styleBg(editor_bg);
+    styles[@intFromEnum(Role.modal_fg)] = styleFg(modal_fg);
+    styles[@intFromEnum(Role.modal_border)] = styleFg(modal_border);
+    styles[@intFromEnum(Role.error_fg)] = styleFg(error_fg);
+    styles[@intFromEnum(Role.muted_fg)] = styleFg(muted_fg);
+    styles[@intFromEnum(Role.accent_fg)] = styleFg(accent_fg);
+    return .{ .id = id, .styles = styles };
+}
 
 pub const ThemeHostOptions = struct {
     themes_root: ?[]const u8 = null,
@@ -63,6 +113,74 @@ pub fn builtinDefault() Palette {
     styles[@intFromEnum(Role.muted_fg)] = .{ .fg = .{ .index = 8 } };
     styles[@intFromEnum(Role.accent_fg)] = .{ .fg = .{ .index = 3 } }; // yellow — distinct from status cyan
     return .{ .id = builtin_id, .styles = styles };
+}
+
+/// One Dark-inspired cool palette (truecolor).
+pub fn builtinOcean() Palette {
+    return buildPalette(
+        "zag-ocean",
+        rgbf(0xAB, 0xB2, 0xBF), // fg
+        rgbf(0x28, 0x2C, 0x34), // bg
+        rgbf(0x61, 0xAF, 0xEF), // status_fg (blue)
+        rgbf(0x28, 0x2C, 0x34), // status_bg
+        rgbf(0xAB, 0xB2, 0xBF), // card_fg
+        rgbf(0x3E, 0x44, 0x51), // card_border
+        rgbf(0x98, 0xC3, 0x79), // editor_fg (green)
+        rgbf(0x28, 0x2C, 0x34), // editor_bg
+        rgbf(0xC6, 0x78, 0xDD), // modal_fg (purple)
+        rgbf(0x3E, 0x44, 0x51), // modal_border
+        rgbf(0xE0, 0x6C, 0x75), // error_fg (red)
+        rgbf(0x5C, 0x63, 0x70), // muted_fg
+        rgbf(0xE5, 0xC0, 0x7B), // accent_fg (yellow)
+    );
+}
+
+/// Solarized-dark warm palette (truecolor).
+pub fn builtinMint() Palette {
+    return buildPalette(
+        "zag-mint",
+        rgbf(0x83, 0x94, 0x96), // fg
+        rgbf(0x00, 0x2B, 0x36), // bg
+        rgbf(0x2A, 0xA1, 0x98), // status_fg (cyan)
+        rgbf(0x00, 0x2B, 0x36), // status_bg
+        rgbf(0x93, 0xA1, 0xA1), // card_fg
+        rgbf(0x07, 0x36, 0x42), // card_border
+        rgbf(0x85, 0x99, 0x00), // editor_fg (olive green)
+        rgbf(0x00, 0x2B, 0x36), // editor_bg
+        rgbf(0xD3, 0x36, 0x82), // modal_fg (magenta)
+        rgbf(0x07, 0x36, 0x42), // modal_border
+        rgbf(0xDC, 0x32, 0x2F), // error_fg (red)
+        rgbf(0x58, 0x6E, 0x75), // muted_fg
+        rgbf(0xB5, 0x89, 0x00), // accent_fg (yellow)
+    );
+}
+
+/// Solarized-light palette (truecolor, light background).
+pub fn builtinLight() Palette {
+    return buildPalette(
+        "zag-light",
+        rgbf(0x65, 0x7B, 0x83), // fg
+        rgbf(0xFD, 0xF6, 0xE3), // bg
+        rgbf(0x26, 0x8B, 0xD2), // status_fg (blue)
+        rgbf(0xFD, 0xF6, 0xE3), // status_bg
+        rgbf(0x58, 0x6E, 0x75), // card_fg
+        rgbf(0xEE, 0xE8, 0xD5), // card_border
+        rgbf(0x85, 0x99, 0x00), // editor_fg (olive)
+        rgbf(0xFD, 0xF6, 0xE3), // editor_bg
+        rgbf(0xD3, 0x36, 0x82), // modal_fg (magenta)
+        rgbf(0xEE, 0xE8, 0xD5), // modal_border
+        rgbf(0xDC, 0x32, 0x2F), // error_fg (red)
+        rgbf(0x93, 0xA1, 0xA1), // muted_fg
+        rgbf(0xB5, 0x89, 0x00), // accent_fg (yellow)
+    );
+}
+
+/// Builtin by id; unknown ids fall back to the default.
+pub fn builtinById(id: []const u8) Palette {
+    if (std.mem.eql(u8, id, "zag-ocean")) return builtinOcean();
+    if (std.mem.eql(u8, id, "zag-mint")) return builtinMint();
+    if (std.mem.eql(u8, id, "zag-light")) return builtinLight();
+    return builtinDefault();
 }
 
 fn namedToColor(name: []const u8) ?vaxis.Color {
@@ -189,10 +307,13 @@ fn pathUnderRoot(root: []const u8, candidate: []const u8) bool {
     return candidate[root.len] == std.fs.path.sep;
 }
 
-/// Resolve active palette: selected user theme if valid under themes_root, else builtin.
+/// Resolve active palette: built-in or selected user theme under
+/// themes_root, else builtin default (fail-closed).
 pub fn resolveActive(gpa: std.mem.Allocator, io: Io, opts: ThemeHostOptions) Palette {
     const sel = opts.selected_id orelse return builtinDefault();
-    if (std.mem.eql(u8, sel, builtin_id)) return builtinDefault();
+    for (builtin_ids) |bid| {
+        if (std.mem.eql(u8, sel, bid)) return builtinById(bid);
+    }
     const root = opts.themes_root orelse return builtinDefault();
     if (root.len == 0) return builtinDefault();
 
@@ -207,9 +328,10 @@ pub fn resolveActive(gpa: std.mem.Allocator, io: Io, opts: ThemeHostOptions) Pal
     return parsed.palette;
 }
 
-/// List theme ids available under root (basename without .json) + builtin. Cap 64.
+/// List theme ids: all built-ins first, then user themes under root
+/// (basename without .json, deduped against builtins). Cap 64.
 pub fn listThemeIds(gpa: std.mem.Allocator, io: Io, root: ?[]const u8, out: *std.ArrayList([]const u8)) !void {
-    try out.append(gpa, builtin_id);
+    for (builtin_ids) |bid| try out.append(gpa, bid);
     const r = root orelse return;
     var dir = Io.Dir.cwd().openDir(io, r, .{ .iterate = true }) catch return;
     defer dir.close(io);
@@ -219,11 +341,51 @@ pub fn listThemeIds(gpa: std.mem.Allocator, io: Io, root: ?[]const u8, out: *std
         if (!std.mem.endsWith(u8, entry.name, ".json")) continue;
         const stem = entry.name[0 .. entry.name.len - ".json".len];
         if (stem.len == 0) continue;
-        if (std.mem.eql(u8, stem, builtin_id)) continue;
+        var is_builtin = false;
+        for (builtin_ids) |bid| {
+            if (std.mem.eql(u8, stem, bid)) {
+                is_builtin = true;
+                break;
+            }
+        }
+        if (is_builtin) continue;
         const owned = try gpa.dupe(u8, stem);
         try out.append(gpa, owned);
         if (out.items.len >= 64) break;
     }
+}
+
+test "builtinById dispatches the four builtins" {
+    const o = builtinById("zag-ocean");
+    try std.testing.expectEqualStrings("zag-ocean", o.id);
+    try std.testing.expect(o.style(.card_fg).fg == .rgb);
+    try std.testing.expect(o.style(.bg).bg == .rgb);
+    const m = builtinById("zag-mint");
+    try std.testing.expectEqualStrings("zag-mint", m.id);
+    const l = builtinById("zag-light");
+    try std.testing.expectEqualStrings("zag-light", l.id);
+    try std.testing.expect(l.style(.bg).bg == .rgb); // light background
+    // Unknown ids fail closed to the default.
+    const d = builtinById("nope");
+    try std.testing.expectEqualStrings(builtin_id, d.id);
+    // Distinct accent/status per theme.
+    try std.testing.expect(!std.mem.eql(u8, &o.style(.status_fg).fg.rgb, &o.style(.accent_fg).fg.rgb));
+}
+
+test "listThemeIds includes all builtins first" {
+    const gpa = std.testing.allocator;
+    var list: std.ArrayList([]const u8) = .empty;
+    defer {
+        for (list.items) |it| {
+            if (!std.mem.eql(u8, it, "zag-default") and !std.mem.eql(u8, it, "zag-ocean") and !std.mem.eql(u8, it, "zag-mint") and !std.mem.eql(u8, it, "zag-light")) gpa.free(it);
+        }
+        list.deinit(gpa);
+    }
+    try listThemeIds(gpa, std.testing.io, null, &list);
+    try std.testing.expectEqual(@as(usize, builtin_ids.len), list.items.len);
+    try std.testing.expectEqualStrings("zag-default", list.items[0]);
+    try std.testing.expectEqualStrings("zag-ocean", list.items[1]);
+    try std.testing.expectEqualStrings("zag-light", list.items[3]);
 }
 
 test "builtinDefault has expected accents" {

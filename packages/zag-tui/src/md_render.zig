@@ -195,11 +195,25 @@ pub fn measureRawIntoStyled(alloc: std.mem.Allocator, win: vaxis.Window, text: [
 
 // ── block walk ─────────────────────────────────────────────────────────────
 
+/// Block walk. Top-level blocks (Document children) get a blank row
+/// between them — markdown paragraph convention; nested blocks (list
+/// items, blockquotes) stay compact (koino tight lists render tight).
 fn renderBlocks(ctx: *Ctx, node: *koino.nodes.AstNode, prefix: Prefix) void {
+    const spaced = node.data.value == .Document;
     var child = node.first_child;
     while (child) |c| : (child = c.next) {
         renderBlock(ctx, c, prefix);
         if (ctx.overflow) return;
+        // Blank separator row between top-level blocks (not after the
+        // last one). Safe in measure mode too (fits is always true).
+        if (spaced and c.next != null) {
+            if (ctx.fits()) {
+                ctx.row += 1;
+            } else {
+                ctx.overflow = true;
+                return;
+            }
+        }
     }
 }
 

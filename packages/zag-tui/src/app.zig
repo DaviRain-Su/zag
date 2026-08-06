@@ -1106,8 +1106,11 @@ pub const App = struct {
                 }
             },
             .theme => {
-                push(self, theme_mod.builtin_id, &n);
-                // User themes are discovered lazily at select time; listBuiltin only here.
+                // Built-ins first, then lazily-discovered user themes.
+                for (theme_mod.builtin_ids) |bid| {
+                    if (n >= self.overlay_line_bufs.len) break;
+                    push(self, bid, &n);
+                }
                 if (self.themes_root) |root| {
                     var list: std.ArrayList([]const u8) = .empty;
                     defer {

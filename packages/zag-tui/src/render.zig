@@ -1356,13 +1356,13 @@ test "md transcript: assistant card renders multi-line markdown body" {
     try std.testing.expect(std.mem.indexOf(u8, r3, "# Title") == null);
     try std.testing.expect(std.mem.indexOf(u8, r3, "Title") != null);
     // Bold inline inside the paragraph row ("para " then bold at interior
-    // col 5 → absolute col 6).
-    try expectRowContains(&cs.screen, 6, "bold");
-    const bold_cell = cs.screen.readCell(6, 6) orelse return error.TestUnexpectedResult;
+    // col 5 → absolute col 6). Blank rows separate top-level blocks now.
+    try expectRowContains(&cs.screen, 7, "bold");
+    const bold_cell = cs.screen.readCell(6, 7) orelse return error.TestUnexpectedResult;
     try std.testing.expect(bold_cell.style.bold);
     // List rows with bullets.
-    try expectRowContains(&cs.screen, 7, "• one");
-    try expectRowContains(&cs.screen, 8, "• two");
+    try expectRowContains(&cs.screen, 9, "• one");
+    try expectRowContains(&cs.screen, 10, "• two");
 }
 
 test "md transcript: tall assistant body clips at the cards region height" {
