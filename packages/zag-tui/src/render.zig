@@ -49,10 +49,20 @@ pub const StatusFacts = struct {
     scroll: usize = 0,
 };
 
+/// Per-row rendering kind for overlay lines (session-tree-001): resume
+/// group headers render muted and are not selectable (no cursor marker).
+pub const RowKind = enum {
+    normal,
+    muted,
+};
+
 pub const OverlayPaint = struct {
     kind: overlay_mod.Kind = .none,
     cursor: usize = 0,
     lines: []const []const u8 = &.{},
+    /// Parallel to `lines`: per-row kind. May be shorter than `lines`;
+    /// missing rows render as `.normal`.
+    row_kinds: []const RowKind = &.{},
 };
 
 pub fn stateName(s: UiState) []const u8 {
@@ -798,17 +808,21 @@ fn drawHostOverlay(
     var row: u16 = 0;
     for (ov.lines, 0..) |line, i| {
         if (row >= box.height) break;
-        const marker_ch: []const u8 = if (i == ov.cursor) "> " else "  ";
+        // Group headers (session-tree-001) render muted and carry no cursor
+        // marker: they are non-selectable (Enter is a no-op on them).
+        const kind: RowKind = if (i < ov.row_kinds.len) ov.row_kinds[i] else .normal;
+        const row_style = if (kind == .muted) palette.style(.muted_fg) else style;
+        const marker_ch: []const u8 = if (i == ov.cursor and kind != .muted) "> " else "  ";
         // Split marker + line into TWO segments: vaxis printSegment borrows
         // the text slice into cells (no copy), so a stack-allocated joined
         // buffer would dangle by the time render() diffs. The marker is a
         // compile-time literal and `line` lives in the App's persistent
         // overlay_line_bufs — both safe to borrow.
-        _ = box.printSegment(.{ .text = marker_ch, .style = style }, .{
+        _ = box.printSegment(.{ .text = marker_ch, .style = row_style }, .{
             .row_offset = row,
             .wrap = .none,
         });
-        _ = box.printSegment(.{ .text = line, .style = style }, .{
+        _ = box.printSegment(.{ .text = line, .style = row_style }, .{
             .row_offset = row,
             .col_offset = @intCast(marker_ch.len),
             .wrap = .none,
@@ -881,6 +895,27 @@ fn drawFixture(
     errdefer sb.deinit();
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
     drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null);
+    return sb;
+}
+
+/// drawFixture variant that renders a host overlay (no permission modal).
+fn drawOverlayFixture(
+    cs: *CellScreen,
+    gpa: std.mem.Allocator,
+    cols: u16,
+    rows: u16,
+    facts: StatusFacts,
+    snap: []const cards.CardSlot,
+    ed: *const editor.Editor,
+    ov: OverlayPaint,
+) !scrollback_mod.Scrollback {
+    cs.* = try CellScreen.init(gpa, cols, rows);
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, false, facts.status_note.len > 0, 0, ed.lineCount(), false);
+    const palette = theme_mod.builtinDefault();
+    var sb = scrollback_mod.Scrollback.init(gpa);
+    errdefer sb.deinit();
+    _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null);
     return sb;
 }
 
@@ -1393,6 +1428,44 @@ test "render card kind drives fg style" {
     try expectBorderedRow(&cs.screen, 4, "· host_error");
     try expectBorderedRow(&cs.screen, 6, "· drop");
     try expectBorderedRow(&cs.screen, 7, "");
+}
+
+test "render resume overlay: group headers muted + cursor marker suppressed" {
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    // Resume rows: session / group header / session. Geometry at 80x24 no
+    // modal: overlay box x=10 w=60, border at row 2 → interior rows 3..5,
+    // interior col 0 at absolute col 11.
+    const lines = [_][]const u8{ "beta 03-05 07:08 3B", "proj-a/", "proj-a/y 02-02 11:12 5B" };
+    const kinds = [_]RowKind{ .normal, .muted, .normal };
+
+    var cs: CellScreen = undefined;
+    var sb = try drawOverlayFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{
+        .kind = overlay_mod.Kind.@"resume",
+        .cursor = 0,
+        .lines = &lines,
+        .row_kinds = &kinds,
+    });
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    // Session row under the cursor: modal_fg + "> " marker.
+    try expectCellFgIndex(&cs.screen, 11, 3, 5); // modal_fg
+    try expectCellEquals(&cs.screen, 11, 3, ">");
+    try expectCellFgIndex(&cs.screen, 11, 4, 8); // header → muted_fg
+    try expectCellFgIndex(&cs.screen, 11, 5, 5); // session row → modal_fg
+
+    // Cursor on the header: muted style AND no marker (non-selectable).
+    var cs2: CellScreen = undefined;
+    var sb2 = try drawOverlayFixture(&cs2, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{
+        .kind = overlay_mod.Kind.@"resume",
+        .cursor = 1,
+        .lines = &lines,
+        .row_kinds = &kinds,
+    });
+    defer cs2.deinit(gpa);
+    defer sb2.deinit();
+    try expectCellEquals(&cs2.screen, 11, 4, " ");
+    try expectCellFgIndex(&cs2.screen, 11, 4, 8); // still muted
 }
 
 test "render degenerate 20x5 constrained never overflows" {

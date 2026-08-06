@@ -569,37 +569,120 @@ pub fn loadWithMeta(
     return parseSessionBytes(gpa, transcript, raw);
 }
 
-/// Read-only listing of persisted sessions: one owned label per `*.jsonl`
-/// entry under `dir` (relative to `cwd`), with the `.jsonl` suffix stripped.
-/// Lock sidecars (`*.lock`) and non-session files are excluded by the suffix
-/// check; empty stems and non-file entries are skipped. Missing/empty dir →
-/// empty list (no error). Caller owns every item (free each + deinit).
-pub fn listSessions(
+/// One persisted session visible to the resume browser (session-tree-001).
+/// Metadata is READ-ONLY directory stat — never session file content.
+pub const SessionEntry = struct {
+    /// Relative path under the scanned root: `"stem"` for sessions directly
+    /// in the root, `"proj/stem"` for sessions in a one-level project
+    /// subdirectory (no `.jsonl` suffix).
+    rel_path: []const u8,
+    /// Last modification time in nanoseconds since the Unix epoch (UTC).
+    mtime_ns: i96,
+    /// File size in bytes.
+    size_bytes: u64,
+};
+
+/// Read-only listing of persisted sessions under `root_dir` (relative to
+/// `cwd`), one level deep: `*.jsonl` files directly in the root plus
+/// `*.jsonl` files in one-level project subdirectories. Per entry the rel
+/// path (`"stem"` or `"proj/stem"`), mtime (ns, UTC) and size (bytes) come
+/// from directory stats (`Dir.statFile`) — never from session content.
+///
+/// Lock sidecars (`*.lock`) and non-session files are excluded by the
+/// suffix check; empty stems, non-file entries and symlinks are skipped
+/// (deep nesting is a non-goal). Unstatable entries (e.g. raced away) are
+/// skipped; iterate errors fail closed. Missing/empty root → empty list
+/// (no error).
+///
+/// Ordering: ungrouped (flat) entries first sorted mtime-desc, then project
+/// groups sorted name-asc with entries within a group mtime-desc. Caller
+/// owns every `rel_path` (free each + deinit the list).
+pub fn listSessionEntries(
     gpa: std.mem.Allocator,
     io: Io,
     cwd: Io.Dir,
-    dir: []const u8,
-    out: *std.ArrayList([]u8),
+    root_dir: []const u8,
+    out: *std.ArrayList(SessionEntry),
 ) Error!void {
-    var d = cwd.openDir(io, dir, .{ .iterate = true }) catch |err| switch (err) {
-        // No sessions dir yet → nothing to list (not an error).
+    var root = cwd.openDir(io, root_dir, .{ .iterate = true }) catch |err| switch (err) {
+        // No sessions root yet → nothing to list (not an error).
         error.FileNotFound => return,
         else => return error.IoFailed,
     };
-    defer d.close(io);
-    var it = d.iterate();
+    defer root.close(io);
+
+    var it = root.iterate();
     while (true) {
         const entry = (it.next(io) catch return error.IoFailed) orelse break;
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.name, ".jsonl")) continue;
-        const stem = entry.name[0 .. entry.name.len - ".jsonl".len];
-        if (stem.len == 0) continue;
-        const owned = gpa.dupe(u8, stem) catch return error.OutOfMemory;
-        out.append(gpa, owned) catch {
-            gpa.free(owned);
-            return error.OutOfMemory;
-        };
+        switch (entry.kind) {
+            .file => try appendEntry(gpa, io, root, entry.name, null, out),
+            .directory => {
+                // One level of project subdirs; deeper nesting is a non-goal.
+                var sub = root.openDir(io, entry.name, .{ .iterate = true }) catch |err| switch (err) {
+                    error.FileNotFound => continue, // dir raced away
+                    else => return error.IoFailed,
+                };
+                defer sub.close(io);
+                var sub_it = sub.iterate();
+                while (true) {
+                    const sub_entry = (sub_it.next(io) catch return error.IoFailed) orelse break;
+                    if (sub_entry.kind != .file) continue;
+                    try appendEntry(gpa, io, sub, sub_entry.name, entry.name, out);
+                }
+            },
+            // Symlinks / sockets / etc. never surface (as in the flat
+            // listing these entries replaced).
+            else => continue,
+        }
     }
+
+    std.mem.sort(SessionEntry, out.items, {}, entryLessThan);
+}
+
+/// Stat one `*.jsonl` file (skipping sidecars / empty stems) and append its
+/// entry. `project` = owning one-level subdir name, or null for flat.
+/// Unstatable files (raced away, unreadable) are skipped — a listing must
+/// never fail because one entry vanished mid-scan.
+fn appendEntry(
+    gpa: std.mem.Allocator,
+    io: Io,
+    dir: Io.Dir,
+    name: []const u8,
+    project: ?[]const u8,
+    out: *std.ArrayList(SessionEntry),
+) Error!void {
+    if (!std.mem.endsWith(u8, name, ".jsonl")) return;
+    const stem = name[0 .. name.len - ".jsonl".len];
+    if (stem.len == 0) return;
+
+    const rel = if (project) |proj|
+        std.fmt.allocPrint(gpa, "{s}/{s}", .{ proj, stem }) catch return error.OutOfMemory
+    else
+        gpa.dupe(u8, stem) catch return error.OutOfMemory;
+    errdefer gpa.free(rel);
+
+    const st = dir.statFile(io, name, .{ .follow_symlinks = true }) catch return;
+    out.append(gpa, .{
+        .rel_path = rel,
+        .mtime_ns = st.mtime.nanoseconds,
+        .size_bytes = st.size,
+    }) catch return error.OutOfMemory;
+}
+
+/// Ordering contract (session-tree-001): ungrouped entries first (mtime
+/// desc), then project groups (name asc), entries within a group mtime desc.
+fn entryLessThan(_: void, a: SessionEntry, b: SessionEntry) bool {
+    const a_group = std.mem.indexOfScalar(u8, a.rel_path, '/');
+    const b_group = std.mem.indexOfScalar(u8, b.rel_path, '/');
+    const a_flat = a_group == null;
+    const b_flat = b_group == null;
+    if (a_flat != b_flat) return a_flat; // flat entries first
+    if (a_flat) return a.mtime_ns > b.mtime_ns; // flat: mtime desc
+    const ag = a.rel_path[0..a_group.?];
+    const bg = b.rel_path[0..b_group.?];
+    const cmp = std.mem.order(u8, ag, bg);
+    if (cmp != .eq) return cmp == .lt; // groups: name asc
+    return a.mtime_ns > b.mtime_ns; // within a group: mtime desc
 }
 
 /// Parse session file bytes (exported for tests of the strict header contract).
@@ -2343,58 +2426,104 @@ test "resumeExisting allocation-index sweep: source intact, lease recoverable" {
     if (!saw_success) return error.TestUnexpectedResult;
 }
 
-test "listSessions: jsonl stems only, sidecars excluded" {
+test "listSessionEntries: flat + grouped jsonl entries with mtime/size; sidecars excluded" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.createDirPath(io, "sessions");
-    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/alpha.jsonl", .data = "x\n" });
-    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/beta.jsonl", .data = "y\n" });
-    // Sidecar + non-session entries must never surface as labels.
+    try tmp.dir.createDirPath(io, "sessions/proj");
+    try tmp.dir.createDirPath(io, "sessions/proj/deep"); // 2nd level — never scanned
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/alpha.jsonl", .data = "abc\n" }); // 4 B
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj/beta.jsonl", .data = "hello\n" }); // 6 B
+    // Sidecar + non-session + empty stem + deep-nested files must not surface.
     try tmp.dir.writeFile(io, .{ .sub_path = "sessions/alpha.jsonl.lock", .data = "" });
     try tmp.dir.writeFile(io, .{ .sub_path = "sessions/notes.txt", .data = "" });
-    // Empty stem (file literally named `.jsonl`) is skipped.
     try tmp.dir.writeFile(io, .{ .sub_path = "sessions/.jsonl", .data = "" });
-    // Subdirectory named `x.jsonl` is not a file → skipped.
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj/deep/nested.jsonl", .data = "x\n" });
+    // Subdirectory named `x.jsonl` is a dir, not a session file.
     try tmp.dir.createDirPath(io, "sessions/sub.jsonl");
 
-    var out: std.ArrayList([]u8) = .empty;
+    // Pin mtimes (whole seconds) so metadata assertions are exact.
+    const t_alpha: i96 = 1772615400000000000; // 2026-03-04 09:10:00 UTC
+    const t_beta: i96 = 1772694480000000000; // 2026-03-05 07:08:00 UTC
+    try tmp.dir.setTimestamps(io, "sessions/alpha.jsonl", .{ .modify_timestamp = .{ .new = .{ .nanoseconds = t_alpha } } });
+    try tmp.dir.setTimestamps(io, "sessions/proj/beta.jsonl", .{ .modify_timestamp = .{ .new = .{ .nanoseconds = t_beta } } });
+
+    var out: std.ArrayList(SessionEntry) = .empty;
     defer {
-        for (out.items) |s| gpa.free(s);
+        for (out.items) |e| gpa.free(e.rel_path);
         out.deinit(gpa);
     }
-    try listSessions(gpa, io, tmp.dir, "sessions", &out);
+    try listSessionEntries(gpa, io, tmp.dir, "sessions", &out);
     try std.testing.expectEqual(@as(usize, 2), out.items.len);
-    var saw_alpha = false;
-    var saw_beta = false;
-    for (out.items) |label| {
-        try std.testing.expect(std.mem.indexOf(u8, label, ".jsonl") == null);
-        try std.testing.expect(std.mem.indexOf(u8, label, ".lock") == null);
-        if (std.mem.eql(u8, label, "alpha")) saw_alpha = true;
-        if (std.mem.eql(u8, label, "beta")) saw_beta = true;
-    }
-    try std.testing.expect(saw_alpha and saw_beta);
+
+    // Flat entry first (ungrouped precedes grouped).
+    try std.testing.expectEqualStrings("alpha", out.items[0].rel_path);
+    try std.testing.expectEqual(t_alpha, out.items[0].mtime_ns);
+    try std.testing.expectEqual(@as(u64, 4), out.items[0].size_bytes);
+    try std.testing.expectEqualStrings("proj/beta", out.items[1].rel_path);
+    try std.testing.expectEqual(t_beta, out.items[1].mtime_ns);
+    try std.testing.expectEqual(@as(u64, 6), out.items[1].size_bytes);
 }
 
-test "listSessions: missing and empty dirs yield empty lists" {
+test "listSessionEntries: ordering — flat mtime desc, groups name asc, within group mtime desc" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    var out: std.ArrayList([]u8) = .empty;
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.createDirPath(io, "sessions/proj-b");
+    try tmp.dir.createDirPath(io, "sessions/proj-a");
+    for ([_]struct { path: []const u8, data: []const u8, ts: i96 }{
+        .{ .path = "sessions/old.jsonl", .data = "o\n", .ts = 1767225600000000000 }, // 2026-01-01 00:00
+        .{ .path = "sessions/new.jsonl", .data = "n\n", .ts = 1769907720000000000 }, // 2026-02-01 01:02
+        .{ .path = "sessions/proj-a/older.jsonl", .data = "x\n", .ts = 1770030720000000000 }, // 2026-02-02 11:12
+        .{ .path = "sessions/proj-a/newer.jsonl", .data = "y\n", .ts = 1770091200000000000 }, // 2026-02-03 04:00
+        .{ .path = "sessions/proj-b/only.jsonl", .data = "z\n", .ts = 1768482840000000000 }, // 2026-01-15 13:14
+    }) |f| {
+        try tmp.dir.writeFile(io, .{ .sub_path = f.path, .data = f.data });
+        try tmp.dir.setTimestamps(io, f.path, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = f.ts } } });
+    }
+
+    var out: std.ArrayList(SessionEntry) = .empty;
     defer {
-        for (out.items) |s| gpa.free(s);
+        for (out.items) |e| gpa.free(e.rel_path);
         out.deinit(gpa);
     }
-    // No sessions dir at all → empty listing (not an error).
-    try listSessions(gpa, io, tmp.dir, "sessions", &out);
+    try listSessionEntries(gpa, io, tmp.dir, "sessions", &out);
+    const want = [_][]const u8{
+        "new",              // flat, mtime desc
+        "old",              // flat, mtime desc
+        "proj-a/newer",     // group name asc; mtime desc inside
+        "proj-a/older",     //
+        "proj-b/only",      //
+    };
+    try std.testing.expectEqual(want.len, out.items.len);
+    for (want, 0..) |w, i| {
+        try std.testing.expectEqualStrings(w, out.items[i].rel_path);
+    }
+}
+
+test "listSessionEntries: missing and empty roots yield empty lists" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    var out: std.ArrayList(SessionEntry) = .empty;
+    defer {
+        for (out.items) |e| gpa.free(e.rel_path);
+        out.deinit(gpa);
+    }
+    // No sessions root at all → empty listing (not an error).
+    try listSessionEntries(gpa, io, tmp.dir, "sessions", &out);
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 
-    // Existing but empty dir → empty listing.
+    // Existing but empty root → empty listing.
     try tmp.dir.createDirPath(io, "sessions");
-    try listSessions(gpa, io, tmp.dir, "sessions", &out);
+    try listSessionEntries(gpa, io, tmp.dir, "sessions", &out);
     try std.testing.expectEqual(@as(usize, 0), out.items.len);
 }

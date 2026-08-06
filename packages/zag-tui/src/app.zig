@@ -198,19 +198,23 @@ pub const App = struct {
     overlay_line_count: usize = 0,
     /// Io handle for Theme FS discovery (set by applyHostPresentation).
     host_io: ?Io = null,
-    /// Resume overlay FS base: `resume_cwd` + `resume_root` are scanned for
-    /// `*.jsonl` sessions (session-resume-tui-001). Product defaults:
-    /// `Io.Dir.cwd()` + dirname of the bound session path (`.zag/sessions`
-    /// for ephemeral). Tests may point both at a tmp dir; the cwd handle is
-    /// borrowed (never closed here).
+    /// Resume overlay FS base: `resume_cwd` + the PINNED sessions root
+    /// (session-tree-001: the default `resume_root` when the active session
+    /// path sits inside it, else the active path's dirname) are scanned for
+    /// `*.jsonl` sessions. Tests may point both at a tmp dir; the cwd handle
+    /// is borrowed (never closed here).
     resume_cwd: Io.Dir = undefined,
     resume_root: []const u8 = ".zag/sessions",
-    /// Raw (unredacted) session stems backing the resume overlay rows —
+    /// Raw (unredacted) session rel paths backing the resume overlay rows —
     /// parallel to overlay_line_bufs so a selection maps back to the real
-    /// filename even though the displayed label went through the redaction
-    /// pipeline (filenames can embed secrets).
+    /// file (`{pinned_root}/{rel}.jsonl`) even though the displayed label
+    /// went through the redaction pipeline (filenames can embed secrets).
     resume_stem_bufs: [24][96]u8 = undefined,
     resume_stem_lens: [24]usize = [_]usize{0} ** 24,
+    /// Per-row kind for the resume overlay (parallel to overlay_line_bufs):
+    /// `.muted` = group header — renders muted, Enter is a no-op; `.normal`
+    /// = selectable session row (or the "(no sessions)" placeholder).
+    resume_row_kinds: [24]render.RowKind = [_]render.RowKind{.normal} ** 24,
 
     pub fn create(gpa: std.mem.Allocator) error{ OutOfMemory, PipeFailed }!*App {
         const app = try gpa.create(App);
@@ -1221,7 +1225,12 @@ pub const App = struct {
                 self.overlay.close();
             },
             .@"resume" => {
-                // The overlay line is the REDACTED label; the raw stem
+                // Group headers (kind .muted) are non-selectable: Enter is a
+                // no-op that keeps the overlay open. (Without the kind flag a
+                // header's empty stem would hit the "(no sessions)" close
+                // path below.)
+                if (self.resume_row_kinds[self.overlay.cursor] == .muted) return;
+                // The overlay line is the REDACTED label; the raw rel path
                 // backing this row lives in the parallel scratch (stems can
                 // embed secrets). An empty stem = the "(no sessions)" row
                 // (or a stale row) → close without acting.
@@ -1229,9 +1238,9 @@ pub const App = struct {
                     self.overlay.close();
                     return;
                 }
-                const stem = self.resume_stem_bufs[self.overlay.cursor][0..self.resume_stem_lens[self.overlay.cursor]];
-                const dir = self.sessionRoot();
-                const path = std.fmt.allocPrint(self.gpa, "{s}/{s}.jsonl", .{ dir, stem }) catch {
+                const rel = self.resume_stem_bufs[self.overlay.cursor][0..self.resume_stem_lens[self.overlay.cursor]];
+                const dir = self.pinnedSessionRoot();
+                const path = std.fmt.allocPrint(self.gpa, "{s}/{s}.jsonl", .{ dir, rel }) catch {
                     self.setNote("resume_failed");
                     self.overlay.close();
                     return;
@@ -1250,15 +1259,56 @@ pub const App = struct {
         }
     }
 
-    /// Session dir for the resume overlay: dirname of the bound session path
-    /// (the `-c` root), or the default `.zag/sessions` for ephemeral sessions.
-    fn sessionRoot(self: *const App) []const u8 {
+    /// PINNED sessions root for the resume browser (session-tree-001): the
+    /// default `resume_root` when the active session path sits inside it,
+    /// else the active path's dirname. Pinning the default root makes
+    /// `-s proj/foo.jsonl` sessions (created under the default root) list
+    /// their siblings — the old dirname-only resolution made them invisible
+    /// (documented instability).
+    fn pinnedSessionRoot(self: *const App) []const u8 {
         if (self.session) |s| {
             if (s.path) |p| {
+                const def = self.resume_root;
+                if (std.mem.startsWith(u8, p, def) and
+                    (p.len == def.len or p[def.len] == '/'))
+                {
+                    return def;
+                }
                 return std.fs.path.dirname(p) orelse ".";
             }
         }
         return self.resume_root;
+    }
+
+    /// Project prefix of a session rel path ("proj/stem" → "proj"), null
+    /// for ungrouped (flat) sessions.
+    fn groupPrefix(rel: []const u8) ?[]const u8 {
+        const i = std.mem.indexOfScalar(u8, rel, '/') orelse return null;
+        return rel[0..i];
+    }
+
+    /// UTC `MM-DD HH:MM` label for a session row (session-tree-001; no TZif
+    /// parsing in v1 — local-timezone display is a documented follow-up).
+    fn formatMtimeUtc(buf: []u8, mtime_ns: i96) []const u8 {
+        if (mtime_ns < 0) return buf[0..0]; // pre-epoch: no representation
+        const secs: u64 = @intCast(@divTrunc(mtime_ns, std.time.ns_per_s));
+        const ep = std.time.epoch.EpochSeconds{ .secs = secs };
+        const month_day = ep.getEpochDay().calculateYearDay().calculateMonthDay();
+        const day_secs = ep.getDaySeconds();
+        return std.fmt.bufPrint(buf, "{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}", .{
+            month_day.month.numeric(),
+            month_day.day_index + 1,
+            day_secs.getHoursIntoDay(),
+            day_secs.getMinutesIntoHour(),
+        }) catch buf[0..0];
+    }
+
+    /// `{n}B` under 1KiB, else `{tenths}KB` (one decimal, e.g. "1.5KB").
+    fn formatSizeLabel(buf: []u8, size: u64) []const u8 {
+        if (size < 1024) return std.fmt.bufPrint(buf, "{d}B", .{size}) catch buf[0..0];
+        const whole = size / 1024;
+        const frac = (size % 1024) * 10 / 1024;
+        return std.fmt.bufPrint(buf, "{d}.{d}KB", .{ whole, frac }) catch buf[0..0];
     }
 
     /// Does `path` equal the ACTIVE session's path? (Ephemeral sessions
@@ -1505,6 +1555,11 @@ pub const App = struct {
 
     fn rebuildOverlayLines(self: *App) usize {
         var n: usize = 0;
+        // Row kinds default to `.normal` for every overlay; the resume
+        // branch re-marks group-header rows `.muted` as it pushes them.
+        // (Reset here — not per branch — so a stale muted flag from a
+        // previous resume listing can never leak into another overlay.)
+        @memset(&self.resume_row_kinds, .normal);
         const push = struct {
             fn go(app: *App, text: []const u8, idx: *usize) void {
                 if (idx.* >= app.overlay_line_bufs.len) return;
@@ -1596,18 +1651,23 @@ pub const App = struct {
                 }
             },
             .@"resume" => {
-                // Session labels go through the SAME redaction pipeline as
-                // setIdentity (filenames can embed secrets); the raw stem is
-                // kept in parallel scratch so selection maps back to the
-                // real file. Cap 24 rows (overlay_line_bufs capacity).
+                // Session browser (session-tree-001): rows are
+                // `{rel} {mtime} {size}` for sessions (`rel` = "stem" or
+                // "proj/stem") plus muted `{project}/` group headers that
+                // are non-selectable. Labels (stems + group names) go
+                // through the SAME redaction pipeline as setIdentity
+                // (filenames can embed secrets); the raw rel path is kept
+                // in parallel scratch so selection maps back to the real
+                // file. Cap 24 rows incl. headers (overlay_line_bufs
+                // capacity).
                 @memset(&self.resume_stem_lens, 0);
-                var list: std.ArrayList([]u8) = .empty;
+                var list: std.ArrayList(coding.session_store.SessionEntry) = .empty;
                 defer {
-                    for (list.items) |item| self.gpa.free(item);
+                    for (list.items) |item| self.gpa.free(item.rel_path);
                     list.deinit(self.gpa);
                 }
                 if (self.host_io) |io| {
-                    coding.session_store.listSessions(self.gpa, io, self.resume_cwd, self.sessionRoot(), &list) catch {
+                    coding.session_store.listSessionEntries(self.gpa, io, self.resume_cwd, self.pinnedSessionRoot(), &list) catch {
                         // Fail closed: a listing I/O error is an empty list.
                         list.clearRetainingCapacity();
                     };
@@ -1615,15 +1675,54 @@ pub const App = struct {
                 if (list.items.len == 0) {
                     push(self, "(no sessions)", &n);
                 } else {
-                    var stem_buf: [96]u8 = undefined;
+                    var prev_group: ?[]const u8 = null;
                     var i: usize = 0;
                     while (i < list.items.len and n < self.overlay_line_bufs.len) : (i += 1) {
-                        const stem = list.items[i];
-                        const redacted = present.presentInto(self.gpa, self.redactor, &stem_buf, stem);
-                        const take = @min(stem.len, self.resume_stem_bufs[n].len);
-                        @memcpy(self.resume_stem_bufs[n][0..take], stem[0..take]);
+                        const entry = list.items[i];
+                        const group = groupPrefix(entry.rel_path);
+                        if (group) |proj| {
+                            if (prev_group == null or !std.mem.eql(u8, prev_group.?, proj)) {
+                                // Group header `{project}/`: muted +
+                                // non-selectable (kind flag); emitted only
+                                // when at least one session row can follow.
+                                if (n + 1 >= self.overlay_line_bufs.len) break;
+                                var proj_buf: [96]u8 = undefined;
+                                const redacted = present.presentInto(self.gpa, self.redactor, &proj_buf, proj);
+                                const take: usize = if (redacted < proj_buf.len) blk: {
+                                    proj_buf[redacted] = '/';
+                                    break :blk redacted + 1;
+                                } else redacted;
+                                self.resume_row_kinds[n] = .muted;
+                                push(self, proj_buf[0..take], &n);
+                                prev_group = proj;
+                            }
+                        } else {
+                            prev_group = null;
+                        }
+                        if (n >= self.overlay_line_bufs.len) break;
+                        // Session row: `{rel} {mtime} {size}` — the raw rel
+                        // path backs the row (parallel scratch) while the
+                        // displayed label is redacted; mtime+size sit at the
+                        // right of the row within the 96-byte cap (the stem
+                        // truncates first, so metadata stays visible).
+                        var meta_buf: [24]u8 = undefined;
+                        const mtime_str = formatMtimeUtc(&meta_buf, entry.mtime_ns);
+                        var size_buf: [16]u8 = undefined;
+                        const size_str = formatSizeLabel(&size_buf, entry.size_bytes);
+                        const meta_len = mtime_str.len + 1 + size_str.len;
+                        var stem_buf: [96]u8 = undefined;
+                        const stem_budget = self.overlay_line_bufs[n].len -| (meta_len + 1);
+                        const rel_redacted = present.presentInto(self.gpa, self.redactor, stem_buf[0..stem_budget], entry.rel_path);
+                        const take = @min(entry.rel_path.len, self.resume_stem_bufs[n].len);
+                        @memcpy(self.resume_stem_bufs[n][0..take], entry.rel_path[0..take]);
                         self.resume_stem_lens[n] = take;
-                        push(self, stem_buf[0..redacted], &n);
+                        stem_buf[rel_redacted] = ' ';
+                        const m_off = rel_redacted + 1;
+                        @memcpy(stem_buf[m_off..][0..mtime_str.len], mtime_str);
+                        const s_off = m_off + mtime_str.len;
+                        stem_buf[s_off] = ' ';
+                        @memcpy(stem_buf[s_off + 1 ..][0..size_str.len], size_str);
+                        push(self, stem_buf[0 .. s_off + 1 + size_str.len], &n);
                     }
                 }
             },
@@ -1803,6 +1902,7 @@ pub const App = struct {
             .kind = self.overlay.kind,
             .cursor = self.overlay.cursor,
             .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
+            .row_kinds = self.resume_row_kinds[0..self.overlay_line_count],
         };
         // Compute the layout once here: renderFrame draws it, and the cards
         // interior (region minus the closed-frame borders) is the scrollback
@@ -2739,6 +2839,305 @@ test "tui-resume: secret-bearing filenames redact in the listing" {
     // Raw stem still resolves to the real filename.
     const raw = app.resume_stem_bufs[0][0..app.resume_stem_lens[0]];
     try std.testing.expect(std.mem.eql(u8, raw, secret));
+}
+
+// ── session-tree-001 fixtures: grouped browser / metadata / pinning ────────
+//
+// Pinned mtimes (UTC, whole seconds) used across the grouped fixtures:
+//   1768482840 = 2026-01-15 13:14, 1769907720 = 2026-02-01 01:02,
+//   1770030720 = 2026-02-02 11:12, 1772615400 = 2026-03-04 09:10,
+//   1772694480 = 2026-03-05 07:08.
+
+test "tui-resume: grouped browser — ordering, headers, mtime+size rows" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    const fixture = [_]struct { path: []const u8, data: []const u8, ts: i96 }{
+        .{ .path = "sessions/beta.jsonl", .data = "bb\n", .ts = 1772694480000000000 }, // 03-05 07:08, 3 B
+        .{ .path = "sessions/alpha.jsonl", .data = "a\n", .ts = 1772615400000000000 }, // 03-04 09:10, 2 B
+        .{ .path = "sessions/proj-a/y.jsonl", .data = "yyyy\n", .ts = 1770030720000000000 }, // 02-02 11:12, 5 B
+        .{ .path = "sessions/proj-a/x.jsonl", .data = "x\n", .ts = 1769907720000000000 }, // 02-01 01:02, 2 B
+        .{ .path = "sessions/proj-b/z.jsonl", .data = "z\n", .ts = 1768482840000000000 }, // 01-15 13:14, 2 B
+    };
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.createDirPath(io, "sessions/proj-a");
+    try tmp.dir.createDirPath(io, "sessions/proj-b");
+    for (fixture) |f| {
+        try tmp.dir.writeFile(io, .{ .sub_path = f.path, .data = f.data });
+        try tmp.dir.setTimestamps(io, f.path, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = f.ts } } });
+    }
+
+    app.overlay.open(.@"resume");
+    const n = app.rebuildOverlayLines();
+    // Flat first (mtime desc), then groups name asc, within group mtime desc;
+    // group headers `{project}/`; session rows `{rel} {mtime} {size}`.
+    const want = [_][]const u8{
+        "beta 03-05 07:08 3B",
+        "alpha 03-04 09:10 2B",
+        "proj-a/",
+        "proj-a/y 02-02 11:12 5B",
+        "proj-a/x 02-01 01:02 2B",
+        "proj-b/",
+        "proj-b/z 01-15 13:14 2B",
+    };
+    try std.testing.expectEqual(want.len, n);
+    for (want, 0..) |w, i| {
+        try std.testing.expectEqualStrings(w, app.overlay_line_ptrs[i]);
+    }
+    // Headers are muted-kind; session rows normal; raw rel paths back rows.
+    try std.testing.expectEqual(render.RowKind.muted, app.resume_row_kinds[2]);
+    try std.testing.expectEqual(render.RowKind.muted, app.resume_row_kinds[5]);
+    try std.testing.expectEqual(render.RowKind.normal, app.resume_row_kinds[0]);
+    try std.testing.expectEqualStrings("beta", app.resume_stem_bufs[0][0..app.resume_stem_lens[0]]);
+    try std.testing.expectEqualStrings("proj-a/y", app.resume_stem_bufs[3][0..app.resume_stem_lens[3]]);
+    // Headers have NO raw stem backing (they are not selectable).
+    try std.testing.expectEqual(@as(usize, 0), app.resume_stem_lens[2]);
+}
+
+test "tui-resume: Enter on a group header is a no-op (overlay stays open)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.createDirPath(io, "sessions/proj");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj/a.jsonl", .data = "x\n" });
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    // Row 0 is the group header (the only entry is grouped).
+    try std.testing.expectEqual(render.RowKind.muted, app.resume_row_kinds[0]);
+    app.overlay.cursor = 0;
+    _ = app.handleKey(.enter);
+    // No-op: the overlay stays open (a header must never hit the
+    // empty-stem "(no sessions)" close path).
+    try std.testing.expect(app.overlay.isOpen());
+    try std.testing.expectEqual(UiState.idle, app.state);
+}
+
+test "tui-resume: 24-row cap includes group headers (headers consume rows)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.createDirPath(io, "sessions/proj");
+    var i: usize = 0;
+    while (i < 22) : (i += 1) {
+        var name_buf: [64]u8 = undefined;
+        const name = try std.fmt.bufPrint(&name_buf, "sessions/f{d:0>2}.jsonl", .{i});
+        try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "x\n" });
+    }
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj/s1.jsonl", .data = "x\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj/s2.jsonl", .data = "x\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj/s3.jsonl", .data = "x\n" });
+
+    app.overlay.open(.@"resume");
+    const n = app.rebuildOverlayLines();
+    try std.testing.expectEqual(@as(usize, 24), n); // 22 flat + header + 1 session
+    // The header consumes a row: exactly ONE group session fits under the
+    // cap (which one is mtime order — equal-mtime ties are unordered).
+    try std.testing.expectEqual(render.RowKind.muted, app.resume_row_kinds[22]);
+    var group_rows: usize = 0;
+    var group_session_rows: usize = 0;
+    var scan: usize = 0;
+    while (scan < n) : (scan += 1) {
+        if (app.resume_row_kinds[scan] == .muted) group_rows += 1;
+        if (std.mem.startsWith(u8, app.resume_stem_bufs[scan][0..app.resume_stem_lens[scan]], "proj/")) group_session_rows += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), group_rows);
+    try std.testing.expectEqual(@as(usize, 1), group_session_rows);
+}
+
+test "tui-resume: secret-bearing group names and stems redact; raw rel paths kept" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = coding.redact.testing.fake_api_key;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    var dir_buf: [256]u8 = undefined;
+    const dir = try std.fmt.bufPrint(&dir_buf, "sessions/{s}", .{secret});
+    try tmp.dir.createDirPath(io, dir);
+    var file_buf: [300]u8 = undefined;
+    const file = try std.fmt.bufPrint(&file_buf, "{s}/inner.jsonl", .{dir});
+    try tmp.dir.writeFile(io, .{ .sub_path = file, .data = "x\n" });
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    // Header row: `{marker}/`; session row: `{marker}/inner {mtime} {size}`.
+    try std.testing.expectEqual(render.RowKind.muted, app.resume_row_kinds[0]);
+    const header = app.overlay_line_ptrs[0];
+    try std.testing.expect(std.mem.indexOf(u8, header, secret) == null);
+    try std.testing.expect(std.mem.indexOf(u8, header, coding.redact.marker) != null);
+    try std.testing.expect(std.mem.endsWith(u8, header, "/"));
+    const row = app.overlay_line_ptrs[1];
+    try std.testing.expect(std.mem.indexOf(u8, row, secret) == null);
+    // Raw rel path still resolves to the real grouped file.
+    const raw = app.resume_stem_bufs[1][0..app.resume_stem_lens[1]];
+    var want_buf: [300]u8 = undefined;
+    const want = try std.fmt.bufPrint(&want_buf, "{s}/inner", .{secret});
+    try std.testing.expect(std.mem.eql(u8, raw, want));
+}
+
+test "tui-resume: selection resolves grouped and flat rel paths to root/{rel}.jsonl" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const active = try startSwapSession(gpa, io, &tmp, "sessions/active-src.jsonl", .create_new, &r);
+    try active.transcript.appendUser("active-q");
+    try active.save();
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, active, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    const fixture = session_header_line ++
+        \\{"role":"user","content":"grouped q"}
+        \\{"role":"assistant","content":"grouped a"}
+    ;
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.createDirPath(io, "sessions/proj-a");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/proj-a/y.jsonl", .data = fixture });
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/beta.jsonl", .data = fixture });
+
+    // Grouped selection: rel path "proj-a/y" resolves to
+    // {pinned_root}/proj-a/y.jsonl (root pinned to "sessions" — the active
+    // path sits inside the default root).
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const grouped_row = resumeRowFor(app, "proj-a/y") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = grouped_row;
+    _ = app.handleKey(.enter);
+    try std.testing.expect(!app.overlay.isOpen());
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+    try std.testing.expectEqualStrings("sessions/proj-a/y.jsonl", app.session.?.path.?);
+
+    // Flat selection: rel path "beta" resolves to {pinned_root}/beta.jsonl.
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const flat_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = flat_row;
+    _ = app.handleKey(.enter);
+    try std.testing.expect(!app.overlay.isOpen());
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+    try std.testing.expectEqualStrings("sessions/beta.jsonl", app.session.?.path.?);
+}
+
+test "tui-resume: root pinning — default root wins under it, else dirname" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.createDirPath(io, "elsewhere");
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/under.jsonl", .data = "x\n" });
+    try tmp.dir.writeFile(io, .{ .sub_path = "elsewhere/out.jsonl", .data = "x\n" });
+
+    // Active path INSIDE the default root → pinned root is the default:
+    // only sessions/under.jsonl is listed.
+    {
+        const active = try startSwapSession(gpa, io, &tmp, "sessions/active.jsonl", .create_new, &r);
+        try active.save();
+        const app = try App.create(gpa);
+        defer app.destroy();
+        app.session = active; // App owns it from here (destroy deinits)
+        wireResumeFixture(app, &tmp, io);
+        app.overlay.open(.@"resume");
+        _ = app.rebuildOverlayLines();
+        try std.testing.expect(resumeRowFor(app, "under") != null);
+        try std.testing.expect(resumeRowFor(app, "out") == null);
+    }
+
+    // Active path OUTSIDE the default root → pinned root is its dirname:
+    // only elsewhere/out.jsonl is listed.
+    {
+        const active = try startSwapSession(gpa, io, &tmp, "elsewhere/active.jsonl", .create_new, &r);
+        try active.save();
+        const app = try App.create(gpa);
+        defer app.destroy();
+        app.session = active;
+        wireResumeFixture(app, &tmp, io);
+        app.overlay.open(.@"resume");
+        _ = app.rebuildOverlayLines();
+        try std.testing.expect(resumeRowFor(app, "out") != null);
+        try std.testing.expect(resumeRowFor(app, "under") == null);
+    }
+}
+
+test "tui-resume: mtime+size stay right-aligned within the 96-byte row cap" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    wireResumeFixture(app, &tmp, io);
+
+    try tmp.dir.createDirPath(io, "sessions");
+    // 100-byte stem + KB-size file: the row must truncate the STEM and keep
+    // `{mtime} {size}` at the right end of the 96-byte cap.
+    const long_stem = "x" ** 100;
+    var name_buf: [200]u8 = undefined;
+    const name = try std.fmt.bufPrint(&name_buf, "sessions/{s}.jsonl", .{long_stem});
+    const big = "y" ** 2048;
+    try tmp.dir.writeFile(io, .{ .sub_path = name, .data = big });
+    const t: i96 = 1772615400000000000; // 2026-03-04 09:10 UTC
+    try tmp.dir.setTimestamps(io, name, .{ .modify_timestamp = .{ .new = .{ .nanoseconds = t } } });
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const row = app.overlay_line_ptrs[0];
+    try std.testing.expectEqual(@as(usize, 96), row.len); // truncated at the cap
+    // The metadata tail survives truncation (right-aligned within the cap).
+    try std.testing.expect(std.mem.endsWith(u8, row, "03-04 09:10 2.0KB"));
+    // The raw rel path behind the row is capped by the frozen 96-byte
+    // selection buffer (documented: rel paths beyond it cannot select).
+    try std.testing.expectEqual(@as(usize, 96), app.resume_stem_lens[0]);
 }
 
 test "tui-resume: selection swaps to and replays the selected session in order" {
