@@ -252,6 +252,20 @@ pub const CardRing = struct {
         self.writePreparedLocked(host_error_idx, .host_error, prepared);
     }
 
+    /// session-swap-001: reset every slot (ordinary FIFO + terminal /
+    /// host-error / drop-note reserves) and every counter so a swapped-in
+    /// session's replay starts from an empty ring — two sessions' cards
+    /// never concatenate. Idle-only by contract (externally synchronized).
+    pub fn clear(self: *CardRing) void {
+        self.lock();
+        defer self.unlock();
+        self.slots = [_]CardSlot{.{}} ** c.card_slots;
+        self.ordinary_count = 0;
+        self.ordinary_start = 0;
+        self.cards_dropped = 0;
+        self.ui_seq = 0;
+    }
+
     pub fn snapshotSeq(self: *CardRing) u64 {
         self.lock();
         defer self.unlock();
@@ -336,6 +350,30 @@ test "terminal reserve retained under ordinary flood" {
     }
     try std.testing.expect(ring.slots[CardRing.terminal_idx].occupied);
     try std.testing.expectEqualStrings("run_terminal", ring.slots[CardRing.terminal_idx].titleSlice());
+}
+
+test "clear resets ordinary slots, reserves and counters" {
+    var ring = CardRing.init();
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    ring.publishOrdinary(gpa, &r, "t1", "b1");
+    ring.publishOrdinary(gpa, &r, "t2", "b2");
+    ring.publishTerminalFixed("run_terminal", "ok=true");
+    ring.publishHostErrorFixed("host_error", "boom");
+    try std.testing.expectEqual(@as(usize, 2), ring.ordinary_count);
+    try std.testing.expect(ring.slots[CardRing.terminal_idx].occupied);
+    try std.testing.expect(ring.slots[CardRing.host_error_idx].occupied);
+    ring.clear();
+    try std.testing.expectEqual(@as(usize, 0), ring.ordinary_count);
+    try std.testing.expectEqual(@as(usize, 0), ring.ordinary_start);
+    try std.testing.expectEqual(@as(u32, 0), ring.cards_dropped);
+    try std.testing.expectEqual(@as(u64, 0), ring.ui_seq);
+    for (ring.slots) |slot| try std.testing.expect(!slot.occupied);
+    // Ring is usable after the clear (fresh publish lands at slot 0).
+    ring.publishOrdinary(gpa, &r, "t3", "b3");
+    try std.testing.expectEqual(@as(usize, 1), ring.ordinary_count);
+    try std.testing.expectEqualStrings("t3", ring.slots[0].titleSlice());
 }
 
 test "publishOrdinary redacts outside lock (secret not stored raw)" {

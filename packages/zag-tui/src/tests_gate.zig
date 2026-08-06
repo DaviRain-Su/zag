@@ -31,6 +31,7 @@ const MockChat = struct {
         _: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *MockChat = @ptrCast(@alignCast(ptr));
         self.calls += 1;
@@ -171,15 +172,23 @@ test "gate6_real_worker_join_ack_success_and_error" {
             .lifecycle = app.lifecycleObserver(),
         });
         defer agent.deinit();
-        var session = try coding.Session.start(gpa, io, .{
+        const session = try gpa.create(coding.Session);
+        session.* = try coding.Session.start(gpa, io, .{
             .base_system = "sys",
             .load_project_instructions = false,
             .redactor = agent.activeRedactor(),
             .skills_enabled = false,
             .templates_enabled = false,
         });
-        defer session.deinit();
-        try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+        // session-swap-001: ownership handed to the App (released back to
+        // the test before the second block rebinds below).
+        try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .redactor = agent.activeRedactor(),
+            .skills_enabled = false,
+            .templates_enabled = false,
+        });
         app.setIdentity(gpa, session.activeRedactor(), "ephemeral", .n_a, "yolo", "protect");
 
         _ = app.editor.insert("hi");
@@ -198,6 +207,14 @@ test "gate6_real_worker_join_ack_success_and_error" {
         }
         try std.testing.expectEqual(@as(u32, 1), host.ack_count.load(.acquire));
         try std.testing.expect(app.state == .idle);
+
+        // session-swap-001: App owns only the CURRENT session; release the
+        // first block's session back to the test before rebinding.
+        if (app.session) |s| {
+            s.deinit();
+            gpa.destroy(s);
+            app.session = null;
+        }
     }
 
     // Error run.
@@ -209,15 +226,21 @@ test "gate6_real_worker_join_ack_success_and_error" {
             .lifecycle = app.lifecycleObserver(),
         });
         defer agent.deinit();
-        var session = try coding.Session.start(gpa, io, .{
+        const session = try gpa.create(coding.Session);
+        session.* = try coding.Session.start(gpa, io, .{
             .base_system = "sys",
             .load_project_instructions = false,
             .redactor = agent.activeRedactor(),
             .skills_enabled = false,
             .templates_enabled = false,
         });
-        defer session.deinit();
-        try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+        try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+            .base_system = "sys",
+            .load_project_instructions = false,
+            .redactor = agent.activeRedactor(),
+            .skills_enabled = false,
+            .templates_enabled = false,
+        });
         _ = app.editor.insert("boom");
         try app.dispatchReply();
         while (app.worker_active) {
@@ -248,15 +271,23 @@ test "gate7_ack_between_two_real_runs" {
         .lifecycle = app.lifecycleObserver(),
     });
     defer agent.deinit();
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "sys",
         .load_project_instructions = false,
         .redactor = agent.activeRedactor(),
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
-    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+    // session-swap-001: ownership handed to the App (App.destroy deinits +
+    // destroys the CURRENT session exactly once).
+    try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
 
     var run_i: u32 = 0;
     while (run_i < 2) : (run_i += 1) {
@@ -314,16 +345,24 @@ test "gate11_lifecycle_real_agent_ordering" {
         .observer = app.observer(),
     });
     defer agent.deinit();
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "sys",
         .load_project_instructions = false,
         .redactor = agent.activeRedactor(),
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
-    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
-    _ = try agent.reply(&session, "hi");
+    // session-swap-001: ownership handed to the App (App.destroy deinits +
+    // destroys the CURRENT session exactly once).
+    try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    _ = try agent.reply(session, "hi");
     var snap: [c.card_slots]cards.CardSlot = undefined;
     const n = app.card_ring.snapshot(&snap);
     var saw_start = false;
@@ -533,15 +572,23 @@ test "gate16_busy_locks_root_submit_single_flight" {
         .lifecycle = app.lifecycleObserver(),
     });
     defer agent.deinit();
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "sys",
         .load_project_instructions = false,
         .redactor = agent.activeRedactor(),
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
-    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+    // session-swap-001: ownership handed to the App (App.destroy deinits +
+    // destroys the CURRENT session exactly once).
+    try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
     app.worker_active = true;
     app.state = .busy;
     _ = app.editor.insert("second");
@@ -561,15 +608,23 @@ test "gate19_control_queue_retained_after_error_join" {
         .lifecycle = app.lifecycleObserver(),
     });
     defer agent.deinit();
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "sys",
         .load_project_instructions = false,
         .redactor = agent.activeRedactor(),
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
-    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+    // session-swap-001: ownership handed to the App (App.destroy deinits +
+    // destroys the CURRENT session exactly once).
+    try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
 
     // Real error worker join, then enqueue post-join (survives idle).
     _ = app.editor.insert("x");
@@ -663,20 +718,28 @@ test "gate21_all_field_secret_redaction" {
         .hunk_reviewer = coding.autoAcceptHunkReviewer(),
     });
     defer agent.deinit();
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "sys",
         .load_project_instructions = false,
         .redactor = agent.activeRedactor(),
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
-    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+    // session-swap-001: ownership handed to the App (App.destroy deinits +
+    // destroys the CURRENT session exactly once).
+    try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
     app.setIdentity(gpa, session.activeRedactor(), "path-" ++ secret, .create_new, "yolo", "protect");
     try std.testing.expect(std.mem.indexOf(u8, app.idDisplay(), secret) == null);
 
     // Tool path + assistant path via real reply (write_file into owned workspace).
-    _ = try agent.reply(&session, "do it");
+    _ = try agent.reply(session, "do it");
 
     // Isolation proof: tool args target this run's unique relative workspace,
     // and the real write landed only there (no bare-cwd x.txt probe — user may
@@ -780,15 +843,23 @@ test "gate_submit_publishes_user_card_in_transcript" {
         .lifecycle = app.lifecycleObserver(),
     });
     defer agent.deinit();
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "sys",
         .load_project_instructions = false,
         .redactor = agent.activeRedactor(),
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
-    try app.bind(&agent, &session, session.activeRedactor().?, host.asHost());
+    // session-swap-001: ownership handed to the App (App.destroy deinits +
+    // destroys the CURRENT session exactly once).
+    try app.bind(&agent, session, session.activeRedactor().?, host.asHost(), .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = agent.activeRedactor(),
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
 
     _ = app.editor.insert("hello user card");
     try app.dispatchReply();

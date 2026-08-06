@@ -520,7 +520,8 @@ pub fn run(init: std.process.Init) !void {
 
     // ── TUI path (comptime-gated so -Dtui=false never types zag-tui) ────────
     // Explicit teardown before process.exit — defers do not run across exit().
-    // Order: Guard.deinit (in runTui) → Session.deinit (in runTui) → Agent → App last.
+    // Order: Guard.deinit (in runTui) → Agent.deinit → App.destroy
+    // (session deinit+destroy inside, App last).
     if (comptime tui_enabled) {
         if (want_tui) {
             const app = tui_entry.App.create(gpa) catch {
@@ -582,7 +583,9 @@ pub fn run(init: std.process.Init) !void {
                 .permission_label = permission_mode.name(),
                 .shell_label = shell_policy.name(),
             });
-            // Guard + Session already freed inside runTui. Explicit Agent then App.
+            // Guard freed inside runTui. The Session is App-owned from bind
+            // (App.destroy below deinits + destroys it, after Agent.deinit —
+            // session state is session-owned). Explicit Agent then App.
             agent.deinit();
             app.destroy();
             std.process.exit(result.exit_code);

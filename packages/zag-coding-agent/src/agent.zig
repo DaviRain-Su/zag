@@ -137,6 +137,10 @@ pub const SessionStartOptions = struct {
     project_templates_trust: prompt_templates_mod.ProjectTemplatesTrust = .untrusted,
     /// Host-owned user templates root (`$HOME/.agents/prompts`). SDK must pass explicitly; never getenv.
     user_templates_root: ?[]const u8 = null,
+    /// Session-store workspace root for `path` resolution (session-swap-001).
+    /// Defaults to `Io.Dir.cwd()`; a TUI swap resolves the newly selected
+    /// session against the same root the resume overlay listed.
+    cwd: ?Io.Dir = null,
 };
 
 pub const StartError = loop.RunError || session_store.Error;
@@ -199,6 +203,9 @@ pub const Session = struct {
             gpa.destroy(arena_impl);
         }
         const arena = arena_impl.allocator();
+        // session-swap-001: session files resolve against the caller's chosen
+        // workspace root (product = process cwd, unchanged).
+        const start_cwd = opts.cwd orelse Io.Dir.cwd();
 
         // Control queues: preallocate BEFORE create/resume I/O or writer lease so
         // preallocation OOM cannot create a file or retain a lease (harness-steering-001).
@@ -256,7 +263,7 @@ pub const Session = struct {
             switch (opts.open_mode) {
                 .create_new => {
                     try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
-                    writer = try session_store.createNewWithRedactor(gpa, io, Io.Dir.cwd(), p, transcript.items(), .{
+                    writer = try session_store.createNewWithRedactor(gpa, io, start_cwd, p, transcript.items(), .{
                         .schema_version = session_store.current_schema_version,
                         .zag_version = "0.5.0",
                         .compaction_gen = compaction_gen,
@@ -265,7 +272,7 @@ pub const Session = struct {
                 },
                 .resume_existing => {
                     var meta: session_store.SessionMeta = .{};
-                    writer = try session_store.resumeExisting(gpa, io, Io.Dir.cwd(), p, &transcript, &meta);
+                    writer = try session_store.resumeExisting(gpa, io, start_cwd, p, &transcript, &meta);
                     compaction_gen = meta.compaction_gen;
                     compaction_summary = meta.compaction_summary;
                     resumed = true;
@@ -273,7 +280,7 @@ pub const Session = struct {
                 .open_or_create => {
                     // SDK convenience: create only after typed not-found; never on parse/schema/I/O.
                     var meta: session_store.SessionMeta = .{};
-                    if (session_store.resumeExisting(gpa, io, Io.Dir.cwd(), p, &transcript, &meta)) |w| {
+                    if (session_store.resumeExisting(gpa, io, start_cwd, p, &transcript, &meta)) |w| {
                         writer = w;
                         compaction_gen = meta.compaction_gen;
                         compaction_summary = meta.compaction_summary;
@@ -281,7 +288,7 @@ pub const Session = struct {
                     } else |err| switch (err) {
                         error.SessionNotFound => {
                             try seedNewTranscript(gpa, io, arena, &transcript, opts, &project_body, &project_source);
-                            writer = try session_store.createNewWithRedactor(gpa, io, Io.Dir.cwd(), p, transcript.items(), .{
+                            writer = try session_store.createNewWithRedactor(gpa, io, start_cwd, p, transcript.items(), .{
                                 .schema_version = session_store.current_schema_version,
                                 .zag_version = "0.5.0",
                                 .compaction_gen = compaction_gen,
@@ -295,7 +302,7 @@ pub const Session = struct {
             }
             // Reload live project file for Layers on resume only.
             if (resumed and opts.load_project_instructions) {
-                if (project_mod.load(gpa, io, Io.Dir.cwd()) catch null) |loaded| {
+                if (project_mod.load(gpa, io, start_cwd) catch null) |loaded| {
                     defer gpa.free(loaded.body);
                     project_source = loaded.source;
                     project_body = arena.dupe(u8, loaded.body) catch return error.OutOfMemory;
@@ -981,7 +988,7 @@ fn agentSummarize(ptr: *anyopaque, request: ztypes.SummaryRequest) ztypes.Summar
     var control = ztypes.RequestControl.withTimeoutMs(ztypes.monoNowNs(), timeout_ms);
     control = control.withCancel(&a.cancel);
 
-    const turn = a.provider.chat(arena, &messages, &.{}, control) catch |err| {
+    const turn = a.provider.chat(arena, &messages, &.{}, control, null) catch |err| {
         return .{ .err = .{ .kind = mapSummaryErrorKind(err), .message = @errorName(err) } };
     };
     return .{ .ok = .{ .text = turn.content } };
@@ -1884,6 +1891,7 @@ test "Agent pre-handler jail deny for long path is bounded and handler not execu
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             const filler = try arena.alloc(u8, 70 * 1024);
@@ -1953,6 +1961,7 @@ test "Agent.reply save failure returns IoFailed and preserves session bytes" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "ok"),
@@ -2015,6 +2024,7 @@ test "Agent Phase1Storage grep and glob default missing and empty path in tmp cw
             messages: []const message.Message,
             defs: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -2103,6 +2113,7 @@ const MockChat = struct {
         _: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *MockChat = @ptrCast(@alignCast(ptr));
         self.calls.* += 1;
@@ -2287,6 +2298,7 @@ test "h-provider: unsupported_control exact run_end once" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -2328,6 +2340,7 @@ test "h-provider: timeout exact run_end once" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -2368,6 +2381,7 @@ test "h-provider: retryable error exact chat_retries+1 attempts" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -2415,6 +2429,7 @@ test "h-trace: per-run cancel clears stale flag; second reply completes" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -2503,6 +2518,7 @@ test "h-trace: pre-run pending cancel applies to the current run (cli-sigint-001
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -2578,6 +2594,7 @@ test "h-trace: beginRun preflight OOM clears a pre-set cancel flag (cli-sigint-0
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -3150,6 +3167,7 @@ const CaptureViewChat = struct {
         messages: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *CaptureViewChat = @ptrCast(@alignCast(ptr));
         self.calls.* += 1;
@@ -3451,6 +3469,7 @@ test "h-context: on_compaction OOM aborts before trace compaction line" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "should-not-reach"),
@@ -3563,6 +3582,7 @@ test "compaction-llm: product summarizer feeds LLM text into session meta + trac
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3642,6 +3662,7 @@ test "compaction-llm: product summarizer provider failure falls back to heuristi
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -4122,6 +4143,7 @@ const EchoSecretChat = struct {
         messages: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *EchoSecretChat = @ptrCast(@alignCast(ptr));
         self.step += 1;
@@ -4425,6 +4447,7 @@ const FailAlwaysChat = struct {
         _: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         return error.AuthenticationFailed;
     }
@@ -4625,6 +4648,7 @@ test "h-redact: mid-trace redaction OOM still one out_of_memory terminal" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             if (self.agent.trace) |*tr| {
@@ -4690,6 +4714,7 @@ test "h-redact: reply clears trace redactor on success and failure" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return error.AuthenticationFailed;
         }
@@ -5415,6 +5440,7 @@ test "h-integration: default Agent ask-deny write leaves target, permission_deni
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -5554,6 +5580,7 @@ test "h-integration: default Agent yolo escaping-symlink jail_deny, outside inta
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -5769,6 +5796,7 @@ test "h-edit: recoverable write fault composes transcript session resume parsed 
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -5875,6 +5903,7 @@ const ShellRecoveryProvider = struct {
         messages: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         self.step += 1;
@@ -6248,6 +6277,7 @@ test "h-integration: cancel between accepted Tools preserves IDs, skips pending,
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -6908,6 +6938,7 @@ test "harness-events: tool start/end correlation + soft permission deny" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -7008,6 +7039,7 @@ test "harness-events: cancel end-only pending tools preserve program-order index
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -7203,6 +7235,7 @@ test "harness-events: provider/session/timeout/unsupported terminals are exact-o
                 _: []const message.Message,
                 _: []const tool.Definition,
                 _: provider_mod.RequestControl,
+                _: ?*?u64,
             ) provider_mod.ChatError!message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.calls.* += 1;
@@ -7247,6 +7280,7 @@ test "harness-events: provider/session/timeout/unsupported terminals are exact-o
                 _: []const message.Message,
                 _: []const tool.Definition,
                 _: provider_mod.RequestControl,
+                _: ?*?u64,
             ) provider_mod.ChatError!message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.calls.* += 1;
@@ -7335,6 +7369,7 @@ test "tui-streaming: facade forwards deltas observer-first, clear before retry d
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "final"),
@@ -7350,6 +7385,7 @@ test "tui-streaming: facade forwards deltas observer-first, clear before retry d
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.attempts += 1;
@@ -7452,6 +7488,7 @@ test "tui-thinking-streaming: facade forwards thinking_delta to lifecycle only" 
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "answer"),
@@ -7468,6 +7505,7 @@ test "tui-thinking-streaming: facade forwards thinking_delta to lifecycle only" 
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             handler(handler_ctx, "", "chain");
             handler(handler_ctx, " of", null);
@@ -7909,6 +7947,7 @@ test "harness-events: no-Trace second-turn provider failure reports source turns
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -8018,6 +8057,7 @@ test "harness-events: hard mid-tool OOM has tool_start without tool_end" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -8179,6 +8219,7 @@ test "harness-events: soft-result correlation unknown invalid jail shell handler
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -8547,6 +8588,7 @@ test "harness-steering: foreign-thread enqueue during reply is observed" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -8664,6 +8706,7 @@ test "harness-steering: mid-batch product path steered body + lifecycle" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -8819,6 +8862,7 @@ test "harness-steering: Trace records steered tool_result; no control EventKind"
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -8925,6 +8969,7 @@ test "harness-steering: injected steering still hits ask-deny write gate" {
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -9023,7 +9068,7 @@ test "edit-sharp §10.13 Options ports root surface and custom toolset no auto-s
         var agent = try Agent.init(gpa, io, .{
             .ptr = undefined,
             .vtable = &.{ .chat = struct {
-                fn c(_: *anyopaque, _: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl) provider_mod.ChatError!message.AssistantTurn {
+                fn c(_: *anyopaque, _: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl, _: ?*?u64) provider_mod.ChatError!message.AssistantTurn {
                     return error.InvalidResponse;
                 }
             }.c },
@@ -9069,7 +9114,7 @@ test "edit-sharp §10.13 Options ports root surface and custom toolset no auto-s
         var agent = try Agent.init(gpa, io, .{
             .ptr = undefined,
             .vtable = &.{ .chat = struct {
-                fn c(_: *anyopaque, _: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl) provider_mod.ChatError!message.AssistantTurn {
+                fn c(_: *anyopaque, _: std.mem.Allocator, _: []const message.Message, _: []const tool.Definition, _: provider_mod.RequestControl, _: ?*?u64) provider_mod.ChatError!message.AssistantTurn {
                     return error.InvalidResponse;
                 }
             }.c },
@@ -9185,6 +9230,7 @@ test "edit-sharp §10.4 remember does not skip review; plan deny" {
                 _: []const message.Message,
                 _: []const tool.Definition,
                 _: provider_mod.RequestControl,
+                _: ?*?u64,
             ) provider_mod.ChatError!message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.step += 1;
@@ -9252,6 +9298,7 @@ test "edit-sharp §10.4 remember does not skip review; plan deny" {
                 _: []const message.Message,
                 _: []const tool.Definition,
                 _: provider_mod.RequestControl,
+                _: ?*?u64,
             ) provider_mod.ChatError!message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.step += 1;
@@ -9321,6 +9368,7 @@ test "edit-sharp §10.7 local soft failure exactly two provider calls" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -9406,6 +9454,7 @@ test "edit-sharp §10.11 resume fork schema v1 no durable preview proposal" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -9543,6 +9592,7 @@ test "edit-sharp §10.12 trace caps no raw preview marker" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;

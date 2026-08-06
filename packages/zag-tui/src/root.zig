@@ -26,6 +26,7 @@ pub const render = @import("render.zig");
 pub const app = @import("app.zig");
 pub const App = app.App;
 pub const OpenDisplay = app.OpenDisplay;
+pub const BindSessionOpts = app.BindSessionOpts;
 pub const TeardownProbe = app.TeardownProbe;
 pub const ThemeHostOptions = theme.ThemeHostOptions;
 

@@ -28,6 +28,7 @@ const fixture_opts = @import("tui_fixture_options");
 
 const zag_bin: []const u8 = fixture_opts.zag_bin;
 const slow_mock_bin: []const u8 = fixture_opts.slow_mock_bin;
+const headless_mock_bin: []const u8 = fixture_opts.headless_mock_bin;
 const http_backend = fixture_opts.http_backend;
 
 const secret_fixture = "sk-test-fake-secret-key-NOT-REAL-aabbccddee112233";
@@ -256,6 +257,46 @@ fn startSlowMock(io: Io, cwd: Io.Dir, stall_ms: u64, want_ready: bool) !struct {
         try argv.append(std.heap.page_allocator, "--ready-file");
         try argv.append(std.heap.page_allocator, ready_file_name);
     }
+
+    const child = std.process.spawn(io, .{
+        .argv = argv.items,
+        .cwd = .{ .dir = cwd },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    }) catch return error.SpawnFailed;
+    const pid = child.id orelse return error.NoPid;
+    errdefer reap(io, pid);
+
+    var port: u16 = 0;
+    var spins: u32 = 0;
+    while (port == 0 and spins < 8000) : (spins += 1) {
+        const content = cwd.readFileAlloc(io, port_file_name, std.heap.page_allocator, .limited(32)) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.Io.sleep(io, std.Io.Duration.fromMilliseconds(1), .real) catch {};
+                continue;
+            },
+            else => return err,
+        };
+        defer std.heap.page_allocator.free(content);
+        port = std.fmt.parseInt(u16, std.mem.trim(u8, content, " \n"), 10) catch continue;
+    }
+    if (port == 0) return error.PortFileTimeout;
+    return .{ .pid = pid, .port = port };
+}
+
+/// session-swap-001: the headless mock completes FULL chat responses (the
+/// slow mock's full-response path is not exercised by any test) — used by
+/// the gate33 /resume → continue fixture.
+fn startHeadlessMock(io: Io, cwd: Io.Dir) !struct { pid: posix.pid_t, port: u16 } {
+    const abs = try absPath(io, headless_mock_bin);
+    defer std.heap.page_allocator.free(abs);
+
+    var argv: std.ArrayList([]const u8) = .empty;
+    defer argv.deinit(std.heap.page_allocator);
+    try argv.append(std.heap.page_allocator, abs);
+    try argv.append(std.heap.page_allocator, "--port-file");
+    try argv.append(std.heap.page_allocator, port_file_name);
 
     const child = std.process.spawn(io, .{
         .argv = argv.items,
@@ -711,6 +752,97 @@ test "gate32_pty_ctrl_d_exit0_termios_restored" {
     // Alt-screen leave if we entered (best-effort check).
     _ = try pty.waitMarker(io, "\x1b[?1049l", 200);
 
+    pty.deinit(io);
+}
+
+// ── session-swap-001: real binary /resume → select → continue ──────────────
+
+test "gate33_pty_resume_swap_continue_appends_to_selected_session" {
+    if (!pty_supported) return error.SkipZigTest;
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // A saved session the TUI can swap to. The initial session is EPHEMERAL
+    // (no -c/-s), so the resume overlay lists exactly ONE row ("beta") —
+    // deterministic selection (cursor 0 + Enter), no FS-order dependence.
+    try tmp.dir.createDirPath(io, ".zag/sessions");
+    const beta_fixture =
+        \\{"schema_version":1,"v":1,"type":"zag_session","compaction_gen":0}
+        \\{"role":"user","content":"beta-original-q"}
+        \\{"role":"assistant","content":"beta-original-a"}
+        \\
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = ".zag/sessions/beta.jsonl", .data = beta_fixture });
+
+    // Full-chat mock (headless mock server): the slow mock's full-response
+    // path is not exercised by any existing test, so the headless mock —
+    // proven by headless_process_fixture — serves the post-swap reply.
+    const mock = try startHeadlessMock(io, tmp.dir);
+    defer reap(io, mock.pid);
+    const env = try makeEnvPairs(gpa, mock.port);
+    defer {
+        gpa.free(env[1]);
+        gpa.free(env);
+    }
+
+    const cwd_abs = try tmpCwdAbs(io, &tmp);
+    defer std.heap.page_allocator.free(cwd_abs);
+
+    var pty = try PtySession.open(gpa, 80, 24, false);
+    errdefer pty.deinit(io);
+    try pty.spawnZag(io, cwd_abs, env);
+
+    // Idle, then open /resume; the only listed session row is "beta".
+    try std.testing.expect(try pty.waitMarker(io, state_idle, 12_000));
+    pty.writeAll("/resume\r");
+    try std.testing.expect(try pty.waitMarker(io, "beta", 5000));
+    pty.writeAll("\r"); // Enter: select beta → swap + replay
+
+    // The swap replayed the selected session's transcript (its cards paint
+    // in the transcript area; the swap note itself is width-truncated on
+    // 80 cols, so the replayed body is the deterministic marker).
+    try std.testing.expect(try pty.waitMarker(io, "beta-original-a", 5000));
+
+    // Real continue: the next message appends to the SELECTED session.
+    pty.writeAll("swapped-continue\r");
+    // Reply completion marker: the assistant turn card paints the mock's
+    // response body in the transcript (the run_terminal reserve card is a
+    // .terminal-kind card that drawCards skips — never rendered).
+    try std.testing.expect(try pty.waitMarker(io, "Hello from mock", 12_000));
+
+    // The selected session file now holds BOTH halves (original + new turn).
+    // Poll with a bound: the save commits just after the stream completes
+    // (the run_terminal reserve card is never rendered — drawCards skips
+    // .terminal cards — so the file is the deterministic completion proof).
+    var saved = false;
+    var spins: u32 = 0;
+    while (spins < 500 and !saved) : (spins += 1) {
+        const raw = tmp.dir.readFileAlloc(io, ".zag/sessions/beta.jsonl", gpa, .limited(1024 * 1024)) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.Io.sleep(io, std.Io.Duration.fromMilliseconds(10), .real) catch {};
+                continue;
+            },
+            else => return err,
+        };
+        if (std.mem.indexOf(u8, raw, "beta-original-q") != null and
+            std.mem.indexOf(u8, raw, "beta-original-a") != null and
+            std.mem.indexOf(u8, raw, "swapped-continue") != null and
+            std.mem.indexOf(u8, raw, "Hello from mock") != null)
+        {
+            saved = true;
+        }
+        gpa.free(raw);
+        if (!saved) std.Io.sleep(io, std.Io.Duration.fromMilliseconds(10), .real) catch {};
+    }
+    try std.testing.expect(saved);
+
+    // Clean cooperative exit.
+    if (pty.pid != null) {
+        pty.writeAll(&.{0x04}); // Ctrl+D empty → exit 0
+        _ = pty.waitExit(io, 5000);
+    }
     pty.deinit(io);
 }
 

@@ -501,6 +501,7 @@ pub fn build(b: *std.Build) void {
         const tui_fixture_opts = b.addOptions();
         tui_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
         tui_fixture_opts.addOptionPath("slow_mock_bin", sigint_slow_mock_exe.getEmittedBin());
+        tui_fixture_opts.addOptionPath("headless_mock_bin", headless_mock_server_exe.getEmittedBin());
         tui_fixture_opts.addOption(HttpBackend, "http_backend", http_backend);
         tui_fixture_opts.addOption(bool, "tui_enabled", true);
         const tui_process_tests = b.addTest(.{

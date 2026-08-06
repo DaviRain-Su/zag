@@ -2,9 +2,12 @@
 //! Implements SignalHost over sigint.Guard. Does not own TUI widgets.
 //!
 //! Teardown is **explicit** (no reliance on defer across process.exit):
-//!   ack → restore(in App.run) → App.quiesce → Guard.deinit → Session.deinit
-//!   → Agent.deinit → App.destroy (App last)
+//!   ack → restore(in App.run) → App.quiesce → Guard.deinit
+//!   → Agent.deinit (caller) → App.destroy (session deinit+destroy inside,
+//!   App last)
 //! Caller must not double-deinit Guard when `guard_deinited` is true.
+//! session-swap-001: the SESSION is App-owned from bind (App.destroy
+//! deinits + destroys the CURRENT session exactly once).
 
 const std = @import("std");
 const Io = std.Io;
@@ -91,12 +94,14 @@ pub const RunResult = struct {
     exit_code: u8,
     /// Guard.deinit already performed — caller must not deinit again.
     guard_deinited: bool = false,
-    /// Session already deinitialized inside runTui.
-    session_deinited: bool = true,
+    /// Session NOT deinitialized here — App owns it from bind; App.destroy
+    /// (after Agent.deinit) deinits + destroys the current session.
+    session_deinited: bool = false,
 };
 
 /// Full product TUI path after App prealloc + Agent.init + Guard.install.
-/// Explicitly deinitializes Guard and Session; leaves Agent + App to caller.
+/// Explicitly deinitializes Guard; the SESSION is App-owned from bind
+/// (App.destroy deinits + destroys it); Agent + App are caller-owned.
 pub fn runTui(args: RunArgs) RunResult {
     const gpa = args.gpa;
     const io = args.io;
@@ -110,7 +115,15 @@ pub fn runTui(args: RunArgs) RunResult {
         return .{ .exit_code = 1, .guard_deinited = true };
     }
 
-    var session = coding.Session.start(gpa, io, .{
+    // session-swap-001: the INITIAL session is heap-allocated and handed to
+    // App (bind owns it; early-error paths deinit + destroy exactly once).
+    const session = gpa.create(coding.Session) catch {
+        fixedStderr("tui: session start failed\n");
+        if (args.teardown_probe) |p| p.note('G');
+        args.guard.deinit();
+        return .{ .exit_code = 1, .guard_deinited = true };
+    };
+    session.* = coding.Session.start(gpa, io, .{
         .base_system = args.base_system,
         .path = args.session_path,
         .open_mode = args.open_mode,
@@ -123,6 +136,7 @@ pub fn runTui(args: RunArgs) RunResult {
         .project_templates_trust = args.host_opts.project_templates_trust,
         .user_templates_root = args.host_opts.user_templates_root,
     }) catch {
+        gpa.destroy(session);
         fixedStderr("tui: session start failed\n");
         if (args.teardown_probe) |p| p.note('G');
         args.guard.deinit();
@@ -135,6 +149,7 @@ pub fn runTui(args: RunArgs) RunResult {
         args.guard.deinit();
         if (args.teardown_probe) |p| p.note('S');
         session.deinit();
+        gpa.destroy(session);
         return .{ .exit_code = 1, .guard_deinited = true };
     };
 
@@ -151,12 +166,23 @@ pub fn runTui(args: RunArgs) RunResult {
     app.setIdentity(gpa, redactor, id, open_disp, args.permission_label, args.shell_label);
     app.applyHostPresentation(io, args.host_opts.theme, args.host_opts.model_label, args.host_opts.model_ids);
 
-    app.bind(args.agent, &session, redactor, host) catch {
+    app.bind(args.agent, session, redactor, host, .{
+        .base_system = args.base_system,
+        .load_project_instructions = args.load_project,
+        .redactor = args.agent.activeRedactor(),
+        .skills_enabled = args.host_opts.skills_enabled,
+        .project_skills_trust = args.host_opts.project_skills_trust,
+        .user_skills_root = args.host_opts.user_skills_root,
+        .templates_enabled = args.host_opts.templates_enabled,
+        .project_templates_trust = args.host_opts.project_templates_trust,
+        .user_templates_root = args.host_opts.user_templates_root,
+    }) catch {
         fixedStderr("tui: bind failed\n");
         if (args.teardown_probe) |p| p.note('G');
         args.guard.deinit();
         if (args.teardown_probe) |p| p.note('S');
         session.deinit();
+        gpa.destroy(session);
         return .{ .exit_code = 1, .guard_deinited = true };
     };
 
@@ -167,9 +193,9 @@ pub fn runTui(args: RunArgs) RunResult {
     app.quiesce();
     if (args.teardown_probe) |p| p.note('G');
     args.guard.deinit();
-    if (args.teardown_probe) |p| p.note('S');
-    session.deinit();
-    return .{ .exit_code = code, .guard_deinited = true, .session_deinited = true };
+    // Session teardown is App-owned: App.destroy (after Agent.deinit in
+    // cli.zig) deinits + destroys the CURRENT session.
+    return .{ .exit_code = code, .guard_deinited = true, .session_deinited = false };
 }
 
 fn terminalBelowMinimum() bool {

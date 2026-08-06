@@ -40,6 +40,22 @@ pub const OpenDisplay = enum {
 
 pub const BindError = error{ MissingRedactor, MissingSignalHost, MissingAgent, MissingSession };
 
+/// session-swap-001: session start knobs captured at bind time and forwarded
+/// verbatim to every later `Session.start` (the swap's new session must match
+/// the initial one — base_system / redactor / skills flags parity).
+pub const BindSessionOpts = struct {
+    base_system: []const u8 = "",
+    load_project_instructions: bool = true,
+    /// Agent.activeRedactor() at bind time (cloned into each started session).
+    redactor: ?*const coding.redact.Redactor = null,
+    skills_enabled: bool = true,
+    project_skills_trust: coding.ProjectSkillsTrust = .untrusted,
+    user_skills_root: ?[]const u8 = null,
+    templates_enabled: bool = true,
+    project_templates_trust: coding.ProjectTemplatesTrust = .untrusted,
+    user_templates_root: ?[]const u8 = null,
+};
+
 /// Card-title identity constants (tui-streaming-001): delta replaces match
 /// `TITLE_PROGRESSIVE` ONLY so a finalized "assistant turn=N" card is never
 /// clobbered by partial text; lifecycle uses the turn format. Kept in one
@@ -84,6 +100,9 @@ pub const App = struct {
     session: ?*coding.Session = null,
     redactor: ?*const coding.redact.Redactor = null,
     host: ?SignalHost = null,
+    /// session-swap-001: session start knobs captured at bind (see
+    /// BindSessionOpts) — the swap reuses them for the new Session.start.
+    bind_session_opts: BindSessionOpts = .{},
 
     id_display: [c.card_title_max_bytes]u8 = undefined,
     id_display_len: usize = 0,
@@ -225,6 +244,16 @@ pub const App = struct {
     }
 
     pub fn destroy(self: *App) void {
+        // session-swap-001: App owns the CURRENT session (bind hands it
+        // over; swaps replace it). Deinit + destroy exactly once when
+        // non-null. Callers order Agent.deinit BEFORE App.destroy — session
+        // state is session-owned (its redactor is a clone).
+        if (self.session) |s| {
+            if (self.teardown_probe) |p| p.note('S');
+            s.deinit();
+            self.gpa.destroy(s);
+            self.session = null;
+        }
         if (self.teardown_probe) |p| p.note('A'); // App free last marker
         if (self.wake_r >= 0) {
             terminal_mod.closeFd(self.wake_r);
@@ -327,18 +356,23 @@ pub const App = struct {
         return self.id_display[0..self.id_display_len];
     }
 
+    /// Binds the heap-allocated CURRENT session; App owns it from here on
+    /// (App.destroy deinits + destroys it exactly once). `opts` captures the
+    /// session start knobs for later swaps (session-swap-001).
     pub fn bind(
         self: *App,
         agent: *coding.Agent,
         session: *coding.Session,
         redactor: *const coding.redact.Redactor,
         host: SignalHost,
+        opts: BindSessionOpts,
     ) BindError!void {
         if (self.quiesced) return error.MissingAgent;
         self.agent = agent;
         self.session = session;
         self.redactor = redactor;
         self.host = host;
+        self.bind_session_opts = opts;
     }
 
     pub fn lifecycleObserver(self: *App) coding.LifecycleObserver {
@@ -1171,7 +1205,22 @@ pub const App = struct {
                     return;
                 }
                 const stem = self.resume_stem_bufs[self.overlay.cursor][0..self.resume_stem_lens[self.overlay.cursor]];
-                self.replaySession(stem);
+                const dir = self.sessionRoot();
+                const path = std.fmt.allocPrint(self.gpa, "{s}/{s}.jsonl", .{ dir, stem }) catch {
+                    self.setNote("resume_failed");
+                    self.overlay.close();
+                    return;
+                };
+                defer self.gpa.free(path);
+                // session-swap-001: a NON-active selection becomes the ACTIVE
+                // session (swap + replay — real continue, the next turn
+                // appends to it); the already-active session replays only
+                // (no-op swap — its own lock would fail a re-start anyway).
+                if (self.isActivePath(path)) {
+                    self.replaySession(path);
+                } else {
+                    self.swapSession(path);
+                }
             },
         }
     }
@@ -1187,6 +1236,15 @@ pub const App = struct {
         return self.resume_root;
     }
 
+    /// Does `path` equal the ACTIVE session's path? (Ephemeral sessions
+    /// have no path and are never "the same file" as a listed session.)
+    fn isActivePath(self: *const App, path: []const u8) bool {
+        if (self.session) |s| {
+            if (s.path) |p| return std.mem.eql(u8, p, path);
+        }
+        return false;
+    }
+
     /// Read-only replay of one persisted session into the card ring
     /// (session-resume-tui-001). The active bound Session is never swapped:
     /// a new turn after replay appends to the ACTIVE session as today.
@@ -1196,19 +1254,12 @@ pub const App = struct {
     /// Otherwise the file is loaded into a fresh arena-owned Transcript
     /// (deinited after replay; no leak). All failures are fail-closed:
     /// note "resume_failed" + close, never crash.
-    fn replaySession(self: *App, stem: []const u8) void {
+    fn replaySession(self: *App, path: []const u8) void {
         const io = self.host_io orelse {
             self.setNote("resume_failed");
             self.overlay.close();
             return;
         };
-        const dir = self.sessionRoot();
-        const path = std.fmt.allocPrint(self.gpa, "{s}/{s}.jsonl", .{ dir, stem }) catch {
-            self.setNote("resume_failed");
-            self.overlay.close();
-            return;
-        };
-        defer self.gpa.free(path);
 
         var arena_impl: std.heap.ArenaAllocator = .init(self.gpa);
         defer arena_impl.deinit();
@@ -1216,16 +1267,10 @@ pub const App = struct {
         var transcript = coding.transcript.Transcript.init(arena);
 
         var msgs: []const coding.message.Message = undefined;
-        var from_active = false;
-        if (self.session) |s| {
-            if (s.path) |p| {
-                if (std.mem.eql(u8, p, path)) {
-                    msgs = s.transcript.items();
-                    from_active = true;
-                }
-            }
-        }
-        if (!from_active) {
+        const from_active = self.isActivePath(path);
+        if (from_active) {
+            msgs = self.session.?.transcript.items();
+        } else {
             const meta = coding.session_store.loadWithMeta(self.gpa, io, self.resume_cwd, path, &transcript) catch {
                 // Missing/corrupt/unsupported → fail closed, never crash.
                 self.setNote("resume_failed");
@@ -1235,6 +1280,30 @@ pub const App = struct {
             _ = meta;
             msgs = transcript.items();
         }
+
+        if (!self.replayTranscript(msgs)) return; // note set + closed inside
+
+        // Post-replay surface: editor cleared, scrollback reset to follow,
+        // state stays idle. The ACTIVE session is untouched (v1 read-only).
+        self.editor.clear();
+        self.delta_len = 0;
+        self.overlay.close();
+        self.sb.gotoBottom(self.last_viewport_h);
+        self.dirty = true;
+        self.setNote(if (from_active) "resume_active" else "resume_browsing");
+    }
+
+    /// Shared replay pipeline (session-resume-tui-001 / session-swap-001):
+    /// walk `msgs` in transcript order and publish cards — user →
+    /// publishUser (redacted); assistant → `assistant turn={n}` renumbered
+    /// 1..N with a toggle-gated `thinking` card; tool → `tool {name}` via
+    /// the carrier assistant's id→name map. Every card runs the existing
+    /// redaction pipeline (never raw). Returns false only on an internal
+    /// OOM (note "resume_failed" + overlay closed, fail-closed).
+    fn replayTranscript(self: *App, msgs: []const coding.message.Message) bool {
+        var arena_impl: std.heap.ArenaAllocator = .init(self.gpa);
+        defer arena_impl.deinit();
+        const arena = arena_impl.allocator();
 
         // Tool rows carry only tool_call_id; the tool NAME lives on the
         // carrier assistant's tool_calls (arena-owned for this replay).
@@ -1252,7 +1321,7 @@ pub const App = struct {
                             tool_names.append(arena, .{ .id = call.id, .name = call.name }) catch {
                                 self.setNote("resume_failed");
                                 self.overlay.close();
-                                return;
+                                return false;
                             };
                         }
                     }
@@ -1285,15 +1354,128 @@ pub const App = struct {
                 },
             }
         }
+        return true;
+    }
 
-        // Post-replay surface: editor cleared, scrollback reset to follow,
-        // state stays idle. The ACTIVE session is untouched (v1 read-only).
+    /// session-swap-001: make the session at `path` the ACTIVE session —
+    /// real continue (the next turn appends to it). Idle-only: swap while
+    /// a worker runs or the UI is not idle → note "resume_busy" + no-op
+    /// (never mid-run).
+    ///
+    /// Fail-closed sequence (old untouched until the new session is ready):
+    ///   1. old.save() — a save error aborts, old stays active;
+    ///   2. Session.start on the NEW path FIRST (per-path locks: both
+    ///      leases briefly coexist) — SessionBusy / missing / OOM aborts
+    ///      with old untouched;
+    ///   3. heap-allocate + move the new session (later failure deinits +
+    ///      destroys it);
+    ///   4. old.deinit() + gpa.destroy(old) — old lock released exactly once;
+    ///   5. app.session = new; app.redactor = new.activeRedactor();
+    ///   6. setIdentity refresh + session_configured_ui reset;
+    ///   7. card-ring clear, then replay the new session's live transcript;
+    ///   8. swap-specific note (never resume_active).
+    ///
+    /// Process-memory state is NOT migrated: queued steering/follow-up are
+    /// dropped and an ephemeral-source old session (writer == null) loses
+    /// its conversation — both surfaced via the note (resume_swapped_ephemeral).
+    fn swapSession(self: *App, path: []const u8) void {
+        if (self.worker_active or self.state != .idle) {
+            self.setNote("resume_busy");
+            return;
+        }
+        const io = self.host_io orelse {
+            self.setNote("resume_failed");
+            self.overlay.close();
+            return;
+        };
+        const old = self.session orelse {
+            self.setNote("resume_failed");
+            self.overlay.close();
+            return;
+        };
+        const opts = self.bind_session_opts;
+
+        // (1) Persist the old session first; a save error aborts the swap
+        // (fail-closed: old stays active and the next turn works).
+        old.save() catch {
+            self.setNote("resume_failed");
+            self.overlay.close();
+            return;
+        };
+
+        // (2)+(3) Start the NEW session BEFORE touching the old (per-path
+        // locks coexist briefly). Any failure aborts with old untouched.
+        const new = self.startSwappedSession(io, path, opts) catch {
+            self.setNote("resume_failed");
+            self.overlay.close();
+            return;
+        };
+
+        // Ephemeral-source fact captured BEFORE the old session is freed
+        // (post-swap note surfaces the lost conversation).
+        const ephemeral_source = old.path == null;
+
+        // (4) Release the old lease + free the old Session exactly once.
+        old.deinit();
+        self.gpa.destroy(old);
+
+        // (5) Re-point BEFORE any replay publish (redaction pipeline runs
+        // through the new session's cloned redactor).
+        self.session = new;
+        self.redactor = new.activeRedactor() orelse self.redactor;
+
+        // (6) Identity + configured-ui refresh for the new path.
+        self.setIdentity(self.gpa, self.redactor, path, .resume_existing, self.perm_label, self.shell_label);
+        self.session_configured_ui.store(false, .release);
+
+        // (7) Card-ring reset so the two sessions' cards never concatenate,
+        // then replay the new session's live transcript (the from-active
+        // branch: the new session IS active, no re-load, no lock conflict).
+        self.card_ring.clear();
+        if (!self.replayTranscript(new.transcript.items())) return; // note set
         self.editor.clear();
         self.delta_len = 0;
+        self.thinking_len = 0;
         self.overlay.close();
         self.sb.gotoBottom(self.last_viewport_h);
         self.dirty = true;
-        self.setNote(if (from_active) "resume_active" else "resume_browsing");
+        // (8) Swap-specific note (not resume_active); ephemeral-source
+        // swaps surface the lost conversation.
+        self.setNote(if (ephemeral_source) "resume_swapped_ephemeral" else "resume_swapped");
+    }
+
+    /// Start + heap-move the swapped-in session (swap steps 2–3). Fail-closed:
+    /// on ANY error the OLD session is untouched and nothing leaks (the heap
+    /// cell is destroyed on the error path; a failed start has no session).
+    fn startSwappedSession(
+        self: *App,
+        io: Io,
+        path: []const u8,
+        opts: BindSessionOpts,
+    ) error{ StartFailed, OutOfMemory }!*coding.Session {
+        const gpa = self.gpa;
+        const new = try gpa.create(coding.Session);
+        errdefer gpa.destroy(new);
+        const started = coding.Session.start(gpa, io, .{
+            .base_system = opts.base_system,
+            .path = path,
+            .open_mode = .resume_existing,
+            .load_project_instructions = opts.load_project_instructions,
+            .redactor = opts.redactor,
+            .skills_enabled = opts.skills_enabled,
+            .project_skills_trust = opts.project_skills_trust,
+            .user_skills_root = opts.user_skills_root,
+            .templates_enabled = opts.templates_enabled,
+            .project_templates_trust = opts.project_templates_trust,
+            .user_templates_root = opts.user_templates_root,
+            .cwd = self.resume_cwd,
+        }) catch {
+            // SessionBusy / SessionNotFound / IoFailed / OOM → flat
+            // fail-closed note (the old session is untouched).
+            return error.StartFailed;
+        };
+        new.* = started;
+        return new;
     }
 
     fn rebuildOverlayLines(self: *App) usize {
@@ -2513,16 +2695,34 @@ test "tui-resume: secret-bearing filenames redact in the listing" {
     try std.testing.expect(std.mem.eql(u8, raw, secret));
 }
 
-test "tui-resume: selection replays cards in order with turn numbering" {
+test "tui-resume: selection swaps to and replays the selected session in order" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
     defer r.deinit();
-    var app = try newTestApp(gpa, &r);
-    defer app.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    // Active session (persisted, heap-owned): a NON-active selection swaps.
+    const active = try startSwapSession(gpa, io, &tmp, "sessions/active-src.jsonl", .create_new, &r);
+    try active.transcript.appendUser("active-q");
+    try active.save();
+
+    const app = try App.create(gpa);
+    defer app.destroy();
     wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, active, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
 
     const fixture =
         session_header_line ++
@@ -2543,10 +2743,12 @@ test "tui-resume: selection replays cards in order with turn numbering" {
     try std.testing.expect(app.show_thinking);
     app.overlay.open(.@"resume");
     _ = app.rebuildOverlayLines();
+    const alpha_row = resumeRowFor(app, "alpha") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = alpha_row;
     _ = app.handleKey(.enter);
 
     try std.testing.expect(!app.overlay.isOpen());
-    try std.testing.expectEqualStrings("resume_browsing", app.noteSlice());
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
     try std.testing.expectEqualStrings("", app.editor.slice());
     try std.testing.expectEqual(UiState.idle, app.state);
 
@@ -2570,11 +2772,26 @@ test "tui-resume: thinking card gated by the toggle (off = no card)" {
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
     defer r.deinit();
-    var app = try newTestApp(gpa, &r);
-    defer app.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const active = try startSwapSession(gpa, io, &tmp, "sessions/active-src.jsonl", .create_new, &r);
+    try active.save();
+    const app = try App.create(gpa);
+    defer app.destroy();
     wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, active, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
 
     const fixture =
         session_header_line ++
@@ -2587,6 +2804,8 @@ test "tui-resume: thinking card gated by the toggle (off = no card)" {
     try std.testing.expect(!app.show_thinking); // default off
     app.overlay.open(.@"resume");
     _ = app.rebuildOverlayLines();
+    const gated_row = resumeRowFor(app, "gated") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = gated_row;
     _ = app.handleKey(.enter);
 
     var snap: [c.card_slots]cards_mod.CardSlot = undefined;
@@ -2608,11 +2827,26 @@ test "tui-resume: replayed bodies and titles run the redaction pipeline" {
     const secret = coding.redact.testing.fake_api_key;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
     defer r.deinit();
-    var app = try newTestApp(gpa, &r);
-    defer app.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const active = try startSwapSession(gpa, io, &tmp, "sessions/active-src.jsonl", .create_new, &r);
+    try active.save();
+    const app = try App.create(gpa);
+    defer app.destroy();
     wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, active, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
 
     const fixture = try std.fmt.allocPrint(gpa,
         \\{{"schema_version":1,"v":1,"type":"zag_session","compaction_gen":0}}
@@ -2630,6 +2864,8 @@ test "tui-resume: replayed bodies and titles run the redaction pipeline" {
     _ = app.handleKey(.ctrl_t); // thinking on — reasoning card must redact too
     app.overlay.open(.@"resume");
     _ = app.rebuildOverlayLines();
+    const red_row = resumeRowFor(app, "red") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = red_row;
     _ = app.handleKey(.enter);
 
     var snap: [c.card_slots]cards_mod.CardSlot = undefined;
@@ -2653,23 +2889,42 @@ test "tui-resume: corrupt session fails closed with resume_failed" {
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
     defer r.deinit();
-    var app = try newTestApp(gpa, &r);
-    defer app.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const active = try startSwapSession(gpa, io, &tmp, "sessions/active-src.jsonl", .create_new, &r);
+    try active.save();
+    const app = try App.create(gpa);
+    defer app.destroy();
     wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, active, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
 
     try tmp.dir.createDirPath(io, "sessions");
     try tmp.dir.writeFile(io, .{ .sub_path = "sessions/corrupt.jsonl", .data = "not json\n" });
 
     app.overlay.open(.@"resume");
-    try std.testing.expectEqual(@as(usize, 1), app.rebuildOverlayLines());
+    _ = app.rebuildOverlayLines();
+    const corrupt_row = resumeRowFor(app, "corrupt") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = corrupt_row;
     _ = app.handleKey(.enter);
 
     try std.testing.expect(!app.overlay.isOpen());
     try std.testing.expectEqualStrings("resume_failed", app.noteSlice());
     try std.testing.expectEqual(UiState.idle, app.state);
-    try std.testing.expectEqual(@as(usize, 0), app.card_ring.ordinary_count); // nothing published
+    // Fail-closed: the old session is untouched, nothing published.
+    try std.testing.expect(app.session == active);
+    try std.testing.expectEqual(@as(usize, 0), app.card_ring.ordinary_count);
 }
 
 test "tui-resume: replay respects the ring cap with the existing drop note" {
@@ -2677,11 +2932,26 @@ test "tui-resume: replay respects the ring cap with the existing drop note" {
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
     defer r.deinit();
-    var app = try newTestApp(gpa, &r);
-    defer app.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
+
+    const active = try startSwapSession(gpa, io, &tmp, "sessions/active-src.jsonl", .create_new, &r);
+    try active.save();
+    const app = try App.create(gpa);
+    defer app.destroy();
     wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, active, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
 
     var lines: std.ArrayList(u8) = .empty;
     defer lines.deinit(gpa);
@@ -2697,6 +2967,8 @@ test "tui-resume: replay respects the ring cap with the existing drop note" {
 
     app.overlay.open(.@"resume");
     _ = app.rebuildOverlayLines();
+    const big_row = resumeRowFor(app, "big") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = big_row;
     _ = app.handleKey(.enter);
 
     try std.testing.expectEqual(@as(usize, 125), app.card_ring.ordinary_count);
@@ -2716,10 +2988,12 @@ test "tui-resume: same-session replay uses the live transcript (no re-load)" {
     defer tmp.cleanup();
     wireResumeFixture(app, &tmp, io);
 
-    // Active session: ephemeral Session whose path matches the fixture stem.
+    // Active session: heap-allocated Session whose path matches the fixture
+    // stem (ownership handed to the App — app.destroy deinits + destroys it).
     // The live transcript holds a message the on-disk file does NOT contain —
     // a disk re-load would replay "on-disk" instead of "live-only-message".
-    var session = try coding.Session.start(gpa, io, .{
+    const session = try gpa.create(coding.Session);
+    session.* = try coding.Session.start(gpa, io, .{
         .base_system = "",
         .path = null,
         .load_project_instructions = false,
@@ -2727,10 +3001,9 @@ test "tui-resume: same-session replay uses the live transcript (no re-load)" {
         .skills_enabled = false,
         .templates_enabled = false,
     });
-    defer session.deinit();
     session.path = try gpa.dupe(u8, "sessions/active.jsonl");
     try session.transcript.appendUser("live-only-message");
-    app.session = &session;
+    app.session = session;
 
     try tmp.dir.createDirPath(io, "sessions");
     try tmp.dir.writeFile(io, .{
@@ -2757,16 +3030,13 @@ test "tui-resume: same-session replay uses the live transcript (no re-load)" {
     try std.testing.expect(!saw_disk);
 }
 
-test "tui-resume: replay is read-only; session file bytes preserved, active unchanged" {
+test "tui-swap: the swap replays without writing the target file (bytes preserved until a turn saves)" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
     defer r.deinit();
-    var app = try newTestApp(gpa, &r);
-    defer app.destroy();
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
-    wireResumeFixture(app, &tmp, io);
 
     const fixture =
         session_header_line ++
@@ -2774,21 +3044,719 @@ test "tui-resume: replay is read-only; session file bytes preserved, active unch
         \\{"role":"assistant","content":"after"}
     ;
     try tmp.dir.createDirPath(io, "sessions");
+
+    // Active session: persisted, heap-owned (handed to the App).
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.transcript.appendUser("initial-q");
+    try initial.save();
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    // Target session on disk; the swap resumes + replays it but must not
+    // write it (the file is only rewritten by a later turn's save).
     try tmp.dir.writeFile(io, .{ .sub_path = "sessions/keep.jsonl", .data = fixture });
 
     app.overlay.open(.@"resume");
     _ = app.rebuildOverlayLines();
+    const keep_row = resumeRowFor(app, "keep") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = keep_row;
     _ = app.handleKey(.enter);
 
-    // Read-only replay: the on-disk session is byte-identical afterwards.
+    // Swap happened; the target file is byte-identical afterwards.
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+    try std.testing.expectEqualStrings("sessions/keep.jsonl", app.session.?.path.?);
     const after = try tmp.dir.readFileAlloc(io, "sessions/keep.jsonl", gpa, .limited(1024 * 1024));
     defer gpa.free(after);
     try std.testing.expectEqualStrings(fixture, after);
-    // Active session untouched (never bound/swapped in v1 read-only browsing),
-    // editor cleared, state stays idle — a new turn appends to ACTIVE as today.
-    try std.testing.expect(app.session == null);
+    // Surface reset: editor cleared, state stays idle.
     try std.testing.expectEqualStrings("", app.editor.slice());
     try std.testing.expectEqual(UiState.idle, app.state);
-    try std.testing.expectEqualStrings("resume_browsing", app.noteSlice());
+}
+
+// ── session-swap-001 fixtures: swap / guard / lock / ownership / redaction /
+// fail-closed / config-parity ────────────────────────────────────────────────
+
+/// Minimal chat provider for swap fixtures (a real Agent is required for the
+/// real bind path; the provider is never invoked by swapSession).
+const SwapMockChat = struct {
+    fn chat(
+        _: *anyopaque,
+        arena: std.mem.Allocator,
+        _: []const coding.message.Message,
+        _: []const coding.tool.Definition,
+        _: coding.provider.RequestControl,
+        _: ?*?u64,
+    ) coding.provider.ChatError!coding.message.AssistantTurn {
+        return .{
+            .content = try arena.dupe(u8, "done"),
+            .tool_calls = &.{},
+            .finish_reason = "stop",
+            .usage = .{ .prompt_tokens = 1, .completion_tokens = 1, .total_tokens = 2 },
+        };
+    }
+};
+
+fn swapMockProvider(state: *SwapMockChat) coding.provider.Provider {
+    return .{ .ptr = state, .vtable = &.{ .chat = SwapMockChat.chat } };
+}
+
+/// Minimal SignalHost for swap fixtures (swapSession never touches the host).
+const SwapFakeHost = struct {
+    fn asHost(self: *SwapFakeHost) SignalHost {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .wake_fd = wakeFd,
+                .drain_wake = drainWake,
+                .pending_interrupt = pendingInterrupt,
+                .acknowledge_cancel = acknowledgeCancel,
+            },
+        };
+    }
+    fn wakeFd(_: *anyopaque) posix.fd_t {
+        return -1;
+    }
+    fn drainWake(_: *anyopaque) void {}
+    fn pendingInterrupt(_: *anyopaque) bool {
+        return false;
+    }
+    fn acknowledgeCancel(_: *anyopaque) void {}
+};
+
+/// Heap-allocate + start a session rooted at the fixture tmp dir (the same
+/// root the resume overlay scans via resume_cwd). Caller owns until bound.
+fn startSwapSession(
+    gpa: std.mem.Allocator,
+    io: Io,
+    tmp: *std.testing.TmpDir,
+    rel_path: ?[]const u8,
+    mode: coding.OpenMode,
+    redactor: *const coding.redact.Redactor,
+) !*coding.Session {
+    const s = try gpa.create(coding.Session);
+    errdefer gpa.destroy(s);
+    s.* = try coding.Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = rel_path,
+        .open_mode = mode,
+        .load_project_instructions = false,
+        .redactor = redactor,
+        .skills_enabled = false,
+        .templates_enabled = false,
+        .cwd = tmp.dir,
+    });
+    return s;
+}
+
+/// Bind `session` (heap-owned, handed to the App) through the REAL bind path
+/// with a fresh mock Agent + stub host, capturing `opts`. The returned Agent
+/// must outlive the App and be deinited after App.destroy (product order).
+fn bindSwapFixture(
+    app: *App,
+    gpa: std.mem.Allocator,
+    io: Io,
+    session: *coding.Session,
+    opts: BindSessionOpts,
+) !*coding.Agent {
+    var mock: SwapMockChat = .{};
+    const agent = try gpa.create(coding.Agent);
+    errdefer gpa.destroy(agent);
+    agent.* = try coding.Agent.init(gpa, io, swapMockProvider(&mock), .{
+        .permission_mode = .yolo,
+        .hunk_reviewer = coding.autoAcceptHunkReviewer(),
+        .lifecycle = app.lifecycleObserver(),
+    });
+    errdefer agent.deinit();
+    var host = SwapFakeHost{};
+    try app.bind(agent, session, session.activeRedactor().?, host.asHost(), opts);
+    return agent;
+}
+
+/// Row index of the listed stem in the resume overlay (FS iteration order is
+/// unspecified — locate by raw stem, not by position).
+fn resumeRowFor(app: *App, stem: []const u8) ?usize {
+    var i: usize = 0;
+    while (i < app.overlay_line_count) : (i += 1) {
+        const raw = app.resume_stem_bufs[i][0..app.resume_stem_lens[i]];
+        if (std.mem.eql(u8, raw, stem)) return i;
+    }
+    return null;
+}
+
+test "tui-swap: selection swaps to the selected session; old lock released, new held; new turn appends" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Active session (persisted; later the "old" path).
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.transcript.appendUser("initial-q");
+    try initial.save();
+
+    // Target session on disk (the swap resumes it).
+    try tmp.dir.createDirPath(io, "sessions");
+    const beta_fixture =
+        session_header_line ++
+        \\{"role":"user","content":"beta-q"}
+        \\{"role":"assistant","content":"beta-a"}
+    ;
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/beta.jsonl", .data = beta_fixture });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    // /resume → select the beta row (raw-stem lookup; FS order unspecified).
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+
+    // Swap-specific note (never resume_active), overlay closed, new active.
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+    try std.testing.expect(!app.overlay.isOpen());
+    const cur = app.session orelse return error.TestUnexpectedResult;
+    try std.testing.expect(cur != initial);
+    try std.testing.expectEqualStrings("sessions/beta.jsonl", cur.path.?);
+    try std.testing.expectEqualStrings("sessions/beta.jsonl", app.idDisplay());
+
+    // Old lock released: a fresh resume of the OLD path now succeeds.
+    var probe = try coding.Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = "sessions/initial.jsonl",
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+        .cwd = tmp.dir,
+    });
+    probe.deinit();
+
+    // New lock held: a second resume of the NEW path fails closed.
+    try std.testing.expectError(error.SessionBusy, coding.Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = "sessions/beta.jsonl",
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+        .cwd = tmp.dir,
+    }));
+
+    // Replay is the NEW session's transcript ONLY (the ring was cleared —
+    // two sessions' cards never concatenate).
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const m = app.card_ring.snapshot(&snap);
+    var idx: usize = 0;
+    try expectCard(&snap, &idx, m, .user, "user", "beta-q");
+    try expectCard(&snap, &idx, m, .ordinary, "assistant turn=1", "beta-a");
+    try std.testing.expectEqual(idx, m);
+    for (snap[0..m]) |*slot| {
+        try std.testing.expect(std.mem.indexOf(u8, slot.bodySlice(), "initial-q") == null);
+    }
+
+    // The selected path is now writable: a new turn appends to it and the
+    // round-trip load preserves both halves.
+    try cur.transcript.appendUser("continued");
+    try cur.save();
+    var load_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer load_arena.deinit();
+    var loaded = coding.transcript.Transcript.init(load_arena.allocator());
+    _ = try coding.session_store.loadWithMeta(gpa, io, tmp.dir, "sessions/beta.jsonl", &loaded);
+    const items = loaded.items();
+    try std.testing.expectEqual(@as(usize, 3), items.len);
+    try std.testing.expectEqualStrings("beta-q", items[0].content);
+    try std.testing.expectEqualStrings("beta-a", items[1].content);
+    try std.testing.expectEqualStrings("continued", items[2].content);
+}
+
+test "tui-swap: busy guard rejects the swap (resume_busy); idle allows it" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.save();
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    // Worker active + busy → swap rejected, no-op (never mid-run).
+    app.worker_active = true;
+    app.state = .busy;
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+    try std.testing.expectEqualStrings("resume_busy", app.noteSlice());
+    try std.testing.expect(app.overlay.isOpen()); // no-op: overlay stays for the user
+    try std.testing.expect(app.session == initial); // unchanged
+    try std.testing.expectEqualStrings("sessions/initial.jsonl", app.session.?.path.?);
+
+    // Idle again → the same selection swaps.
+    app.worker_active = false;
+    app.state = .idle;
+    _ = app.handleKey(.enter);
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+    try std.testing.expectEqualStrings("sessions/beta.jsonl", app.session.?.path.?);
+}
+
+test "tui-swap: start failure (external lock) is fail-closed — old stays active and usable" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.transcript.appendUser("initial-q");
+    try initial.save();
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    // Externally lock the target path (a second process's lease).
+    var blocker = try coding.Session.start(gpa, io, .{
+        .base_system = "sys",
+        .path = "sessions/beta.jsonl",
+        .open_mode = .resume_existing,
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+        .cwd = tmp.dir,
+    });
+    defer blocker.deinit();
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+
+    // Fail-closed: note surfaced, overlay closed, OLD session untouched —
+    // its lease is still held and the next turn appends to it.
+    try std.testing.expectEqualStrings("resume_failed", app.noteSlice());
+    try std.testing.expect(!app.overlay.isOpen());
+    try std.testing.expect(app.session == initial);
+    try std.testing.expectEqualStrings("sessions/initial.jsonl", app.session.?.path.?);
+
+    try initial.transcript.appendUser("next-turn");
+    try initial.save();
+    var load_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer load_arena.deinit();
+    var loaded = coding.transcript.Transcript.init(load_arena.allocator());
+    _ = try coding.session_store.loadWithMeta(gpa, io, tmp.dir, "sessions/initial.jsonl", &loaded);
+    const items = loaded.items();
+    try std.testing.expectEqualStrings("initial-q", items[items.len - 2].content);
+    try std.testing.expectEqualStrings("next-turn", items[items.len - 1].content);
+}
+
+test "tui-swap: save failure aborts before the old session is touched" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.save();
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    // Arm the old writer's test failpoint: the swap's step-1 save fails.
+    // (No defer here — the disarm below runs while the session is alive;
+    // a defer would fire after app.destroy freed it.)
+    coding.session_store.testing.setFailBeforeReplace(&initial.writer.?, true);
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+
+    // Abort BEFORE the swap: old session untouched, note surfaced.
+    try std.testing.expectEqualStrings("resume_failed", app.noteSlice());
+    try std.testing.expect(app.session == initial);
+    try std.testing.expectEqualStrings("sessions/initial.jsonl", app.session.?.path.?);
+
+    // Old still usable after the failpoint is disarmed.
+    coding.session_store.testing.setFailBeforeReplace(&initial.writer.?, false);
+    try initial.transcript.appendUser("after-abort");
+    try initial.save();
+    var load_arena: std.heap.ArenaAllocator = .init(gpa);
+    defer load_arena.deinit();
+    var loaded = coding.transcript.Transcript.init(load_arena.allocator());
+    _ = try coding.session_store.loadWithMeta(gpa, io, tmp.dir, "sessions/initial.jsonl", &loaded);
+    const items = loaded.items();
+    try std.testing.expectEqualStrings("after-abort", items[items.len - 1].content);
+}
+
+test "tui-swap: swap-back works; teardown deinits the current session exactly once" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.transcript.appendUser("initial-q");
+    try initial.save();
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    // Swap to beta.
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+    const beta = app.session.?;
+    try std.testing.expectEqualStrings("sessions/beta.jsonl", beta.path.?);
+
+    // Swap BACK to the original path (its lock was released by the swap).
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const initial_row = resumeRowFor(app, "initial") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = initial_row;
+    _ = app.handleKey(.enter);
+    const back = app.session orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+    try std.testing.expectEqualStrings("sessions/initial.jsonl", back.path.?);
+    try std.testing.expect(back != initial); // a fresh session object
+    try std.testing.expect(back != beta);
+
+    // The replayed transcript is the initial session's.
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const m = app.card_ring.snapshot(&snap);
+    var idx: usize = 0;
+    try expectCard(&snap, &idx, m, .user, "user", "initial-q");
+    try std.testing.expectEqual(idx, m);
+
+    // defer app.destroy() deinits + destroys the CURRENT session exactly
+    // once — testing.allocator proves no double-free and no leak of any of
+    // the three session objects.
+}
+
+test "tui-swap: the new session's redactor applies to the replay cards" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const secret = "swapped-secret-42";
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{secret}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.transcript.appendUser("alpha-only-token");
+    try initial.save();
+    const initial_redactor = initial.activeRedactor().?;
+    try tmp.dir.createDirPath(io, "sessions");
+    const beta_fixture = try std.fmt.allocPrint(gpa,
+        \\{{"schema_version":1,"v":1,"type":"zag_session","compaction_gen":0}}
+        \\{{"role":"user","content":"the secret is {s}"}}
+        \\{{"role":"assistant","content":"all good"}}
+        ,
+        .{secret},
+    );
+    defer gpa.free(beta_fixture);
+    try tmp.dir.writeFile(io, .{ .sub_path = "sessions/beta.jsonl", .data = beta_fixture });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+    try std.testing.expectEqualStrings("resume_swapped", app.noteSlice());
+
+    // The redactor instance is the NEW session's clone (not the old one's),
+    // and the replay cards redact the secret present in the new session.
+    const cur = app.session.?;
+    try std.testing.expect(app.redactor == cur.activeRedactor().?);
+    try std.testing.expect(app.redactor != initial_redactor);
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const m = app.card_ring.snapshot(&snap);
+    var secret_hits: usize = 0;
+    var marker_hits: usize = 0;
+    for (snap[0..m]) |*slot| {
+        if (!slot.occupied) continue;
+        if (std.mem.indexOf(u8, slot.titleSlice(), secret) != null) secret_hits += 1;
+        if (std.mem.indexOf(u8, slot.bodySlice(), secret) != null) secret_hits += 1;
+        if (std.mem.indexOf(u8, slot.bodySlice(), coding.redact.marker) != null) marker_hits += 1;
+        // "a secret pattern present in one session, absent in the other":
+        // the initial session's content is gone (ring cleared by the swap).
+        try std.testing.expect(std.mem.indexOf(u8, slot.bodySlice(), "alpha-only-token") == null);
+    }
+    try std.testing.expectEqual(@as(usize, 0), secret_hits);
+    try std.testing.expect(marker_hits >= 1);
+}
+
+test "tui-swap: base_system / redactor / skills flags captured at bind reach the new session" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.save();
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "CUSTOM-BASE",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+
+    // Config parity: the swapped-in session carries the bind-time knobs.
+    const cur = app.session.?;
+    try std.testing.expectEqualStrings("CUSTOM-BASE", cur.base_system);
+    try std.testing.expect(!cur.skills_enabled);
+    try std.testing.expect(!cur.templates_enabled);
+    try std.testing.expect(cur.activeRedactor() != null);
+    try std.testing.expect(app.redactor == cur.activeRedactor().?);
+}
+
+test "tui-swap: selecting the ACTIVE session replays only (no-op swap)" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const initial = try startSwapSession(gpa, io, &tmp, "sessions/initial.jsonl", .create_new, &r);
+    try initial.transcript.appendUser("initial-q");
+    try initial.save();
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, initial, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const initial_row = resumeRowFor(app, "initial") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = initial_row;
+    _ = app.handleKey(.enter);
+
+    // Replay only: same session pointer, no swap, live-transcript replay
+    // (the session still holds its own lock — a swap would hit SessionBusy).
+    try std.testing.expectEqualStrings("resume_active", app.noteSlice());
+    try std.testing.expect(app.session == initial);
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const m = app.card_ring.snapshot(&snap);
+    var idx: usize = 0;
+    try expectCard(&snap, &idx, m, .user, "user", "initial-q");
+    try std.testing.expectEqual(idx, m);
+}
+
+test "tui-swap: ephemeral-source swap surfaces the lost conversation note" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Active session is EPHEMERAL (no path — nothing to save on swap).
+    const ephemeral = try startSwapSession(gpa, io, &tmp, null, .create_new, &r);
+    try tmp.dir.createDirPath(io, "sessions");
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "sessions/beta.jsonl",
+        .data = session_header_line ++ "{\"role\":\"user\",\"content\":\"beta-q\"}\n",
+    });
+
+    const app = try App.create(gpa);
+    defer app.destroy();
+    wireResumeFixture(app, &tmp, io);
+    const agent = try bindSwapFixture(app, gpa, io, ephemeral, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+        .redactor = &r,
+        .skills_enabled = false,
+        .templates_enabled = false,
+    });
+    // Heap-owned mock Agent: deinit AND destroy (bindSwapFixture allocated).
+    defer {
+        agent.deinit();
+        gpa.destroy(agent);
+    }
+
+    app.overlay.open(.@"resume");
+    _ = app.rebuildOverlayLines();
+    const beta_row = resumeRowFor(app, "beta") orelse return error.TestUnexpectedResult;
+    app.overlay.cursor = beta_row;
+    _ = app.handleKey(.enter);
+
+    // The swap succeeds; the note surfaces the ephemeral-source loss.
+    try std.testing.expectEqualStrings("resume_swapped_ephemeral", app.noteSlice());
+    try std.testing.expectEqualStrings("sessions/beta.jsonl", app.session.?.path.?);
 }
 
