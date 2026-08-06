@@ -29,6 +29,10 @@ pub const LoopEvent = union(enum) {
     assistant_message: struct {
         text: []const u8,
         has_tools: bool,
+        /// Model reasoning/thinking text for the turn (thinking-visible
+        /// toggle). Borrowed, valid during emit; null when the provider
+        /// sent no thinking.
+        reasoning: ?[]const u8 = null,
     },
     /// One content delta from the in-flight streaming assistant turn
     /// (tui-streaming-001). Borrowed, synchronous, in-order — same discipline

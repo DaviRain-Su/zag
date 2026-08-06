@@ -156,11 +156,15 @@ pub const Terminal = struct {
     /// futex; the bridge must start after so no event is missed.
     pub fn enterRawAlt(self: *Terminal) error{WriteFailed}!void {
         self.vx.enterAltScreen(self.tty.writer()) catch return error.WriteFailed;
-        // Mouse reporting ON: the scroll wheel must reach the app as a
-        // mouse event — without it, terminal emulators (iTerm2 etc.) fall
-        // back to translating the wheel into arrow keys, which the editor
-        // treats as history navigation (visible "editor jumping").
+        // Mouse reporting ON for the scroll wheel, but ONLY click/wheel
+        // (X10 1000 + SGR 1006): button-motion/any-motion (1002/1003) are
+        // disabled so the terminal keeps native drag-to-select — copying
+        // transcript content with the mouse + Cmd+C still works. vaxis's
+        // setMouseMode enables the full set; we immediately disable motion.
+        // vaxis.state.mouse stays true, so deinit still emits mouse_reset.
         self.vx.setMouseMode(self.tty.writer(), true) catch {};
+        self.tty.writer().writeAll("\x1b[?1002l\x1b[?1003l\x1b[?1000h") catch {};
+        self.tty.writer().flush() catch {};
         self.loop.installResizeHandler() catch {};
         self.loop.start() catch return error.WriteFailed;
         // Best-effort capability queries; failures degrade to defaults.

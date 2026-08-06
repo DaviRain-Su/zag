@@ -371,15 +371,13 @@ pub fn estimateCard(slot: *const cards.CardSlot, content_width: u16, assistant: 
     }
     const half: usize = @max(@max(content_width, 1) / 2, 1);
     var rows: u64 = 0;
-    switch (slot.kind) {
-        .ordinary, .host_error, .drop_note, .terminal => {
-            // Single title row (no body rendering).
-            rows = 1;
-        },
-        .user => {
-            rows = 1; // `❯ user` title row
-            rows += estBody(slot.bodySlice(), half);
-        },
+    const has_body = slot.kind == .user or std.mem.startsWith(u8, slot.titleSlice(), "tool ") or std.mem.startsWith(u8, slot.titleSlice(), "thinking");
+    if (has_body) {
+        rows = 1; // title row
+        rows += estBody(slot.bodySlice(), half);
+    } else {
+        // Single title row (no body rendering).
+        rows = 1;
     }
     return @intCast(@min(rows, 65535));
 }

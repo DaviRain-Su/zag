@@ -131,6 +131,10 @@ pub const App = struct {
     themes_root: ?[]const u8 = null,
     theme_selected: []const u8 = theme_mod.builtin_id,
 
+    /// Ctrl+O cycles the permission mode — see handleKey.
+    /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
+    /// text publishes as a `· thinking` card ahead of the assistant turn.
+    show_thinking: bool = false,
     overlay: overlay_mod.Overlay = .{},
     /// Row-level transcript scrollback (tui-scrollback-001): geometry
     /// cache + virtual_y + follow mode. Survives frames.
@@ -360,11 +364,24 @@ pub const App = struct {
                 // Turn boundary: the complete message arrived; next turn's
                 // deltas start clean.
                 self.delta_len = 0;
+                // Thinking visibility toggle: publish the model's reasoning
+                // as its own card (before the assistant turn card) when the
+                // user has thinking on and the provider sent reasoning.
+                if (self.show_thinking) {
+                    if (m.reasoning) |r| {
+                        if (r.len > 0) {
+                            self.card_ring.publishOrdinary(self.gpa, self.redactor, "thinking", r);
+                        }
+                    }
+                }
                 // Lifecycle is card identity for assistant (turn/has_tools).
                 var title_buf: [64]u8 = undefined;
                 const title = std.fmt.bufPrint(&title_buf, TITLE_TURN_FMT, .{m.turn}) catch "assistant";
-                // Replace-style: drop any open progressive "assistant" body card.
-                self.card_ring.replaceNewestOrdinaryTitlePrefix(self.gpa, red, "assistant", title, m.text);
+                // Replace ONLY an open progressive card (its partial text
+                // becomes this complete turn); with no progressive card this
+                // publishes a fresh turn card — a finalized "assistant
+                // turn=N" card is never clobbered by a later turn.
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(self.gpa, red, TITLE_PROGRESSIVE, title, m.text);
             },
             .tool_start => |t| {
                 // Full redact pipeline for name/id/args (arbitrary bytes).
@@ -884,6 +901,13 @@ pub const App = struct {
                 self.perm_label = next.label();
                 return .none;
             },
+            .ctrl_t => {
+                // Thinking visibility toggle: reasoning cards appear for
+                // turns that carry model thinking (future turns only —
+                // already-published cards stay as they are).
+                self.show_thinking = !self.show_thinking;
+                return .none;
+            },
             .char => |ch| {
                 _ = self.editor.insert(ch);
                 self.syncSlashOverlay();
@@ -1221,6 +1245,7 @@ pub const App = struct {
             .followup_pending = follow,
             .model = self.model_label,
             .theme_id = self.palette.id,
+            .show_thinking = self.show_thinking,
             .scroll = self.sb.scroll_offset,
         };
         const ov = render.OverlayPaint{
@@ -1375,6 +1400,86 @@ test "tui-streaming: delta body is redacted in the card" {
     const card = newestAssistantCard(app) orelse return error.TestUnexpectedResult;
     try std.testing.expect(std.mem.indexOf(u8, card.bodySlice(), secret) == null);
     try std.testing.expect(std.mem.indexOf(u8, card.bodySlice(), coding.redact.marker) != null);
+}
+
+test "tui-thinking: reasoning publishes a card only when the toggle is on" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+
+    // Toggle off (default): reasoning is NOT published.
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 1, .text = "answer", .has_tools = false, .reasoning = "hidden chain of thought" } });
+    var snap: [c.card_slots]cards_mod.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var saw_thinking: usize = 0;
+    for (snap[0..n]) |*slot| {
+        if (slot.occupied and std.mem.eql(u8, slot.titleSlice(), "thinking")) saw_thinking += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), saw_thinking);
+
+    // Toggle on: reasoning publishes as a `· thinking` card BEFORE the
+    // assistant turn card (thinking precedes content).
+    _ = app.handleKey(.ctrl_t);
+    try std.testing.expect(app.show_thinking);
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 2, .text = "answer two", .has_tools = false, .reasoning = "planning the reply" } });
+    const n2 = app.card_ring.snapshot(&snap);
+    var thinking_idx: ?usize = null;
+    var assistant_idx: ?usize = null;
+    for (snap[0..n2], 0..) |*slot, i| {
+        if (!slot.occupied) continue;
+        if (std.mem.eql(u8, slot.titleSlice(), "thinking")) thinking_idx = i;
+        if (std.mem.eql(u8, slot.titleSlice(), "assistant turn=2")) assistant_idx = i;
+    }
+    try std.testing.expect(thinking_idx != null);
+    try std.testing.expect(assistant_idx != null);
+    try std.testing.expect(thinking_idx.? < assistant_idx.?);
+    try std.testing.expectEqualStrings("planning the reply", snap[thinking_idx.?].bodySlice());
+
+    // Toggle off again: the NEXT reasoning is not published.
+    _ = app.handleKey(.ctrl_t);
+    try std.testing.expect(!app.show_thinking);
+    App.onLifecycle(app, .{ .assistant_message = .{ .turn = 3, .text = "answer three", .has_tools = false, .reasoning = "more thinking" } });
+    const n3 = app.card_ring.snapshot(&snap);
+    var saw_thinking3: usize = 0;
+    for (snap[0..n3]) |*slot| {
+        if (slot.occupied and std.mem.eql(u8, slot.titleSlice(), "thinking")) saw_thinking3 += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), saw_thinking3); // only turn 2's card
+}
+
+test "tui-thinking: meta line shows the toggle state" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
+    try app.paint(&rec.pt.term); // 80×40 → status meta line at row 38
+    var buf: [512]u8 = undefined;
+    const off = readRow(&rec, 38, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, off, "think:off") != null);
+    _ = app.handleKey(.ctrl_t);
+    try app.paint(&rec.pt.term);
+    const on = readRow(&rec, 38, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, on, "think:on") != null);
+}
+
+/// Read one full row into `buf` (RecTerm.cellText is single-cell).
+fn readRow(rec: *const RecTerm, row: u16, buf: []u8) []const u8 {
+    var n: usize = 0;
+    var col: u16 = 0;
+    while (col < 80) : (col += 1) {
+        var cell: [8]u8 = undefined;
+        const g = rec.cellText(col, row, &cell);
+        if (g.len == 0) continue;
+        if (n + g.len > buf.len) break;
+        @memcpy(buf[n..][0..g.len], g);
+        n += g.len;
+    }
+    return buf[0..n];
 }
 
 test "tui-streaming: complete assistant_message resets at turn boundary" {

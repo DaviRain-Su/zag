@@ -268,6 +268,7 @@ pub fn run(deps: Deps, transcript: *transcript_mod.Transcript) RunError!Result {
         deps_run.event_sink.emit(.{ .assistant_message = .{
             .text = last_text,
             .has_tools = turn.wantsTools(),
+            .reasoning = turn.reasoning,
         } }) catch |err| return mapSinkEmit(err);
         if (turn.usage) |u| {
             // usage: Trace usage, then user Observer/ledger/verbose/cost.

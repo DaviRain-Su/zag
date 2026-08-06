@@ -48,10 +48,13 @@ pub const LifecycleEvent = union(enum) {
     },
     /// Emitted after a complete validated assistant turn is appended.
     /// `turn` is the 1-based turn counter. `has_tools` is `turn.wantsTools()`.
+    /// `reasoning` is the turn's model thinking text (null when absent) —
+    /// the thinking-visibility toggle in the host UI consumes it.
     assistant_message: struct {
         turn: u32,
         text: []const u8,
         has_tools: bool,
+        reasoning: ?[]const u8 = null,
     },
     /// One content delta from the in-flight streaming turn (tui-streaming-001).
     /// Borrowed, synchronous, in-order; UI-visible only (never persisted).

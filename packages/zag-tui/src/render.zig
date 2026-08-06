@@ -42,6 +42,8 @@ pub const StatusFacts = struct {
     followup_pending: u32 = 0,
     model: []const u8 = "—",
     theme_id: []const u8 = theme_mod.builtin_id,
+    /// Thinking visibility toggle state (Ctrl+T).
+    show_thinking: bool = false,
     /// Transcript scroll offset (0 = newest window); shown as feedback.
     scroll: usize = 0,
 };
@@ -382,11 +384,12 @@ fn renderCardInto(
         }
         return;
     }
-    // Title row for user/tool/host_error/drop_note cards. The user marker
-    // is a distinct "❯" (vs "·" for tools) plus the accent color — input
-    // vs output is unmistakable.
+    // Title row for user/tool/thinking/host_error/drop_note cards. The user
+    // marker is a distinct "❯" (vs "·" for tools) plus the accent color —
+    // input vs output is unmistakable.
     const title_limit = @min(@as(usize, 128), @max(@as(usize, win.width), 2) - 2);
     const title = present.utf8Prefix(card.titleSlice(), title_limit);
+    const has_body = card.kind == .user or std.mem.startsWith(u8, card.titleSlice(), "tool ") or std.mem.startsWith(u8, card.titleSlice(), "thinking");
     if (card.kind == .user) {
         if (store.format("❯ {s}", .{title})) |s| {
             printLineStyled(win, 0, s, style);
@@ -396,11 +399,12 @@ fn renderCardInto(
             printLineStyled(win, 0, s, style);
         }
     }
-    // Body rendering only for user cards (tool/host-error rows stay
-    // single-title — transcript compaction). The body is the already-
-    // redacted card buffer; markdown is rendered multi-line, clipped to
-    // the card height. Fallback: raw text, never blank.
-    if (card.kind == .user and card.body_len > 0 and win.height > 1) {
+    // Body rendering for user/tool/thinking cards (host-error/drop rows stay
+    // single-title). Tool cards show their args (tool_start) or result
+    // summary (tool_end); thinking cards show the model's reasoning. The
+    // body is the already-redacted card buffer; markdown is rendered
+    // multi-line, clipped to the card height. Fallback: raw text, never blank.
+    if (has_body and card.body_len > 0 and win.height > 1) {
         const body_win = win.child(.{
             .x_off = 2,
             .y_off = 1,
@@ -439,7 +443,8 @@ pub fn measureCardHeight(gpa: std.mem.Allocator, card: *const cards.CardSlot, co
             return md_render.measureRawIntoStyled(agpa, mwin, card.bodySlice(), md_style);
     }
     var h: u16 = 1;
-    if (card.kind == .user and card.body_len > 0) {
+    const has_body = card.kind == .user or std.mem.startsWith(u8, card.titleSlice(), "tool ") or std.mem.startsWith(u8, card.titleSlice(), "thinking");
+    if (has_body and card.body_len > 0) {
         // The body renders indented (x_off=2) at width content_width-2 —
         // measure at the SAME width or the last wrapped line would clip.
         const body_w = content_width -| 2;
@@ -563,13 +568,15 @@ fn drawStatus(
         }
         return;
     }
-    // Meta line: model · theme · perm · state (+ scroll feedback + hints).
-    // `perm:` shows the active permission mode (ask/auto/bypass) — the
-    // only place the mode is visible (tui-perm-modes-001).
-    if (store.format(" model:{s} theme:{s} perm:{s} state:{s}", .{
+    // Meta line: model · theme · perm · think · state (+ scroll feedback +
+    // hints). `perm:` shows the active permission mode (ask/auto/bypass);
+    // `think:` shows the thinking-visibility toggle (Ctrl+T) — the only
+    // places those states are visible.
+    if (store.format(" model:{s} theme:{s} perm:{s} think:{s} state:{s}", .{
         facts.model,
         facts.theme_id,
         facts.perm,
+        if (facts.show_thinking) "on" else "off",
         stateName(facts.state),
     })) |s| {
         printLineStyled(win, 0, s, status_style);
@@ -1031,10 +1038,12 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     // Card rows (tool row single title, assistant title + body preview),
     // then the cards region's side rails to row 14.
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
+    // Tool cards show their body (args/result) indented under the title.
+    try expectBorderedRow(&cs.screen, 3, "  id=t1 args={}");
     // Assistant cards render flush-left without a title row (clean
     // transcript — the markdown body IS the entry).
-    try expectBorderedRow(&cs.screen, 4, "hello world");
-    var row: u16 = 5;
+    try expectBorderedRow(&cs.screen, 5, "hello world");
+    var row: u16 = 6;
     while (row < 15) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
     // Row 15 is the gap between the cards region and the modal (blank).
     try expectRowEquals(&cs.screen, 15, "");
@@ -1088,7 +1097,8 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
     try expectSeparatorRow(&cs.screen, 1, " transcript ");
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 4, "hello world");
+    try expectBorderedRow(&cs.screen, 3, "  id=t1 args={}");
+    try expectBorderedRow(&cs.screen, 5, "hello world");
     try expectSeparatorRow(&cs.screen, 20, " editor ");
     // The editor prompt + CJK placeholder (wide glyphs occupy 2 cells each;
     // assert cells individually since expectBorderedRow miscounts width).
@@ -1333,25 +1343,26 @@ test "md transcript: assistant card renders multi-line markdown body" {
     // body FLUSH-LEFT with no title row (clean transcript).
     // Cards begin at row 2 (single-row header → cards_y = 1).
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    // The 1-row gap after the tool card, then the assistant body starts at
-    // row 4: the H1 heading (accent fg + bold, markers stripped) at
-    // absolute col 1 (border + interior offset).
-    try expectCellEquals(&cs.screen, 1, 4, "T");
-    try expectCellFgIndex(&cs.screen, 1, 4, 3);
-    const h = cs.screen.readCell(1, 4) orelse return error.TestUnexpectedResult;
+    // Tool body + gap, then the assistant body starts at row 5: the H1
+    // heading (accent fg + bold, markers stripped) at absolute col 1
+    // (border + interior offset).
+    try expectBorderedRow(&cs.screen, 3, "  id=t1 args={}");
+    try expectCellEquals(&cs.screen, 1, 5, "T");
+    try expectCellFgIndex(&cs.screen, 1, 5, 3);
+    const h = cs.screen.readCell(1, 5) orelse return error.TestUnexpectedResult;
     try std.testing.expect(h.style.bold);
     var buf: [512]u8 = undefined;
-    const r3 = rowText(&cs.screen, 4, &buf);
+    const r3 = rowText(&cs.screen, 5, &buf);
     try std.testing.expect(std.mem.indexOf(u8, r3, "# Title") == null);
     try std.testing.expect(std.mem.indexOf(u8, r3, "Title") != null);
     // Bold inline inside the paragraph row ("para " then bold at interior
     // col 5 → absolute col 6).
-    try expectRowContains(&cs.screen, 5, "bold");
-    const bold_cell = cs.screen.readCell(6, 5) orelse return error.TestUnexpectedResult;
+    try expectRowContains(&cs.screen, 6, "bold");
+    const bold_cell = cs.screen.readCell(6, 6) orelse return error.TestUnexpectedResult;
     try std.testing.expect(bold_cell.style.bold);
     // List rows with bullets.
-    try expectRowContains(&cs.screen, 6, "• one");
-    try expectRowContains(&cs.screen, 7, "• two");
+    try expectRowContains(&cs.screen, 7, "• one");
+    try expectRowContains(&cs.screen, 8, "• two");
 }
 
 test "md transcript: tall assistant body clips at the cards region height" {
@@ -1458,10 +1469,12 @@ test "md transcript: tool rows unchanged (single title, body never rendered)" {
     defer sb.deinit();
 
     try expectBorderedRow(&cs.screen, 2, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 4, "· tool run_shell");
-    // The bodies never appear as rows (tool rows are single-title). Scan the
-    // whole cards interior (rows 5..14) plus the gap rows below it.
-    var row: u16 = 5;
+    try expectBorderedRow(&cs.screen, 3, "  id=t1 args={}");
+    try expectBorderedRow(&cs.screen, 5, "· tool run_shell");
+    try expectBorderedRow(&cs.screen, 6, "  ok=true");
+    // Nothing leaks past the tool cards: rows after the second tool card's
+    // body are blank (scan rows 7..16).
+    var row: u16 = 7;
     while (row < 17) : (row += 1) {
         var buf: [512]u8 = undefined;
         const text = rowText(&cs.screen, row, &buf);

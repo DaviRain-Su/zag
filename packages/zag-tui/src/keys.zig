@@ -32,6 +32,8 @@ pub const AppKey = union(enum) {
     ctrl_k,
     /// Toggle the permission mode (hyper: Ctrl+O toggles always-approve).
     ctrl_o,
+    /// Toggle model thinking visibility (Ctrl+T).
+    ctrl_t,
     alt_s,
     alt_f,
     page_up,
@@ -64,6 +66,7 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
             'u' => return .ctrl_u,
             'k' => return .ctrl_k,
             'o' => return .ctrl_o,
+            't' => return .ctrl_t,
             else => {},
         }
     }

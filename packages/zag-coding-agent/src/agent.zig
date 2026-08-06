@@ -1026,6 +1026,7 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
                 .turn = bridge.current_turn,
                 .text = am.text,
                 .has_tools = am.has_tools,
+                .reasoning = am.reasoning,
             } });
             if (bridge.trace) |tr| {
                 tr.emitAssistant(am.text) catch |err| return mapTraceToSink(err);
@@ -6609,6 +6610,7 @@ const OwnedLifecycleEvent = struct {
     name: ?[]u8 = null,
     arguments: ?[]u8 = null,
     body: ?[]u8 = null,
+    reasoning: ?[]u8 = null,
     control_kind: ?lifecycle_mod.ControlKind = null,
     next_turn: u32 = 0,
     turns: u32 = 0,
@@ -6622,6 +6624,7 @@ const OwnedLifecycleEvent = struct {
         if (self.name) |s| gpa.free(s);
         if (self.arguments) |s| gpa.free(s);
         if (self.body) |s| gpa.free(s);
+        if (self.reasoning) |s| gpa.free(s);
         self.* = .{ .kind = self.kind };
     }
 };
@@ -6676,11 +6679,19 @@ const LifecycleRecorder = struct {
             },
             .assistant_message => |am| blk: {
                 const text = self.gpa.dupe(u8, am.text) catch return;
+                const reasoning = if (am.reasoning) |r|
+                    self.gpa.dupe(u8, r) catch {
+                        self.gpa.free(text);
+                        return;
+                    }
+                else
+                    null;
                 break :blk .{
                     .kind = .assistant_message,
                     .turn = am.turn,
                     .text = text,
                     .has_tools = am.has_tools,
+                    .reasoning = reasoning,
                 };
             },
             .assistant_delta => |d| blk: {
