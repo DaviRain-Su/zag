@@ -1173,6 +1173,7 @@ pub const App = struct {
             .followup_pending = follow,
             .model = self.model_label,
             .theme_id = self.palette.id,
+            .scroll = self.scroll_from_bottom,
         };
         const ov = render.OverlayPaint{
             .kind = self.overlay.kind,

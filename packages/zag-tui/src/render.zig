@@ -41,6 +41,8 @@ pub const StatusFacts = struct {
     followup_pending: u32 = 0,
     model: []const u8 = "—",
     theme_id: []const u8 = theme_mod.builtin_id,
+    /// Transcript scroll offset (0 = newest window); shown as feedback.
+    scroll: usize = 0,
 };
 
 pub const OverlayPaint = struct {
@@ -391,19 +393,37 @@ fn drawStatus(
         }
         return;
     }
+    // Meta line: model · theme · state (+ scroll feedback + hints). Built
+    // with store (persistent bytes survive render()).
     if (store.format(" model:{s} theme:{s} state:{s}", .{
         facts.model,
         facts.theme_id,
         stateName(facts.state),
     })) |s| {
         printLineStyled(win, 0, s, status_style);
+        var col: usize = win.gwidth(s);
+        if (facts.scroll > 0) {
+            if (store.format(" ↑{d}", .{facts.scroll})) |n| {
+                _ = win.printSegment(.{ .text = n, .style = palette.style(.error_fg) }, .{
+                    .row_offset = 0,
+                    .col_offset = @intCast(col),
+                    .wrap = .none,
+                });
+                col += win.gwidth(n);
+            }
+        }
+        if (store.format(" [PgUp/Dn 滚动 · / 命令]", .{})) |n| {
+            _ = win.printSegment(.{ .text = n, .style = palette.style(.muted_fg) }, .{
+                .row_offset = 0,
+                .col_offset = @intCast(col + 1),
+                .wrap = .none,
+            });
+        }
         if (facts.status_note.len > 0) {
             if (store.format(" · {s}", .{facts.status_note})) |n| {
-                // Separate segment: store bytes are persistent, so the slice
-                // stays valid for render() (same discipline as LineStore).
                 _ = win.printSegment(.{ .text = n, .style = status_style }, .{
                     .row_offset = 0,
-                    .col_offset = @intCast(win.gwidth(s)),
+                    .col_offset = @intCast(col + 1),
                     .wrap = .none,
                 });
             }
@@ -857,7 +877,8 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     try expectCellEquals(&cs.screen, 4, 21, "输");
     try expectCellEquals(&cs.screen, 14, 21, "/");
     try expectCellEquals(&cs.screen, 22, 21, "令");
-    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default state:busy");
+    try expectRowContains(&cs.screen, 22, "state:busy");
+    try expectRowContains(&cs.screen, 22, "PgUp/Dn");
     try expectBottomBorderRow(&cs.screen, 23);
 
     // Cell-level frame closure: every corner/edge glyph of the outer frame.
@@ -899,7 +920,8 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     try expectCellEquals(&cs.screen, 4, 21, "输");
     try expectCellEquals(&cs.screen, 5, 21, " ");
     try expectCellEquals(&cs.screen, 6, 21, "入");
-    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default state:busy");
+    try expectRowContains(&cs.screen, 22, "state:busy");
+    try expectRowContains(&cs.screen, 22, "PgUp/Dn");
     try expectBottomBorderRow(&cs.screen, 23);
     try expectModalTopRow(&cs.screen, 16);
     // Wide modal border spans the full width.
@@ -937,6 +959,7 @@ test "render state:{s} text present in the status meta line (PTY marker contract
     // The header is a single border row now; the state text lives in the
     // bottom meta line (status row 22 = rows-2).
     try expectRowContains(&cs_idle.screen, 22, "state:idle");
+    try expectRowContains(&cs_idle.screen, 22, "PgUp/Dn");
 
     facts.state = .closing;
     var cs_closing: CellScreen = undefined;
@@ -1002,7 +1025,8 @@ test "render multi-line editor clipped to the fixed content row" {
 
     try expectBorderedRow(&cs.screen, 21, " > line1");
     // The status meta line no longer carries the byte counter / key hints.
-    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default state:busy");
+    try expectRowContains(&cs.screen, 22, "state:busy");
+    try expectRowContains(&cs.screen, 22, "PgUp/Dn");
 }
 
 test "render status strings min-capped to interior width" {
