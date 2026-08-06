@@ -519,10 +519,10 @@ fn drawScrollbar(win: vaxis.Window, sb: *const scrollback_mod.Scrollback, palett
 
 fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor, palette: *const theme_mod.Palette) void {
     const editor_style = mergedFgBg(palette, .editor_fg, .editor_bg);
-    const row: u16 = 0;
     const content = ed.slice();
-    const first_line = singleLine(content);
     if (mode == .constrained) {
+        const first_line = singleLine(content);
+        const row: u16 = 0;
         if (row < win.height) {
             _ = win.printSegment(.{ .text = "> ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
             if (first_line.len > 0) {
@@ -535,20 +535,62 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
         return;
     }
     // Full mode: the `├ … ┤` separator row is the region's border; the
-    // single fixed content row is the first editor line, clipped like card
-    // bodies. The interior ` > ` maps to the same absolute cursor column the
-    // pre-vaxis `│ > ` frame used (the `│` moved into the border).
-    if (row < win.height) {
-        _ = win.printSegment(.{ .text = " > ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
-        if (first_line.len > 0) {
-            _ = win.printSegment(.{ .text = first_line }, .{ .row_offset = row, .col_offset = 3, .wrap = .none });
-        } else {
-            // Placeholder hint (muted) until the user types.
-            _ = win.printSegment(.{ .text = "输入消息，/ 查看命令", .style = palette.style(.muted_fg) }, .{ .row_offset = row, .col_offset = 3, .wrap = .none });
+    // interior rows show a window of the input ending at the cursor's line
+    // (multiline input grows the region; older lines scroll off the top).
+    // The first content row's ` > ` maps to the same absolute cursor column
+    // the pre-vaxis `│ > ` frame used (the `│` moved into the border).
+    const max_rows: usize = win.height;
+    if (max_rows == 0) return;
+
+    // Split into lines; find the cursor's line index (byte offsets).
+    var line_starts: [layout_mod.max_editor_rows + 1]usize = undefined;
+    var line_count: usize = 0;
+    var start: usize = 0;
+    var i: usize = 0;
+    while (i <= content.len) : (i += 1) {
+        if (i == content.len or content[i] == '\n') {
+            if (line_count < line_starts.len) line_starts[line_count] = start;
+            line_count += 1;
+            start = i + 1;
         }
-        const prefix = if (ed.cursor <= first_line.len) content[0..ed.cursor] else first_line;
-        win.showCursor(3 + win.gwidth(prefix), row);
     }
+    // Cursor line: the line containing ed.cursor.
+    var cursor_line: usize = 0;
+    var k: usize = 0;
+    while (k < line_count) : (k += 1) {
+        const ls = line_starts[k];
+        const le = if (k + 1 < line_count) line_starts[k + 1] - 1 else content.len;
+        if (ed.cursor >= ls and ed.cursor <= le) {
+            cursor_line = k;
+            break;
+        }
+    }
+    // Window: the last `max_rows` lines ending at cursor_line.
+    const first_vis = if (cursor_line + 1 > max_rows) cursor_line + 1 - max_rows else 0;
+    const vis_rows = @min(line_count - first_vis, max_rows);
+    var r: usize = 0;
+    while (r < vis_rows) : (r += 1) {
+        const li = first_vis + r;
+        const ls = line_starts[li];
+        const le = if (li + 1 < line_count) line_starts[li + 1] - 1 else content.len;
+        const line = content[ls..le];
+        const prefix_text: []const u8 = if (r == 0) " > " else "   ";
+        _ = win.printSegment(.{ .text = prefix_text, .style = editor_style }, .{ .row_offset = @intCast(r), .wrap = .none });
+        if (line.len > 0) {
+            _ = win.printSegment(.{ .text = line }, .{ .row_offset = @intCast(r), .col_offset = @intCast(prefix_text.len), .wrap = .none });
+        } else if (r == 0 and content.len == 0) {
+            // Placeholder hint (muted) until the user types.
+            _ = win.printSegment(.{ .text = "输入消息，/ 查看命令", .style = palette.style(.muted_fg) }, .{ .row_offset = @intCast(r), .col_offset = @intCast(prefix_text.len), .wrap = .none });
+        }
+    }
+    // Cursor: column within the cursor line, row within the window.
+    const cl = cursor_line - first_vis;
+    const cls = line_starts[cursor_line];
+    const cl_len = if (cursor_line + 1 < line_count) line_starts[cursor_line + 1] - 1 else content.len;
+    const in_line = @min(ed.cursor, cl_len);
+    const prefix = if (in_line >= cls) content[cls..in_line] else content[0..in_line];
+    const col_base: usize = if (cl == 0) 3 else 3;
+    win.showCursor(@intCast(col_base + win.gwidth(prefix)), @intCast(cl));
 }
 
 fn drawStatus(
@@ -770,7 +812,7 @@ fn drawFixture(
     modal: permission.ModalSnapshot,
 ) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0);
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount());
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
@@ -1209,7 +1251,7 @@ test "render title truncated to interior width (min-cap holds)" {
     }
 }
 
-test "render multi-line editor clipped to the fixed content row" {
+test "render multi-line editor grows and shows the cursor window" {
     const gpa = std.testing.allocator;
     var f = fixedFixture();
     _ = f.ed.insert("line1\nline2");
@@ -1218,7 +1260,11 @@ test "render multi-line editor clipped to the fixed content row" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    try expectBorderedRow(&cs.screen, 21, " > line1");
+    // 2 input lines → editor region = separator + 2 rows (y=19..21);
+    // the transcript shrinks accordingly. Cursor sits at the end of
+    // line2, so the window shows both lines.
+    try expectBorderedRow(&cs.screen, 20, " > line1");
+    try expectBorderedRow(&cs.screen, 21, "   line2");
     // The status meta line no longer carries the byte counter / key hints.
     try expectRowContains(&cs.screen, 22, "state:busy");
     try expectRowContains(&cs.screen, 22, "PgUp/Dn");
@@ -1409,7 +1455,7 @@ test "md transcript: tall assistant body clips at the cards region height" {
     // Scrolling up reveals the head of the transcript (row-level scrollback
     // — the older turns are reachable, which is the user's blocking ask).
     sb.scrollUp(200);
-    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0);
+    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1);
     _ = sb.prepare(&snap, @max(layout2.cards.w -| 3, 1), @max(layout2.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
     const palette2 = theme_mod.builtinDefault();
     drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb);

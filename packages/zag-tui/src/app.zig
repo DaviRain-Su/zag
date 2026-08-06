@@ -1331,7 +1331,7 @@ pub const App = struct {
         // interior (region minus the closed-frame borders) is the scrollback
         // viewport + page unit. The scroll argument is legacy (card-level
         // window, used only by constrained mode's newest-3 titles).
-        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0);
+        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount());
         const viewport_h: usize = @max(layout.cards.h -| 1, 1);
         const content_w: u16 = @max(layout.cards.w -| 3, 1);
         self.last_viewport_h = viewport_h;
@@ -1934,6 +1934,28 @@ test "tui-input: ctrl+o cycles permission modes and auto-approves pending" {
     _ = app.handleKey(.ctrl_o);
     try std.testing.expectEqual(permission_mod.Mode.auto, app.permission.mode());
     try std.testing.expect(!app.permission.isPending());
+}
+
+test "tui-input: alt+enter multiline grows the editor region" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    _ = app.handleKey(.alt_enter);
+    _ = app.handleKey(.alt_enter);
+    try std.testing.expectEqual(@as(usize, 3), app.editor.lineCount());
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
+    try app.paint(&rec.pt.term); // 80×40: editor region grew to 4 rows
+    try std.testing.expectEqual(@as(usize, 32), app.last_viewport_h); // transcript shrank (cards 35→33)
+    // All three input lines are on screen (rows 33..35 interior).
+    var buf: [512]u8 = undefined;
+    var found_enter = false;
+    var r: u16 = 30;
+    while (r <= 36) : (r += 1) {
+        const row = readRow(&rec, r, &buf);
+        if (std.mem.indexOf(u8, row, " > ") != null) found_enter = true;
+    }
+    try std.testing.expect(found_enter);
 }
 
 test "tui-input: paint records the cards viewport height for paging" {
