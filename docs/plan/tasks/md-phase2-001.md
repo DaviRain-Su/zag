@@ -86,4 +86,4 @@ keep one row per source row).
 
 # closeout
 
-- Commit: `<hash>` (zag-tui: fenced-code syntax highlight + bold table headers (md-phase2-001)) — code commit; closeout line lands as a doc-only follow-up.
+- Commit: `ab6f86b` (zag-tui: fenced-code syntax highlight + bold table headers (md-phase2-001)) — code commit; closeout line lands as a doc-only follow-up.
