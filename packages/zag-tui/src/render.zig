@@ -3,7 +3,7 @@
 //! (`root.child(.{ .x_off, .y_off, .width, .height })`); card bodies/titles
 //! truncate per the tui-layout-001 rules (utf8Prefix min-caps); multi-line
 //! editor content clips to the fixed content row; `state:{s}` stays present
-//! in the header cells (PTY grep contract). `vx.render()` diff replaces the
+//! in the status meta line (PTY grep contract). `vx.render()` diff replaces the
 //! old full-frame ANSI; the offscreen fixtures assert the cell content that
 //! the pre-vaxis golden frames encode.
 
@@ -365,6 +365,9 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
         _ = win.printSegment(.{ .text = " > ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
         if (first_line.len > 0) {
             _ = win.printSegment(.{ .text = first_line }, .{ .row_offset = row, .col_offset = 3, .wrap = .none });
+        } else {
+            // Placeholder hint (muted) until the user types.
+            _ = win.printSegment(.{ .text = "输入消息，/ 查看命令", .style = palette.style(.muted_fg) }, .{ .row_offset = row, .col_offset = 3, .wrap = .none });
         }
         const prefix = if (ed.cursor <= first_line.len) content[0..ed.cursor] else first_line;
         win.showCursor(3 + win.gwidth(prefix), row);
@@ -379,6 +382,7 @@ fn drawStatus(
     palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
 ) void {
+    _ = ed; // meta line no longer shows the byte counter (minimal look)
     const status_style = palette.style(.accent_fg);
     if (win.height < 1) return;
     if (mode == .constrained) {
@@ -387,13 +391,23 @@ fn drawStatus(
         }
         return;
     }
-    if (store.format(" model:{s} theme:{s} [{d}/{d}] [/ palette · PgUp/Dn]", .{
+    if (store.format(" model:{s} theme:{s} state:{s}", .{
         facts.model,
         facts.theme_id,
-        ed.len,
-        c.editor_max_bytes,
+        stateName(facts.state),
     })) |s| {
         printLineStyled(win, 0, s, status_style);
+        if (facts.status_note.len > 0) {
+            if (store.format(" · {s}", .{facts.status_note})) |n| {
+                // Separate segment: store bytes are persistent, so the slice
+                // stays valid for render() (same discipline as LineStore).
+                _ = win.printSegment(.{ .text = n, .style = status_style }, .{
+                    .row_offset = 0,
+                    .col_offset = @intCast(win.gwidth(s)),
+                    .wrap = .none,
+                });
+            }
+        }
     }
 }
 
@@ -449,7 +463,7 @@ fn drawHostOverlay(
     const style = palette.style(.modal_fg);
     const h: u16 = @min(12, @max(layout.cards.h, 4));
     const w: u16 = @min(root.width, 60);
-    const y: u16 = layout.cards.y;
+    const y: u16 = layout.cards.y + 1; // skip the cards region's `├ … ┤` separator row
     const x: u16 = if (root.width > w) (root.width - w) / 2 else 0;
     const box = root.child(.{
         .x_off = x,
@@ -480,9 +494,20 @@ fn drawHostOverlay(
     for (ov.lines, 0..) |line, i| {
         if (row >= box.height) break;
         const marker_ch: []const u8 = if (i == ov.cursor) "> " else "  ";
-        var buf: [256]u8 = undefined;
-        const rendered = std.fmt.bufPrint(&buf, "{s}{s}", .{ marker_ch, line }) catch line;
-        printLineStyled(box, row, rendered, style);
+        // Split marker + line into TWO segments: vaxis printSegment borrows
+        // the text slice into cells (no copy), so a stack-allocated joined
+        // buffer would dangle by the time render() diffs. The marker is a
+        // compile-time literal and `line` lives in the App's persistent
+        // overlay_line_bufs — both safe to borrow.
+        _ = box.printSegment(.{ .text = marker_ch, .style = style }, .{
+            .row_offset = row,
+            .wrap = .none,
+        });
+        _ = box.printSegment(.{ .text = line, .style = style }, .{
+            .row_offset = row,
+            .col_offset = @intCast(marker_ch.len),
+            .wrap = .none,
+        });
         row += 1;
     }
 }
@@ -801,28 +826,38 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, f.modal);
     defer cs.deinit(gpa);
 
-    // Header: top border (title overlaid), two content rows, no bottom edge
-    // (the transcript separator is the cards region's top border).
+    // Minimal frame: row 0 is the top border (title overlaid) — the header
+    // is a single border row, so the transcript separator follows directly
+    // at row 1 (the id/perm/shell info lines are gone).
     try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
-    try expectBorderedRow(&cs.screen, 1, " id: sess-abc  open:create_new cfg:y");
-    try expectBorderedRow(&cs.screen, 2, " perm:ask  shell:protect  state:busy  S:2 F:1");
-    // Transcript separator + card rows (tool row single title, assistant
-    // title + body preview), then the cards region's side rails to row 15.
-    try expectSeparatorRow(&cs.screen, 3, " transcript ");
-    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 5, "· assistant turn=1");
-    try expectBorderedRow(&cs.screen, 6, "  hello world");
-    var row: u16 = 7;
-    while (row < 16) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
+    try expectSeparatorRow(&cs.screen, 1, " transcript ");
+    // Card rows (tool row single title, assistant title + body preview),
+    // then the cards region's side rails to row 14.
+    try expectBorderedRow(&cs.screen, 2, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 3, "· assistant turn=1");
+    try expectBorderedRow(&cs.screen, 4, "  hello world");
+    var row: u16 = 5;
+    while (row < 15) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
+    // Row 15 is the gap between the cards region and the modal (blank).
+    try expectRowEquals(&cs.screen, 15, "");
     // Modal: rounded border at rows 16-19 (full width), title + two rows.
     try expectModalTopRow(&cs.screen, 16);
     try expectBorderedRow(&cs.screen, 17, "risk:medium  args_len:23  tool:write_file");
     try expectBorderedRow(&cs.screen, 18, "[a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny");
     try expectModalBottomRow(&cs.screen, 19);
-    // Editor separator + content, status line, bottom border closes the frame.
+    // Editor separator + placeholder content, status meta line, bottom
+    // border closes the frame. The placeholder is ` > ` at interior cols
+    // 0-2 then the muted CJK hint; each CJK glyph is 2 cells wide in vaxis
+    // (the odd cells are skipped), so assert cell-by-cell instead of the
+    // full row.
     try expectSeparatorRow(&cs.screen, 20, " editor ");
-    try expectBorderedRow(&cs.screen, 21, " > ");
-    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
+    try expectCellEquals(&cs.screen, 1, 21, " ");
+    try expectCellEquals(&cs.screen, 2, 21, ">");
+    try expectCellEquals(&cs.screen, 3, 21, " ");
+    try expectCellEquals(&cs.screen, 4, 21, "输");
+    try expectCellEquals(&cs.screen, 14, 21, "/");
+    try expectCellEquals(&cs.screen, 22, 21, "令");
+    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default state:busy");
     try expectBottomBorderRow(&cs.screen, 23);
 
     // Cell-level frame closure: every corner/edge glyph of the outer frame.
@@ -830,12 +865,12 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     try expectCellEquals(&cs.screen, 79, 0, "┐");
     try expectCellEquals(&cs.screen, 0, 23, "└");
     try expectCellEquals(&cs.screen, 79, 23, "┘");
-    try expectCellEquals(&cs.screen, 0, 3, "├");
-    try expectCellEquals(&cs.screen, 79, 3, "┤");
+    try expectCellEquals(&cs.screen, 0, 1, "├");
+    try expectCellEquals(&cs.screen, 79, 1, "┤");
     try expectCellEquals(&cs.screen, 0, 20, "├");
     try expectCellEquals(&cs.screen, 79, 20, "┤");
-    try expectCellEquals(&cs.screen, 0, 1, "│");
-    try expectCellEquals(&cs.screen, 79, 1, "│");
+    try expectCellEquals(&cs.screen, 0, 2, "│");
+    try expectCellEquals(&cs.screen, 79, 2, "│");
     // Modal corner cells (rounded family).
     try expectCellEquals(&cs.screen, 0, 16, "╭");
     try expectCellEquals(&cs.screen, 79, 16, "╮");
@@ -851,15 +886,20 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     defer cs.deinit(gpa);
 
     try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
-    try expectBorderedRow(&cs.screen, 1, " id: sess-abc  open:create_new cfg:y");
-    try expectBorderedRow(&cs.screen, 2, " perm:ask  shell:protect  state:busy  S:2 F:1");
-    try expectSeparatorRow(&cs.screen, 3, " transcript ");
-    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 5, "· assistant turn=1");
-    try expectBorderedRow(&cs.screen, 6, "  hello world");
+    try expectSeparatorRow(&cs.screen, 1, " transcript ");
+    try expectBorderedRow(&cs.screen, 2, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 3, "· assistant turn=1");
+    try expectBorderedRow(&cs.screen, 4, "  hello world");
     try expectSeparatorRow(&cs.screen, 20, " editor ");
-    try expectBorderedRow(&cs.screen, 21, " > ");
-    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
+    // The editor prompt + CJK placeholder (wide glyphs occupy 2 cells each;
+    // assert cells individually since expectBorderedRow miscounts width).
+    try expectCellEquals(&cs.screen, 1, 21, " ");
+    try expectCellEquals(&cs.screen, 2, 21, ">");
+    try expectCellEquals(&cs.screen, 3, 21, " ");
+    try expectCellEquals(&cs.screen, 4, 21, "输");
+    try expectCellEquals(&cs.screen, 5, 21, " ");
+    try expectCellEquals(&cs.screen, 6, 21, "入");
+    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default state:busy");
     try expectBottomBorderRow(&cs.screen, 23);
     try expectModalTopRow(&cs.screen, 16);
     // Wide modal border spans the full width.
@@ -885,7 +925,7 @@ test "render constrained-mode cells match pre-vaxis golden (30x8)" {
     while (row < 8) : (row += 1) try expectRowEquals(&cs.screen, row, "");
 }
 
-test "render state:{s} text present in header cells (PTY marker contract)" {
+test "render state:{s} text present in the status meta line (PTY marker contract)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var facts = f.facts_full;
@@ -894,13 +934,15 @@ test "render state:{s} text present in header cells (PTY marker contract)" {
     var cs_idle: CellScreen = undefined;
     try drawFixture(&cs_idle, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
     defer cs_idle.deinit(gpa);
-    try expectRowContains(&cs_idle.screen, 2, "state:idle");
+    // The header is a single border row now; the state text lives in the
+    // bottom meta line (status row 22 = rows-2).
+    try expectRowContains(&cs_idle.screen, 22, "state:idle");
 
     facts.state = .closing;
     var cs_closing: CellScreen = undefined;
     try drawFixture(&cs_closing, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
     defer cs_closing.deinit(gpa);
-    try expectRowContains(&cs_closing.screen, 2, "state:closing");
+    try expectRowContains(&cs_closing.screen, 22, "state:closing");
 }
 
 test "render body preview truncated to interior width on UTF-8 boundary" {
@@ -922,9 +964,11 @@ test "render body preview truncated to interior width on UTF-8 boundary" {
     defer cs.deinit(gpa);
 
     // First body row: 2-space indent + 74 a's + é + x (76 content cells).
-    try expectBorderedRow(&cs.screen, 5, ("  " ++ ("a" ** 74) ++ "\xc3\xa9" ++ "x"));
+    // Cards start at row 2 (single-row header), so the title is row 2 and
+    // the body begins at row 3.
+    try expectBorderedRow(&cs.screen, 3, ("  " ++ ("a" ** 74) ++ "\xc3\xa9" ++ "x"));
     // The wrapped tail lands on the next row (no content lost).
-    try expectBorderedRow(&cs.screen, 6, "  yz");
+    try expectBorderedRow(&cs.screen, 4, "  yz");
 }
 
 test "render title truncated to interior width (min-cap holds)" {
@@ -939,7 +983,7 @@ test "render title truncated to interior width (min-cap holds)" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectBorderedRow(&cs.screen, 4, ("· " ++ ("t" ** 75)));
+    try expectBorderedRow(&cs.screen, 2, ("· " ++ ("t" ** 75)));
     var row: u16 = 0;
     while (row < 24) : (row += 1) {
         var buf: [512]u8 = undefined;
@@ -957,19 +1001,22 @@ test "render multi-line editor clipped to the fixed content row" {
     defer cs.deinit(gpa);
 
     try expectBorderedRow(&cs.screen, 21, " > line1");
-    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default [11/65536] [/ palette · PgUp/Dn]");
+    // The status meta line no longer carries the byte counter / key hints.
+    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default state:busy");
 }
 
-test "render header strings min-capped to interior width" {
+test "render status strings min-capped to interior width" {
     const gpa = std.testing.allocator;
     var f = fixedFixture();
-    f.facts_full.id_display = "x" ** 100;
+    f.facts_full.theme_id = "x" ** 100;
     var cs: CellScreen = undefined;
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    // Interior is 78 wide: " id: " (5 cells) + 73 x's; the right rail closes.
-    try expectBorderedRow(&cs.screen, 1, (" id: " ++ ("x" ** 73)));
+    // The header is a border row (nothing to cap there); the meta line is
+    // the min-capped string now. Interior is 78 cells: " model:— theme:"
+    // (15 cells / 17 bytes) + 61 x's fills the byte cap exactly.
+    try expectBorderedRow(&cs.screen, 22, (" model:— theme:" ++ ("x" ** 61)));
 }
 
 test "render no-events frame" {
@@ -979,7 +1026,7 @@ test "render no-events frame" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &.{}, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectBorderedRow(&cs.screen, 4, "(no events yet)");
+    try expectBorderedRow(&cs.screen, 2, "(no events yet)");
 }
 
 test "render card kind drives fg style" {
@@ -1002,15 +1049,16 @@ test "render card kind drives fg style" {
     defer cs.deinit(gpa);
 
     // Title text starts at interior col 2 ("· " prefix) → absolute col 3.
-    try expectCellFgIndex(&cs.screen, 3, 4, 7); // ordinary → card_fg
-    try expectCellFgIndex(&cs.screen, 3, 5, 8); // terminal → muted_fg
-    try expectCellFgIndex(&cs.screen, 3, 6, 1); // host_error → error_fg
-    try expectCellFgIndex(&cs.screen, 3, 7, 8); // drop_note → muted_fg
+    // Cards begin at row 2 (single-row header → cards_y = 1).
+    try expectCellFgIndex(&cs.screen, 3, 2, 7); // ordinary → card_fg
+    try expectCellFgIndex(&cs.screen, 3, 3, 8); // terminal → muted_fg
+    try expectCellFgIndex(&cs.screen, 3, 4, 1); // host_error → error_fg
+    try expectCellFgIndex(&cs.screen, 3, 5, 8); // drop_note → muted_fg
     // Tool/terminal/host-error cards render as single title rows.
-    try expectBorderedRow(&cs.screen, 4, "· alpha");
-    try expectBorderedRow(&cs.screen, 5, "· run_terminal");
-    try expectBorderedRow(&cs.screen, 6, "· host_error");
-    try expectBorderedRow(&cs.screen, 7, "· drop");
+    try expectBorderedRow(&cs.screen, 2, "· alpha");
+    try expectBorderedRow(&cs.screen, 3, "· run_terminal");
+    try expectBorderedRow(&cs.screen, 4, "· host_error");
+    try expectBorderedRow(&cs.screen, 5, "· drop");
 }
 
 test "render degenerate 20x5 constrained never overflows" {
@@ -1031,8 +1079,8 @@ test "render degenerate 20x5 constrained never overflows" {
 // drawCards renders assistant + user card bodies through md_render
 // (multi-line, clipped to the cards region); tool/terminal/host-error rows
 // stay single-title. Geometry at 80x24 (no modal): cards region interior
-// rows 4..16; the assistant title row is 5 and its body starts at row 6,
-// column 2 (border + 1 interior offset).
+// rows 2..14 (single-row header → cards_y = 1); the assistant title row is
+// 3 and its body starts at row 4, column 2 (border + 1 interior offset).
 
 fn mdCard(title: []const u8, kind: cards.CardKind, body: []const u8) cards.CardSlot {
     var slot = cards.CardSlot{ .occupied = true, .kind = kind };
@@ -1064,25 +1112,26 @@ test "md transcript: assistant card renders multi-line markdown body" {
     defer cs.deinit(gpa);
 
     // Tool row stays single-title; assistant title + formatted body follow.
-    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 5, "· assistant turn=1");
-    // Body row 6 = the H1 heading: accent fg + bold, markers stripped.
+    // Cards begin at row 2 (single-row header → cards_y = 1).
+    try expectBorderedRow(&cs.screen, 2, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 3, "· assistant turn=1");
+    // Body row 4 = the H1 heading: accent fg + bold, markers stripped.
     // Body content starts at absolute col 3 (border + interior + 2 indent).
-    try expectCellEquals(&cs.screen, 3, 6, "T");
-    try expectCellFgIndex(&cs.screen, 3, 6, 3);
-    const h = cs.screen.readCell(3, 6) orelse return error.TestUnexpectedResult;
+    try expectCellEquals(&cs.screen, 3, 4, "T");
+    try expectCellFgIndex(&cs.screen, 3, 4, 3);
+    const h = cs.screen.readCell(3, 4) orelse return error.TestUnexpectedResult;
     try std.testing.expect(h.style.bold);
     var buf: [512]u8 = undefined;
-    const r6 = rowText(&cs.screen, 6, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, r6, "# Title") == null);
-    try std.testing.expect(std.mem.indexOf(u8, r6, "Title") != null);
+    const r4 = rowText(&cs.screen, 4, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r4, "# Title") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r4, "Title") != null);
     // Bold inline inside the paragraph row (absolute col 8 = "bold" start).
-    try expectRowContains(&cs.screen, 7, "bold");
-    const bold_cell = cs.screen.readCell(8, 7) orelse return error.TestUnexpectedResult;
+    try expectRowContains(&cs.screen, 5, "bold");
+    const bold_cell = cs.screen.readCell(8, 5) orelse return error.TestUnexpectedResult;
     try std.testing.expect(bold_cell.style.bold);
     // List rows with bullets.
-    try expectRowContains(&cs.screen, 8, "• one");
-    try expectRowContains(&cs.screen, 9, "• two");
+    try expectRowContains(&cs.screen, 6, "• one");
+    try expectRowContains(&cs.screen, 7, "• two");
 }
 
 test "md transcript: tall assistant body clips at the cards region height" {
@@ -1110,15 +1159,16 @@ test "md transcript: tall assistant body clips at the cards region height" {
     try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
 
-    // Single-card layout: the body window is 12 rows (region 13 − title row),
-    // so the render clips at "line 12" (screen row 16 = 5 + 11); nothing past
-    // the region.
-    try expectRowContains(&cs.screen, 16, "line 12");
+    // Single-card layout: the cards region is 14 rows (y=1..14, interior
+    // rows 2..14), so the body window is 12 rows (region 14 − title row −
+    // border) and the render clips at "line 12" (screen row 14 = 3 + 11);
+    // nothing past the region.
+    try expectRowContains(&cs.screen, 14, "line 12");
     var buf: [512]u8 = undefined;
-    const last = rowText(&cs.screen, 17, &buf);
+    const last = rowText(&cs.screen, 15, &buf);
     try std.testing.expect(std.mem.indexOf(u8, last, "line 13") == null);
-    const r18 = rowText(&cs.screen, 18, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, r18, "line 13") == null);
+    const r16 = rowText(&cs.screen, 16, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r16, "line 13") == null);
 }
 
 test "md transcript: user card body renders with accent base" {
@@ -1137,17 +1187,17 @@ test "md transcript: user card body renders with accent base" {
     try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
 
-    // User title row 4; body row 5 = the H1: accent fg (user base accent) +
+    // User title row 2; body row 3 = the H1: accent fg (user base accent) +
     // bold heading, markers stripped.
-    try expectBorderedRow(&cs.screen, 4, "· user");
-    try expectCellEquals(&cs.screen, 3, 5, "m");
-    try expectCellFgIndex(&cs.screen, 3, 5, 3);
-    const h = cs.screen.readCell(3, 5) orelse return error.TestUnexpectedResult;
+    try expectBorderedRow(&cs.screen, 2, "· user");
+    try expectCellEquals(&cs.screen, 3, 3, "m");
+    try expectCellFgIndex(&cs.screen, 3, 3, 3);
+    const h = cs.screen.readCell(3, 3) orelse return error.TestUnexpectedResult;
     try std.testing.expect(h.style.bold);
     var buf: [512]u8 = undefined;
-    const r5 = rowText(&cs.screen, 5, &buf);
-    try std.testing.expect(std.mem.indexOf(u8, r5, "# my question") == null);
-    try std.testing.expect(std.mem.indexOf(u8, r5, "my question") != null);
+    const r3 = rowText(&cs.screen, 3, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r3, "# my question") == null);
+    try std.testing.expect(std.mem.indexOf(u8, r3, "my question") != null);
 }
 
 test "md transcript: tool rows unchanged (single title, body never rendered)" {
@@ -1169,10 +1219,11 @@ test "md transcript: tool rows unchanged (single title, body never rendered)" {
     try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
 
-    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
-    try expectBorderedRow(&cs.screen, 5, "· tool run_shell");
-    // The bodies never appear as rows (tool rows are single-title).
-    var row: u16 = 6;
+    try expectBorderedRow(&cs.screen, 2, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 3, "· tool run_shell");
+    // The bodies never appear as rows (tool rows are single-title). Scan the
+    // whole cards interior (rows 4..14) plus the gap rows below it.
+    var row: u16 = 4;
     while (row < 17) : (row += 1) {
         var buf: [512]u8 = undefined;
         const text = rowText(&cs.screen, row, &buf);

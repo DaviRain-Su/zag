@@ -1402,10 +1402,12 @@ test "tui-layout: first paint always happens" {
     try std.testing.expect(!app.dirty);
     try std.testing.expect(app.last_painted_size != null);
     // Cell proof: the full frame was drawn into the offscreen screen.
+    // Minimal frame: row 0 is the top border, row 1 is the transcript
+    // separator (`├─ transcript ─…` with the label starting at col 3).
     try expectCellText(&rec, 0, 0, "┌");
     try expectCellText(&rec, 1, 0, "─");
-    try expectCellText(&rec, 0, 1, "│");
-    try expectCellText(&rec, 2, 1, "i");
+    try expectCellText(&rec, 0, 1, "├");
+    try expectCellText(&rec, 3, 1, "t");
 }
 
 test "tui-layout: no-change poll skips render (canary survives)" {
