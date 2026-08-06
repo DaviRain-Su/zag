@@ -310,11 +310,19 @@ fn drawCards(
                 }
                 continue;
             }
-            // Title row for user/tool/host_error/drop_note cards.
+            // Title row for user/tool/host_error/drop_note cards. The user
+            // marker is a distinct "❯" (vs "·" for tools) plus the accent
+            // color — input vs output is unmistakable.
             if (row < win.height) {
                 const title = present.utf8Prefix(card.titleSlice(), title_limit);
-                if (store.format("· {s}", .{title})) |s| {
-                    printLineStyled(win, row, s, style);
+                if (card.kind == .user) {
+                    if (store.format("❯ {s}", .{title})) |s| {
+                        printLineStyled(win, row, s, style);
+                    }
+                } else {
+                    if (store.format("· {s}", .{title})) |s| {
+                        printLineStyled(win, row, s, style);
+                    }
                 }
                 row += 1;
             }
@@ -345,6 +353,9 @@ fn drawCards(
     while (i > 0 and row < win.height) {
         i -= 1;
         const card = &snap[window.start + i];
+        // Terminal-reserve cards (run_terminal) are status noise — never
+        // shown, in either mode (user feedback).
+        if (card.kind == .terminal) continue;
         const title = present.utf8Prefix(card.titleSlice(), title_limit);
         if (store.format("· {s}", .{title})) |s| {
             printLineStyled(win, row, s, cardStyle(card.kind, palette));
@@ -1240,7 +1251,7 @@ test "md transcript: user card body renders with accent base" {
 
     // User title row 2; body row 3 = the H1: accent fg (user base accent) +
     // bold heading, markers stripped.
-    try expectBorderedRow(&cs.screen, 2, "· user");
+    try expectBorderedRow(&cs.screen, 2, "❯ user");
     try expectCellEquals(&cs.screen, 3, 3, "m");
     try expectCellFgIndex(&cs.screen, 3, 3, 3);
     const h = cs.screen.readCell(3, 3) orelse return error.TestUnexpectedResult;
