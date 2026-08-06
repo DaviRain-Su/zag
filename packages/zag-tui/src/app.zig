@@ -683,6 +683,18 @@ pub const App = struct {
                         break;
                     }
                 },
+                .mouse => |m| {
+                    // Scroll wheel → row-level transcript scroll (hyper
+                    // wheel semantics; 3 rows per notch). The bottom
+                    // overscroll re-engages follow — wheel-to-bottom snaps
+                    // back to live content. Click/motion are ignored (v1).
+                    switch (m.button) {
+                        .wheel_up => self.sb.scrollUp(3),
+                        .wheel_down => self.sb.scrollDown(3, self.last_viewport_h),
+                        else => {},
+                    }
+                    self.dirty = true;
+                },
                 .winsize => |ws| {
                     term.resize(ws);
                     self.dirty = true;
@@ -1607,6 +1619,43 @@ test "tui-input: page keys scroll rows and re-engage follow" {
     _ = app.handleKey(.page_down);
     try std.testing.expect(app.sb.follow_mode);
     try std.testing.expectEqual(bottom, app.sb.scroll_offset);
+}
+
+test "tui-input: mouse wheel scrolls the transcript rows" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        var tbuf: [40]u8 = undefined;
+        const t = std.fmt.bufPrint(&tbuf, "assistant turn={d}", .{i}) catch "assistant";
+        app.card_ring.publishOrdinaryPrepared(cards_mod.PreparedCard.fromFixed(t, "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty twenty-one twenty-two twenty-three twenty-four"));
+    }
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
+    try app.paint(&rec.pt.term); // 80×40 → viewport 29, content overflows
+    try std.testing.expect(app.sb.follow_mode);
+    const bottom = app.sb.scroll_offset;
+    try std.testing.expect(bottom > 0); // content overflows
+
+    const wheel = terminal_mod.Event{ .mouse = .{ .button = .wheel_up, .col = 1, .row = 1, .mods = .{}, .type = .press } };
+    // Wheel up: scrolls the transcript back (never touches the editor).
+    rec.pt.term.ring.push(wheel) catch unreachable;
+    _ = app.drainBridgeEvents(&rec.pt.term);
+    try std.testing.expect(!app.sb.follow_mode);
+    try std.testing.expect(app.sb.scroll_offset < bottom);
+    const up = app.sb.scroll_offset;
+    try std.testing.expectEqualStrings("", app.editor.slice()); // editor untouched
+
+    // Wheel down: scrolls forward; overscroll at the bottom re-engages.
+    var n: usize = 0;
+    while (n < 30) : (n += 1) {
+        rec.pt.term.ring.push(terminal_mod.Event{ .mouse = .{ .button = .wheel_down, .col = 1, .row = 1, .mods = .{}, .type = .press } }) catch unreachable;
+        _ = app.drainBridgeEvents(&rec.pt.term);
+    }
+    try std.testing.expect(app.sb.follow_mode);
+    try std.testing.expectEqual(bottom, app.sb.scroll_offset);
+    try std.testing.expect(up > 0);
 }
 
 test "tui-input: paint records the cards viewport height for paging" {

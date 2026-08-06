@@ -29,12 +29,13 @@ pub const Size = struct {
     }
 };
 
-/// Bridge-ring event vocabulary. `key_press`/`winsize` come from vaxis's
-/// input thread via `loop.nextEvent()`; `quit` is posted by `restore()` to
-/// unblock a bridge blocked in `nextEvent`.
+/// Bridge-ring event vocabulary. `key_press`/`winsize`/`mouse` come from
+/// vaxis's input thread via `loop.nextEvent()`; `quit` is posted by
+/// `restore()` to unblock a bridge blocked in `nextEvent`.
 pub const Event = union(enum) {
     key_press: vaxis.Key,
     winsize: vaxis.Winsize,
+    mouse: vaxis.Mouse,
     quit,
 };
 
@@ -155,6 +156,11 @@ pub const Terminal = struct {
     /// futex; the bridge must start after so no event is missed.
     pub fn enterRawAlt(self: *Terminal) error{WriteFailed}!void {
         self.vx.enterAltScreen(self.tty.writer()) catch return error.WriteFailed;
+        // Mouse reporting ON: the scroll wheel must reach the app as a
+        // mouse event — without it, terminal emulators (iTerm2 etc.) fall
+        // back to translating the wheel into arrow keys, which the editor
+        // treats as history navigation (visible "editor jumping").
+        self.vx.setMouseMode(self.tty.writer(), true) catch {};
         self.loop.installResizeHandler() catch {};
         self.loop.start() catch return error.WriteFailed;
         // Best-effort capability queries; failures degrade to defaults.
