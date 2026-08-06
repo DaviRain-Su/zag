@@ -125,7 +125,7 @@ Recon facts (all verified):
   `gate33_pty_resume_swap_continue_appends_to_selected_session`) pass on
   macOS; the single skip is the pre-existing TTY-less `ISIG` test.
 
-commit: (code commit line added by closeout)
+commit: f077b95 "session-tree-001: grouped /resume session browser with mtime+size metadata" (code; doc status + closeout follow)
 
 # related
 
