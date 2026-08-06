@@ -89,7 +89,7 @@ pub fn main(init: std.process.Init) !void {
         .messages = &messages,
         .max_tokens = 512,
         .response_format = response_format,
-    }) catch |err| {
+    }, null) catch |err| {
         std.debug.print("chat completion failed: {s}\n", .{@errorName(err)});
         return;
     };

@@ -65,6 +65,7 @@ pub const Resource = struct {
             full_path,
             T,
             request_opts,
+            null,
         );
     }
 

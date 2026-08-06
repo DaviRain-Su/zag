@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     var chat = client.chat().create_chat_completion(gpa, .{
         .model = conf.model,
         .messages = &messages,
-    }) catch |err| {
+    }, null) catch |err| {
         if (err == errors.Error.HttpError) {
             std.debug.print("Chat call failed (HTTP error)\n", .{});
             return;

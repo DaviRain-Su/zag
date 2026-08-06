@@ -113,6 +113,7 @@ pub const Resource = struct {
             path,
             gen.ListFilesResponse,
             request_opts,
+            null,
         );
     }
 
@@ -153,6 +154,7 @@ pub const Resource = struct {
             payload,
             gen.OpenAIFile,
             request_opts,
+            null,
         );
     }
 
@@ -224,6 +226,7 @@ pub const Resource = struct {
             path,
             gen.DeleteFileResponse,
             request_opts,
+            null,
         );
     }
 
@@ -271,6 +274,7 @@ pub const Resource = struct {
             path,
             gen.OpenAIFile,
             request_opts,
+            null,
         );
     }
 
@@ -312,6 +316,7 @@ pub const Resource = struct {
             &.{},
             null,
             request_opts,
+            null,
         );
         return .{
             .allocator = self.transport.allocator,

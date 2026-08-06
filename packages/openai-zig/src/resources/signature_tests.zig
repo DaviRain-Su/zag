@@ -28,6 +28,13 @@ fn assertLastParamIsOptionalRequestOptions(comptime Func: type) void {
     }
 }
 
+fn assertLastParamIsRetryAfterOut(comptime Func: type) void {
+    const params = @typeInfo(Func).Fn.params;
+    if (params[params.len - 1].type != ?*?u64) {
+        @compileError("last param should be ?*?u64 (retry_after_out)");
+    }
+}
+
 test "models resource signature keeps request_opts optional" {
     assertParamCount(models.Resource.list_models_with_options, 3);
     assertLastParamIsOptionalRequestOptions(models.Resource.list_models_with_options);
@@ -49,8 +56,11 @@ test "models resource signature keeps request_opts optional" {
 }
 
 test "chat completion signature keeps request options and optional payload fields" {
-    assertParamCount(chat.Resource.create_chat_completion_with_options, 4);
-    assertLastParamIsOptionalRequestOptions(chat.Resource.create_chat_completion_with_options);
+    assertParamCount(chat.Resource.create_chat_completion, 4);
+    assertLastParamIsRetryAfterOut(chat.Resource.create_chat_completion);
+
+    assertParamCount(chat.Resource.create_chat_completion_with_options, 5);
+    assertLastParamIsRetryAfterOut(chat.Resource.create_chat_completion_with_options);
 
     assertParamCount(chat.Resource.create_with_options, 4);
     assertLastParamIsOptionalRequestOptions(chat.Resource.create_with_options);
@@ -60,8 +70,8 @@ test "chat completion signature keeps request options and optional payload field
     assertParamCount(chat.Resource.create_chat_completion_stream_with_options, 6);
     assertLastParamIsOptionalRequestOptions(chat.Resource.create_chat_completion_stream_with_options);
 
-    assertParamCount(chat.Resource.create_chat_completion_stream_with_options_and_done, 8);
-    assertLastParamIsOptionalRequestOptions(chat.Resource.create_chat_completion_stream_with_options_and_done);
+    assertParamCount(chat.Resource.create_chat_completion_stream_with_options_and_done, 9);
+    assertLastParamIsRetryAfterOut(chat.Resource.create_chat_completion_stream_with_options_and_done);
 
     assertParamCount(chat.Resource.create_chat_completion_stream_raw_with_done, 7);
 

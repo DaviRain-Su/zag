@@ -51,6 +51,7 @@ pub const Resource = struct {
             "/organization/spend_limit",
             req,
             gen.OrganizationSpendLimitResource,
+            null,
         );
     }
 
@@ -101,6 +102,7 @@ pub const Resource = struct {
             path,
             req,
             gen.ProjectSpendLimitResource,
+            null,
         );
     }
 
@@ -152,6 +154,7 @@ pub const Resource = struct {
             "/organization/spend_alerts",
             req,
             gen.OrganizationSpendAlert,
+            null,
         );
     }
 
@@ -186,6 +189,7 @@ pub const Resource = struct {
             path,
             req,
             gen.OrganizationSpendAlert,
+            null,
         );
     }
 
@@ -241,6 +245,7 @@ pub const Resource = struct {
             path,
             req,
             gen.ProjectSpendAlert,
+            null,
         );
     }
 
@@ -285,6 +290,7 @@ pub const Resource = struct {
             path,
             req,
             gen.ProjectSpendAlert,
+            null,
         );
     }
 
@@ -341,6 +347,7 @@ pub const Resource = struct {
             "/organization/data_retention",
             req,
             gen.OrganizationDataRetention,
+            null,
         );
     }
 
@@ -375,6 +382,7 @@ pub const Resource = struct {
             path,
             req,
             gen.ProjectDataRetention,
+            null,
         );
     }
 
@@ -419,6 +427,7 @@ pub const Resource = struct {
             path,
             req,
             gen.ProjectHostedToolPermissions,
+            null,
         );
     }
 
@@ -463,6 +472,7 @@ pub const Resource = struct {
             path,
             req,
             gen.ProjectModelPermissions,
+            null,
         );
     }
 

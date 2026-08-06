@@ -39,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
         .model = conf.model,
         .messages = &messages,
         .max_tokens = 64,
-    }) catch |err| {
+    }, null) catch |err| {
         std.debug.print("Request failed (check API key or model): {s}\n", .{@errorName(err)});
         return;
     };
@@ -80,7 +80,7 @@ pub fn main(init: std.process.Init) !void {
         .model = conf.model,
         .messages = &prefix_messages,
         .max_tokens = 64,
-    }) catch |err| {
+    }, null) catch |err| {
         std.debug.print("Prefix continuation request failed: {s}\n", .{@errorName(err)});
         return;
     };

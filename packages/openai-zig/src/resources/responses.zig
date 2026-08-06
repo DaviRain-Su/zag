@@ -38,6 +38,7 @@ pub const Resource = struct {
             "/responses",
             req,
             gen.Response,
+            null,
         );
     }
 
@@ -55,6 +56,7 @@ pub const Resource = struct {
             req,
             gen.Response,
             request_opts,
+            null,
         );
     }
 
@@ -164,6 +166,7 @@ pub const Resource = struct {
             on_done,
             done_ctx,
             request_opts,
+            null,
         );
     }
 
@@ -208,6 +211,7 @@ pub const Resource = struct {
             path,
             gen.Response,
             request_opts,
+            null,
         );
     }
 
@@ -259,6 +263,7 @@ pub const Resource = struct {
             path,
             DeleteResponseResponse,
             request_opts,
+            null,
         );
     }
 
@@ -310,6 +315,7 @@ pub const Resource = struct {
             path,
             gen.Response,
             request_opts,
+            null,
         );
     }
 
@@ -361,6 +367,7 @@ pub const Resource = struct {
             path,
             gen.ResponseItemList,
             request_opts,
+            null,
         );
     }
 
@@ -377,6 +384,7 @@ pub const Resource = struct {
             "/responses/input_tokens",
             req,
             gen.TokenCountsResource,
+            null,
         );
     }
 
@@ -394,6 +402,7 @@ pub const Resource = struct {
             req,
             gen.TokenCountsResource,
             request_opts,
+            null,
         );
     }
 
@@ -428,6 +437,7 @@ pub const Resource = struct {
             "/responses/compact",
             req,
             gen.CompactResource,
+            null,
         );
     }
 
@@ -445,6 +455,7 @@ pub const Resource = struct {
             req,
             gen.CompactResource,
             request_opts,
+            null,
         );
     }
 
@@ -463,6 +474,7 @@ pub const Resource = struct {
             "/responses?beta=true",
             req,
             gen.Response,
+            null,
         );
     }
 
@@ -531,6 +543,7 @@ pub const Resource = struct {
             "/responses/compact?beta=true",
             req,
             gen.CompactResource,
+            null,
         );
     }
 
@@ -547,6 +560,7 @@ pub const Resource = struct {
             "/responses/input_tokens?beta=true",
             req,
             gen.TokenCountsResource,
+            null,
         );
     }
 };

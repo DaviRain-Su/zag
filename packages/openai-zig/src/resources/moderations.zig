@@ -24,6 +24,7 @@ pub const Resource = struct {
             "/moderations",
             req,
             gen.CreateModerationResponse,
+            null,
         );
     }
 
@@ -41,6 +42,7 @@ pub const Resource = struct {
             req,
             gen.CreateModerationResponse,
             request_opts,
+            null,
         );
     }
 

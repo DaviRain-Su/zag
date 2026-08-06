@@ -5,6 +5,9 @@ const errors = @import("../errors.zig");
 pub const StreamDoneHandler = *const fn (?*anyopaque) errors.Error!void;
 
 /// Send a JSON request and parse into the provided type.
+/// `retry_after_out` (openai-retry-after-001): optional capture slot for the
+/// `Retry-After` header (ms) of the last completed exchange; see the
+/// transport for fill semantics. Pass `null` when unused.
 pub inline fn sendJsonTyped(
     transport: *transport_mod.Transport,
     allocator: std.mem.Allocator,
@@ -12,10 +15,12 @@ pub inline fn sendJsonTyped(
     path: []const u8,
     value: anytype,
     comptime T: type,
+    retry_after_out: ?*?u64,
 ) errors.Error!std.json.Parsed(T) {
-    return sendJsonTypedWithOptions(transport, allocator, method, path, value, T, null);
+    return sendJsonTypedWithOptions(transport, allocator, method, path, value, T, null, retry_after_out);
 }
 
+/// See `sendJsonTyped` for `retry_after_out` semantics.
 pub inline fn sendJsonTypedWithOptions(
     transport: *transport_mod.Transport,
     allocator: std.mem.Allocator,
@@ -24,6 +29,7 @@ pub inline fn sendJsonTypedWithOptions(
     value: anytype,
     comptime T: type,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error!std.json.Parsed(T) {
     var body_writer: std.Io.Writer.Allocating = .init(allocator);
     defer body_writer.deinit();
@@ -39,7 +45,7 @@ pub inline fn sendJsonTypedWithOptions(
     const resp = try transport.requestWithOptions(method, path, &.{
         .{ .name = "Accept", .value = "application/json" },
         .{ .name = "Content-Type", .value = "application/json" },
-    }, payload, req_opts);
+    }, payload, req_opts, retry_after_out);
     const body = resp.body;
     defer transport.allocator.free(body);
 
@@ -60,7 +66,7 @@ pub inline fn sendNoBodyTyped(
     path: []const u8,
     comptime T: type,
 ) errors.Error!std.json.Parsed(T) {
-    return sendNoBodyTypedWithOptions(transport, allocator, method, path, T, null);
+    return sendNoBodyTypedWithOptions(transport, allocator, method, path, T, null, null);
 }
 
 pub inline fn sendRawJsonTyped(
@@ -71,7 +77,7 @@ pub inline fn sendRawJsonTyped(
     payload: ?[]const u8,
     comptime T: type,
 ) errors.Error!std.json.Parsed(T) {
-    return sendRawJsonTypedWithOptions(transport, allocator, method, path, payload, T, null);
+    return sendRawJsonTypedWithOptions(transport, allocator, method, path, payload, T, null, null);
 }
 
 pub fn sendRawJsonTypedWithOptions(
@@ -82,11 +88,12 @@ pub fn sendRawJsonTypedWithOptions(
     payload: ?[]const u8,
     comptime T: type,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error!std.json.Parsed(T) {
     const resp = try transport.requestWithOptions(method, path, &.{
         .{ .name = "Accept", .value = "application/json" },
         .{ .name = "Content-Type", .value = "application/json" },
-    }, payload, req_opts);
+    }, payload, req_opts, retry_after_out);
 
     const body = resp.body;
     defer transport.allocator.free(body);
@@ -108,7 +115,7 @@ pub fn sendMultipartTyped(
     payload: anytype,
     comptime T: type,
 ) errors.Error!std.json.Parsed(T) {
-    return sendMultipartTypedWithOptions(transport, allocator, method, path, payload, T, null);
+    return sendMultipartTypedWithOptions(transport, allocator, method, path, payload, T, null, null);
 }
 
 pub fn sendMultipartTypedWithOptions(
@@ -119,6 +126,7 @@ pub fn sendMultipartTypedWithOptions(
     payload: anytype,
     comptime T: type,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error!std.json.Parsed(T) {
     const resp = try transport.requestWithOptions(
         method,
@@ -129,6 +137,7 @@ pub fn sendMultipartTypedWithOptions(
         },
         payload.body,
         req_opts,
+        retry_after_out,
     );
     const body = resp.body;
     defer transport.allocator.free(body);
@@ -149,10 +158,11 @@ pub inline fn sendNoBodyTypedWithOptions(
     path: []const u8,
     comptime T: type,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error!std.json.Parsed(T) {
     const resp = try transport.requestWithOptions(method, path, &.{
         .{ .name = "Accept", .value = "application/json" },
-    }, null, req_opts);
+    }, null, req_opts, retry_after_out);
     const body = resp.body;
     defer transport.allocator.free(body);
 
@@ -171,10 +181,11 @@ pub inline fn sendBinary(
     method: std.http.Method,
     path: []const u8,
 ) errors.Error![]u8 {
-    return sendBinaryWithOptions(transport, method, path, &.{}, null, null);
+    return sendBinaryWithOptions(transport, method, path, &.{}, null, null, null);
 }
 
 /// Send a request with custom headers/payload and return raw response bytes.
+/// `retry_after_out` semantics: see `sendJsonTyped`.
 pub fn sendBinaryWithOptions(
     transport: *transport_mod.Transport,
     method: std.http.Method,
@@ -182,8 +193,9 @@ pub fn sendBinaryWithOptions(
     headers: []const std.http.Header,
     body: ?[]const u8,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error![]u8 {
-    const resp = try transport.requestWithOptions(method, path, headers, body, req_opts);
+    const resp = try transport.requestWithOptions(method, path, headers, body, req_opts, retry_after_out);
     return resp.body;
 }
 
@@ -196,8 +208,9 @@ pub fn sendValueOrNullWithOptions(
     headers: []const std.http.Header,
     body: ?[]const u8,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error!std.json.Parsed(std.json.Value) {
-    const resp = try transport.requestWithOptions(method, path, headers, body, req_opts);
+    const resp = try transport.requestWithOptions(method, path, headers, body, req_opts, retry_after_out);
     const response_body = resp.body;
     defer transport.allocator.free(response_body);
 
@@ -220,7 +233,7 @@ pub inline fn sendValueOrNull(
     headers: []const std.http.Header,
     body: ?[]const u8,
 ) errors.Error!std.json.Parsed(std.json.Value) {
-    return sendValueOrNullWithOptions(transport, allocator, method, path, headers, body, null);
+    return sendValueOrNullWithOptions(transport, allocator, method, path, headers, body, null, null);
 }
 
 pub fn sendStreamTyped(
@@ -244,7 +257,6 @@ pub fn sendStreamTyped(
         T,
         on_event,
         user_ctx,
-        null,
         null,
         null,
     );
@@ -275,6 +287,7 @@ pub fn sendStreamTypedWithOptions(
         null,
         null,
         req_opts,
+        null,
     );
 }
 
@@ -304,9 +317,13 @@ pub fn sendStreamTypedWithDone(
         on_done,
         done_ctx,
         null,
+        null,
     );
 }
 
+/// `retry_after_out` (openai-retry-after-001): optional capture slot for the
+/// `Retry-After` header (ms) of the last completed exchange; see the
+/// transport for fill semantics. Pass `null` when unused.
 pub fn sendStreamTypedWithDoneWithOptions(
     transport: *transport_mod.Transport,
     allocator: std.mem.Allocator,
@@ -320,6 +337,7 @@ pub fn sendStreamTypedWithDoneWithOptions(
     on_done: ?StreamDoneHandler,
     done_ctx: ?*anyopaque,
     req_opts: ?transport_mod.Transport.RequestOptions,
+    retry_after_out: ?*?u64,
 ) errors.Error!void {
     var parser = try StreamEventParser(T).initWithDone(
         allocator,
@@ -338,6 +356,7 @@ pub fn sendStreamTypedWithDoneWithOptions(
         StreamEventParser(T).onTransportChunk,
         &parser,
         req_opts,
+        retry_after_out,
     );
     try parser.flush();
 }

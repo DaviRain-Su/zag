@@ -88,6 +88,7 @@ pub const Resource = struct {
             "/completions",
             req,
             CreateCompletionResponse,
+            null,
         );
     }
 
@@ -105,6 +106,7 @@ pub const Resource = struct {
             req,
             CreateCompletionResponse,
             request_opts,
+            null,
         );
     }
 
@@ -121,6 +123,7 @@ pub const Resource = struct {
             "/completions",
             req,
             CreateCompletionResponse,
+            null,
         );
     }
 
@@ -139,6 +142,7 @@ pub const Resource = struct {
             req,
             CreateCompletionResponse,
             request_opts,
+            null,
         );
     }
 
@@ -276,6 +280,7 @@ pub const Resource = struct {
             on_done,
             done_ctx,
             request_opts,
+            null,
         );
     }
 
@@ -375,6 +380,7 @@ pub const Resource = struct {
             on_done,
             done_ctx,
             request_opts,
+            null,
         );
     }
 

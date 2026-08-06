@@ -41,7 +41,7 @@ pub fn main(init: std.process.Init) !void {
         .model = conf.model,
         .messages = &messages,
         .max_tokens = 512,
-    }) catch |err| {
+    }, null) catch |err| {
         std.debug.print("Chat completion request failed: {s}\n", .{@errorName(err)});
         return;
     };

@@ -41,6 +41,7 @@ pub const Resource = struct {
             "/user/balance",
             GetUserBalanceResponse,
             request_opts,
+            null,
         );
     }
 

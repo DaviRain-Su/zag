@@ -85,6 +85,7 @@ pub const Resource = struct {
             value,
             T,
             req_opts,
+            null,
         );
     }
 
@@ -113,6 +114,7 @@ pub const Resource = struct {
             path,
             T,
             req_opts,
+            null,
         );
     }
 

@@ -31,6 +31,7 @@ pub const Resource = struct {
             "/models",
             gen.ListModelsResponse,
             request_opts,
+            null,
         );
     }
 
@@ -78,6 +79,7 @@ pub const Resource = struct {
             path,
             gen.Model,
             request_opts,
+            null,
         );
     }
 
@@ -125,6 +127,7 @@ pub const Resource = struct {
             path,
             gen.DeleteModelResponse,
             request_opts,
+            null,
         );
     }
 

@@ -318,7 +318,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("Assistant stream:\n", .{});
     if (compat.isDeepSeek(conf.base_url)) {
         const fallback_request = compat.withoutStream(@TypeOf(request), request);
-        const response = client.chat().create_chat_completion(gpa, fallback_request) catch {
+        const response = client.chat().create_chat_completion(gpa, fallback_request, null) catch {
             std.debug.print("Fallback chat completion failed.\n", .{});
             std.debug.print("\n", .{});
             return;
@@ -353,11 +353,12 @@ pub fn main(init: std.process.Init) !void {
         null,
         onDone,
         &stream_state,
+        null,
     ) catch |err| {
         std.debug.print("Chat stream request failed: {s}\n", .{@errorName(err)});
         std.debug.print("Falling back to non-stream chat completion...\n", .{});
         const fallback_request = compat.withoutStream(@TypeOf(request), request);
-        const response = client.chat().create_chat_completion(gpa, fallback_request) catch {
+        const response = client.chat().create_chat_completion(gpa, fallback_request, null) catch {
             std.debug.print("Fallback chat completion failed.\n", .{});
             std.debug.print("\n", .{});
             return;
@@ -387,7 +388,7 @@ pub fn main(init: std.process.Init) !void {
             std.debug.print("Stream response incomplete, fallback to non-stream call:\n", .{});
         }
         const fallback_request = compat.withoutStream(@TypeOf(request), request);
-        const response = client.chat().create_chat_completion(gpa, fallback_request) catch {
+        const response = client.chat().create_chat_completion(gpa, fallback_request, null) catch {
             std.debug.print("Fallback chat completion failed.\n", .{});
             std.debug.print("\n", .{});
             return;

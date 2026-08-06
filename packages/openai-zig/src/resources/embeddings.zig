@@ -24,6 +24,7 @@ pub const Resource = struct {
             "/embeddings",
             req,
             gen.CreateEmbeddingResponse,
+            null,
         );
     }
 
@@ -41,6 +42,7 @@ pub const Resource = struct {
             req,
             gen.CreateEmbeddingResponse,
             request_opts,
+            null,
         );
     }
 

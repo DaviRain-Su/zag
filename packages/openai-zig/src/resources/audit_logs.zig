@@ -107,6 +107,7 @@ pub const Resource = struct {
             path,
             gen.ListAuditLogsResponse,
             request_opts,
+            null,
         );
     }
 

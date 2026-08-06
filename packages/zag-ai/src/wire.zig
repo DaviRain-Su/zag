@@ -53,8 +53,8 @@ pub const VTable = struct {
         opts: ChatOptions,
         /// Retry-After capture slot (retry-after-wire-001), in ms. Written
         /// only on terminal error returns with a parsed integer header
-        /// (429/5xx, Anthropic wire); cleared to null otherwise. OpenAI
-        /// adapters ignore the slot (no header source — v1 scope).
+        /// (429/5xx, Anthropic + OpenAI wires — openai-retry-after-001);
+        /// cleared to null otherwise.
         retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn,
     chat_stream: *const fn (

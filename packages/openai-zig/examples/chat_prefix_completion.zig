@@ -49,6 +49,7 @@ pub fn main(init: std.process.Init) !void {
             .max_tokens = 64,
             .stream = null,
         },
+        null,
     ) catch |err| {
         std.debug.print("Prefix completion request failed: {s}\n", .{@errorName(err)});
         return;

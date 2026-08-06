@@ -114,6 +114,7 @@ pub const Resource = struct {
             req,
             gen.Batch,
             request_opts,
+            null,
         );
     }
 
@@ -146,7 +147,7 @@ pub const Resource = struct {
         }
         const path = fbs.buffered();
 
-        return common.sendNoBodyTypedWithOptions(self.transport, allocator, .GET, path, gen.ListBatchesResponse, request_opts);
+        return common.sendNoBodyTypedWithOptions(self.transport, allocator, .GET, path, gen.ListBatchesResponse, request_opts, null);
     }
 
     /// GET /batches/{batch_id}
@@ -168,7 +169,7 @@ pub const Resource = struct {
         const path = std.fmt.bufPrint(&path_buf, "/batches/{s}", .{batch_id}) catch {
             return errors.Error.SerializeError;
         };
-        return common.sendNoBodyTypedWithOptions(self.transport, allocator, .GET, path, gen.Batch, request_opts);
+        return common.sendNoBodyTypedWithOptions(self.transport, allocator, .GET, path, gen.Batch, request_opts, null);
     }
 
     /// POST /batches/{batch_id}/cancel
@@ -190,6 +191,6 @@ pub const Resource = struct {
         const path = std.fmt.bufPrint(&path_buf, "/batches/{s}/cancel", .{batch_id}) catch {
             return errors.Error.SerializeError;
         };
-        return common.sendNoBodyTypedWithOptions(self.transport, allocator, .POST, path, gen.Batch, request_opts);
+        return common.sendNoBodyTypedWithOptions(self.transport, allocator, .POST, path, gen.Batch, request_opts, null);
     }
 };

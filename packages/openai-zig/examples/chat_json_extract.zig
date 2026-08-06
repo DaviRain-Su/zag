@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
         .messages = &messages,
         .response_format = .json_object,
         .max_tokens = 256,
-    }) catch |err| {
+    }, null) catch |err| {
         std.debug.print("Request failed: {s}\n", .{@errorName(err)});
         return;
     };

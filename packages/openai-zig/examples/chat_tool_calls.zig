@@ -104,7 +104,7 @@ pub fn main(init: std.process.Init) !void {
         .stream = null,
     };
 
-    const response = client.chat().create_chat_completion(gpa, request) catch |err| {
+    const response = client.chat().create_chat_completion(gpa, request, null) catch |err| {
         std.debug.print("chat completion with tools failed: {s}\n", .{@errorName(err)});
         return;
     };

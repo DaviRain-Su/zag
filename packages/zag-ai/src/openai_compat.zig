@@ -102,9 +102,11 @@ pub const Client = struct {
     }
 
     /// Call chat completions with per-request knobs.
-    /// `retry_after_out` (retry-after-wire-001) is accepted for vtable
-    /// uniformity but never written: openai-zig's Transport.Response carries
-    /// no headers, so OpenAI has no capture source (documented follow-up).
+    /// `retry_after_out` (openai-retry-after-001): capture slot for the
+    /// `Retry-After` header (ms). The transport writes the parsed value of
+    /// the terminal exchange; here the slot is KEPT only when the mapped
+    /// error is RateLimited/ServerError, cleared otherwise (anthropic
+    /// consumer parity, retry-after-wire-001).
     pub fn chatWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
@@ -113,7 +115,6 @@ pub const Client = struct {
         opts: ChatOptions,
         retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
-        _ = retry_after_out;
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
         const req = try buildChatRequest(arena, self.config.model, chat_messages, chat_tools, opts, false);
@@ -126,8 +127,12 @@ pub const Client = struct {
         self.sdk.transport.setRequestControl(toSdkControl(opts.control));
         defer self.sdk.transport.clearRequestControl();
 
-        var parsed = self.sdk.chat().create_chat_completion(arena, req) catch |err| {
-            return mapSdkError(err);
+        var parsed = self.sdk.chat().create_chat_completion(arena, req, retry_after_out) catch |err| {
+            const mapped = mapSdkError(err);
+            if (retry_after_out) |out| {
+                if (mapped != error.RateLimited and mapped != error.ServerError) out.* = null;
+            }
+            return mapped;
         };
         defer parsed.deinit();
 
@@ -138,8 +143,8 @@ pub const Client = struct {
 
     /// OpenAI Chat Completions SSE stream; returns assembled turn.
     /// (Anthropic streaming lives in `anthropic_messages.Client`, not here.)
-    /// `retry_after_out` is accepted for vtable uniformity but never written
-    /// (OpenAI has no header capture source — retry-after-wire-001).
+    /// `retry_after_out` semantics: see `chatWithOptions` (openai-retry-after-001);
+    /// SSE-level failures (state.err) always clear the slot.
     pub fn chatStreamWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
@@ -150,7 +155,6 @@ pub const Client = struct {
         opts: ChatOptions,
         retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
-        _ = retry_after_out;
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
         const req = try buildChatRequest(arena, self.config.model, chat_messages, chat_tools, opts, true);
@@ -169,16 +173,26 @@ pub const Client = struct {
         defer self.sdk.transport.clearRequestControl();
 
         // On cancel/timeout/incomplete, partial state is discarded (never finish()).
-        self.sdk.chat().create_chat_completion_stream_with_done(
+        self.sdk.chat().create_chat_completion_stream_with_options_and_done(
             arena,
             req,
             onOpenAiSdkEvent,
             &state,
+            null,
             onOpenAiSdkDone,
             &state,
+            retry_after_out,
         ) catch |err| {
-            if (state.err) |e| return e;
-            return mapSdkError(err);
+            if (state.err) |e| {
+                // SSE-level failures never carry Retry-After (retry-after-wire-001).
+                if (retry_after_out) |out| out.* = null;
+                return e;
+            }
+            const mapped = mapSdkError(err);
+            if (retry_after_out) |out| {
+                if (mapped != error.RateLimited and mapped != error.ServerError) out.* = null;
+            }
+            return mapped;
         };
 
         if (state.err) |e| return e;

@@ -603,23 +603,30 @@ pub const Resource = struct {
             "/chat/completions",
             gen.ChatCompletionList,
             request_opts,
+            null,
         );
     }
 
     /// POST /chat/completions -> dynamic JSON.
+    /// `retry_after_out` (openai-retry-after-001): optional capture slot for
+    /// the `Retry-After` header (ms); see the transport for fill semantics.
+    /// Pass `null` when unused.
     pub fn create_chat_completion(
         self: *const Resource,
         allocator: std.mem.Allocator,
         req: CreateChatCompletionRequest,
+        retry_after_out: ?*?u64,
     ) errors.Error!std.json.Parsed(gen.CreateChatCompletionResponse) {
-        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, gen.CreateChatCompletionResponse);
+        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, gen.CreateChatCompletionResponse, retry_after_out);
     }
 
+    /// See `create_chat_completion` for `retry_after_out` semantics.
     pub fn create_chat_completion_with_options(
         self: *const Resource,
         allocator: std.mem.Allocator,
         req: CreateChatCompletionRequest,
         request_opts: ?transport_mod.Transport.RequestOptions,
+        retry_after_out: ?*?u64,
     ) errors.Error!std.json.Parsed(gen.CreateChatCompletionResponse) {
         return common.sendJsonTypedWithOptions(
             self.transport,
@@ -629,6 +636,7 @@ pub const Resource = struct {
             req,
             gen.CreateChatCompletionResponse,
             request_opts,
+            retry_after_out,
         );
     }
 
@@ -638,7 +646,7 @@ pub const Resource = struct {
         allocator: std.mem.Allocator,
         req: CreateChatCompletionRawRequest,
     ) errors.Error!std.json.Parsed(gen.CreateChatCompletionResponse) {
-        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, gen.CreateChatCompletionResponse);
+        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, gen.CreateChatCompletionResponse, null);
     }
 
     /// POST /chat/completions -> raw JSON payload with request options.
@@ -656,6 +664,7 @@ pub const Resource = struct {
             req,
             gen.CreateChatCompletionResponse,
             request_opts,
+            null,
         );
     }
 
@@ -665,7 +674,7 @@ pub const Resource = struct {
         allocator: std.mem.Allocator,
         req: CreateChatCompletionRequest,
     ) errors.Error!std.json.Parsed(std.json.Value) {
-        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, std.json.Value);
+        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, std.json.Value, null);
     }
 
     pub fn create_chat_completion_value_with_options(
@@ -682,6 +691,7 @@ pub const Resource = struct {
             req,
             std.json.Value,
             request_opts,
+            null,
         );
     }
 
@@ -691,7 +701,7 @@ pub const Resource = struct {
         allocator: std.mem.Allocator,
         req: CreateChatCompletionRawRequest,
     ) errors.Error!std.json.Parsed(std.json.Value) {
-        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, std.json.Value);
+        return common.sendJsonTyped(self.transport, allocator, .POST, "/chat/completions", req, std.json.Value, null);
     }
 
     /// POST /chat/completions -> raw JSON payload with request options returning raw JSON value.
@@ -709,6 +719,7 @@ pub const Resource = struct {
             req,
             std.json.Value,
             request_opts,
+            null,
         );
     }
 
@@ -718,7 +729,7 @@ pub const Resource = struct {
         allocator: std.mem.Allocator,
         req: CreateChatCompletionRequest,
     ) errors.Error!std.json.Parsed(gen.CreateChatCompletionResponse) {
-        return self.create_chat_completion(allocator, req);
+        return self.create_chat_completion(allocator, req, null);
     }
 
     /// POST /chat/completions -> raw JSON payload.
@@ -746,7 +757,7 @@ pub const Resource = struct {
         req: CreateChatCompletionRequest,
         request_opts: ?transport_mod.Transport.RequestOptions,
     ) errors.Error!std.json.Parsed(gen.CreateChatCompletionResponse) {
-        return self.create_chat_completion_with_options(allocator, req, request_opts);
+        return self.create_chat_completion_with_options(allocator, req, request_opts, null);
     }
 
     /// GET /chat/completions/{completion_id}
@@ -800,6 +811,7 @@ pub const Resource = struct {
             payload,
             gen.CreateChatCompletionResponse,
             request_opts,
+            null,
         );
     }
 
@@ -869,6 +881,7 @@ pub const Resource = struct {
             null,
             on_done,
             done_ctx,
+            null,
         );
     }
 
@@ -888,9 +901,13 @@ pub const Resource = struct {
             request_opts,
             null,
             null,
+            null,
         );
     }
 
+    /// `retry_after_out` (openai-retry-after-001): optional capture slot for
+    /// the `Retry-After` header (ms); see the transport for fill semantics.
+    /// Pass `null` when unused.
     pub fn create_chat_completion_stream_with_options_and_done(
         self: *const Resource,
         allocator: std.mem.Allocator,
@@ -900,6 +917,7 @@ pub const Resource = struct {
         request_opts: ?transport_mod.Transport.RequestOptions,
         on_done: ?StreamDoneHandler,
         done_ctx: ?*anyopaque,
+        retry_after_out: ?*?u64,
     ) errors.Error!void {
         var stream_req = req;
         stream_req.stream = true;
@@ -932,6 +950,7 @@ pub const Resource = struct {
             on_done,
             done_ctx,
             request_opts,
+            retry_after_out,
         );
     }
 
@@ -1031,6 +1050,7 @@ pub const Resource = struct {
             on_done,
             done_ctx,
             request_opts,
+            null,
         );
     }
 

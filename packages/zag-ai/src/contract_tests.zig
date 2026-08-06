@@ -543,6 +543,8 @@ const RetryAfterProbe = struct {
     server: *std.Io.net.Server,
     status: u16,
     retry_after: ?[]const u8,
+    /// Response body (default "{}"); Content-Length is derived from it.
+    body: []const u8 = "{}",
     fn serve(self: *@This()) void {
         const stream = self.server.accept(self.io) catch return;
         defer stream.close(self.io);
@@ -553,13 +555,13 @@ const RetryAfterProbe = struct {
             if (line.len <= 2) break; // \r\n
         }
         var w = stream.writer(self.io, &.{});
-        var head_buf: [256]u8 = undefined;
+        var head_buf: [512]u8 = undefined;
         const head = if (self.retry_after) |ra|
-            std.fmt.bufPrint(&head_buf, "HTTP/1.1 {d} X\r\nRetry-After: {s}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n", .{ self.status, ra }) catch return
+            std.fmt.bufPrint(&head_buf, "HTTP/1.1 {d} X\r\nRetry-After: {s}\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ self.status, ra, self.body.len }) catch return
         else
-            std.fmt.bufPrint(&head_buf, "HTTP/1.1 {d} X\r\nContent-Length: 2\r\nConnection: close\r\n\r\n", .{self.status}) catch return;
+            std.fmt.bufPrint(&head_buf, "HTTP/1.1 {d} X\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n", .{ self.status, self.body.len }) catch return;
         _ = w.interface.writeAll(head) catch {};
-        _ = w.interface.writeAll("{}") catch {};
+        _ = w.interface.writeAll(self.body) catch {};
         w.interface.flush() catch {};
     }
 };
@@ -676,4 +678,133 @@ test "contract: shared request funnel captures Retry-After on terminal error" {
     var out: ?u64 = null;
     try std.testing.expectError(error.RateLimited, client.postJsonControl("/x", "{}", types.RequestControl.none(), &out));
     try std.testing.expectEqual(@as(?u64, 9_000), out);
+}
+
+// ── openai-retry-after-001: OpenAI wire Retry-After capture (loopback) ────
+//
+// Mirrors the Anthropic probes through the openai_compat wire client — the
+// same entry the Core loop calls (wire_provider threads the vtable slot).
+// The SDK transport writes the parsed value on terminal error returns; the
+// adapter KEEPS it only for mapped RateLimited/ServerError and clears it
+// otherwise (anthropic consumer parity); stream SSE-level failures always
+// clear (state.err branch).
+
+const openai_chat_body =
+    \\{"id":"x","object":"chat.completion","created":0,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]}
+;
+
+const openai_stream_body =
+    \\data: {"id":"x","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}
+    \\
+    \\data: [DONE]
+    \\
+;
+
+fn probeOpenAiRetryAfter(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    status: u16,
+    retry_after: ?[]const u8,
+    stream: bool,
+    body: []const u8,
+    handler: ?types.StreamHandler,
+    out_init: ?u64,
+) !struct { err: ?types.ChatError, out: ?u64 } {
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var probe: RetryAfterProbe = .{
+        .io = io,
+        .server = &server,
+        .status = status,
+        .retry_after = retry_after,
+        .body = body,
+    };
+    const thr = try std.Thread.spawn(.{}, RetryAfterProbe.serve, .{&probe});
+    defer thr.join();
+
+    var base_buf: [64]u8 = undefined;
+    const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
+    var client = openai_compat.Client.init(gpa, io, .{
+        .base_url = base_url,
+        .api_key = "test-key",
+        .model = "openai-test",
+        .max_retries = 0,
+    });
+    defer client.deinit();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+    const msgs = [_]types.Message{types.Message.user("hi")};
+
+    var out: ?u64 = out_init;
+    var err: ?types.ChatError = null;
+    if (stream) {
+        const r = client.chatStreamWithOptions(arena, &msgs, &.{}, handler, null, .{}, &out);
+        if (r) |_| {} else |e| err = e;
+    } else {
+        const r = client.chatWithOptions(arena, &msgs, &.{}, .{}, &out);
+        if (r) |_| {} else |e| err = e;
+    }
+    return .{ .err = err, .out = out };
+}
+
+test "contract: openai chat 429 integer Retry-After surfaces 5000ms" {
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 429, "5", false, "{}", null, null);
+    try std.testing.expectEqual(error.RateLimited, r.err.?);
+    try std.testing.expectEqual(@as(?u64, 5_000), r.out);
+}
+
+test "contract: openai chat 500 Retry-After surfaces 7000ms (ServerError)" {
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 500, "7", false, "{}", null, null);
+    try std.testing.expectEqual(error.ServerError, r.err.?);
+    try std.testing.expectEqual(@as(?u64, 7_000), r.out);
+}
+
+test "contract: openai chat non-retryable 401 Retry-After is cleared" {
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 401, "5", false, "{}", null, 12_345);
+    try std.testing.expectEqual(error.AuthenticationFailed, r.err.?);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "contract: openai chat success clears the slot" {
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 200, null, false, openai_chat_body, null, 12_345);
+    try std.testing.expect(r.err == null);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "contract: openai stream 429 Retry-After surfaces 3000ms" {
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 429, "3", true, "{}", null, null);
+    try std.testing.expectEqual(error.RateLimited, r.err.?);
+    try std.testing.expectEqual(@as(?u64, 3_000), r.out);
+}
+
+test "contract: openai stream success clears the slot" {
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 200, null, true, openai_stream_body, null, 12_345);
+    try std.testing.expect(r.err == null);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "contract: openai stream SSE-level failure clears the slot" {
+    // 200 + a valid delta but NO [DONE] + a failing handler: the stream
+    // fails at the SSE level (state.err branch) — the slot is cleared even
+    // though the transport's stream-error returns never write it.
+    const FailHandler = struct {
+        fn go(_: ?*anyopaque, _: types.StreamEvent) anyerror!void {
+            return error.StreamFailed;
+        }
+    };
+    const gpa = std.testing.allocator;
+    const r = try probeOpenAiRetryAfter(gpa, std.testing.io, 200, null, true, openai_stream_body, FailHandler.go, 12_345);
+    try std.testing.expectEqual(error.StreamFailed, r.err.?);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
 }

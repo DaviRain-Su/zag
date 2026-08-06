@@ -547,7 +547,7 @@ pub const Client = struct {
 
         const resp = try self.transport.requestWithOptions(.GET, "/models", &.{
             .{ .name = "Accept", .value = "application/json" },
-        }, null, transport_opts);
+        }, null, transport_opts, null);
         self.transport.allocator.free(resp.body);
     }
 

@@ -80,6 +80,7 @@ pub const Resource = struct {
             w.buffered(),
             gen.SkillListResource,
             request_opts,
+            null,
         );
     }
 
@@ -106,6 +107,7 @@ pub const Resource = struct {
             req,
             gen.SkillResource,
             request_opts,
+            null,
         );
     }
 
@@ -135,6 +137,7 @@ pub const Resource = struct {
             path,
             gen.SkillResource,
             request_opts,
+            null,
         );
     }
 
@@ -164,6 +167,7 @@ pub const Resource = struct {
             path,
             gen.DeletedSkillResource,
             request_opts,
+            null,
         );
     }
 
@@ -196,6 +200,7 @@ pub const Resource = struct {
             req,
             gen.SkillResource,
             request_opts,
+            null,
         );
     }
 
@@ -223,6 +228,7 @@ pub const Resource = struct {
             &.{},
             null,
             request_opts,
+            null,
         );
         return .{ .allocator = self.transport.allocator, .data = body };
     }
@@ -256,6 +262,7 @@ pub const Resource = struct {
             w.buffered(),
             gen.SkillVersionListResource,
             request_opts,
+            null,
         );
     }
 
@@ -288,6 +295,7 @@ pub const Resource = struct {
             req,
             gen.SkillVersionResource,
             request_opts,
+            null,
         );
     }
 
@@ -319,6 +327,7 @@ pub const Resource = struct {
             path,
             gen.SkillVersionResource,
             request_opts,
+            null,
         );
     }
 
@@ -350,6 +359,7 @@ pub const Resource = struct {
             path,
             gen.DeletedSkillVersionResource,
             request_opts,
+            null,
         );
     }
 
@@ -379,6 +389,7 @@ pub const Resource = struct {
             &.{},
             null,
             request_opts,
+            null,
         );
         return .{ .allocator = self.transport.allocator, .data = body };
     }

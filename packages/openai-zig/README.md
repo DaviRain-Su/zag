@@ -26,7 +26,7 @@ var chat = try client.chat().create_chat_completion(gpa, .{
     .messages = &.{
         .{ .role = "user", .content = "hello" },
     },
-});
+}, null); // last param: optional Retry-After capture slot (openai-retry-after-001)
 defer chat.deinit();
 ```
 

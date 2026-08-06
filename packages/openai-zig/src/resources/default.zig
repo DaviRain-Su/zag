@@ -97,7 +97,7 @@ pub const Resource = struct {
         comptime T: type,
         request_opts: ?transport_mod.Transport.RequestOptions,
     ) errors.Error!std.json.Parsed(T) {
-        return common.sendJsonTypedWithOptions(self.transport, allocator, method, path, value, T, request_opts);
+        return common.sendJsonTypedWithOptions(self.transport, allocator, method, path, value, T, request_opts, null);
     }
 
     fn sendNoBody(
@@ -118,7 +118,7 @@ pub const Resource = struct {
         comptime T: type,
         request_opts: ?transport_mod.Transport.RequestOptions,
     ) errors.Error!std.json.Parsed(T) {
-        return common.sendNoBodyTypedWithOptions(self.transport, allocator, method, path, T, request_opts);
+        return common.sendNoBodyTypedWithOptions(self.transport, allocator, method, path, T, request_opts, null);
     }
 
     fn sendMultipartWithOptions(
@@ -138,6 +138,7 @@ pub const Resource = struct {
             payload,
             T,
             request_opts,
+            null,
         );
     }
 
@@ -154,6 +155,7 @@ pub const Resource = struct {
             &.{},
             null,
             request_opts,
+            null,
         );
         return .{
             .allocator = self.transport.allocator,

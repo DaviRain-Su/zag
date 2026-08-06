@@ -59,7 +59,7 @@ pub const Resource = struct {
         value: anytype,
         comptime T: type,
     ) errors.Error!std.json.Parsed(T) {
-        return common.sendJsonTyped(self.transport, allocator, method, path, value, T);
+        return common.sendJsonTyped(self.transport, allocator, method, path, value, T, null);
     }
 
     fn sendJsonTypedWithOptions(
@@ -79,6 +79,7 @@ pub const Resource = struct {
             value,
             T,
             request_opts,
+            null,
         );
     }
 
@@ -116,6 +117,7 @@ pub const Resource = struct {
             path,
             T,
             request_opts,
+            null,
         );
     }
 

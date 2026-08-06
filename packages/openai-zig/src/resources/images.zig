@@ -35,6 +35,7 @@ pub const Resource = struct {
             payload,
             ImagesResponse,
             request_opts,
+            null,
         );
     }
 
@@ -190,6 +191,7 @@ pub const Resource = struct {
             "/images/generations",
             req,
             ImagesResponse,
+            null,
         );
     }
 
@@ -207,6 +209,7 @@ pub const Resource = struct {
             req,
             ImagesResponse,
             request_opts,
+            null,
         );
     }
 };

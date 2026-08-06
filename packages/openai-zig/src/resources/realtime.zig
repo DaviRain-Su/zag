@@ -29,7 +29,7 @@ pub const Resource = struct {
         comptime T: type,
         req_opts: ?transport_mod.Transport.RequestOptions,
     ) errors.Error!std.json.Parsed(T) {
-        return common.sendJsonTypedWithOptions(self.transport, allocator, .POST, path, body, T, req_opts);
+        return common.sendJsonTypedWithOptions(self.transport, allocator, .POST, path, body, T, req_opts, null);
     }
 
     fn sendNoBodyValueOrNull(
@@ -56,6 +56,7 @@ pub const Resource = struct {
             },
             null,
             req_opts,
+            null,
         );
     }
 
@@ -131,6 +132,7 @@ pub const Resource = struct {
                 &headers,
                 body.sdp,
                 request_opts,
+                null,
             );
         }
 
@@ -147,6 +149,7 @@ pub const Resource = struct {
             &headers,
             payload,
             request_opts,
+            null,
         );
     }
 
@@ -190,6 +193,7 @@ pub const Resource = struct {
             body,
             gen.RealtimeSessionCreateResponse,
             request_opts,
+            null,
         );
     }
 
@@ -215,6 +219,7 @@ pub const Resource = struct {
             body,
             gen.RealtimeTranscriptionSessionCreateResponse,
             request_opts,
+            null,
         );
     }
 

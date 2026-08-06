@@ -149,16 +149,23 @@ pub const Transport = struct {
         };
     }
 
+    /// `retry_after_out` (openai-retry-after-001): when non-null, the parsed
+    /// `Retry-After` header (integer seconds × 1000 → ms; HTTP-date or absent
+    /// → null) of the last completed HTTP exchange is written into the slot
+    /// on every terminal return. Written on terminal error returns (the value
+    /// the caller should honor), and null on success.
     pub fn request(
         self: *Transport,
         method: std.http.Method,
         path: []const u8,
         headers: []const std.http.Header,
         body: ?[]const u8,
+        retry_after_out: ?*?u64,
     ) errors.Error!Response {
-        return self.requestWithOptions(method, path, headers, body, null);
+        return self.requestWithOptions(method, path, headers, body, null, retry_after_out);
     }
 
+    /// See `request` for `retry_after_out` semantics.
     pub fn requestWithOptions(
         self: *Transport,
         method: std.http.Method,
@@ -166,10 +173,12 @@ pub const Transport = struct {
         headers: []const std.http.Header,
         body: ?[]const u8,
         req_opts: ?RequestOptions,
+        retry_after_out: ?*?u64,
     ) errors.Error!Response {
-        return self.requestInternal(method, path, headers, body, false, null, null, req_opts);
+        return self.requestInternal(method, path, headers, body, false, null, null, req_opts, retry_after_out);
     }
 
+    /// See `request` for `retry_after_out` semantics (stream variant).
     pub fn requestStream(
         self: *Transport,
         method: std.http.Method,
@@ -178,10 +187,12 @@ pub const Transport = struct {
         body: ?[]const u8,
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
+        retry_after_out: ?*?u64,
     ) errors.Error!void {
-        return self.requestStreamWithOptions(method, path, headers, body, on_chunk, chunk_ctx, null);
+        return self.requestStreamWithOptions(method, path, headers, body, on_chunk, chunk_ctx, null, retry_after_out);
     }
 
+    /// See `request` for `retry_after_out` semantics (stream variant).
     pub fn requestStreamWithOptions(
         self: *Transport,
         method: std.http.Method,
@@ -191,10 +202,14 @@ pub const Transport = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
         req_opts: ?RequestOptions,
+        retry_after_out: ?*?u64,
     ) errors.Error!void {
-        _ = try self.requestInternal(method, path, headers, body, true, on_chunk, chunk_ctx, req_opts);
+        _ = try self.requestInternal(method, path, headers, body, true, on_chunk, chunk_ctx, req_opts, retry_after_out);
     }
 
+    /// See `request` for `retry_after_out` semantics. Fetch-level error
+    /// returns leave the slot untouched — only the terminal status-error and
+    /// success returns write the last exchange's parsed value.
     fn requestInternal(
         self: *Transport,
         method: std.http.Method,
@@ -205,6 +220,7 @@ pub const Transport = struct {
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
         req_opts: ?RequestOptions,
+        retry_after_out: ?*?u64,
     ) errors.Error!Response {
         const active_opts = self.resolveRequestOptions(req_opts);
         const control = lifecycle.mergeConfiguredTimeout(self.request_control, active_opts.timeout_ms);
@@ -269,13 +285,22 @@ pub const Transport = struct {
                     .request_id = outcome.request_id,
                 });
                 if (outcome.body.len > 0) self.allocator.free(outcome.body);
+                // Terminal error return: the parsed Retry-After of the LAST
+                // completed exchange is the truth the caller should honor.
+                if (retry_after_out) |out| out.* = outcome.retry_after_ms;
                 return err;
             }
 
             if (stream) {
                 if (outcome.body.len > 0) self.allocator.free(outcome.body);
+                // Terminal success return: success never carries Retry-After
+                // truth for the caller — the slot is cleared (zag-ai parity).
+                if (retry_after_out) |out| out.* = null;
                 return .{ .status = outcome.status, .body = &.{} };
             }
+            // Terminal success return: success never carries Retry-After
+            // truth for the caller — the slot is cleared (zag-ai parity).
+            if (retry_after_out) |out| out.* = null;
             return .{ .status = outcome.status, .body = outcome.body };
         }
         return errors.Error.HttpError;
@@ -524,4 +549,45 @@ test "curl transport resolves request options" {
     const default_opts = transport.resolveRequestOptions(null);
     try std.testing.expectEqualStrings("https://api.local", default_opts.base_url);
     try std.testing.expectEqual(@as(u64, 5000), default_opts.timeout_ms.?);
+}
+
+// ── openai-retry-after-001: curl backend Retry-After capture (loopback) ──
+// Mirrors the std-backend fixtures via the shared loopback probe
+// (http_std.zig); attemptOnce already parses `Retry-After` into
+// `outcome.retry_after_ms` — these assert the request-level slot behavior.
+
+test "retry-after: curl transport 429 + Retry-After 5 fills 5000ms on error" {
+    const r = try shared.probeTransportRetryAfter(Transport, std.testing.allocator, std.testing.io, 429, "5");
+    try std.testing.expectEqual(errors.Error.RateLimitError, r.err.?);
+    try std.testing.expectEqual(@as(?u64, 5_000), r.out);
+}
+
+test "retry-after: curl transport success clears the slot" {
+    const r = try shared.probeTransportRetryAfter(Transport, std.testing.allocator, std.testing.io, 200, null);
+    try std.testing.expect(r.err == null);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "retry-after: curl transport absent header leaves null" {
+    const r = try shared.probeTransportRetryAfter(Transport, std.testing.allocator, std.testing.io, 429, null);
+    try std.testing.expectEqual(errors.Error.RateLimitError, r.err.?);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "retry-after: curl transport last exchange wins (429+RA then success → null)" {
+    const r = try shared.probeTransportRetryAfterMulti(Transport, std.testing.allocator, std.testing.io, &.{
+        .{ .status = 429, .retry_after = "0" },
+        .{ .status = 200, .retry_after = null },
+    }, 1);
+    try std.testing.expect(r.err == null);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "retry-after: curl transport last exchange wins (429+0 then 429+9 → 9000)" {
+    const r = try shared.probeTransportRetryAfterMulti(Transport, std.testing.allocator, std.testing.io, &.{
+        .{ .status = 429, .retry_after = "0" },
+        .{ .status = 429, .retry_after = "9" },
+    }, 1);
+    try std.testing.expectEqual(errors.Error.RateLimitError, r.err.?);
+    try std.testing.expectEqual(@as(?u64, 9_000), r.out);
 }
