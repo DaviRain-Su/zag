@@ -94,3 +94,7 @@ card (gated by the existing Ctrl+T toggle).
 # related
 
 - [tui-streaming-001](./tui-streaming-001.md) · [tui-markdown-001](./tui-markdown-001.md)
+
+# closeout
+
+- Commit: `22b8980` (zag-tui: stream thinking deltas into a progressive card (Ctrl+T)) — combined-tree commit also carrying m4-sampler-resilience-001 and session-resume-tui-001 code; task-doc closeout lines land as doc-only follow-ups.
