@@ -1,7 +1,7 @@
 ---
 id: tui-vaxis-001
 scope: tui/vaxis-backend
-status: contract-draft
+status: done
 priority: P1
 depends-on:
   - tui-minimal-001
@@ -26,15 +26,18 @@ OUT of scope (wholesale-port boundary).
 
 **Binding specification:** [tui-vaxis.md](../../modules/tui-vaxis.md)
 
+**Implementation tip:** **done** @ `76360ab`.
+
 # status truth
 
 | Track | Status |
 |-------|--------|
-| Contract | **draft** — pending independent architecture + safety re-reviews |
-| Implementation | not started |
+| Contract | binding [tui-vaxis.md](../../modules/tui-vaxis.md); landed with impl |
+| Implementation | **done** @ `76360ab` |
 | Maturity | **unchanged** — no row add/raise |
 | tui-minimal-001 / tui-streaming-001 / tui-layout-001 behavioral contracts | **unchanged** — PTY fixture markers, state machine, Guard Ctrl+C path, streaming, geometry all survive |
 | Session v1 / Trace v1 / headless-v1 / Core / coding-agent | **unchanged** by contract law (zag-tui-only slice) |
+| Follow-on | Theme → slash/overlay → transcript → model ([gap analysis](../analysis/2026-08-06-tui-canvas-grok-gap.md)) |
 
 # context
 

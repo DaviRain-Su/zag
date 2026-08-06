@@ -65,6 +65,9 @@ pub const HostResourceOptions = struct {
     templates_enabled: bool = true,
     project_templates_trust: coding.ProjectTemplatesTrust = .untrusted,
     user_templates_root: ?[]const u8 = null,
+    theme: zag_tui.ThemeHostOptions = .{},
+    model_label: []const u8 = "—",
+    model_ids: []const []const u8 = &.{},
 };
 
 pub const RunArgs = struct {
@@ -146,6 +149,7 @@ pub fn runTui(args: RunArgs) RunResult {
     const id = args.session_path orelse "ephemeral";
     // Path chrome: full redact pipeline with Session-owned redactor.
     app.setIdentity(gpa, redactor, id, open_disp, args.permission_label, args.shell_label);
+    app.applyHostPresentation(io, args.host_opts.theme, args.host_opts.model_label, args.host_opts.model_ids);
 
     app.bind(args.agent, &session, redactor, host) catch {
         fixedStderr("tui: bind failed\n");

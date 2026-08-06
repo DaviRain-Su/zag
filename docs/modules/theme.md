@@ -1,6 +1,6 @@
 ---
 status: active
-scope: host-shell Theme binding contract (PASS; no implementation)
+scope: host-shell Theme binding + implementation
 task: theme-001
 prerequisite:
   - tui-minimal-001
@@ -8,36 +8,13 @@ prerequisite:
 
 # Theme (host-shell passive data + host renderer)
 
-This module is the **single authoritative binding** for `theme-001`. It freezes
-ownership, passive Theme data rules, the minimal v1 surface, fail-closed
-fallback, host-owned reload/UI invalidation, non-interference with closed L2
-truth, and the later implementation Gate matrix.
+This module is the **single authoritative binding** for `theme-001`.
 
-**Contract freeze PASS** at reviewed tip
-`9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` after independent
-**architecture/ownership** and **safety/fail-closed** re-reviews (**PASS**,
-**zero blockers**). Lineage: define `f045e9e` → round-1 BLOCKED → harden
-`9e1b9f9` (reviewed tip) → this docs tip is a **PASS-record only** (records the
-prior tip’s dual re-review result; **does not** claim that *this* PASS-record
-commit was itself dual re-reviewed).
+**Contract freeze PASS** @ `9e1b9f9`. **Implementation:** `packages/zag-tui/src/theme.zig`
+wires role → `vaxis.Style` in `render.zig`; CLI passes `ThemeHostOptions`
+(`user` root `$HOME/.agents/themes`). Fail-closed to built-in `zag-default`.
 
-**Task status:** `theme-001` frontmatter is **`ready`** — meaning only that the
-contract is frozen and a later **fresh Goal** may select an independent
-implementation node. This PASS-record **does not** authorize product code, does
-**not** start implementation, and does **not** raise maturity.
-
-**Implementation status:** **not started**. Live `packages/zag-tui` seams
-(read-only evidence for this freeze):
-
-| Seam | Current truth | Theme implication |
-|------|---------------|-------------------|
-| `render.zig` | Hard-coded layout ANSI (home/clear, box chrome); **no** palette / role colors | Theme-driven SGR generation is a **later implementation requirement** |
-| `terminal.zig` | Raw mode, alt-screen, geometry; **no** color-depth or background detection | Capability/background adaptation is a **later implementation requirement** |
-| `app.zig` / `present.zig` | Dual-thread host, cards, redaction publish path; **no** Theme type/catalog/reload | Catalog, selection, reload transaction, UI invalidation are **later implementation requirements** |
-| `constants.zig` | Frozen TUI capacities only | Theme budgets are additional host constants under this contract |
-
-This docs node **must not** claim any of the above already exist. Contract PASS
-does **not** ship Theme code and does **not** auto-start an implementation Goal.
+**Task status:** `theme-001` **done** (canvas track). No maturity raise.
 
 Related truth (do not fork):
 

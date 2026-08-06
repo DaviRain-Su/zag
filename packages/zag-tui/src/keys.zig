@@ -27,6 +27,8 @@ pub const AppKey = union(enum) {
     ctrl_j,
     alt_s,
     alt_f,
+    page_up,
+    page_down,
     unknown,
 };
 
@@ -61,6 +63,8 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
         vaxis.Key.left => return .left,
         vaxis.Key.right => return .right,
         vaxis.Key.delete => return .delete,
+        vaxis.Key.page_up, vaxis.Key.kp_page_up => return .page_up,
+        vaxis.Key.page_down, vaxis.Key.kp_page_down => return .page_down,
         else => {},
     }
 
