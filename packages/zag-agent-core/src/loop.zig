@@ -670,7 +670,14 @@ fn chatWithRetry(
             }
             const retryable = zt.isRetryableError(err);
             const more = attempt + 1 < max_attempts;
-            if (!retryable or !more) return error.ProviderFailed;
+            if (!retryable or !more) {
+                // Surface the real ChatError tag once before collapsing to
+                // ProviderFailed (stable @errorName only — never raw bodies).
+                deps.event_sink.emit(.{
+                    .provider_failed = .{ .err_name = @errorName(err) },
+                }) catch |serr| return mapSinkEmit(serr);
+                return error.ProviderFailed;
+            }
 
             // Overflow-safe delay, clamped to remaining deadline, sliced ≤25ms.
             var delay_ms = retryDelayMsSaturating(deps.options.retry_base_delay_ms, attempt);
@@ -689,6 +696,10 @@ fn chatWithRetry(
             };
         }
     }
+    // Unreachable when max_attempts ≥ 1 (default); keep for empty budget edge.
+    deps.event_sink.emit(.{
+        .provider_failed = .{ .err_name = "ProviderFailed" },
+    }) catch |serr| return mapSinkEmit(serr);
     return error.ProviderFailed;
 }
 
@@ -787,6 +798,8 @@ const RecordingSink = struct {
     jail_decisions: u32 = 0,
     shell_decisions: u32 = 0,
     provider_retries: u32 = 0,
+    provider_faileds: u32 = 0,
+    last_provider_failed_err: []const u8 = "",
     context_compactions: u32 = 0,
     control_applieds: u32 = 0,
     last_control_kind: ?control_input_mod.Kind = null,
@@ -855,6 +868,10 @@ const RecordingSink = struct {
             .jail_decision => self.jail_decisions += 1,
             .shell_decision => self.shell_decisions += 1,
             .provider_retry => self.provider_retries += 1,
+            .provider_failed => |pf| {
+                self.provider_faileds += 1;
+                self.last_provider_failed_err = pf.err_name;
+            },
             .context_compaction => self.context_compactions += 1,
             .control_applied => |c| {
                 if (self.fail_on_control_applied) |e| {
@@ -1201,6 +1218,41 @@ test "chat_stream forwards deltas in order before assistant_message" {
     // chunk; the captured concatenation proves per-emit borrow validity.
     try std.testing.expectEqualStrings("Hello world", sink.delta_buf[0..sink.delta_buf_len]);
     try std.testing.expectEqual(@as(u32, 1), sink.assistant_messages);
+}
+
+test "terminal provider failure emits provider_failed with ChatError tag" {
+    const gpa = std.testing.allocator;
+
+    const FailMock = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            return error.AuthenticationFailed;
+        }
+    };
+
+    const provider = provider_mod.Provider{
+        .ptr = undefined,
+        .vtable = &.{ .chat = FailMock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.chat_retries = 0;
+    try std.testing.expectError(error.ProviderFailed, run(deps, &transcript));
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_faileds);
+    try std.testing.expectEqualStrings("AuthenticationFailed", sink.last_provider_failed_err);
+    try std.testing.expectEqual(@as(u32, 0), sink.provider_retries);
 }
 
 test "failed streaming attempt emits delta_clear before retry deltas" {

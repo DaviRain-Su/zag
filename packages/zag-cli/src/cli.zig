@@ -995,6 +995,8 @@ fn runRepl(
 
         try writeStdout(io, "zag> ");
         const result = agent.reply(&session, reply_text.text) catch |err| {
+            // provider_failed (underlying ChatError tag) is logged by the
+            // product event sink before this collapse to ProviderFailed.
             std.log.err("agent failed: {s}", .{@errorName(err)});
             // Acknowledge any SIGINT-driven cancel so the next Ctrl+C works
             // afresh; the flag was cleared at the reply completion boundary.

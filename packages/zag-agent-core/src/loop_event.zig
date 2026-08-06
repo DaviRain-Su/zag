@@ -75,6 +75,12 @@ pub const LoopEvent = union(enum) {
         attempt: u32,
         err_name: []const u8,
     },
+    /// Terminal provider failure before `error.ProviderFailed` (stable `@errorName`
+    /// only — no raw HTTP body). Product adapters log this so `ProviderFailed`
+    /// is not an opaque black hole.
+    provider_failed: struct {
+        err_name: []const u8,
+    },
     /// Context projection/compaction fact (session note + trace `compaction`).
     context_compaction: context_view_mod.CompactionEvent,
     /// Control input applied into the authoritative Transcript and committed

@@ -1125,6 +1125,15 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
                 .{ r.attempt, a.options.chat_retries, r.err_name },
             );
         },
+        .provider_failed => |r| {
+            // Terminal ChatError tag before error.ProviderFailed. Trace reuses
+            // provider_retry with attempt=0 so the cause is auditable without a
+            // new Trace kind. err_name is a stable @errorName only.
+            if (bridge.trace) |tr| {
+                tr.emitProviderRetry(0, r.err_name) catch |err| return mapTraceToSink(err);
+            }
+            std.log.err("provider failed: {s}", .{r.err_name});
+        },
         .context_compaction => |ev| {
             // Session note first, then Trace compaction (h-context-001).
             bridge.session.noteCompaction(ev) catch return error.OutOfMemory;
@@ -2225,6 +2234,10 @@ test "h-trace: provider failure ok=false provider_error exactly once" {
 
     const tr = if (agent.trace) |*t| t else return error.TestUnexpectedResult;
     try expectRunEnd(tr, false, "provider_error");
+    // Terminal ChatError tag is recorded (attempt=0 provider_retry) so the
+    // cause is not lost behind the opaque ProviderFailed collapse.
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "AuthenticationFailed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, tr.buf.items, "\"attempt\":0") != null);
 }
 
 test "h-trace: max_turns terminal ok=true stop_reason=max_turns" {
