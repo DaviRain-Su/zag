@@ -241,7 +241,7 @@ test "contract: std rejects deadline before network; curl allows" {
         try std.testing.expectError(error.UnsupportedControl, client.postJson("/x", "{}"));
     } else {
         // curl may attempt network; capability must not reject.
-        _ = client.postJsonControl("/x", "{}", types.RequestControl.withTimeoutMs(types.monoNowNs(), 50)) catch {};
+        _ = client.postJsonControl("/x", "{}", types.RequestControl.withTimeoutMs(types.monoNowNs(), 50), null) catch {};
     }
 }
 
@@ -256,7 +256,7 @@ test "contract: std reject require_active_cancel before network" {
     });
     defer client.deinit();
     const control = types.RequestControl.none().withRequireActiveCancel(true);
-    try std.testing.expectError(error.UnsupportedControl, client.postJsonControl("/x", "{}", control));
+    try std.testing.expectError(error.UnsupportedControl, client.postJsonControl("/x", "{}", control, null));
 }
 
 test "contract: curl local timeout no headers wall bound" {
@@ -295,7 +295,7 @@ test "contract: curl local timeout no headers wall bound" {
 
     const control = types.RequestControl.withTimeoutMs(types.monoNowNs(), 200);
     const t0 = types.monoNowNs();
-    const result = client.postJsonControl("/slow", "{}", control);
+    const result = client.postJsonControl("/slow", "{}", control, null);
     const elapsed_ms = (types.monoNowNs() - t0) / std.time.ns_per_ms;
     try std.testing.expectError(error.Timeout, result);
     try std.testing.expect(elapsed_ms < 2500);
@@ -351,7 +351,7 @@ test "contract: curl cancel aborts stalled stream" {
     const t0 = types.monoNowNs();
     const result = client.postJsonStreamControl("/s", "{}", struct {
         fn cb(_: ?*anyopaque, _: []const u8) types.ChatError!void {}
-    }.cb, null, control);
+    }.cb, null, control, null);
     const elapsed_ms = (types.monoNowNs() - t0) / std.time.ns_per_ms;
     try std.testing.expectError(error.Cancelled, result);
     try std.testing.expect(elapsed_ms < 2500);
@@ -493,7 +493,7 @@ test "contract: ordinary std no-control loopback 200" {
         .timeout_ms = null,
     });
     defer client.deinit();
-    const resp = try client.postJsonControl("/echo", "{}", types.RequestControl.none());
+    const resp = try client.postJsonControl("/echo", "{}", types.RequestControl.none(), null);
     defer client.freeBody(resp.body);
     try std.testing.expectEqual(@as(u16, 200), resp.status);
     try std.testing.expectEqualStrings("ok", resp.body);
@@ -528,4 +528,152 @@ test "contract: atomic tool reject empty name among multi" {
         .{ .id = "a", .name = "ok", .arguments = "{}" },
         .{ .id = "b", .name = "", .arguments = "{}" },
     }));
+}
+
+// ── retry-after-wire-001: Anthropic Retry-After capture (both backends) ────
+//
+// Loopback server answers one request with the given status + optional
+// Retry-After header. The wire client forces max_retries=0, so a retryable
+// status is terminal on the FIRST attempt: a single-connection server proves
+// the "value set only on terminal error returns" contract (an internal retry
+// would fail the second connection with HttpFailed, not the mapped status).
+
+const RetryAfterProbe = struct {
+    io: std.Io,
+    server: *std.Io.net.Server,
+    status: u16,
+    retry_after: ?[]const u8,
+    fn serve(self: *@This()) void {
+        const stream = self.server.accept(self.io) catch return;
+        defer stream.close(self.io);
+        var rbuf: [2048]u8 = undefined;
+        var reader = stream.reader(self.io, &rbuf);
+        while (true) {
+            const line = reader.interface.takeDelimiterInclusive('\n') catch break;
+            if (line.len <= 2) break; // \r\n
+        }
+        var w = stream.writer(self.io, &.{});
+        var head_buf: [256]u8 = undefined;
+        const head = if (self.retry_after) |ra|
+            std.fmt.bufPrint(&head_buf, "HTTP/1.1 {d} X\r\nRetry-After: {s}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n", .{ self.status, ra }) catch return
+        else
+            std.fmt.bufPrint(&head_buf, "HTTP/1.1 {d} X\r\nContent-Length: 2\r\nConnection: close\r\n\r\n", .{self.status}) catch return;
+        _ = w.interface.writeAll(head) catch {};
+        _ = w.interface.writeAll("{}") catch {};
+        w.interface.flush() catch {};
+    }
+};
+
+fn probeAnthropicRetryAfter(
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    status: u16,
+    retry_after: ?[]const u8,
+    stream: bool,
+) !struct { err: types.ChatError, out: ?u64 } {
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var probe: RetryAfterProbe = .{ .io = io, .server = &server, .status = status, .retry_after = retry_after };
+    const thr = try std.Thread.spawn(.{}, RetryAfterProbe.serve, .{&probe});
+    defer thr.join();
+
+    var base_buf: [64]u8 = undefined;
+    const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
+    var client = try anthropic_messages.Client.init(gpa, io, .{
+        .base_url = base_url,
+        .api_key = "test-key",
+        .model = "claude-test",
+        .max_retries = 0,
+    });
+    defer client.deinit();
+
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    const arena = arena_impl.allocator();
+    const msgs = [_]types.Message{types.Message.user("hi")};
+
+    var out: ?u64 = null;
+    var err: ?types.ChatError = null;
+    if (stream) {
+        const r = client.chatStreamWithOptions(arena, &msgs, &.{}, null, null, .{}, &out);
+        if (r) |_| {} else |e| err = e;
+    } else {
+        const r = client.chatWithOptions(arena, &msgs, &.{}, .{}, &out);
+        if (r) |_| {} else |e| err = e;
+    }
+    return .{ .err = err orelse error.Unexpected, .out = out };
+}
+
+test "contract: anthropic 429 integer Retry-After surfaces 5000ms" {
+    const gpa = std.testing.allocator;
+    const r = try probeAnthropicRetryAfter(gpa, std.testing.io, 429, "5", false);
+    try std.testing.expectEqual(error.RateLimited, r.err);
+    try std.testing.expectEqual(@as(?u64, 5_000), r.out);
+}
+
+test "contract: anthropic 429 HTTP-date Retry-After is null" {
+    const gpa = std.testing.allocator;
+    const r = try probeAnthropicRetryAfter(gpa, std.testing.io, 429, "Wed, 21 Oct 2015 07:28:00 GMT", false);
+    try std.testing.expectEqual(error.RateLimited, r.err);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "contract: anthropic 429 without Retry-After is null" {
+    const gpa = std.testing.allocator;
+    const r = try probeAnthropicRetryAfter(gpa, std.testing.io, 429, null, false);
+    try std.testing.expectEqual(error.RateLimited, r.err);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "contract: anthropic 500 Retry-After surfaces 7000ms (ServerError)" {
+    const gpa = std.testing.allocator;
+    const r = try probeAnthropicRetryAfter(gpa, std.testing.io, 500, "7", false);
+    try std.testing.expectEqual(error.ServerError, r.err);
+    try std.testing.expectEqual(@as(?u64, 7_000), r.out);
+}
+
+test "contract: anthropic non-retryable 401 Retry-After is null" {
+    const gpa = std.testing.allocator;
+    const r = try probeAnthropicRetryAfter(gpa, std.testing.io, 401, "5", false);
+    try std.testing.expectEqual(error.AuthenticationFailed, r.err);
+    try std.testing.expectEqual(@as(?u64, null), r.out);
+}
+
+test "contract: anthropic stream 429 Retry-After surfaces 3000ms" {
+    const gpa = std.testing.allocator;
+    const r = try probeAnthropicRetryAfter(gpa, std.testing.io, 429, "3", true);
+    try std.testing.expectEqual(error.RateLimited, r.err);
+    try std.testing.expectEqual(@as(?u64, 3_000), r.out);
+}
+
+test "contract: shared request funnel captures Retry-After on terminal error" {
+    // Raw transport-level probe: the funnel writes the parsed value beside
+    // the status read; wire adapters filter by error class on top.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    const address = try std.Io.net.IpAddress.parse("127.0.0.1", 0);
+    var server = try address.listen(io, .{ .reuse_address = true });
+    defer server.deinit(io);
+    const port = server.socket.address.getPort();
+
+    var probe: RetryAfterProbe = .{ .io = io, .server = &server, .status = 429, .retry_after = "9" };
+    const thr = try std.Thread.spawn(.{}, RetryAfterProbe.serve, .{&probe});
+    defer thr.join();
+
+    var base_buf: [64]u8 = undefined;
+    const base_url = try std.fmt.bufPrint(&base_buf, "http://127.0.0.1:{d}", .{port});
+    var client = try http.Client.initBearer(gpa, io, .{
+        .base_url = base_url,
+        .api_key = "k",
+        .model = "m",
+        .max_retries = 0,
+    });
+    defer client.deinit();
+
+    var out: ?u64 = null;
+    try std.testing.expectError(error.RateLimited, client.postJsonControl("/x", "{}", types.RequestControl.none(), &out));
+    try std.testing.expectEqual(@as(?u64, 9_000), out);
 }

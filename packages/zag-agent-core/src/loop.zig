@@ -644,6 +644,11 @@ fn chatWithRetry(
             error.Timeout => return .{ .timeout = {} },
         };
 
+        // Retry-After capture slot (retry-after-wire-001): fresh per attempt.
+        // Written by the provider ONLY on terminal rate-limit/server errors
+        // (429, 500..599) with a parsed integer header; null otherwise.
+        var retry_after_ms: ?u64 = null;
+
         // tui-streaming-001: use chat_stream whenever present (falls back to
         // chat — byte-identical — when the slot is absent). Deltas are emitted
         // synchronously, in-order, through the same event sink; a sink failure
@@ -659,10 +664,11 @@ fn chatWithRetry(
                 control,
                 deltaHandler,
                 &emit_ctx,
+                &retry_after_ms,
             );
             if (emit_ctx.err) |serr| return mapSinkEmit(serr);
             break :blk r;
-        } else deps.provider.chat(scratch, messages, defs, control);
+        } else deps.provider.chat(scratch, messages, defs, control, &retry_after_ms);
         if (result) |turn| {
             return .{ .turn = turn };
         } else |err| {
@@ -690,8 +696,15 @@ fn chatWithRetry(
                 return error.ProviderFailed;
             }
 
-            // Overflow-safe delay, clamped to remaining deadline, sliced ≤25ms.
+            // Overflow-safe delay: a parsed Retry-After overrides the plain
+            // exponential schedule — min(max(retry_after_ms, exponential),
+            // 30s) — before the existing remaining-deadline clamp
+            // (retry-after-wire-001). No value → plain exponential (zero
+            // regression). sleepSliced still observes cancel mid-sleep.
             var delay_ms = retryDelayMsSaturating(deps.options.retry_base_delay_ms, attempt);
+            if (retry_after_ms) |ra| {
+                delay_ms = retryDelayMsWithRetryAfter(delay_ms, ra);
+            }
             if (control.remainingMs(zt.monoNowNs())) |rem| {
                 if (rem == 0) return .{ .timeout = {} };
                 delay_ms = @min(delay_ms, rem);
@@ -742,6 +755,19 @@ fn retryDelayMsSaturating(base_ms: u64, attempt: u32) u64 {
     const shift: u6 = @intCast(@min(attempt, 4));
     const factor: u64 = @as(u64, 1) << shift;
     return std.math.mul(u64, base_ms, factor) catch std.math.maxInt(u64);
+}
+
+/// Retry-After ceiling (retry-after-wire-001): provider-requested backoff is
+/// honored up to 30s; beyond that the schedule caps (cancellation still
+/// interrupts via sleepSliced).
+const retry_after_max_ms: u64 = 30 * std.time.ms_per_s;
+
+/// Retry-After override (retry-after-wire-001): next sleep =
+/// `min(max(retry_after_ms, exponential_ms), 30s)`. `exponential_ms` is
+/// already saturating; both operands are u64 so max/min cannot overflow.
+fn retryDelayMsWithRetryAfter(exponential_ms: u64, retry_after_ms: u64) u64 {
+    const overridden = @max(exponential_ms, retry_after_ms);
+    return @min(overridden, retry_after_max_ms);
 }
 
 /// Short-sliced sleep so cancel is observed promptly during long backoff.
@@ -1128,6 +1154,7 @@ test "sink failure during assistant_delta aborts the run" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "hi"),
@@ -1143,6 +1170,7 @@ test "sink failure during assistant_delta aborts the run" {
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             handler(handler_ctx, "delta", null);
             return .{
@@ -1179,6 +1207,7 @@ test "loop stops when model returns text only" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -1224,6 +1253,7 @@ test "chat_stream forwards deltas in order before assistant_message" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "Hello world"),
@@ -1239,6 +1269,7 @@ test "chat_stream forwards deltas in order before assistant_message" {
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             // Reuse ONE buffer per chunk: the handler must consume the slice
             // during emit (borrowed validity) — the sink copies at emit time.
@@ -1292,6 +1323,7 @@ test "terminal provider failure emits provider_failed with ChatError tag" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return error.AuthenticationFailed;
         }
@@ -1328,6 +1360,7 @@ test "failed streaming attempt emits delta_clear before retry deltas" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "final answer"),
@@ -1343,6 +1376,7 @@ test "failed streaming attempt emits delta_clear before retry deltas" {
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.attempts += 1;
@@ -1402,6 +1436,7 @@ test "cancelled streaming attempt emits delta_clear (no partial text under termi
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "never"),
@@ -1417,6 +1452,7 @@ test "cancelled streaming attempt emits delta_clear (no partial text under termi
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             // Partial deltas, then a user cancel (non-retryable).
             handler(handler_ctx, "partial ", null);
@@ -1491,6 +1527,7 @@ test "retryable error exhausts attempts then provider_failed once" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1534,6 +1571,7 @@ test "newly retryable tags reach the table and retry to success" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1586,6 +1624,7 @@ test "terminal error-set tag emits provider_failed once with retry budget availa
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1627,6 +1666,7 @@ test "clean ChatOutcomes never emit provider_failed" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1674,6 +1714,7 @@ test "cancel during backoff returns cancelled" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return error.RateLimited;
         }
@@ -1715,6 +1756,180 @@ test "cancel during backoff returns cancelled" {
     try std.testing.expectEqual(@as(u32, 0), sink.provider_faileds);
 }
 
+// ── retry-after-wire-001: Retry-After overrides the backoff schedule ───────
+
+test "retryDelayMsWithRetryAfter math: max(value, exp) then 30s cap" {
+    // Value wins over the exponential schedule.
+    try std.testing.expectEqual(@as(u64, 5_000), retryDelayMsWithRetryAfter(500, 5_000));
+    // Exponential wins when larger than the value.
+    try std.testing.expectEqual(@as(u64, 1_000), retryDelayMsWithRetryAfter(1_000, 250));
+    // Values beyond 30s clamp at the cap (cancellation still interrupts).
+    try std.testing.expectEqual(@as(u64, 30_000), retryDelayMsWithRetryAfter(1_000, 60_000));
+    try std.testing.expectEqual(@as(u64, 30_000), retryDelayMsWithRetryAfter(30_000, 30_000));
+    try std.testing.expectEqual(@as(u64, 30_000), retryDelayMsWithRetryAfter(30_000, 29_999));
+    // Saturating exponential (overflow) still caps at 30s, never wraps.
+    try std.testing.expectEqual(@as(u64, 30_000), retryDelayMsWithRetryAfter(std.math.maxInt(u64), 2_000));
+}
+
+test "retry-after value extends backoff to max(value, exponential)" {
+    const gpa = std.testing.allocator;
+
+    const RetryAfterMock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            retry_after_out: ?*?u64,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) {
+                // 250ms provider-requested backoff (loop base is 1ms).
+                retry_after_out.?.* = 250;
+                return error.RateLimited;
+            }
+            return .{
+                .content = try arena.dupe(u8, "recovered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: RetryAfterMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = RetryAfterMock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.retry_base_delay_ms = 1; // exponential is negligible; the value must dominate
+    const t0 = zt.monoNowNs();
+    const result = try run(deps, &transcript);
+    const elapsed_ms = @as(u64, @intCast((zt.monoNowNs() - t0) / std.time.ns_per_ms));
+
+    try std.testing.expectEqualStrings("recovered", result.final_text);
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+    // The 250ms provider backoff was honored (not the 1ms exponential).
+    try std.testing.expect(elapsed_ms >= 200);
+}
+
+test "retry-after absent keeps plain exponential backoff" {
+    const gpa = std.testing.allocator;
+
+    const RetryAfterAbsentMock = struct {
+        calls: u32 = 0,
+        fn chat(
+            ptr: *anyopaque,
+            arena: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            _: ?*?u64,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            const self: *@This() = @ptrCast(@alignCast(ptr));
+            self.calls += 1;
+            if (self.calls == 1) return error.RateLimited;
+            return .{
+                .content = try arena.dupe(u8, "recovered"),
+                .tool_calls = &.{},
+                .finish_reason = "stop",
+            };
+        }
+    };
+
+    var mock: RetryAfterAbsentMock = .{};
+    const provider = provider_mod.Provider{
+        .ptr = &mock,
+        .vtable = &.{ .chat = RetryAfterAbsentMock.chat },
+    };
+
+    var sink: RecordingSink = .{};
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.retry_base_delay_ms = 1;
+    const t0 = zt.monoNowNs();
+    const result = try run(deps, &transcript);
+    const elapsed_ms = @as(u64, @intCast((zt.monoNowNs() - t0) / std.time.ns_per_ms));
+
+    try std.testing.expectEqualStrings("recovered", result.final_text);
+    try std.testing.expectEqual(@as(u32, 2), mock.calls);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+    // No value → the 1ms exponential, not a multi-hundred-ms honor.
+    try std.testing.expect(elapsed_ms < 150);
+}
+
+test "cancel during long Retry-After backoff returns cancelled" {
+    const gpa = std.testing.allocator;
+
+    const LongRetryAfterMock = struct {
+        fn chat(
+            _: *anyopaque,
+            _: std.mem.Allocator,
+            _: []const message.Message,
+            _: []const tool.Definition,
+            _: provider_mod.RequestControl,
+            retry_after_out: ?*?u64,
+        ) provider_mod.ChatError!message.AssistantTurn {
+            // 60s provider request — over the 30s cap; the loop clamps.
+            retry_after_out.?.* = 60_000;
+            return error.RateLimited;
+        }
+    };
+
+    var cancel_flag: cancel_mod.Flag = .{};
+    const provider = provider_mod.Provider{
+        .ptr = undefined,
+        .vtable = &.{ .chat = LongRetryAfterMock.chat },
+    };
+
+    // Arm a thread that flips the flag ~10ms into the (clamped) backoff sleep;
+    // sleepSliced must still observe the cancel mid-sleep.
+    const Arm = struct {
+        flag: *cancel_mod.Flag,
+        fn go(self: *@This()) void {
+            var ts: std.c.timespec = .{ .sec = 0, .nsec = 10 * std.time.ns_per_ms };
+            _ = std.c.nanosleep(&ts, null);
+            self.flag.request();
+        }
+    };
+    var arm: Arm = .{ .flag = &cancel_flag };
+    const thr = try std.Thread.spawn(.{}, Arm.go, .{&arm});
+    defer thr.join();
+
+    var sink: RecordingSink = .{};
+    var arena_impl: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_impl.deinit();
+    var transcript = transcript_mod.Transcript.init(arena_impl.allocator());
+    try transcript.appendUser("hi");
+
+    var deps = defaultDeps(gpa, provider, .{ .tools = &.{} }, sink.sink());
+    deps.options.cancel = &cancel_flag;
+    const t0 = zt.monoNowNs();
+    const result = try run(deps, &transcript);
+    const elapsed_ms = @as(u64, @intCast((zt.monoNowNs() - t0) / std.time.ns_per_ms));
+
+    try std.testing.expect(result.stop_reason == .cancelled);
+    try std.testing.expectEqual(@as(u32, 1), sink.provider_retries);
+    try std.testing.expectEqual(@as(u32, 0), sink.provider_faileds);
+    // Interrupted mid-sleep, not after the full (clamped) backoff.
+    try std.testing.expect(elapsed_ms < 2000);
+}
+
 // ── tui-thinking-streaming-001: reasoning deltas through the loop ───────────
 
 test "thinking deltas emit in order with content deltas" {
@@ -1727,6 +1942,7 @@ test "thinking deltas emit in order with content deltas" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "Hello world"),
@@ -1743,6 +1959,7 @@ test "thinking deltas emit in order with content deltas" {
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             // Interleaved content + reasoning chunks, in provider order.
             handler(handler_ctx, "Hel", null);
@@ -1799,6 +2016,7 @@ test "failed streaming attempt clears thinking deltas with ONE clear" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "final answer"),
@@ -1815,6 +2033,7 @@ test "failed streaming attempt clears thinking deltas with ONE clear" {
             _: provider_mod.RequestControl,
             handler: provider_mod.DeltaHandler,
             handler_ctx: *anyopaque,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.attempts += 1;
@@ -1874,6 +2093,7 @@ test "non-stream provider emits no thinking deltas; turn reasoning on assistant_
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -1927,6 +2147,7 @@ test "permission deny yields tool error without executing" {
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -2005,6 +2226,7 @@ test "jail deny absolute path without writing" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -2082,6 +2304,7 @@ test "loop pre-handler jail deny for long absolute path is bounded and does not 
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -2147,6 +2370,7 @@ test "cancel after chat completes open tool pairs" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -2248,6 +2472,7 @@ test "seam composition: permissive trusted host runs handler exactly once" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -2314,6 +2539,7 @@ test "seam composition: deny policy appends one permission_denied, no handler" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -2373,6 +2599,7 @@ test "seam composition: jail deny after policy allow, before handler" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -2435,6 +2662,7 @@ test "seam composition: shell deny after policy allow, before handler" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -2480,6 +2708,7 @@ test "seam composition: unknown tool soft-fails before policy" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -2539,6 +2768,7 @@ test "seam composition: invalid path args soft-fail before policy" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -2584,6 +2814,7 @@ test "seam composition: sink SinkFailed maps to TraceFailed run error" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -2619,6 +2850,7 @@ test "seam composition: sink OutOfMemory maps to OutOfMemory run error" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -2659,6 +2891,7 @@ test "h-provider-001: control reaches provider chat (seam composition)" {
             _: []const message.Message,
             _: []const tool.Definition,
             control: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             // Flag pointer identity: same cancel flag threaded through RequestControl.
@@ -2725,6 +2958,7 @@ test "tools execute serially in call order (seam composition)" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 3);
             tc[0] = .{
@@ -2755,10 +2989,11 @@ test "tools execute serially in call order (seam composition)" {
             msgs: []const message.Message,
             defs: []const tool.Definition,
             control: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
-            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, defs, control);
+            if (self.calls == 1) return Mock.chat(ptr, arena, msgs, defs, control, null);
             // Verify tool results arrived as 1,2,3 in transcript order.
             var labels: [3]?[]const u8 = .{ null, null, null };
             var li: usize = 0;
@@ -2858,6 +3093,7 @@ test "core-policy-ownership-001: policy deny body OOM — policy_decision emitte
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -2942,6 +3178,7 @@ test "core-policy-ownership-001: shell deny body OOM — shell_decision emitted 
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const tc = try arena.alloc(message.ToolCall, 1);
             tc[0] = .{
@@ -3007,6 +3244,7 @@ test "core-context-001: identity view passes valid transcript to provider" {
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3057,6 +3295,7 @@ test "core-context-001: hostile ContextView malformed bundle → InvalidContext,
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3121,6 +3360,7 @@ test "core-context-001: hostile ContextView with leading system layers then malf
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3192,6 +3432,7 @@ test "core-context-001: hostile ContextView compaction + malformed body → Inva
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3266,6 +3507,7 @@ test "harness-steering: none() preserves completed text-only" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "done"),
@@ -3296,6 +3538,7 @@ test "harness-steering: pre-turn steering before turn 1; one-at-a-time" {
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3374,6 +3617,7 @@ test "harness-steering: mid-batch steered exact body + prepared user" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3478,6 +3722,7 @@ test "harness-steering: would-complete steering priority over follow-up" {
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3538,6 +3783,7 @@ test "harness-steering: follow-up alone continues same run" {
             messages: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3590,6 +3836,7 @@ test "harness-steering: cancel before pre-turn leaves queue uncommitted" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "should-not"),
@@ -3634,6 +3881,7 @@ test "harness-steering: cancel after non-null would-complete peek retains item" 
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             // After chat returns text-only, would-complete peeks then rechecks cancel.
@@ -3679,6 +3927,7 @@ test "harness-steering: empty would-complete returns completed (no late cancel)"
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             // Cancel after chat: empty would-complete must still complete (no new late-cancel check).
@@ -3716,6 +3965,7 @@ test "harness-steering: max_turns retains pending control" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "only"),
@@ -3772,6 +4022,7 @@ test "harness-steering: last-turn tools finish; steering retained" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -3825,6 +4076,7 @@ test "harness-steering: multi-tool cancel still uses code=cancelled never steere
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             // Enqueue during chat so pre-turn cannot consume; cancel before tools.
@@ -3885,6 +4137,7 @@ test "harness-steering: post-commit control_applied sink failure leaves applied 
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "never"),
@@ -3931,6 +4184,7 @@ test "harness-steering: ordinary appendUser OOM does not commit or emit control_
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -4007,6 +4261,7 @@ test "harness-steering: mid-batch prepareUser OOM before any steered side effect
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -4156,6 +4411,7 @@ test "harness-steering: mid-batch backfill sink fault leaves partial steered + h
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;

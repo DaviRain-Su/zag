@@ -142,14 +142,25 @@ pub const Client = struct {
     }
 
     pub fn postJson(self: *Client, path: []const u8, body: []const u8) Error!Response {
-        return self.postJsonControl(path, body, .{});
+        return self.postJsonControl(path, body, .{}, null);
     }
 
-    pub fn postJsonControl(self: *Client, path: []const u8, body: []const u8, control: RequestControl) Error!Response {
+    /// `retry_after_out` (retry-after-wire-001): when non-null, the parsed
+    /// `Retry-After` header (integer seconds × 1000 → ms; HTTP-date or absent
+    /// → null) of the last completed HTTP exchange is written into the slot
+    /// on every return. Written on terminal error returns (the value the
+    /// caller should honor), and null on success/other errors.
+    pub fn postJsonControl(
+        self: *Client,
+        path: []const u8,
+        body: []const u8,
+        control: RequestControl,
+        retry_after_out: ?*?u64,
+    ) Error!Response {
         return self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "application/json" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, false, null, null, control);
+        }, body, false, null, null, control, retry_after_out);
     }
 
     pub fn freeBody(self: *Client, body: []u8) void {
@@ -163,9 +174,10 @@ pub const Client = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
     ) Error!void {
-        return self.postJsonStreamControl(path, body, on_chunk, chunk_ctx, .{});
+        return self.postJsonStreamControl(path, body, on_chunk, chunk_ctx, .{}, null);
     }
 
+    /// See `postJsonControl` for `retry_after_out` semantics (stream variant).
     pub fn postJsonStreamControl(
         self: *Client,
         path: []const u8,
@@ -173,11 +185,12 @@ pub const Client = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
         control: RequestControl,
+        retry_after_out: ?*?u64,
     ) Error!void {
         _ = try self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "text/event-stream" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, true, on_chunk, chunk_ctx, control);
+        }, body, true, on_chunk, chunk_ctx, control, retry_after_out);
     }
 
     pub fn mapHttpStatus(status: u16) Error {
@@ -202,6 +215,7 @@ pub const Client = struct {
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
         control_in: RequestControl,
+        retry_after_out: ?*?u64,
     ) Error!Response {
         const control = rc.mergeConfiguredTimeout(control_in, self.timeout_ms);
         try rc.preflight(control);
@@ -214,7 +228,7 @@ pub const Client = struct {
         var attempt: u8 = 0;
         while (attempt <= self.max_retries) : (attempt += 1) {
             try rc.preflight(control);
-            const result = self.attemptOnce(method, url_z, extra, body, stream, on_chunk, chunk_ctx, control) catch |err| {
+            const result = self.attemptOnce(method, url_z, extra, body, stream, on_chunk, chunk_ctx, control, retry_after_out) catch |err| {
                 if (err == error.OutOfMemory) return error.OutOfMemory;
                 if (err == error.StreamFailed) return error.StreamFailed;
                 if (err == error.Cancelled) return error.Cancelled;
@@ -231,6 +245,8 @@ pub const Client = struct {
                     continue;
                 }
                 if (result.body.len > 0) self.allocator.free(result.body);
+                // attemptOnce wrote the captured Retry-After (or null) into
+                // the slot on the terminal exchange (retry-after-wire-001).
                 return mapHttpStatus(result.status);
             }
 
@@ -250,6 +266,7 @@ pub const Client = struct {
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
         control: RequestControl,
+        retry_after_out: ?*?u64,
     ) Error!Response {
         // default_timeout_ms=0 → no curl default; we set CURLOPT_TIMEOUT_MS below.
         var easy = curl.Easy.init(.{
@@ -335,6 +352,12 @@ pub const Client = struct {
             if (cb_ctx.failed) return cb_ctx.err;
             if (cb_ctx.aborted == .cancelled) return error.Cancelled;
             if (cb_ctx.aborted == .timeout) return error.Timeout;
+            // Retry-After capture (retry-after-wire-001) — must run before
+            // easy.deinit() (deferred at fn top). Integer seconds only;
+            // HTTP-date/absent → null. Value in ms for the backoff slot.
+            if (retry_after_out) |out| {
+                out.* = captureRetryAfterMs(resp);
+            }
             return .{ .status = @intCast(resp.status_code), .body = &.{} };
         }
 
@@ -347,6 +370,12 @@ pub const Client = struct {
             if (cb_ctx.aborted == .timeout) return error.Timeout;
             return mapCurlDiag(easy.diagnostics, control);
         };
+        // Retry-After capture (retry-after-wire-001) — must run before
+        // easy.deinit() (deferred at fn top). Integer seconds only;
+        // HTTP-date/absent → null. Value in ms for the backoff slot.
+        if (retry_after_out) |out| {
+            out.* = captureRetryAfterMs(resp);
+        }
         body_writer.writer.flush() catch {};
         const bytes = body_writer.toOwnedSlice() catch return error.OutOfMemory;
         return .{ .status = @intCast(resp.status_code), .body = bytes };
@@ -430,6 +459,40 @@ fn mapCurlDiag(diag: curl.Diagnostics, control: RequestControl) Error {
 
 fn isRetryableStatus(status: u16) bool {
     return status == 408 or status == 429 or status >= 500;
+}
+
+/// Retry-After capture (retry-after-wire-001): mirrors the openai-zig
+/// precedent (`headerRetryAfterMs`, transport/http_curl.zig:503-508) beside
+/// the status read. Integer seconds ONLY (v1 scope); HTTP-date / RFC1123 /
+/// garbage → null. Value in ms for the backoff slot.
+fn captureRetryAfterMs(resp: curl.Easy.Response) ?u64 {
+    const header = (resp.getHeader("Retry-After") catch return null) orelse return null;
+    return retryAfterMsFromRaw(header.get());
+}
+
+/// Pure raw-value → ms parse (integer seconds only; HTTP-date → null).
+fn retryAfterMsFromRaw(value: []const u8) ?u64 {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len == 0) return null;
+    const seconds = std.fmt.parseInt(u64, trimmed, 10) catch return null;
+    return std.math.mul(u64, seconds, std.time.ms_per_s) catch std.math.maxInt(u64);
+}
+
+test "captureRetryAfterMs integer only" {
+    const cases = [_]struct { raw: []const u8, want: ?u64 }{
+        .{ .raw = "5", .want = 5_000 },
+        .{ .raw = " 5 ", .want = 5_000 },
+        .{ .raw = "0", .want = 0 },
+        .{ .raw = "", .want = null },
+        .{ .raw = "Wed, 21 Oct 2015 07:28:00 GMT", .want = null },
+        .{ .raw = "-1", .want = null },
+        .{ .raw = "5.5", .want = null },
+        .{ .raw = "abc", .want = null },
+    };
+    for (cases) |c| {
+        const got = retryAfterMsFromRaw(c.raw);
+        try std.testing.expectEqual(c.want, got);
+    }
 }
 
 fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8) Error![]u8 {

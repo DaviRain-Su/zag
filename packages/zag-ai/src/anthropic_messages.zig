@@ -63,12 +63,19 @@ pub const Client = struct {
         return .{ .ptr = self, .vtable = &owned_vtable };
     }
 
+    /// `retry_after_out` (retry-after-wire-001): optional capture slot for
+    /// the `Retry-After` header (ms). Written ONLY on terminal error returns
+    /// where `mapHttpStatus` yields RateLimited/ServerError (429, 500..599)
+    /// and the header parsed as integer seconds; cleared to null otherwise.
+    /// The transport already wrote the parsed value (or null) for those
+    /// statuses; non-rate-limit/server errors are nulled here.
     pub fn chatWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
         const body = try buildRequestBody(arena, self.config.model, messages, tools, opts, false);
 
@@ -77,7 +84,12 @@ pub const Client = struct {
         self.http.max_retries = 0;
         defer self.http.max_retries = saved_retries;
 
-        const resp = try self.http.postJsonControl("/v1/messages", body, opts.control);
+        const resp = self.http.postJsonControl("/v1/messages", body, opts.control, retry_after_out) catch |err| {
+            if (retry_after_out) |out| {
+                if (err != error.RateLimited and err != error.ServerError) out.* = null;
+            }
+            return err;
+        };
         defer self.http.freeBody(resp.body);
 
         if (resp.status < 200 or resp.status >= 300) {
@@ -95,6 +107,7 @@ pub const Client = struct {
         return turn;
     }
 
+    /// See `chatWithOptions` for `retry_after_out` semantics (stream variant).
     pub fn chatStreamWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
@@ -103,6 +116,7 @@ pub const Client = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
         const body = try buildRequestBody(arena, self.config.model, messages, tools, opts, true);
 
@@ -117,8 +131,15 @@ pub const Client = struct {
         defer self.http.max_retries = saved_retries;
 
         // On cancel/timeout/incomplete, partial state is discarded (never finish()).
-        self.http.postJsonStreamControl("/v1/messages", body, onHttpChunk, &state, opts.control) catch |err| {
-            if (state.err) |e| return e;
+        self.http.postJsonStreamControl("/v1/messages", body, onHttpChunk, &state, opts.control, retry_after_out) catch |err| {
+            if (state.err) |e| {
+                // SSE-level failures never carry Retry-After (retry-after-wire-001).
+                if (retry_after_out) |out| out.* = null;
+                return e;
+            }
+            if (retry_after_out) |out| {
+                if (err != error.RateLimited and err != error.ServerError) out.* = null;
+            }
             return err;
         };
 
@@ -182,9 +203,10 @@ pub const Client = struct {
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
         const self: *Client = @ptrCast(@alignCast(ptr));
-        return self.chatWithOptions(arena, messages, tools, opts);
+        return self.chatWithOptions(arena, messages, tools, opts, retry_after_out);
     }
 
     fn wireChatStream(
@@ -195,9 +217,10 @@ pub const Client = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
         const self: *Client = @ptrCast(@alignCast(ptr));
-        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts);
+        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts, retry_after_out);
     }
 
     fn wireEmbed(

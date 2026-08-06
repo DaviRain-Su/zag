@@ -38,8 +38,8 @@ Build: `zig build -Dhttp_backend=curl` (needs system libcurl; zig-curl is path-v
 var w = try ai.createWire(gpa, io, config, .openai_compat);
 // or .anthropic_messages
 defer w.deinit();
-const turn = try w.chat(arena, messages, tools, opts);
-_ = try w.chatStream(arena, messages, tools, handler, ctx, opts);
+const turn = try w.chat(arena, messages, tools, opts, null);
+_ = try w.chatStream(arena, messages, tools, handler, ctx, opts, null);
 
 // Resolve then wire
 var rr = try ai.resolve(gpa, io, env, null);

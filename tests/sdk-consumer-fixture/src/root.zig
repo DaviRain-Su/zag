@@ -107,6 +107,7 @@ test "low-level zag-types + zag-agent-core composition" {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -263,6 +264,7 @@ test "high-level coding.Agent injects custom tool, provider, observer, and ask p
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -382,6 +384,7 @@ test "high-level ask policy deny path does not execute tool" {
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -467,6 +470,7 @@ test "high-level cancel after assistant tool_calls fills pending with cancelled"
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -551,6 +555,7 @@ test "session create → reply → save → resume preserves transcript" {
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "hello-back"),
@@ -635,6 +640,7 @@ test "session save error returns session_error and preserves prior bytes" {
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "reply"),
@@ -727,6 +733,7 @@ test "session-fork: public Session.fork + durable create/resume smoke" {
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "fork-smoke"),
@@ -841,6 +848,7 @@ test "low-level core: explicit five-seam permissive composition" {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -925,6 +933,7 @@ test "low-level core: explicit deny policy prevents handler execution" {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -992,6 +1001,7 @@ test "low-level core: unknown tool soft-fails before policy" {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1338,6 +1348,7 @@ test "public LifecycleObserver copies assistant/tool bytes; owned after reply re
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;
@@ -1476,6 +1487,7 @@ test "harness-steering: Session enqueue copies caller bytes; low-level none comp
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "ok"),
@@ -1580,6 +1592,7 @@ test "skills-001: public options + activation + no implicit reply parse" {
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "reply-ok"),
@@ -1677,6 +1690,7 @@ test "prompt-templates-001: public options + expand + no implicit reply parse" {
             _: []const coding.message.Message,
             _: []const coding.tool.Definition,
             _: coding.provider.RequestControl,
+            _: ?*?u64,
         ) coding.provider.ChatError!coding.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "reply-ok"),
@@ -1763,6 +1777,7 @@ test "edit-sharp public ports Options and custom toolset no auto-splice" {
                 _: []const coding.message.Message,
                 _: []const coding.tool.Definition,
                 _: coding.provider.RequestControl,
+                _: ?*?u64,
             ) coding.provider.ChatError!coding.message.AssistantTurn {
                 return error.InvalidResponse;
             }
@@ -1851,6 +1866,7 @@ test "edit-sharp public ports Options and custom toolset no auto-splice" {
                 _: []const coding.message.Message,
                 _: []const coding.tool.Definition,
                 _: coding.provider.RequestControl,
+                _: ?*?u64,
             ) coding.provider.ChatError!coding.message.AssistantTurn {
                 const self: *@This() = @ptrCast(@alignCast(ptr));
                 self.step += 1;

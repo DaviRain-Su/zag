@@ -119,14 +119,25 @@ pub const Client = struct {
     }
 
     pub fn postJson(self: *Client, path: []const u8, body: []const u8) Error!Response {
-        return self.postJsonControl(path, body, .{});
+        return self.postJsonControl(path, body, .{}, null);
     }
 
-    pub fn postJsonControl(self: *Client, path: []const u8, body: []const u8, control: RequestControl) Error!Response {
+    /// `retry_after_out` (retry-after-wire-001): when non-null, the parsed
+    /// `Retry-After` header (integer seconds × 1000 → ms; HTTP-date or absent
+    /// → null) of the last completed HTTP exchange is written into the slot
+    /// on every return. Written on terminal error returns (the value the
+    /// caller should honor), and null on success/other errors.
+    pub fn postJsonControl(
+        self: *Client,
+        path: []const u8,
+        body: []const u8,
+        control: RequestControl,
+        retry_after_out: ?*?u64,
+    ) Error!Response {
         return self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "application/json" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, false, null, null, control);
+        }, body, false, null, null, control, retry_after_out);
     }
 
     pub fn freeBody(self: *Client, body: []u8) void {
@@ -140,9 +151,10 @@ pub const Client = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
     ) Error!void {
-        return self.postJsonStreamControl(path, body, on_chunk, chunk_ctx, .{});
+        return self.postJsonStreamControl(path, body, on_chunk, chunk_ctx, .{}, null);
     }
 
+    /// See `postJsonControl` for `retry_after_out` semantics (stream variant).
     pub fn postJsonStreamControl(
         self: *Client,
         path: []const u8,
@@ -150,11 +162,12 @@ pub const Client = struct {
         on_chunk: StreamChunk,
         chunk_ctx: ?*anyopaque,
         control: RequestControl,
+        retry_after_out: ?*?u64,
     ) Error!void {
         _ = try self.request(.POST, path, &.{
             .{ .name = "Accept", .value = "text/event-stream" },
             .{ .name = "Content-Type", .value = "application/json" },
-        }, body, true, on_chunk, chunk_ctx, control);
+        }, body, true, on_chunk, chunk_ctx, control, retry_after_out);
     }
 
     pub fn mapHttpStatus(status: u16) Error {
@@ -179,6 +192,7 @@ pub const Client = struct {
         on_chunk: ?StreamChunk,
         chunk_ctx: ?*anyopaque,
         control_in: RequestControl,
+        retry_after_out: ?*?u64,
     ) Error!Response {
         // Client-configured timeout is a deadline requirement — fail closed on std.
         const control = rc.mergeConfiguredTimeout(control_in, self.timeout_ms);
@@ -255,6 +269,20 @@ pub const Client = struct {
 
             const status: u16 = @intFromEnum(response.head.status);
 
+            // Retry-After capture (retry-after-wire-001): beside the status
+            // read, in the shared request funnel. Integer seconds only;
+            // HTTP-date/absent → null. Value in ms for the backoff slot.
+            var retry_after_ms: ?u64 = null;
+            if (retry_after_out != null) {
+                var head_it = response.head.iterateHeaders();
+                while (head_it.next()) |h| {
+                    if (std.ascii.eqlIgnoreCase(h.name, "retry-after")) {
+                        retry_after_ms = parseRetryAfterMs(h.value);
+                        break;
+                    }
+                }
+            }
+
             if (stream) {
                 if (status < 200 or status >= 300) {
                     const err_body = readAllBody(self.allocator, &response, control) catch &.{};
@@ -263,6 +291,7 @@ pub const Client = struct {
                         try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                         continue;
                     }
+                    if (retry_after_out) |out| out.* = retry_after_ms;
                     return mapHttpStatus(status);
                 }
                 const cb = on_chunk orelse return error.Unexpected;
@@ -274,6 +303,7 @@ pub const Client = struct {
                     if (err == error.UnsupportedControl) return error.UnsupportedControl;
                     return error.HttpFailed;
                 };
+                if (retry_after_out) |out| out.* = null;
                 return .{ .status = status, .body = &.{} };
             }
 
@@ -292,9 +322,11 @@ pub const Client = struct {
                     continue;
                 }
                 self.allocator.free(response_bytes);
+                if (retry_after_out) |out| out.* = retry_after_ms;
                 return mapHttpStatus(status);
             }
 
+            if (retry_after_out) |out| out.* = null;
             return .{ .status = status, .body = response_bytes };
         }
         return error.HttpFailed;
@@ -303,6 +335,28 @@ pub const Client = struct {
 
 fn isRetryableStatus(status: u16) bool {
     return status == 408 or status == 429 or status >= 500;
+}
+
+/// Retry-After parsing (retry-after-wire-001): integer seconds ONLY (v1
+/// scope), converted to ms (saturating) for the backoff slot. HTTP-date /
+/// RFC1123 / garbage → null (std.time.epoch has no string parser in 0.16; a
+/// hand-rolled tokenizer is a documented follow-up).
+fn parseRetryAfterMs(value: []const u8) ?u64 {
+    const trimmed = std.mem.trim(u8, value, " \t");
+    if (trimmed.len == 0) return null;
+    const seconds = std.fmt.parseInt(u64, trimmed, 10) catch return null;
+    return std.math.mul(u64, seconds, std.time.ms_per_s) catch std.math.maxInt(u64);
+}
+
+test "parseRetryAfterMs integer only" {
+    try std.testing.expectEqual(@as(?u64, 5_000), parseRetryAfterMs("5"));
+    try std.testing.expectEqual(@as(?u64, 5_000), parseRetryAfterMs(" 5 "));
+    try std.testing.expectEqual(@as(?u64, 0), parseRetryAfterMs("0"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterMs(""));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterMs("Wed, 21 Oct 2015 07:28:00 GMT"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterMs("-1"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterMs("5.5"));
+    try std.testing.expectEqual(@as(?u64, null), parseRetryAfterMs("abc"));
 }
 
 fn buildUrl(allocator: std.mem.Allocator, base_url: []const u8, path: []const u8) Error![]u8 {

@@ -37,6 +37,7 @@ const EchoChat = struct {
         _: []const message.Message,
         _: []const tool.Definition,
         _: provider_mod.RequestControl,
+        _: ?*?u64,
     ) provider_mod.ChatError!message.AssistantTurn {
         const self: *@This() = @ptrCast(@alignCast(ptr));
         return .{

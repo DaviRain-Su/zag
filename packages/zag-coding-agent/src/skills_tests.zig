@@ -64,6 +64,7 @@ fn noopProvider() core.provider.Provider {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "ok"),
@@ -1038,6 +1039,7 @@ test "skills §11.13: after activation ask+jail+protect+redaction still gate" {
             _: []const core.message.Message,
             _: []const tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;

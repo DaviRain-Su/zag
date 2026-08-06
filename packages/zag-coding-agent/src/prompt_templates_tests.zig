@@ -33,6 +33,7 @@ fn noopProvider() core.provider.Provider {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             return .{
                 .content = try arena.dupe(u8, "ok"),
@@ -56,6 +57,7 @@ fn countingProvider(calls: *u32) core.provider.Provider {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls.* += 1;
@@ -78,6 +80,7 @@ fn countingProvider(calls: *u32) core.provider.Provider {
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const c: *u32 = @ptrCast(@alignCast(ptr));
             c.* += 1;
@@ -932,6 +935,7 @@ test "templates §11.17: after expansion write/shell still hit ask + jail + prot
             _: []const core.message.Message,
             _: []const core.tool.Definition,
             _: core.provider.RequestControl,
+            _: ?*?u64,
         ) core.provider.ChatError!core.message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.calls += 1;

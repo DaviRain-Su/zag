@@ -89,17 +89,22 @@ pub const Client = struct {
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
     ) Error!types.AssistantTurn {
-        return self.chatWithOptions(arena, messages, tools, .{});
+        return self.chatWithOptions(arena, messages, tools, .{}, null);
     }
 
     /// Call chat completions with per-request knobs.
+    /// `retry_after_out` (retry-after-wire-001) is accepted for vtable
+    /// uniformity but never written: openai-zig's Transport.Response carries
+    /// no headers, so OpenAI has no capture source (documented follow-up).
     pub fn chatWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
+        _ = retry_after_out;
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
         const req = try buildChatRequest(arena, self.config.model, chat_messages, chat_tools, opts, false);
@@ -124,6 +129,8 @@ pub const Client = struct {
 
     /// OpenAI Chat Completions SSE stream; returns assembled turn.
     /// (Anthropic streaming lives in `anthropic_messages.Client`, not here.)
+    /// `retry_after_out` is accepted for vtable uniformity but never written
+    /// (OpenAI has no header capture source — retry-after-wire-001).
     pub fn chatStreamWithOptions(
         self: *Client,
         arena: std.mem.Allocator,
@@ -132,7 +139,9 @@ pub const Client = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
+        _ = retry_after_out;
         const chat_messages = try toChatMessages(arena, messages);
         const chat_tools = try toChatTools(arena, tools);
         const req = try buildChatRequest(arena, self.config.model, chat_messages, chat_tools, opts, true);
@@ -178,7 +187,7 @@ pub const Client = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
     ) Error!types.AssistantTurn {
-        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, .{});
+        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, .{}, null);
     }
 
     /// Create embeddings for one or more input strings (OpenAI-compatible `/embeddings`).
@@ -283,9 +292,10 @@ pub const Client = struct {
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
         const self: *Client = @ptrCast(@alignCast(ptr));
-        return self.chatWithOptions(arena, messages, tools, opts);
+        return self.chatWithOptions(arena, messages, tools, opts, retry_after_out);
     }
 
     fn wireChatStream(
@@ -296,9 +306,10 @@ pub const Client = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
         const self: *Client = @ptrCast(@alignCast(ptr));
-        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts);
+        return self.chatStreamWithOptions(arena, messages, tools, handler, handler_ctx, opts, retry_after_out);
     }
 
     fn wireEmbed(

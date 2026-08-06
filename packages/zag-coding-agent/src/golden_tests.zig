@@ -29,6 +29,7 @@ test "golden readonly-list-build" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -122,6 +123,7 @@ test "golden deny-write leaves no file" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.step += 1;
@@ -208,6 +210,7 @@ test "cancel then session save/load resumes" {
             _: []const message.Message,
             _: []const tool.Definition,
             _: provider_mod.RequestControl,
+            _: ?*?u64,
         ) provider_mod.ChatError!message.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.cancel_ptr.request();

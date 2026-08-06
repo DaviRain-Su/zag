@@ -51,6 +51,11 @@ pub const VTable = struct {
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
+        /// Retry-After capture slot (retry-after-wire-001), in ms. Written
+        /// only on terminal error returns with a parsed integer header
+        /// (429/5xx, Anthropic wire); cleared to null otherwise. OpenAI
+        /// adapters ignore the slot (no header source — v1 scope).
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn,
     chat_stream: *const fn (
         ptr: *anyopaque,
@@ -60,6 +65,8 @@ pub const VTable = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
+        /// See `chat` — stream variant of the Retry-After capture slot.
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn,
     embed: *const fn (
         ptr: *anyopaque,
@@ -92,8 +99,9 @@ pub const WireAdapter = struct {
         messages: []const types.Message,
         tools: []const types.ToolDefinition,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
-        return self.vtable.chat(self.ptr, arena, messages, tools, opts);
+        return self.vtable.chat(self.ptr, arena, messages, tools, opts, retry_after_out);
     }
 
     pub fn chatStream(
@@ -104,8 +112,9 @@ pub const WireAdapter = struct {
         handler: ?types.StreamHandler,
         handler_ctx: ?*anyopaque,
         opts: ChatOptions,
+        retry_after_out: ?*?u64,
     ) Error!types.AssistantTurn {
-        return self.vtable.chat_stream(self.ptr, arena, messages, tools, handler, handler_ctx, opts);
+        return self.vtable.chat_stream(self.ptr, arena, messages, tools, handler, handler_ctx, opts, retry_after_out);
     }
 
     /// Embeddings when the wire supports them; otherwise `error.NotSupported`.

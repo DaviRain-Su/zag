@@ -34,6 +34,11 @@ pub const VTable = struct {
         messages: []const message.Message,
         tools: []const tool.Definition,
         control: RequestControl,
+        /// Retry-After capture slot (retry-after-wire-001), in ms. Written
+        /// ONLY on terminal rate-limit/server errors (429, 500..599) when
+        /// the wire parsed an integer `Retry-After` header; null otherwise
+        /// (or untouched on success). Fakes pass null / ignore.
+        retry_after_out: ?*?u64,
     ) ChatError!message.AssistantTurn,
     /// Optional streaming variant (shape mirrors the zag-ai WireAdapter
     /// two-slot precedent wire.zig:59-63). Content deltas are forwarded to
@@ -48,6 +53,8 @@ pub const VTable = struct {
         control: RequestControl,
         handler: DeltaHandler,
         handler_ctx: *anyopaque,
+        /// See `chat` — stream variant of the Retry-After capture slot.
+        retry_after_out: ?*?u64,
     ) ChatError!message.AssistantTurn = null,
 };
 
@@ -62,8 +69,9 @@ pub const Provider = struct {
         messages: []const message.Message,
         tools: []const tool.Definition,
         control: RequestControl,
+        retry_after_out: ?*?u64,
     ) ChatError!message.AssistantTurn {
-        return self.vtable.chat(self.ptr, arena, messages, tools, control);
+        return self.vtable.chat(self.ptr, arena, messages, tools, control, retry_after_out);
     }
 
     /// Streaming chat when the provider implements `chat_stream`; otherwise
@@ -77,8 +85,9 @@ pub const Provider = struct {
         control: RequestControl,
         handler: DeltaHandler,
         handler_ctx: *anyopaque,
+        retry_after_out: ?*?u64,
     ) ChatError!message.AssistantTurn {
         const f = self.vtable.chat_stream orelse return error.NotSupported;
-        return f(self.ptr, arena, messages, tools, control, handler, handler_ctx);
+        return f(self.ptr, arena, messages, tools, control, handler, handler_ctx, retry_after_out);
     }
 };

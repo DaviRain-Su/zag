@@ -63,6 +63,7 @@ pub const WireProvider = struct {
         messages: []const message.Message,
         tools: []const tool.Definition,
         control: provider_mod.RequestControl,
+        retry_after_out: ?*?u64,
     ) ChatError!message.AssistantTurn {
         const self: *WireProvider = @ptrCast(@alignCast(ptr));
         var opts = self.chat_options;
@@ -79,6 +80,8 @@ pub const WireProvider = struct {
         }
         opts.control = c;
         // Provider plane: definitions only — never Tool/descriptor/capabilities.
+        // retry-after-wire-001: the out slot reaches the wire client; the
+        // Anthropic vtable impl writes it, the OpenAI impl ignores it.
         if (self.stream) {
             return self.wire.chatStream(
                 arena,
@@ -87,9 +90,10 @@ pub const WireProvider = struct {
                 self.on_event,
                 self.on_event_ctx,
                 opts,
+                retry_after_out,
             );
         }
-        return self.wire.chat(arena, messages, tools, opts);
+        return self.wire.chat(arena, messages, tools, opts, retry_after_out);
     }
 
     /// Streaming port (tui-streaming-001). The loop calls this slot whenever
@@ -107,6 +111,7 @@ pub const WireProvider = struct {
         control: provider_mod.RequestControl,
         handler: provider_mod.DeltaHandler,
         handler_ctx: *anyopaque,
+        retry_after_out: ?*?u64,
     ) ChatError!message.AssistantTurn {
         const self: *WireProvider = @ptrCast(@alignCast(ptr));
         var opts = self.chat_options;
@@ -122,7 +127,7 @@ pub const WireProvider = struct {
         }
         opts.control = c;
         if (!self.stream) {
-            return self.wire.chat(arena, messages, tools, opts);
+            return self.wire.chat(arena, messages, tools, opts, retry_after_out);
         }
         var shim = StreamShim{
             .core_handler = handler,
@@ -137,6 +142,7 @@ pub const WireProvider = struct {
             StreamShim.onWireEvent,
             &shim,
             opts,
+            retry_after_out,
         );
     }
 };
@@ -206,8 +212,9 @@ test "loop via WireProvider forwards only ToolDefinition to WireAdapter" {
             _: ?ai.types.StreamHandler,
             _: ?*anyopaque,
             opts: ai.ChatOptions,
+            _: ?*?u64,
         ) ai.wire.Error!ai.types.AssistantTurn {
-            return chat(ptr, arena, messages, tools, opts);
+            return chat(ptr, arena, messages, tools, opts, null);
         }
         fn chat(
             ptr: *anyopaque,
@@ -215,6 +222,7 @@ test "loop via WireProvider forwards only ToolDefinition to WireAdapter" {
             _: []const ai.types.Message,
             tools: []const ai.ToolDefinition,
             _: ai.ChatOptions,
+            _: ?*?u64,
         ) ai.wire.Error!ai.types.AssistantTurn {
             const self: *@This() = @ptrCast(@alignCast(ptr));
             self.saw = true;
@@ -346,6 +354,7 @@ test "loop chat_stream forwards only content_delta (stream=true)" {
             handler: ?ai.types.StreamHandler,
             handler_ctx: ?*anyopaque,
             _: ai.ChatOptions,
+            _: ?*?u64,
         ) ai.wire.Error!ai.types.AssistantTurn {
             const events = [_]ai.types.StreamEvent{
                 .{ .content_delta = "Hel" },
@@ -369,6 +378,7 @@ test "loop chat_stream forwards only content_delta (stream=true)" {
             _: []const ai.types.Message,
             _: []const ai.ToolDefinition,
             _: ai.ChatOptions,
+            _: ?*?u64,
         ) ai.wire.Error!ai.types.AssistantTurn {
             return error.NotSupported;
         }
@@ -475,6 +485,7 @@ test "chat_stream chains wire on_event: both consumers receive deltas" {
             handler: ?ai.types.StreamHandler,
             handler_ctx: ?*anyopaque,
             _: ai.ChatOptions,
+            _: ?*?u64,
         ) ai.wire.Error!ai.types.AssistantTurn {
             const events = [_]ai.types.StreamEvent{
                 .{ .content_delta = "Hel" },
@@ -498,6 +509,7 @@ test "chat_stream chains wire on_event: both consumers receive deltas" {
             _: []const ai.types.Message,
             _: []const ai.ToolDefinition,
             _: ai.ChatOptions,
+            _: ?*?u64,
         ) ai.wire.Error!ai.types.AssistantTurn {
             return error.NotSupported;
         }
