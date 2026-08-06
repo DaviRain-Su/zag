@@ -36,6 +36,11 @@ pub const Client = struct {
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Client {
         var cfg = config;
         cfg.api_style = .openai_compat;
+        // OpenCode Go/Zen (and some CDNs) reject requests without a User-Agent
+        // (Cloudflare 1010). Always send a stable product UA.
+        const ua_headers = [_]std.http.Header{
+            .{ .name = "User-Agent", .value = "zag/0.5" },
+        };
         const sdk = openai.initClient(allocator, .{
             .io = io,
             .base_url = cfg.base_url,
@@ -43,6 +48,7 @@ pub const Client = struct {
             .max_retries = cfg.max_retries,
             .retry_base_delay_ms = cfg.retry_base_delay_ms,
             .timeout_ms = cfg.timeout_ms,
+            .extra_headers = &ua_headers,
         }) catch |err| {
             std.debug.panic("openai-zig client init failed: {s}", .{@errorName(err)});
         };

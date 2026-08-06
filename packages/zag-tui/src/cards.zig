@@ -252,6 +252,16 @@ pub const CardRing = struct {
         self.writePreparedLocked(host_error_idx, .host_error, prepared);
     }
 
+    /// Clear the sticky host_error reserve slot (e.g. after a successful reply).
+    pub fn clearHostError(self: *CardRing) void {
+        self.lock();
+        defer self.unlock();
+        if (self.slots[host_error_idx].occupied) {
+            self.slots[host_error_idx] = .{};
+            self.ui_seq += 1;
+        }
+    }
+
     /// session-swap-001: reset every slot (ordinary FIFO + terminal /
     /// host-error / drop-note reserves) and every counter so a swapped-in
     /// session's replay starts from an empty ring — two sessions' cards

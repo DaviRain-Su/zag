@@ -472,8 +472,11 @@ fn StreamEventParser(comptime T: type) type {
             const event_payload = std.mem.trimStart(u8, raw_event_payload, " \t");
             if (event_payload.len == 0) return;
 
-            // After [DONE], any non-empty data payload is protocol error.
-            if (self.done) return errors.Error.HttpError;
+            // After [DONE], ignore trailer data frames (e.g. OpenCode Go
+            // sends `data: {"choices":[],"cost":"0"}` after [DONE]). Comments
+            // are already ignored above; only a second [DONE] remains an error
+            // via the `if (self.done)` check inside dispatch().
+            if (self.done) return;
 
             if (self.data_buf.items.len > 0) {
                 self.data_buf.append(self.allocator, '\n') catch {
@@ -562,20 +565,23 @@ test "sse strict: missing DONE is HttpError" {
     return error.TestUnexpectedResult;
 }
 
-test "sse strict: DONE then more data is HttpError" {
+test "sse: DONE then trailer data is ignored (OpenCode Go cost frame)" {
     const gpa = std.testing.allocator;
-    feedStrictSseForTest(gpa, SseProbeEvent,
+    var saw_done = false;
+    try feedStrictSseForTest(gpa, SseProbeEvent,
         \\data: {"id":"1"}
         \\
         \\data: [DONE]
         \\
-        \\data: {"id":"2"}
+        \\data: {"choices":[],"cost":"0"}
         \\
-    , noopSseEvent, null, null, null) catch |err| {
-        try std.testing.expect(err == error.HttpError);
-        return;
-    };
-    return error.TestUnexpectedResult;
+    , noopSseEvent, null, struct {
+        fn d(ctx: ?*anyopaque) errors.Error!void {
+            const p: *bool = @ptrCast(@alignCast(ctx.?));
+            p.* = true;
+        }
+    }.d, &saw_done);
+    try std.testing.expect(saw_done);
 }
 
 test "sse strict: clean DONE succeeds and on_done once" {

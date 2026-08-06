@@ -1717,6 +1717,9 @@ pub const App = struct {
                 self.sb.gotoBottom(self.last_viewport_h);
                 self.state = .busy;
                 self.setNote("(starting…)");
+                // New turn: clear sticky host_error from a previous failure so
+                // the transcript does not keep a red card while retrying.
+                self.card_ring.clearHostError();
                 self.worker_finished.store(false, .release);
                 self.worker_had_error.store(false, .release);
                 self.worker_active = true;
@@ -1739,11 +1742,27 @@ pub const App = struct {
             self.wake();
         }
         const prompt = self.worker_prompt;
-        _ = agent.reply(session, prompt) catch {
+        _ = agent.reply(session, prompt) catch |err| {
             self.worker_had_error.store(true, .release);
-            self.card_ring.publishHostErrorFixed("host_error", "reply_error");
+            // Surface the typed stop category so the sticky host_error card is
+            // actionable (provider_error / max_turns / …), not opaque "reply_error".
+            // Covers ReplyError = loop.RunError || session_store.Error || trace.Error.
+            const body: []const u8 = switch (err) {
+                error.ProviderFailed => "provider_error",
+                error.MaxTurnsExceeded => "max_turns",
+                error.OutOfMemory => "out_of_memory",
+                error.InvalidToolset => "invalid_toolset",
+                error.InvalidContext => "invalid_context",
+                error.TraceFailed, error.TraceIoFailed, error.TraceSerializationFailed => "trace_error",
+                error.InvalidPath => "invalid_path",
+                error.SessionNotFound, error.SessionAlreadyExists, error.SessionBusy, error.InvalidSession, error.UnsupportedSchema, error.IoFailed => "session_error",
+            };
+            self.card_ring.publishHostErrorFixed("host_error", body);
             return;
         };
+        // Successful reply: drop sticky prior host_error so a recovered session
+        // does not keep showing a red card.
+        self.card_ring.clearHostError();
     }
 
     fn paint(self: *App, term: *terminal_mod.Terminal) error{WriteFailed}!void {
