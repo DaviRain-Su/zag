@@ -21,6 +21,7 @@ const terminal = @import("terminal.zig");
 const theme_mod = @import("theme.zig");
 const overlay_mod = @import("overlay.zig");
 const scrollback_mod = @import("scrollback.zig");
+const subagent_mod = @import("zag-coding-agent").subagent;
 
 pub const UiState = enum {
     idle,
@@ -85,6 +86,7 @@ pub fn renderFrame(
     palette: *const theme_mod.Palette,
     ov: OverlayPaint,
     sb: *scrollback_mod.Scrollback,
+    subagents: ?*const subagent_mod.Registry,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
@@ -98,7 +100,7 @@ pub fn renderFrame(
     term.scratch.len = 0;
     _ = term.md_arena.reset(.retain_capacity);
     const root = term.vx.window();
-    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb);
+    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb, subagents);
     term.render() catch return error.WriteFailed;
 }
 
@@ -118,6 +120,7 @@ fn drawFrame(
     ov: OverlayPaint,
     store: *terminal.LineStore,
     sb: *scrollback_mod.Scrollback,
+    subagents: ?*const subagent_mod.Registry,
 ) void {
     root.clear();
     switch (layout.mode) {
@@ -165,6 +168,7 @@ fn drawFrame(
             overlayLineTitle(root, layout.editor, " editor ", border_style);
 
             if (layout.modal) |m| drawModal(root, m, modal, palette, store);
+            if (layout.tasks_overlay) |t| drawTasksOverlay(root, t, subagents, palette, store);
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
     }
@@ -185,8 +189,9 @@ pub fn drawFrameInto(
     ov: OverlayPaint,
     store: *terminal.LineStore,
     sb: *scrollback_mod.Scrollback,
+    subagents: ?*const subagent_mod.Registry,
 ) void {
-    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb);
+    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb, subagents);
 }
 
 fn childRegion(root: vaxis.Window, region: layout_mod.Region) vaxis.Window {
@@ -693,6 +698,63 @@ fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.Mo
     }
 }
 
+/// Subagent tasks overlay (subagents-001 TUI slice): a small box above the
+/// editor/modal band listing the parent agent's live subagent entries —
+/// header line, one row per entry (`│ ▶ task: … (turns:N) │`), closing
+/// border. Entries come from a `snapshotInto` of the borrowed registry.
+fn drawTasksOverlay(
+    root: vaxis.Window,
+    region: layout_mod.Region,
+    registry: ?*const subagent_mod.Registry,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+) void {
+    const style = palette.style(.modal_fg);
+    const inner = root.child(.{
+        .x_off = region.x,
+        .y_off = region.y,
+        .width = region.w,
+        .height = region.h,
+    });
+    if (inner.width == 0 or inner.height == 0) return;
+
+    var row: u16 = 0;
+    if (row < inner.height) {
+        printLineStyled(inner, row, "┌─ subagents ─────────┐", style);
+        row += 1;
+    }
+    if (registry) |reg| {
+        var buf: [subagent_mod.max_registry_entries]subagent_mod.Entry = undefined;
+        const n = reg.snapshotInto(&buf);
+        for (buf[0..n]) |e| {
+            if (row >= inner.height) break;
+            if (store.format("│ {s} {s}: {s} (turns:{d}) │", .{
+                statusGlyph(e.status),
+                e.subagent_type.name(),
+                singleLine(e.description),
+                e.turns,
+            })) |s| {
+                printLineStyled(inner, row, s, style);
+            }
+            row += 1;
+        }
+    }
+    if (row < inner.height) {
+        printLineStyled(inner, row, "└─────────────────────┘", style);
+    }
+}
+
+/// One-cell status indicator for a subagent entry.
+fn statusGlyph(status: subagent_mod.Status) []const u8 {
+    return switch (status) {
+        .pending => "○",
+        .running => "▶",
+        .completed => "✓",
+        .failed => "✗",
+        .cancelled => "⊘",
+    };
+}
+
 fn drawHostOverlay(
     root: vaxis.Window,
     layout: layout_mod.Layout,
@@ -813,12 +875,12 @@ fn drawFixture(
     modal: permission.ModalSnapshot,
 ) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount());
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount(), false);
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
-    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null);
     return sb;
 }
 
@@ -1456,10 +1518,10 @@ test "md transcript: tall assistant body clips at the cards region height" {
     // Scrolling up reveals the head of the transcript (row-level scrollback
     // — the older turns are reachable, which is the user's blocking ask).
     sb.scrollUp(200);
-    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1);
+    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1, false);
     _ = sb.prepare(&snap, @max(layout2.cards.w -| 3, 1), @max(layout2.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
     const palette2 = theme_mod.builtinDefault();
-    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb);
+    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb, null);
     try expectRowContains(&cs.screen, 2, "line 1");
     const head = rowText(&cs.screen, 2, &buf);
     try std.testing.expect(std.mem.indexOf(u8, head, "line 30") == null);

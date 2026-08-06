@@ -18,6 +18,8 @@ const project_mod = @import("project.zig");
 const skills_mod = @import("skills.zig");
 const prompt_templates_mod = @import("prompt_templates.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
+const subagent_mod = @import("subagent.zig");
+const task_tool = @import("runtime/task_tool.zig");
 
 const message = core.message;
 const tool = core.tool;
@@ -1214,6 +1216,10 @@ pub const Agent = struct {
     tools_storage: toolset_mod.Phase1Storage,
     /// Heap-stable default `apply_hunk` state (B7). Outlives all reply/Tool copies.
     apply_hunk_state: *edit_tools.ApplyHunkState,
+    /// Heap-stable state for the `task` tool (subagent dispatch).
+    task_tool_state: *task_tool.TaskToolState,
+    /// Subagent registry (tracks all subagents spawned by this agent).
+    subagent_registry: *subagent_mod.Registry,
     /// Heap-stable scratch arena for LLM compaction-summary responses
     /// (compaction-llm-001). Reset before each summarizer call; the response
     /// text only needs to live until the retry ladder copies it.
@@ -1263,6 +1269,30 @@ pub const Agent = struct {
             .verifier = options.post_edit_verifier,
         };
 
+        // subagents-001: heap-stable TaskToolState for the task tool.
+        const task_state = try gpa.create(task_tool.TaskToolState);
+        errdefer gpa.destroy(task_state);
+        task_state.* = .{
+            .gpa = gpa,
+            .io = io,
+            .provider = provider,
+            .redactor = &owned_redactor,
+            .permission_mode = options.permission_mode,
+            .shell_policy_mode = options.shell_policy,
+            .parent_depth = 0,
+            .apply_hunk_state = apply_state,
+            .registry = null, // set below after registry is created
+        };
+
+        // subagents-001: subagent registry for tracking spawned subagents.
+        const subagent_reg = try gpa.create(subagent_mod.Registry);
+        errdefer {
+            subagent_reg.deinit();
+            gpa.destroy(subagent_reg);
+        }
+        subagent_reg.* = subagent_mod.Registry.init(gpa);
+        task_state.registry = subagent_reg;
+
         // compaction-llm-001: per-Agent scratch for summarizer provider
         // responses (reset per summarize call; deinit'd with the Agent).
         const summary_scratch = try gpa.create(std.heap.ArenaAllocator);
@@ -1273,8 +1303,10 @@ pub const Agent = struct {
             .gpa = gpa,
             .io = io,
             .provider = provider,
-            .tools_storage = .init(apply_state),
+            .tools_storage = .init(apply_state, task_state),
             .apply_hunk_state = apply_state,
+            .task_tool_state = task_state,
+            .subagent_registry = subagent_reg,
             .summary_scratch = summary_scratch,
             .options = options,
             .stdin_prompter = .{ .io = io },
@@ -1301,6 +1333,9 @@ pub const Agent = struct {
             tr.setRedactor(null);
             tr.deinit();
         }
+        self.subagent_registry.deinit();
+        self.gpa.destroy(self.subagent_registry);
+        self.gpa.destroy(self.task_tool_state);
         self.owned_redactor.deinit();
         self.gpa.destroy(self.apply_hunk_state);
         self.summary_scratch.deinit();
@@ -1629,6 +1664,10 @@ pub const Agent = struct {
                 self.lifecycle_run_open = false;
             }
         }
+        // subagents-001: ensure task_tool_state.redactor points to this
+        // Agent's stable owned_redactor (init-time pointer pointed at a
+        // stack local that was moved; rebind here where self is stable).
+        self.task_tool_state.redactor = &self.owned_redactor;
         try self.beginRun(session);
         self.startLifecycle(session.path != null);
         session.zag_version = self.options.version;

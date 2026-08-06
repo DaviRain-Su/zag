@@ -5,6 +5,7 @@ const core = @import("zag-agent-core");
 const tool = core.tool;
 const fs_tools = @import("runtime/fs_tools.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
+const task_tool = @import("runtime/task_tool.zig");
 
 pub const Toolset = tool.Toolset;
 
@@ -24,9 +25,9 @@ pub const Phase0Storage = struct {
 /// Default coding toolset: explore + search + edit + apply_hunk + apply_transaction + shell.
 /// `apply_hunk` / `apply_transaction` share Agent-owned `ApplyHunkState` (B7).
 pub const Phase1Storage = struct {
-    tools: [9]tool.Tool,
+    tools: [10]tool.Tool,
 
-    pub fn init(apply_hunk_state: *edit_tools.ApplyHunkState) Phase1Storage {
+    pub fn init(apply_hunk_state: *edit_tools.ApplyHunkState, task_state: *task_tool.TaskToolState) Phase1Storage {
         const ro = fs_tools.phase0Tools();
         const search = fs_tools.searchTools();
         const rw = edit_tools.phase1ExtraTools();
@@ -41,6 +42,7 @@ pub const Phase1Storage = struct {
                 edit_tools.makeApplyHunkTool(apply_hunk_state),
                 edit_tools.makeApplyTransactionTool(apply_hunk_state),
                 rw[2], // run_shell
+                task_tool.makeTaskTool(task_state), // task (subagent dispatch)
             },
         };
     }
@@ -53,7 +55,8 @@ pub const Phase1Storage = struct {
 test "every built-in declares complete descriptor capabilities" {
     const gpa = std.testing.allocator;
     var apply_state: edit_tools.ApplyHunkState = .{};
-    const storage = Phase1Storage.init(&apply_state);
+    var task_state: task_tool.TaskToolState = undefined;
+    const storage = Phase1Storage.init(&apply_state, &task_state);
     const tools = storage.tools;
     try tool.validateTools(gpa, &tools);
 
@@ -74,6 +77,7 @@ test "every built-in declares complete descriptor capabilities" {
         .{ .name = "apply_hunk", .risk = .write, .uses_path = true, .shell = .none, .stateful = true },
         .{ .name = "apply_transaction", .risk = .write, .uses_path = false, .shell = .none, .stateful = true },
         .{ .name = "run_shell", .risk = .execute, .uses_path = false, .shell = .command_argument },
+        .{ .name = "task", .risk = .execute, .uses_path = false, .shell = .none },
     };
 
     try std.testing.expectEqual(expected.len, tools.len);
@@ -87,9 +91,18 @@ test "every built-in declares complete descriptor capabilities" {
             try std.testing.expect(t.descriptor.capabilities.workspace.defaultPath() == null);
         }
         try std.testing.expect(t.descriptor.capabilities.shell == exp.shell);
-        try std.testing.expect(t.descriptor.capabilities.cancellation == .none);
+        if (std.mem.eql(u8, exp.name, "task")) {
+            // The task tool is cooperatively cancellable (child-agent cancel).
+            try std.testing.expect(t.descriptor.capabilities.cancellation == .cooperative);
+        } else {
+            try std.testing.expect(t.descriptor.capabilities.cancellation == .none);
+        }
         if (exp.stateful) {
             try std.testing.expect(t.instance == @as(?*anyopaque, @ptrCast(&apply_state)));
+        } else if (std.mem.eql(u8, exp.name, "task")) {
+            // The task tool's instance is the Agent-owned TaskToolState
+            // (non-null, but not apply_state).
+            try std.testing.expect(t.instance != null);
         } else {
             try std.testing.expect(t.instance == null);
         }

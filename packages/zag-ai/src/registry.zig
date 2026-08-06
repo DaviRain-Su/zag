@@ -71,12 +71,19 @@ pub fn resolveFromGet(getter: anytype) Error!Resolved {
     if (zag_provider) |pid| {
         if (pid.len > 0) {
             const spec = presets.find(pid) orelse return error.UnknownProvider;
+            // Keyless presets (e.g. local Ollama) use an empty key when no
+            // env key is configured. The transport sends no Authorization
+            // header when the key is empty.
             const key_src: auth_env.KeySource = auth_env.resolveApiKeySource(getter, spec.env_keys) orelse
                 if (zag_key) |k|
                     if (k.len > 0)
                         auth_env.KeySource{ .key = k, .source = "ZAG_API_KEY" }
+                    else if (spec.env_keys.len == 0)
+                        auth_env.KeySource{ .key = "", .source = "keyless" }
                     else
                         return error.MissingApiKey
+                else if (spec.env_keys.len == 0)
+                    auth_env.KeySource{ .key = "", .source = "keyless" }
                 else
                     return error.MissingApiKey;
             const style = try styleFromGetter(getter, spec.api_style);
@@ -215,5 +222,50 @@ test "unsupported api style garbage" {
     try std.testing.expectError(error.UnsupportedApiStyle, resolveFromGet(TestEnv{ .pairs = &.{
         .{ "DEEPSEEK_API_KEY", "sk" },
         .{ "ZAG_API_STYLE", "not-a-style" },
+    } }));
+}
+
+test "ollama local keyless via ZAG_PROVIDER" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ZAG_PROVIDER", "ollama" },
+    } });
+    try std.testing.expectEqualStrings("ollama", r.spec_id);
+    try std.testing.expectEqualStrings("http://localhost:11434/v1", r.config.base_url);
+    try std.testing.expectEqualStrings("deepseek-v4-flash:0731", r.config.model);
+    try std.testing.expectEqualStrings("keyless", r.api_key_source);
+    try std.testing.expectEqual(@as(usize, 0), r.config.api_key.len);
+    try std.testing.expect(r.api_style == .openai_compat);
+}
+
+test "ollama local ZAG_BASE_URL override" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ZAG_PROVIDER", "ollama" },
+        .{ "ZAG_BASE_URL", "http://192.168.1.100:11434/v1" },
+        .{ "ZAG_MODEL", "qwen2.5-coder:7b" },
+    } });
+    try std.testing.expectEqualStrings("http://192.168.1.100:11434/v1", r.config.base_url);
+    try std.testing.expectEqualStrings("qwen2.5-coder:7b", r.config.model);
+}
+
+test "ollama cloud with API key" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "OLLAMA_API_KEY", "ollama-cloud-key" },
+    } });
+    try std.testing.expectEqualStrings("https://ollama.com/v1", r.config.base_url);
+    try std.testing.expectEqualStrings("ollama-cloud-key", r.config.api_key);
+}
+
+test "ollama cloud via ZAG_PROVIDER" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ZAG_PROVIDER", "ollama-cloud" },
+        .{ "OLLAMA_API_KEY", "my-key" },
+    } });
+    try std.testing.expectEqualStrings("ollama-cloud", r.spec_id);
+    try std.testing.expectEqualStrings("my-key", r.config.api_key);
+}
+
+test "ollama cloud missing key fails" {
+    try std.testing.expectError(error.MissingApiKey, resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ZAG_PROVIDER", "ollama-cloud" },
     } }));
 }

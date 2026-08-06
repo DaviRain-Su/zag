@@ -38,6 +38,10 @@ pub const Layout = struct {    mode: Mode,
     status: Region,
     /// Permission modal overlay region — never present in constrained mode.
     modal: ?Region,
+    /// Subagent tasks overlay region — sits ABOVE the modal (if any) and the
+    /// editor band; never present in constrained mode. Shows the parent
+    /// agent's live subagent entries (subagents-001 TUI slice).
+    tasks_overlay: ?Region,
     cards_window: CardsWindow,
 };
 
@@ -55,6 +59,7 @@ pub fn compute(
     note_present: bool,
     scroll_from_bottom: usize,
     editor_lines: usize,
+    tasks_visible: bool,
 ) Layout {
     const w: u16 = @max(size.cols, 1);
     const rows = size.rows;
@@ -80,6 +85,7 @@ pub fn compute(
             .editor = .{ .x = 0, .y = editor_y, .w = w, .h = editor_h },
             .status = .{ .x = 0, .y = status_y, .w = w, .h = status_h },
             .modal = null,
+            .tasks_overlay = null,
             .cards_window = .{ .start = start, .count = @intCast(count) },
         };
     }
@@ -107,13 +113,25 @@ pub fn compute(
         .h = modal_h,
     };
 
+    // Subagent tasks overlay: up to 8 rows, sitting ABOVE the modal (if
+    // any) and ABOVE the editor. Saturating y keeps the region inside the
+    // frame when the modal + tasks stack exceeds the gap (clamp law).
+    const tasks_h: u16 = if (tasks_visible) @min(8, gap) else 0;
+    const tasks_region: ?Region = if (tasks_h == 0) null else .{
+        .x = 0,
+        .y = editor_y -| modal_h -| tasks_h,
+        .w = w,
+        .h = tasks_h,
+    };
+
     // Transcript fills the space between the single-row header and the
     // 4-row bottom band (editor 2 + status 2) — max_cards = rows-5. The
     // older rows-10 left a large dead gap between transcript and editor
-    // (user feedback). cards_gap (which also subtracts the modal) clamps.
+    // (user feedback). cards_gap (which also subtracts the modal and the
+    // tasks overlay) clamps.
     const max_cards: u16 = if (rows > 12) rows - 5 else 3;
     const cards_y: u16 = header_h;
-    const cards_gap: u16 = if (editor_y > cards_y + modal_h) editor_y - cards_y - modal_h else 0;
+    const cards_gap: u16 = if (editor_y > cards_y + modal_h + tasks_h) editor_y - cards_y - modal_h - tasks_h else 0;
     const cards_h: u16 = @min(max_cards, cards_gap);
 
     const max_cards_u: usize = if (rows > 12) rows - 5 else 3;
@@ -129,6 +147,7 @@ pub fn compute(
         .editor = .{ .x = 0, .y = editor_y, .w = w, .h = editor_h },
         .status = .{ .x = 0, .y = status_y, .w = w, .h = status_h },
         .modal = modal_region,
+        .tasks_overlay = tasks_region,
         .cards_window = .{ .start = start, .count = count },
     };
 }
@@ -136,7 +155,7 @@ pub fn compute(
 // ── geometry fixtures (tui-layout-001) ──────────────────────────────────────
 
 test "layout full mode geometry" {
-    const l = compute(.{ .cols = 80, .rows = 24 }, 5, false, false, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 24 }, 5, false, false, 0, 1, false);
     try std.testing.expect(l.mode == .full);
     // header: single border row with the title overlaid (minimal frame);
     // the id/perm/shell info lines are gone.
@@ -160,7 +179,7 @@ test "layout full mode geometry" {
 }
 
 test "layout full note is ignored (single-row header)" {
-    const l = compute(.{ .cols = 80, .rows = 24 }, 5, false, true, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 24 }, 5, false, true, 0, 1, false);
     // Notes surface in the meta line; the header stays a single border row.
     try std.testing.expectEqual(@as(u16, 1), l.header.h);
     try std.testing.expectEqual(@as(u16, 1), l.cards.y);
@@ -170,7 +189,7 @@ test "layout full note is ignored (single-row header)" {
 }
 
 test "layout full modal presence and position" {
-    const l = compute(.{ .cols = 80, .rows = 24 }, 5, true, false, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 24 }, 5, true, false, 0, 1, false);
     const m = l.modal orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 16), m.y); // bottom-up from editor band
     try std.testing.expectEqual(@as(u16, 4), m.h);
@@ -184,7 +203,7 @@ test "layout full modal presence and position" {
 }
 
 test "layout full note + modal clamps cards" {
-    const l = compute(.{ .cols = 80, .rows = 24 }, 20, true, true, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 24 }, 20, true, true, 0, 1, false);
     try std.testing.expectEqual(@as(u16, 1), l.header.h);
     const m = l.modal orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 16), m.y);
@@ -199,7 +218,7 @@ test "layout full note + modal clamps cards" {
 }
 
 test "layout rows <= 12 caps cards at 3" {
-    const l = compute(.{ .cols = 80, .rows = 10 }, 8, false, false, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 10 }, 8, false, false, 0, 1, false);
     try std.testing.expect(l.mode == .full); // rows=10 not constrained
     try std.testing.expectEqual(@as(usize, 3), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 5), l.cards_window.start);
@@ -209,14 +228,14 @@ test "layout rows <= 12 caps cards at 3" {
 }
 
 test "layout rows 13 cards cap 3" {
-    const l = compute(.{ .cols = 80, .rows = 13 }, 2, false, false, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 13 }, 2, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(usize, 2), l.cards_window.count); // card_count < window
     try std.testing.expectEqual(@as(usize, 0), l.cards_window.start);
     try std.testing.expectEqual(@as(u16, 8), l.cards.h); // 13 - 5 = 8
 }
 
 test "layout rows 10 + note + modal clamps without overflow" {
-    const l = compute(.{ .cols = 80, .rows = 10 }, 5, true, true, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 10 }, 5, true, true, 0, 1, false);
     try std.testing.expectEqual(@as(u16, 1), l.header.h);
     const m = l.modal orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 2), m.y); // bottom-up from the editor band
@@ -233,7 +252,7 @@ test "layout rows 10 + note + modal clamps without overflow" {
 }
 
 test "layout rows 0 and 1 never overflow" {
-    const l0 = compute(.{ .cols = 80, .rows = 0 }, 3, true, true, 0, 1);
+    const l0 = compute(.{ .cols = 80, .rows = 0 }, 3, true, true, 0, 1, false);
     try std.testing.expectEqual(@as(u16, 0), l0.header.h);
     try std.testing.expectEqual(@as(u16, 0), l0.cards.h);
     try std.testing.expectEqual(@as(u16, 0), l0.editor.h);
@@ -244,7 +263,7 @@ test "layout rows 0 and 1 never overflow" {
     try std.testing.expect(l0.editor.y + l0.editor.h <= 0);
     try std.testing.expect(l0.status.y + l0.status.h <= 0);
 
-    const l1 = compute(.{ .cols = 80, .rows = 1 }, 3, true, false, 0, 1);
+    const l1 = compute(.{ .cols = 80, .rows = 1 }, 3, true, false, 0, 1, false);
     try std.testing.expect(l1.header.y + l1.header.h <= 1);
     try std.testing.expect(l1.cards.y + l1.cards.h <= 1);
     try std.testing.expect(l1.editor.y + l1.editor.h <= 1);
@@ -252,17 +271,17 @@ test "layout rows 0 and 1 never overflow" {
 }
 
 test "layout tiny width clamps w to 1" {
-    const l = compute(.{ .cols = 0, .rows = 24 }, 1, false, false, 0, 1);
+    const l = compute(.{ .cols = 0, .rows = 24 }, 1, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(u16, 1), l.header.w);
     try std.testing.expectEqual(@as(u16, 1), l.cards.w);
     try std.testing.expectEqual(@as(u16, 1), l.editor.w);
     try std.testing.expectEqual(@as(u16, 1), l.status.w);
-    const l1 = compute(.{ .cols = 1, .rows = 24 }, 1, false, false, 0, 1);
+    const l1 = compute(.{ .cols = 1, .rows = 24 }, 1, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(u16, 1), l1.header.w);
 }
 
 test "layout card_count 0 yields empty cards window" {
-    const l = compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(usize, 0), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 0), l.cards_window.start);
     // Region budget is card-count independent.
@@ -270,29 +289,29 @@ test "layout card_count 0 yields empty cards window" {
 }
 
 test "layout window is the last count cards when overflowing" {
-    const l = compute(.{ .cols = 80, .rows = 24 }, 20, false, false, 0, 1);
+    const l = compute(.{ .cols = 80, .rows = 24 }, 20, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(usize, 19), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 1), l.cards_window.start);
 }
 
 test "layout editor grows with input lines" {
-    const l1 = compute(.{ .cols = 80, .rows = 40 }, 0, false, false, 0, 1);
+    const l1 = compute(.{ .cols = 80, .rows = 40 }, 0, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(u16, 2), l1.editor.h);
     try std.testing.expectEqual(@as(u16, 36), l1.editor.y);
     try std.testing.expectEqual(@as(u16, 35), l1.cards.h);
     // 3 input lines → editor region 4 rows, growing UPWARD; transcript
     // shrinks by the same amount.
-    const l3 = compute(.{ .cols = 80, .rows = 40 }, 0, false, false, 0, 3);
+    const l3 = compute(.{ .cols = 80, .rows = 40 }, 0, false, false, 0, 3, false);
     try std.testing.expectEqual(@as(u16, 4), l3.editor.h);
     try std.testing.expectEqual(@as(u16, 34), l3.editor.y);
     try std.testing.expectEqual(@as(u16, 33), l3.cards.h);
     // Cap at max_editor_rows.
-    const l9 = compute(.{ .cols = 80, .rows = 40 }, 0, false, false, 0, 9);
+    const l9 = compute(.{ .cols = 80, .rows = 40 }, 0, false, false, 0, 9, false);
     try std.testing.expectEqual(@as(u16, 1 + max_editor_rows), l9.editor.h);
 }
 
 test "layout constrained geometry" {
-    const l = compute(.{ .cols = 30, .rows = 8 }, 5, true, true, 0, 1);
+    const l = compute(.{ .cols = 30, .rows = 8 }, 5, true, true, 0, 1, false);
     try std.testing.expect(l.mode == .constrained);
     try std.testing.expect(l.modal == null); // modal never drawn
     try std.testing.expectEqual(@as(u16, 0), l.header.y);
@@ -308,7 +327,7 @@ test "layout constrained geometry" {
 }
 
 test "layout constrained no cards" {
-    const l = compute(.{ .cols = 30, .rows = 8 }, 0, false, false, 0, 1);
+    const l = compute(.{ .cols = 30, .rows = 8 }, 0, false, false, 0, 1, false);
     try std.testing.expectEqual(@as(usize, 0), l.cards_window.count);
     try std.testing.expectEqual(@as(u16, 0), l.cards.h); // region absent
     try std.testing.expectEqual(@as(u16, 2), l.editor.y);
@@ -316,7 +335,7 @@ test "layout constrained no cards" {
 }
 
 test "layout constrained rows 1 clamps without overflow" {
-    const l = compute(.{ .cols = 30, .rows = 1 }, 2, false, false, 0, 1);
+    const l = compute(.{ .cols = 30, .rows = 1 }, 2, false, false, 0, 1, false);
     try std.testing.expect(l.header.y + l.header.h <= 1);
     try std.testing.expect(l.status.y + l.status.h <= 1);
     try std.testing.expect(l.cards.y + l.cards.h <= 1);
@@ -324,7 +343,7 @@ test "layout constrained rows 1 clamps without overflow" {
 }
 
 test "layout scroll from bottom shifts window start" {
-    const base = compute(.{ .cols = 80, .rows = 24 }, 25, false, false, 0, 1);
-    const scrolled = compute(.{ .cols = 80, .rows = 24 }, 25, false, false, 5, 1);
+    const base = compute(.{ .cols = 80, .rows = 24 }, 25, false, false, 0, 1, false);
+    const scrolled = compute(.{ .cols = 80, .rows = 24 }, 25, false, false, 5, 1, false);
     try std.testing.expect(scrolled.cards_window.start + 5 == base.cards_window.start);
 }

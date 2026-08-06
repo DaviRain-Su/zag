@@ -270,6 +270,10 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    // cli-sigint-001-style note: core tests use std.Thread.spawn + std.c.nanosleep
+    // (cancel-during-backoff fixtures, retry-after-wire-001); nanosleep is an
+    // extern "c" symbol so the test artifact needs libc (test artifact only).
+    core_tests.root_module.link_libc = true;
     const run_core_tests = b.addRunArtifact(core_tests);
 
     const coding_tests = b.addTest(.{

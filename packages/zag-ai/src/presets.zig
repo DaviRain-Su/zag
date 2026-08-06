@@ -142,6 +142,21 @@ pub const builtin: []const ProviderSpec = &.{
         .env_keys = &.{"XIAOMI_API_KEY"},
         .default_model = "mimo-v2-flash",
     },
+    // ── Local / self-hosted (openai_compat) ──────────────────────────
+    .{
+        .id = "ollama",
+        .name = "Ollama (local)",
+        .base_url = "http://localhost:11434/v1",
+        .env_keys = &.{},
+        .default_model = "deepseek-v4-flash:0731",
+    },
+    .{
+        .id = "ollama-cloud",
+        .name = "Ollama Cloud",
+        .base_url = "https://ollama.com/v1",
+        .env_keys = &.{"OLLAMA_API_KEY"},
+        .default_model = "deepseek-v4-flash:0731",
+    },
     // ── Anthropic-compatible hosts ────────────────────────────────────
     .{
         .id = "kimi-coding",
@@ -207,6 +222,22 @@ test "anthropic style on anthropic-family presets" {
     try std.testing.expect(find("cerebras").?.api_style == .openai_compat);
 }
 
-test "builtin count is stable enough" {
-    try std.testing.expect(count() >= 15);
+test "ollama presets exist" {
+    const local = find("ollama").?;
+    try std.testing.expectEqualStrings("Ollama (local)", local.name);
+    try std.testing.expectEqualStrings("http://localhost:11434/v1", local.base_url);
+    try std.testing.expect(local.env_keys.len == 0); // keyless
+    try std.testing.expect(local.api_style == .openai_compat);
+
+    const cloud = find("ollama-cloud").?;
+    try std.testing.expectEqualStrings("Ollama Cloud", cloud.name);
+    try std.testing.expectEqualStrings("https://ollama.com/v1", cloud.base_url);
+    try std.testing.expect(cloud.env_keys.len == 1); // OLLAMA_API_KEY
+    try std.testing.expectEqualStrings("OLLAMA_API_KEY", cloud.env_keys[0]);
+    try std.testing.expect(cloud.api_style == .openai_compat);
 }
+
+test "builtin count is stable enough" {
+    try std.testing.expect(count() >= 17);
+}
+

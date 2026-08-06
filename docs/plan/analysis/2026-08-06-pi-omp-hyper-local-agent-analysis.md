@@ -64,9 +64,9 @@ scope.
 | Thin loop, permissions, workspace jail, sessions, headless | L2 floor exists | preserve as invariant |
 | Session/context sharpness | M3 landed at `31523b6` | extend later with tree/runtime model data; no schema claim yet |
 | TUI | minimal + streaming + layout landed | finish Vaxis first, then adapt Theme candidate |
-| Edit | first sharpness slice landed | add atomic multi-file transaction and stale-anchor recovery |
-| Repo intelligence | search/context only | bounded repo map plus LSP service |
-| Process ownership | no supervisor | add explicit child-tree ownership before LSP/MCP/subagents |
+| Edit | `apply_hunk` + `apply_transaction` **done** @ `e086df8` | keep format evolution separate; no L3 claim |
+| Repo intelligence | search/context only | bounded repo map plus LSP service (after supervisor) |
+| Process ownership | no supervisor; contract **draft** | [process-supervisor-001](../tasks/process-supervisor-001.md) before LSP/MCP/subagents |
 | Long-lived clients | one-shot headless only | define Zag-native correlated `rpc-v1`, then ACP adapter |
 | Delegation | steering/follow-up only | typed bounded subagents after supervisor |
 | Runtime extensions | E0/E1 only | MCP/E2 after supervisor; E3 WASM remains separately gated |

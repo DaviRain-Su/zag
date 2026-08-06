@@ -8,9 +8,10 @@
 > item 1 and [C4](../phases/C4-edit-sharpness.md) deferred multi-file work —
 > **not** Pi/Codex/Hyper format parity.
 >
-> **Contract freeze PASS tip:** recorded on the task after dual architecture +
-> safety reviews (**zero blockers**). This module is the single authoritative
-> binding; implementation still requires a separate Goal.
+> **Contract freeze PASS:** dual architecture + safety reviews (**zero blockers**).
+> **Implementation:** **done** @ `e086df8` (`apply_transaction` in
+> `zag-coding-agent`); §10 fixtures green; Tools · write/edit stays **L2**.
+> Next D-012 process node: [process-supervisor](./process-supervisor.md).
 
 ## 1. Principles
 

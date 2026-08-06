@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 first edit slice + minimal TUI(+streaming/layout) + **vaxis backend done** @ `76360ab`. **Host-shell track:** Theme impl next; slash/overlay/transcript/model per [canvas gap](./plan/analysis/2026-08-06-tui-canvas-grok-gap.md); post-TUI remote Gate still Phase A. **D-012 coding track:** `edit-transaction` landed on main; supervisor / `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
+| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 edit slices (`apply_hunk` + `apply_transaction` **done**) + minimal TUI(+streaming/layout/vaxis/canvas). **Host-shell track:** polish + post-TUI remote Gate Phase A. **D-012 coding track:** edit-transaction **done** @ `e086df8`; process-supervisor **draft**; `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -66,25 +66,25 @@ M2 — selected daily UX ✅
         ├────────────────────────────┬────────────────────────────┐
         ▼                            ▼                            ▼
   Host-shell polish            Evidence / Gate              D-012 coding route
-  tui-vaxis-001                post-tui-remote-             edit-transaction-001
-   (backend; in flight /         dual-backend-gate-001       **ready** (contract PASS)
-    not closed)                  (Phase A in-progress)            │
+  tui-vaxis / theme /            post-tui-remote-             edit-transaction-001
+   canvas (landed / polish)       dual-backend-gate-001       **done** @ `e086df8`
+        │                        (Phase A in-progress)            │
         │                            │                            ▼
-  theme-001 (ready;              (orthogonal)               process-supervisor
-   adapt after vaxis)                                         ├─ rpc-v1
-                                                              ├─ LSP / workspace
-                                                              ├─ ACP
-                                                              ├─ typed subagents
-                                                              └─ MCP / E2
+        │                        (orthogonal)               process-supervisor-001
+        │                                                     **draft** (contract)
+        │                                                         ├─ rpc-v1
+        │                                                         ├─ LSP / workspace
+        │                                                         ├─ ACP
+        │                                                         ├─ typed subagents
+        │                                                         └─ MCP / E2
                                                          (+ session tree / model data /
                                                             memory / E3 — own Gates)
 ```
 
 Two **parallel** delivery lanes after M2 (do not serialize them):
 
-1. **Host shell** — finish quarantined vaxis backend → Theme impl (reuse/adapt
-   unmerged `ff509a6` candidate only after vaxis) → richer views later.
-2. **D-012 coding agent** — edit transaction (**ready** for impl Goal) → supervisor → long-lived clients
+1. **Host shell** — Theme/slash/transcript polish; post-TUI remote Gate Phase B when granted.
+2. **D-012 coding agent** — edit transaction **done** → process supervisor (draft → dual review) → long-lived clients
    / intelligence / extensions. Does **not** wait on Theme or remote `-Dtui`.
 
 ## D-012 capability route
@@ -94,8 +94,8 @@ Pi/OMP/Hyper parity). Dependency order from
 [analysis](./plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md):
 
 ```text
-edit-transaction-001 (ready; contract PASS; binding edit-transaction.md)
-  └─► process-supervisor-001 (not drafted)
+edit-transaction-001 **done** @ `e086df8` (binding edit-transaction.md)
+  └─► process-supervisor-001 **draft** (binding process-supervisor.md)
         ├─► rpc-v1
         ├─► LSP / workspace service
         ├─► ACP adapter
@@ -107,12 +107,11 @@ E3 WASM — only after E2 semantics + capability Gates
 
 | Node | Status |
 |------|--------|
-| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **ready** — dual review PASS; impl needs fresh Goal |
-| process-supervisor / `rpc-v1` / LSP / ACP / subagents / MCP / session-tree / model-data / E2–E3 | **roadmap only** — each needs its own contract + Gate |
+| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **done** @ `e086df8` — `apply_transaction` + §10 fixtures; Tools · write/edit L2 |
+| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — module + task; dual review not started |
+| `rpc-v1` / LSP / ACP / subagents / MCP / session-tree / model-data / E2–E3 | **roadmap only** — each needs its own contract + Gate after supervisor |
 
-`process-supervisor` and everything under it remain **not task-ready** until
-drafted. Edit-transaction is the only D-012 coding node **ready** for an
-implementation Goal today.
+Next coding Goal eligible after dual review moves supervisor to **`ready`**.
 
 ### M0 — Interaction reliability
 
@@ -194,7 +193,8 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | `skills-001` | passive `SKILL.md` discovery + bounded prompt injection; **done @ `caafef5`** ([skills](./modules/skills.md), [task](./plan/tasks/skills-001.md)) | loader has no execute privilege; induced Tool calls still use normal security Gates; Runtime Extensions stays L0 |
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest + review ([tools-edit](./modules/tools-edit.md)) | no multi-file txn (that is `edit-transaction-001`); Tools write/edit stays L2 |
-| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **ready** — contract **PASS** (dual reviews zero blockers); binding [edit-transaction.md](./modules/edit-transaction.md); D-012 item 1 | dual review done; **fresh Goal** required for impl; orthogonal to TUI/Theme |
+| [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **done** @ `e086df8` — `apply_transaction` + §10; binding [edit-transaction.md](./modules/edit-transaction.md); D-012 item 1 | Tools · write/edit stays L2; orthogonal to TUI/Theme |
+| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — binding [process-supervisor.md](./modules/process-supervisor.md) | dual review next; unblocks LSP/MCP/subagent/rpc |
 | [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55`; streaming @ `2d57e84`; layout @ `189de9e` | host shell only; no maturity raise |
 | tui-vaxis-001 | **done** @ `76360ab` | quarantined backend only; no vxfw wholesale |
 | [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** Phase A; TARGET `f352b60…`; Gate green **No** | docs evidence; **no** remote `-Dtui`; no Phase B grant |

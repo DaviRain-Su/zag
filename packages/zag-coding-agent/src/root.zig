@@ -46,6 +46,8 @@ pub const doctor = @import("doctor.zig");
 pub const wire_provider = @import("wire_provider.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
+pub const subagent = @import("subagent.zig");
+pub const task_tool = @import("runtime/task_tool.zig");
 pub const golden_tests = @import("golden_tests.zig");
 
 // skills-001: public activation + options surface
@@ -118,6 +120,17 @@ pub const PostEditVerifier = edit_tools.PostEditVerifier;
 pub const PostEditVerifyResult = edit_tools.PostEditVerifyResult;
 pub const ApplyHunkState = edit_tools.ApplyHunkState;
 pub const autoAcceptHunkReviewer = edit_tools.autoAcceptHunkReviewer;
+
+// subagents-001: public surface
+pub const SubagentType = subagent.SubagentType;
+pub const SubagentRequest = subagent.SubagentRequest;
+pub const SubagentResult = subagent.SubagentResult;
+pub const SubagentRegistry = subagent.Registry;
+pub const SubagentEntry = subagent.Entry;
+pub const SubagentStatus = subagent.Status;
+pub const SubagentSpawnContext = subagent.SpawnContext;
+pub const TaskToolState = task_tool.TaskToolState;
+pub const makeTaskTool = task_tool.makeTaskTool;
 
 // session-fork-001: Gate fixtures (module §8 items 1–29)
 test {

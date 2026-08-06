@@ -99,6 +99,8 @@ pub const App = struct {
     agent: ?*coding.Agent = null,
     session: ?*coding.Session = null,
     redactor: ?*const coding.redact.Redactor = null,
+    /// Borrowed subagent registry pointer (from coding-agent Agent). Null when no agent bound.
+    subagent_registry: ?*const @import("zag-coding-agent").subagent.Registry = null,
     host: ?SignalHost = null,
     /// session-swap-001: session start knobs captured at bind (see
     /// BindSessionOpts) — the swap reuses them for the new Session.start.
@@ -172,6 +174,9 @@ pub const App = struct {
     /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
     /// text publishes as a `· thinking` card ahead of the assistant turn.
     show_thinking: bool = false,
+    /// Subagent tasks overlay toggle (Ctrl+K): when on, the live subagent
+    /// registry renders above the editor/modal band (subagents-001 TUI).
+    tasks_visible: bool = false,
     overlay: overlay_mod.Overlay = .{},
     /// Row-level transcript scrollback (tui-scrollback-001): geometry
     /// cache + virtual_y + follow mode. Survives frames.
@@ -373,6 +378,8 @@ pub const App = struct {
         self.redactor = redactor;
         self.host = host;
         self.bind_session_opts = opts;
+        // subagents-001: bind the Agent's subagent registry for TUI display.
+        self.subagent_registry = agent.subagent_registry;
     }
 
     pub fn lifecycleObserver(self: *App) coding.LifecycleObserver {
@@ -979,8 +986,9 @@ pub const App = struct {
                 return .none;
             },
             .ctrl_k => {
-                self.editor.killToEnd();
-                self.syncSlashOverlay();
+                // Subagent tasks overlay toggle (Ctrl+K): shows the parent
+                // agent's live subagent entries above the editor band.
+                self.tasks_visible = !self.tasks_visible;
                 return .none;
             },
             .page_up => {
@@ -1764,7 +1772,7 @@ pub const App = struct {
         // interior (region minus the closed-frame borders) is the scrollback
         // viewport + page unit. The scroll argument is legacy (card-level
         // window, used only by constrained mode's newest-3 titles).
-        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount());
+        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible);
         const viewport_h: usize = @max(layout.cards.h -| 1, 1);
         const content_w: u16 = @max(layout.cards.w -| 3, 1);
         self.last_viewport_h = viewport_h;
@@ -1776,7 +1784,7 @@ pub const App = struct {
             render.measureCardHeight,
             scrollback_mod.estimateCard,
         );
-        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb);
+        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb, self.subagent_registry);
         self.dirty = false;
         self.last_painted_size = sz;
     }
@@ -2375,7 +2383,7 @@ test "tui-input: home/end/ctrl-a/ctrl-e move the editor cursor" {
     try std.testing.expectEqual(@as(usize, 7), app.editor.cursor);
 }
 
-test "tui-input: ctrl-w/u/k edit the buffer" {
+test "tui-input: ctrl-w/u edit the buffer; ctrl-k toggles the tasks overlay" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
@@ -2385,10 +2393,12 @@ test "tui-input: ctrl-w/u/k edit the buffer" {
     try std.testing.expectEqualStrings("abc ", app.editor.slice());
     _ = app.handleKey(.ctrl_u);
     try std.testing.expectEqualStrings("", app.editor.slice());
-    _ = app.editor.insert("one\ntwo");
-    app.editor.cursor = 6;
+    // Ctrl+K (rebound from kill-to-end): toggles the subagent tasks overlay.
+    try std.testing.expect(!app.tasks_visible); // default off
     _ = app.handleKey(.ctrl_k);
-    try std.testing.expectEqualStrings("one\ntw", app.editor.slice());
+    try std.testing.expect(app.tasks_visible);
+    _ = app.handleKey(.ctrl_k);
+    try std.testing.expect(!app.tasks_visible);
 }
 
 test "tui-theme: switching builtins never frees static memory" {

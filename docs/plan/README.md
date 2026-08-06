@@ -31,6 +31,8 @@ docs/plan/
 | Prompt Templates (E1) | **done** at `61326ae` — [prompt-templates-001](./tasks/prompt-templates-001.md) + binding [prompt-templates.md](../modules/prompt-templates.md); passive coding-agent slice + thin CLI routing; Runtime Extensions remains L0 (no E1 maturity raise) |
 | M3 session/context sharpness | **implementation-complete** at `31523b6` — [session-item-001](./tasks/session-item-001.md), [chat-state-prune-001](./tasks/chat-state-prune-001.md), [compaction-llm-001](./tasks/compaction-llm-001.md); additive reasoning/synthetic/prompt-index fields, view-only repair/dedup/token trimming, and opt-in LLM summaries with heuristic fallback; no Session v1/Trace v1/headless-v1 or maturity change |
 | Edit sharpness (C4 first slice) | **done** at `7be5151` — [edit-sharpness-001](./tasks/edit-sharpness-001.md) + binding [tools-edit.md](../modules/tools-edit.md) § C4 + [C4-edit-sharpness](../phases/C4-edit-sharpness.md); contract PASS @ `07b8dab`/`f13b0f8` → impl `cfdc81b` → fix `241374a` → docs truth/closeout `7be5151`; candidate + merged-main local macOS std **40/40 · 655/655**, curl **42/42 · 654/654**; coding **375**, CLI **36**, SDK **24/24**; OpenAPI **287**; catalog **40**; docs **92/74**; **no push** / no fresh remote Linux for this tip; Tools · write/edit stays **L2** |
+| Edit transaction (C4 second / D-012 item 1) | **done** at `e086df8` — [edit-transaction-001](./tasks/edit-transaction-001.md) + binding [edit-transaction.md](../modules/edit-transaction.md); dual contract reviews PASS → impl `apply_transaction` + §10 fixtures; local coding-agent **417/417**; **no L3 / no remote monorepo Gate claim**; Tools · write/edit stays **L2** |
+| Process supervisor (D-012 item 3) | **draft** — [process-supervisor-001](./tasks/process-supervisor-001.md) + [process-supervisor.md](../modules/process-supervisor.md); dual review not started; unblocks LSP/MCP/subagent/rpc |
 | Minimal TUI (M2 / C9 first slice) | **done** at `f8f7f55` — [tui-minimal-001](./tasks/tui-minimal-001.md) + binding [tui-minimal.md](../modules/tui-minimal.md); contract PASS @ `c7a8f3a` → impl final `f8f7f55` (dual final reviews PASS, zero blockers; PTY + gate21 exclusive workspace); local ff-only merge; task + merged-main local macOS default std **42/42 · 656/656**, curl **44/44 · 655/655**, TUI std **47/47 · 711/711**, TUI curl **49/49 · 710/710**; OpenAPI **287**; catalog **40**; docs **92/74** (55 files); local reflog shows external/other push of `f8f7f55` to `origin/main` (not by this closeout); TUI docs tips local-only at closeout, later ancestors of TARGET `f352b60` (Class C lineage only; not Phase B live evidence; closeout did not push); **no** maturity raise; post-TUI remote Gate **not** claimed here — see [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) (**in-progress** Phase A; TARGET `f352b60`; rebind PASS @ `7f9cfa4`; no grant/run/Gate green) |
 | TUI streaming | **implementation-complete** at `2d57e84` — [tui-streaming-001](./tasks/tui-streaming-001.md) / [tui-streaming.md](../modules/tui-streaming.md); default transport, progressive assistant cards, usage parity; no Session/Trace/headless wire or maturity change |
 | TUI layout/presenter | **implementation-complete** at `189de9e` — [tui-layout-001](./tasks/tui-layout-001.md) / [tui-layout.md](../modules/tui-layout.md); pure geometry plus dirty-flag paint; no maturity change |
@@ -158,14 +160,12 @@ completed foundation
            ┌───────────────┼───────────────────────────────┐
            ▼               ▼                               ▼
    tui-streaming ✅   post-tui-remote-gate            edit-transaction-001
-   tui-layout ✅        (Phase A in-progress)          **ready** (contract PASS)
+   tui-layout ✅        (Phase A in-progress)          **done** @ e086df8
            │               │                               │
-   tui-vaxis-001           │                         (D-012 → supervisor…)
-    (in flight;            ├─ orthogonal
-     not closed)           │
-           ▼               │
-   theme-001 (ready;       │
-    adapt after vaxis)     │
+   tui-vaxis/canvas        │                         process-supervisor-001
+    (landed / polish)      ├─ orthogonal               **draft**
+           │               │                               │
+   theme / slash …         │                         (rpc / LSP / …)
 ```
 
 `pi-alignment-001`, `cli-sigint-001`, the D-011 ownership nodes, `harness-events-001`,
@@ -231,9 +231,10 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 |--------------|--------|-------|
 | [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** (rebind PASS @ `7f9cfa4`) | Docs-first post-TUI **default-path** remote dual-OS dual-backend Gate; TARGET `f352b60…` (OLD_TARGET `b151307` abandoned); no run id; no push; no Phase B grant; Gate green No; **no** remote `-Dtui`; **no** maturity raise |
 | [theme-001](./tasks/theme-001.md) | **ready** (contract PASS @ `9e1b9f9`; dual re-reviews zero blockers) | Host-shell Theme binding [theme.md](../modules/theme.md); docs only; depends-on `tui-minimal-001`; eligible for **fresh** implementation Goal; **no** product code yet; **orthogonal** to post-TUI remote Gate; **no** maturity raise |
-| [edit-transaction-001](./tasks/edit-transaction-001.md) | **ready** (contract PASS; dual reviews zero blockers) | C4 second slice / D-012 item 1: multi-file `apply_transaction`; binding [edit-transaction.md](../modules/edit-transaction.md); eligible for **fresh** implementation Goal; **no** product code yet; **orthogonal** to TUI vaxis/Theme; **no** maturity raise |
+| [edit-transaction-001](./tasks/edit-transaction-001.md) | **done** @ `e086df8` | C4 second slice / D-012 item 1: multi-file `apply_transaction`; binding [edit-transaction.md](../modules/edit-transaction.md); §10 fixtures; coding-agent **417/417**; **orthogonal** to TUI; Tools · write/edit stays L2 |
+| [process-supervisor-001](./tasks/process-supervisor-001.md) | **draft** | D-012 item 3: process ownership; binding [process-supervisor.md](../modules/process-supervisor.md); dual review not started |
 | RPC / ACP / extension-UI | **pending** (not ready) | **fresh Goal** still required; Theme contract does **not** auto-select or package them |
-| D-012 local coding-agent route | **roadmap; first node ready** | edit-transaction-001 (**ready**, contract PASS) → process supervisor → `rpc-v1` / LSP / ACP / typed subagents / MCP-E2; each later node requires its own contract and Gate |
+| D-012 local coding-agent route | **partial** | edit-transaction-001 (**done**) → process-supervisor-001 (**draft**) → `rpc-v1` / LSP / ACP / typed subagents / MCP-E2; each later node requires its own contract and Gate |
 
 ### Completed foundation
 

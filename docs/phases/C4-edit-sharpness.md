@@ -39,14 +39,20 @@ Binding truth: [tools-edit § C4 first-slice](../modules/tools-edit.md#l3--c4-fi
 3. Fixture matrix §10 on dual-backend local macOS Gates (incl. fail-next post-replace + digest boundaries) ✅
 4. Legacy `search_replace`/`write_file` behavior stable ✅
 
+## 第二切片（closed @ `e086df8`）
+
+- 多文件事务/回滚 — **done** [edit-transaction-001](../plan/tasks/edit-transaction-001.md)
+  / [edit-transaction.md](../modules/edit-transaction.md)（contract PASS → impl
+  `apply_transaction` + §10 fixtures；Tools · write/edit stays **L2**；
+  no remote Gate claim this tip）。
+
 ## 后移
 
-- 多文件事务/回滚 — **合同 ready** [edit-transaction-001](../plan/tasks/edit-transaction-001.md)
-  / [edit-transaction.md](../modules/edit-transaction.md)（dual review PASS；实现需 fresh Goal）；
 - AST/LSP/DAP；
 - 完整 IDE/TUI diff pane；
 - multi-hunk apply_patch / hashline line-address formats；
 - 自动 doctor→verify command；
+- process supervisor / mid-flight shell preemption — [process-supervisor-001](../plan/tasks/process-supervisor-001.md)；
 - 以增加 Tool 数量为目标的扩张；
 - Core 变更或 schema 变更。
 

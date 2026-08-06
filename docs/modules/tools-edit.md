@@ -280,10 +280,9 @@ Options reviewer/verifier are **not** auto-spliced. Null reviewer on `apply_hunk
 ### Deferred beyond this first slice (still L3 direction, not this freeze)
 
 - Multi-hunk apply_patch / hashline line-address formats;
-- multi-file atomic/partial-success policy — **owned by ready contract**
-  [edit-transaction.md](./edit-transaction.md) /
-  [edit-transaction-001](../plan/tasks/edit-transaction-001.md) (`status: ready`;
-  dual review PASS; **no** implementation claim on the contract tip);
+- multi-file atomic transaction — **done** @ `e086df8`
+  ([edit-transaction.md](./edit-transaction.md) /
+  [edit-transaction-001](../plan/tasks/edit-transaction-001.md)); Tools · write/edit stays L2;
 - canonical path/domain permission policy;
 - external-writer compare-and-swap beyond digest revalidate;
 - automatic project-script verification CLI;

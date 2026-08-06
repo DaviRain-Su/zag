@@ -5202,3 +5202,85 @@ test "edit-txn §10.9 second path jail escape" {
     try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
     try std.testing.expectEqual(@as(u32, 0), reviewer.calls_owned);
 }
+
+test "edit-txn §10.14 per-entry hunk string over 32 KiB too_large pre-commit" {
+    // Reachable budget under production caps: each old_string/new_string ≤32 KiB.
+    // Aggregate preimage (8 MiB) and aggregate hunk (1 MiB) are structural belts —
+    // N≤16 × per-entry caps cannot exceed them, so the per-entry string cap is the
+    // enforceable fixture for §10.14 budget rejection.
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "x\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    var ha: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+
+    const over = max_hunk_string_bytes + 1;
+    const big_old = try gpa.alloc(u8, over);
+    defer gpa.free(big_old);
+    @memset(big_old, 'O');
+
+    var state: ApplyHunkState = .{ .reviewer = autoAcceptHunkReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try std.fmt.allocPrint(
+        gpa,
+        "{{\"entries\":[{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":{f},\"new_string\":\"N\"}}]}}",
+        .{
+            std.json.fmt("a.txt", .{}),
+            std.json.fmt(ha[0..], .{}),
+            std.json.fmt(big_old, .{}),
+        },
+    );
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnError(body, "too_large");
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", a0);
+}
+
+test "edit-txn §10.10 one review covers whole transaction" {
+    // Contract §3.3/§7: one HunkReviewer call for N files (not N reviews).
+    // Permission ask-once is loop-level (one ToolPolicy check per invocation).
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const a0 = "alpha OLD_A omega\n";
+    const b0 = "beta OLD_B gamma\n";
+    const c0 = "gamma OLD_C delta\n";
+    try tmp.dir.writeFile(io, .{ .sub_path = "a.txt", .data = a0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "b.txt", .data = b0 });
+    try tmp.dir.writeFile(io, .{ .sub_path = "c.txt", .data = c0 });
+    var ha: [64]u8 = undefined;
+    var hb: [64]u8 = undefined;
+    var hc: [64]u8 = undefined;
+    sha256HexOf(a0, &ha);
+    sha256HexOf(b0, &hb);
+    sha256HexOf(c0, &hc);
+
+    var reviewer = FixedReviewer.init(.accept);
+    var state: ApplyHunkState = .{ .reviewer = reviewer.asReviewer() };
+    const ctx: tool.Context = .{ .allocator = gpa, .io = io, .cwd = tmp.dir };
+    const args = try std.fmt.allocPrint(
+        gpa,
+        "{{\"entries\":[{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":\"OLD_A\",\"new_string\":\"NEW_A\"}},{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":\"OLD_B\",\"new_string\":\"NEW_B\"}},{{\"path\":{f},\"expected_sha256\":{f},\"old_string\":\"OLD_C\",\"new_string\":\"NEW_C\"}}]}}",
+        .{
+            std.json.fmt("a.txt", .{}),
+            std.json.fmt(ha[0..], .{}),
+            std.json.fmt("b.txt", .{}),
+            std.json.fmt(hb[0..], .{}),
+            std.json.fmt("c.txt", .{}),
+            std.json.fmt(hc[0..], .{}),
+        },
+    );
+    defer gpa.free(args);
+    const body = try applyTransaction(ctx, &state, args);
+    defer gpa.free(body);
+    try expectTxnOk(body, "not_configured");
+    try std.testing.expectEqual(@as(u32, 1), reviewer.calls_owned);
+    try expectFileBytes(gpa, io, tmp.dir, "a.txt", "alpha NEW_A omega\n");
+    try expectFileBytes(gpa, io, tmp.dir, "b.txt", "beta NEW_B gamma\n");
+    try expectFileBytes(gpa, io, tmp.dir, "c.txt", "gamma NEW_C delta\n");
+}
