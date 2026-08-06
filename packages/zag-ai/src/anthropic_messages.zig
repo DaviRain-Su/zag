@@ -23,6 +23,8 @@ pub const Client = struct {
     config: Config,
     http: http.Client,
     owned_by_wire: bool = false,
+    /// Heap-owned model id when set via `setModel`.
+    owned_model: ?[]u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Error!Client {
         var cfg = config;
@@ -50,6 +52,7 @@ pub const Client = struct {
     }
 
     pub fn deinit(self: *Client) void {
+        if (self.owned_model) |m| self.allocator.free(m);
         self.http.deinit();
     }
 
@@ -169,6 +172,8 @@ pub const Client = struct {
         .chat = wireChat,
         .chat_stream = wireChatStream,
         .embed = wireEmbed,
+        .set_model = wireSetModel,
+        .get_model = wireGetModel,
     };
 
     const owned_vtable: wire.VTable = .{
@@ -178,6 +183,8 @@ pub const Client = struct {
         .chat = wireChat,
         .chat_stream = wireChatStream,
         .embed = wireEmbed,
+        .set_model = wireSetModel,
+        .get_model = wireGetModel,
     };
 
     fn wireApiStyle(_: *anyopaque) wire.ApiStyle {
@@ -231,6 +238,20 @@ pub const Client = struct {
     ) Error!types.EmbeddingResult {
         const self: *Client = @ptrCast(@alignCast(ptr));
         return self.embed(arena, inputs, opts);
+    }
+
+    fn wireSetModel(ptr: *anyopaque, model: []const u8) Error!void {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        if (model.len == 0) return error.BadRequest;
+        const owned = self.allocator.dupe(u8, model) catch return error.OutOfMemory;
+        if (self.owned_model) |old| self.allocator.free(old);
+        self.owned_model = owned;
+        self.config.model = owned;
+    }
+
+    fn wireGetModel(ptr: *anyopaque) []const u8 {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.config.model;
     }
 };
 

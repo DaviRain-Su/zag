@@ -52,6 +52,21 @@ pub const WireProvider = struct {
         return self.asProvider();
     }
 
+    /// Switch the active chat model on the underlying wire.
+    pub fn setModel(self: *WireProvider, model: []const u8) ai.WireError!void {
+        return self.wire.setModel(model);
+    }
+
+    /// Current model id (borrowed from wire).
+    pub fn getModel(self: *const WireProvider) []const u8 {
+        return self.wire.getModel();
+    }
+
+    /// Live model ids from the provider (arena-owned).
+    pub fn listModels(self: *WireProvider, arena: std.mem.Allocator) ai.WireError![]const []const u8 {
+        return self.wire.listModels(arena);
+    }
+
     const vtable: provider_mod.VTable = .{
         .chat = chatImpl,
         .chat_stream = chatStreamImpl,

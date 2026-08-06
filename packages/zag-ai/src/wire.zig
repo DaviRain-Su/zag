@@ -74,6 +74,17 @@ pub const VTable = struct {
         inputs: []const []const u8,
         opts: EmbedOptions,
     ) Error!EmbeddingResult,
+    /// Optional: list model ids from the provider (GET /models). Arena-owned.
+    /// Null → wire does not support live listing (caller falls back to catalog).
+    list_models: ?*const fn (
+        ptr: *anyopaque,
+        arena: std.mem.Allocator,
+    ) Error![]const []const u8 = null,
+    /// Optional: switch the active chat model for subsequent requests.
+    /// Copies `model` into wire-owned storage. Null → no-op.
+    set_model: ?*const fn (ptr: *anyopaque, model: []const u8) Error!void = null,
+    /// Optional: current model id (borrowed). Null → empty.
+    get_model: ?*const fn (ptr: *anyopaque) []const u8 = null,
 };
 
 /// Type-erased wire backend.
@@ -125,6 +136,25 @@ pub const WireAdapter = struct {
         opts: EmbedOptions,
     ) Error!EmbeddingResult {
         return self.vtable.embed(self.ptr, arena, inputs, opts);
+    }
+
+    /// Live model ids from the provider (arena-owned). `error.NotSupported` when
+    /// the wire has no list_models implementation.
+    pub fn listModels(self: WireAdapter, arena: std.mem.Allocator) Error![]const []const u8 {
+        const f = self.vtable.list_models orelse return error.NotSupported;
+        return f(self.ptr, arena);
+    }
+
+    /// Switch the active chat model. Copies into wire-owned storage.
+    pub fn setModel(self: WireAdapter, model: []const u8) Error!void {
+        const f = self.vtable.set_model orelse return error.NotSupported;
+        return f(self.ptr, model);
+    }
+
+    /// Current model id (borrowed from wire config). Empty when unavailable.
+    pub fn getModel(self: WireAdapter) []const u8 {
+        const f = self.vtable.get_model orelse return "";
+        return f(self.ptr);
     }
 
     pub fn supportsEmbed(self: WireAdapter) bool {

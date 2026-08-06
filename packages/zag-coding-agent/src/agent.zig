@@ -1209,6 +1209,28 @@ fn mapTraceToSink(err: trace_mod.Error) loop_event_mod.SinkError {
     };
 }
 
+/// Optional host-bound model switcher (CLI wires WireProvider behind this).
+/// Allows the TUI to change the active chat model without knowing the wire type.
+pub const ModelControl = struct {
+    ptr: *anyopaque = undefined,
+    setModelFn: ?*const fn (ptr: *anyopaque, model: []const u8) anyerror!void = null,
+    getModelFn: ?*const fn (ptr: *anyopaque) []const u8 = null,
+
+    pub fn none() ModelControl {
+        return .{};
+    }
+
+    pub fn setModel(self: ModelControl, model: []const u8) anyerror!void {
+        const f = self.setModelFn orelse return error.NotSupported;
+        return f(self.ptr, model);
+    }
+
+    pub fn getModel(self: ModelControl) []const u8 {
+        const f = self.getModelFn orelse return "";
+        return f(self.ptr);
+    }
+};
+
 pub const Agent = struct {
     gpa: std.mem.Allocator,
     io: Io,
@@ -1239,6 +1261,8 @@ pub const Agent = struct {
     lifecycle_run_open: bool = false,
     /// Always owned after successful init (clone of options.redactor or built from secrets).
     owned_redactor: redact_mod.Redactor,
+    /// Optional model switcher (CLI binds WireProvider after Agent.init).
+    model_control: ModelControl = .{},
     /// Test-only toolset override for InvalidToolset fixtures (production always null).
     test_tools: if (builtin.is_test) ?[]const tool.Tool else void =
         if (builtin.is_test) null else {},
@@ -1353,6 +1377,21 @@ pub const Agent = struct {
     pub fn setPostEditVerifier(self: *Agent, verifier: ?edit_tools.PostEditVerifier) void {
         self.apply_hunk_state.verifier = verifier;
         self.options.post_edit_verifier = verifier;
+    }
+
+    /// Bind a model switcher (typically WireProvider). Safe to call after init.
+    pub fn setModelControl(self: *Agent, control: ModelControl) void {
+        self.model_control = control;
+    }
+
+    /// Switch the active chat model via the bound ModelControl.
+    pub fn setModel(self: *Agent, model: []const u8) anyerror!void {
+        return self.model_control.setModel(model);
+    }
+
+    /// Current model id (borrowed), or empty when unbound.
+    pub fn getModel(self: *const Agent) []const u8 {
+        return self.model_control.getModel();
     }
 
     /// Active redactor (Agent-owned; stable for Agent lifetime).

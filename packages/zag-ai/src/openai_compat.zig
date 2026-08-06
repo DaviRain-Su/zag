@@ -30,6 +30,8 @@ pub const Client = struct {
     sdk: openai.Client,
     /// When true, `asWireOwned` deinit frees this Client via allocator.
     owned_by_wire: bool = false,
+    /// Heap-owned model id when set via `setModel` (overrides config.model).
+    owned_model: ?[]u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, io: Io, config: Config) Client {
         var cfg = config;
@@ -53,6 +55,7 @@ pub const Client = struct {
     }
 
     pub fn deinit(self: *Client) void {
+        if (self.owned_model) |m| self.allocator.free(m);
         self.sdk.deinit();
     }
 
@@ -249,6 +252,47 @@ pub const Client = struct {
         return &self.sdk;
     }
 
+    /// GET /models → arena-owned list of model ids (sorted, capped).
+    pub fn listModels(self: *Client, arena: std.mem.Allocator) Error![]const []const u8 {
+        const max_models: usize = 64;
+        var parsed = self.sdk.models().list(arena) catch |err| {
+            return mapSdkError(err);
+        };
+        defer parsed.deinit();
+
+        const data = parsed.value.data;
+        const n = @min(data.len, max_models);
+        const ids = try arena.alloc([]const u8, n);
+        var out_i: usize = 0;
+        for (data) |m| {
+            if (out_i >= n) break;
+            if (m.id.len == 0) continue;
+            ids[out_i] = try arena.dupe(u8, m.id);
+            out_i += 1;
+        }
+        // Sort for stable UI ordering.
+        std.mem.sort([]const u8, ids[0..out_i], {}, struct {
+            fn less(_: void, a: []const u8, b: []const u8) bool {
+                return std.mem.order(u8, a, b) == .lt;
+            }
+        }.less);
+        return ids[0..out_i];
+    }
+
+    /// Switch active chat model. Copies into Client-owned storage.
+    pub fn setModel(self: *Client, model: []const u8) Error!void {
+        if (model.len == 0) return error.BadRequest;
+        const owned = self.allocator.dupe(u8, model) catch return error.OutOfMemory;
+        if (self.owned_model) |old| self.allocator.free(old);
+        self.owned_model = owned;
+        self.config.model = owned;
+    }
+
+    /// Current model id (borrowed).
+    pub fn getModel(self: *const Client) []const u8 {
+        return self.config.model;
+    }
+
     const borrowed_vtable: wire.VTable = .{
         .api_style = wireApiStyle,
         .name = wireNameFn,
@@ -256,6 +300,9 @@ pub const Client = struct {
         .chat = wireChat,
         .chat_stream = wireChatStream,
         .embed = wireEmbed,
+        .list_models = wireListModels,
+        .set_model = wireSetModel,
+        .get_model = wireGetModel,
     };
 
     const owned_vtable: wire.VTable = .{
@@ -265,6 +312,9 @@ pub const Client = struct {
         .chat = wireChat,
         .chat_stream = wireChatStream,
         .embed = wireEmbed,
+        .list_models = wireListModels,
+        .set_model = wireSetModel,
+        .get_model = wireGetModel,
     };
 
     fn wireApiStyle(ptr: *anyopaque) wire.ApiStyle {
@@ -320,6 +370,21 @@ pub const Client = struct {
     ) Error!EmbeddingResult {
         const self: *Client = @ptrCast(@alignCast(ptr));
         return self.embed(arena, inputs, opts);
+    }
+
+    fn wireListModels(ptr: *anyopaque, arena: std.mem.Allocator) Error![]const []const u8 {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.listModels(arena);
+    }
+
+    fn wireSetModel(ptr: *anyopaque, model: []const u8) Error!void {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.setModel(model);
+    }
+
+    fn wireGetModel(ptr: *anyopaque) []const u8 {
+        const self: *Client = @ptrCast(@alignCast(ptr));
+        return self.getModel();
     }
 };
 
@@ -1293,6 +1358,23 @@ test "mapSdkError classifies auth and rate limit" {
     try std.testing.expectEqual(error.BadRequest, mapSdkError(error.BadRequestError));
     try std.testing.expect(types.isRetryableError(error.RateLimited));
     try std.testing.expect(!types.isRetryableError(error.AuthenticationFailed));
+}
+
+test "setModel owns and switches config.model" {
+    const gpa = std.testing.allocator;
+    var client = Client.init(gpa, std.testing.io, .{
+        .base_url = "https://example.invalid/v1",
+        .api_key = "k",
+        .model = "initial-model",
+    });
+    defer client.deinit();
+    try std.testing.expectEqualStrings("initial-model", client.getModel());
+    try client.setModel("switched-model");
+    try std.testing.expectEqualStrings("switched-model", client.getModel());
+    try std.testing.expectEqualStrings("switched-model", client.config.model);
+    // Second switch frees the previous owned copy.
+    try client.setModel("third-model");
+    try std.testing.expectEqualStrings("third-model", client.getModel());
 }
 
 test "buildRequestBody encodes multimodal content_parts" {

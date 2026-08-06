@@ -111,6 +111,7 @@ pub const OpenMode = agent.OpenMode;
 pub const ReplyError = agent.ReplyError;
 pub const OwnedResult = agent.OwnedResult;
 pub const ForkError = agent.ForkError;
+pub const ModelControl = agent.ModelControl;
 
 // edit-sharpness-001 (C4 first slice): public review/verify ports (B7).
 pub const HunkReviewer = edit_tools.HunkReviewer;

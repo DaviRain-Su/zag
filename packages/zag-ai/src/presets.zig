@@ -106,6 +106,25 @@ pub const builtin: []const ProviderSpec = &.{
         .env_keys = &.{"HF_TOKEN"},
         .default_model = "meta-llama/Meta-Llama-3.1-8B-Instruct",
     },
+    // ── OpenCode curated gateways (openai_compat) ───────────────────
+    // OpenCode Go: subscription tier curated open models.
+    // Docs: https://opencode.ai/docs/go/  Base: https://opencode.ai/zen/go/v1
+    .{
+        .id = "opencode-go",
+        .name = "OpenCode Go",
+        .base_url = "https://opencode.ai/zen/go/v1",
+        .env_keys = &.{ "OPENCODE_API_KEY", "OPENCODE_GO_API_KEY" },
+        .default_model = "deepseek-v4-flash",
+    },
+    // OpenCode Zen: pay-as-you-go curated models (same auth console).
+    // Base: https://opencode.ai/zen/v1
+    .{
+        .id = "opencode-zen",
+        .name = "OpenCode Zen",
+        .base_url = "https://opencode.ai/zen/v1",
+        .env_keys = &.{ "OPENCODE_API_KEY", "OPENCODE_ZEN_API_KEY" },
+        .default_model = "claude-sonnet-4-5",
+    },
     // ── Regional coding hosts (openai_compat) ─────────────────────────
     .{
         .id = "moonshotai",
@@ -237,7 +256,23 @@ test "ollama presets exist" {
     try std.testing.expect(cloud.api_style == .openai_compat);
 }
 
+test "opencode go and zen presets exist" {
+    const go = find("opencode-go").?;
+    try std.testing.expectEqualStrings("OpenCode Go", go.name);
+    try std.testing.expectEqualStrings("https://opencode.ai/zen/go/v1", go.base_url);
+    try std.testing.expectEqualStrings("OPENCODE_API_KEY", go.env_keys[0]);
+    try std.testing.expectEqualStrings("OPENCODE_GO_API_KEY", go.env_keys[1]);
+    try std.testing.expectEqualStrings("deepseek-v4-flash", go.default_model);
+    try std.testing.expect(go.api_style == .openai_compat);
+
+    const zen = find("opencode-zen").?;
+    try std.testing.expectEqualStrings("OpenCode Zen", zen.name);
+    try std.testing.expectEqualStrings("https://opencode.ai/zen/v1", zen.base_url);
+    try std.testing.expectEqualStrings("OPENCODE_API_KEY", zen.env_keys[0]);
+    try std.testing.expect(zen.api_style == .openai_compat);
+}
+
 test "builtin count is stable enough" {
-    try std.testing.expect(count() >= 17);
+    try std.testing.expect(count() >= 19);
 }
 

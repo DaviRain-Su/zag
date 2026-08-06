@@ -269,3 +269,30 @@ test "ollama cloud missing key fails" {
         .{ "ZAG_PROVIDER", "ollama-cloud" },
     } }));
 }
+
+test "opencode-go via OPENCODE_API_KEY auto-detect" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "OPENCODE_API_KEY", "oc-key" },
+    } });
+    try std.testing.expectEqualStrings("opencode-go", r.spec_id);
+    try std.testing.expectEqualStrings("https://opencode.ai/zen/go/v1", r.config.base_url);
+    try std.testing.expectEqualStrings("oc-key", r.config.api_key);
+    try std.testing.expectEqualStrings("deepseek-v4-flash", r.config.model);
+}
+
+test "opencode-zen via ZAG_PROVIDER" {
+    const r = try resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ZAG_PROVIDER", "opencode-zen" },
+        .{ "OPENCODE_API_KEY", "oc-key" },
+        .{ "ZAG_MODEL", "claude-sonnet-4-5" },
+    } });
+    try std.testing.expectEqualStrings("opencode-zen", r.spec_id);
+    try std.testing.expectEqualStrings("https://opencode.ai/zen/v1", r.config.base_url);
+    try std.testing.expectEqualStrings("claude-sonnet-4-5", r.config.model);
+}
+
+test "opencode-go missing key fails" {
+    try std.testing.expectError(error.MissingApiKey, resolveFromGet(TestEnv{ .pairs = &.{
+        .{ "ZAG_PROVIDER", "opencode-go" },
+    } }));
+}

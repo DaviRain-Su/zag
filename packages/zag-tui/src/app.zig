@@ -186,7 +186,10 @@ pub const App = struct {
     last_viewport_h: usize = 0,
 
     model_label: []const u8 = "—",
-    /// Borrowed catalog ids from host (CLI arena / static). Cap used at paint.
+    /// Owned copy of the selected model id (stable across overlay rebuilds).
+    model_sel_buf: [96]u8 = undefined,
+    model_sel_len: usize = 0,
+    /// Borrowed live/catalog model ids from host (CLI arena / static). Cap used at paint.
     model_ids: []const []const u8 = &.{},
     /// Scratch lines for overlay paint (rebuilt each paint).
     overlay_line_bufs: [24][96]u8 = undefined,
@@ -319,7 +322,11 @@ pub const App = struct {
         self.themes_root = theme_opts.themes_root;
         if (theme_opts.selected_id) |sel| self.theme_selected = sel;
         self.reloadTheme();
-        self.model_label = model_label;
+        // Own a stable copy of the model label (caller may pass a temporary).
+        const n = @min(model_label.len, self.model_sel_buf.len);
+        @memcpy(self.model_sel_buf[0..n], model_label[0..n]);
+        self.model_sel_len = n;
+        self.model_label = self.model_sel_buf[0..n];
         self.model_ids = model_ids;
         self.dirty = true;
     }
@@ -1182,10 +1189,20 @@ pub const App = struct {
                 self.overlay.close();
             },
             .model => {
-                self.model_label = line;
+                // Copy selected id into App-owned storage (overlay lines are
+                // scratch buffers rewritten every paint).
+                const n = @min(line.len, self.theme_sel_buf.len);
+                // Reuse a dedicated model buffer so theme_sel is not clobbered.
+                // model_label is borrowed; store in overlay-stable buffer.
+                @memcpy(self.model_sel_buf[0..n], line[0..n]);
+                self.model_sel_len = n;
+                self.model_label = self.model_sel_buf[0..n];
                 if (self.agent) |agent| {
-                    // Host label only — wire model stays at resolve-time unless catalog row found.
-                    _ = agent;
+                    agent.setModel(self.model_label) catch {
+                        self.setNote("model_switch_failed");
+                        self.overlay.close();
+                        return;
+                    };
                 }
                 self.setNote("model_selected");
                 self.overlay.close();
