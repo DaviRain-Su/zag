@@ -14,10 +14,15 @@
 //! Style mapping (frozen theme roles, no new roles):
 //!   base      → caller-supplied card base (card_fg / user accent)
 //!   heading   → accent_fg + bold (h1-h6 uniform)
-//!   code      → base fg dimmed + fixed bg tint (index 0) — no highlight
+//!   code      → base fg dimmed + fixed bg tint (index 0); fenced blocks
+//!               with a non-empty `info` word highlight per token (md-phase2-001):
+//!               keyword → accent_fg, string → editor_fg, comment → muted_fg,
+//!               number → status_fg (code bg/dim kept for the whole block)
 //!   quote     → muted_fg (`│ ` prefix per line)
 //!   link      → accent_fg + Cell.link (OSC 8); URL in `cell.link.uri`
 //!   hr        → muted_fg (`─` fill)
+//!   table     → header row (.TableRow = .Header) base + bold; koino
+//!               alignments pad right/center/left per column
 //!
 //! Fallback: unknown/unhandled node kinds render their children (literal
 //! text leaves) — content is never skipped, never blank. Rendering clips at
@@ -32,6 +37,10 @@ const md_parse = @import("md_parse.zig");
 
 /// Derived markdown styles. `forCard` builds them from the frozen theme
 /// roles plus the card's base style (assistant → card_fg, user → accent_fg).
+/// Syntax-highlight colors DERIVE from existing roles (no new roles):
+/// keyword → accent_fg, string → editor_fg, comment → muted_fg, number →
+/// status_fg; the token styles' fg replaces the code block's base fg while
+/// the code tint (bg index 0 + dim) is kept for the whole block.
 pub const MdStyle = struct {
     base: vaxis.Style,
     heading: vaxis.Style,
@@ -39,6 +48,10 @@ pub const MdStyle = struct {
     quote: vaxis.Style,
     link: vaxis.Style,
     hr: vaxis.Style,
+    keyword: vaxis.Style,
+    string: vaxis.Style,
+    comment: vaxis.Style,
+    number: vaxis.Style,
 
     pub fn forCard(palette: *const theme_mod.Palette, base: vaxis.Style) MdStyle {
         const accent = palette.style(.accent_fg);
@@ -52,6 +65,12 @@ pub const MdStyle = struct {
             .quote = muted,
             .link = accent,
             .hr = muted,
+            // Syntax highlight (md-phase2-001): derived from the frozen
+            // theme roles — no new roles, no theme file changes.
+            .keyword = accent,
+            .string = palette.style(.editor_fg),
+            .comment = muted,
+            .number = palette.style(.status_fg),
         };
     }
 
@@ -301,6 +320,302 @@ fn renderHr(ctx: *Ctx, prefix: Prefix) void {
     ctx.row += 1;
 }
 
+// ── fenced-code highlight (md-phase2-001) ──────────────────────────────────
+//
+// Single-pass, allocation-free, codepoint-wise tokenizer over each fenced
+// code line. Tokens slice the ORIGINAL arena-backed literal (never a temp
+// buffer — cells borrow grapheme slices for the screen's lifetime), so the
+// renderer writes one segment per token. Strings (with escaped delimiters),
+// line comments (`//`, `#`, `--` per-language flags), line-local block
+// comments (`/* */`; an unterminated `/*` styles the rest of the line),
+// numbers (decimal/hex/float), and identifiers matched against the
+// language's keyword set; everything else is base. All structural bytes are
+// ASCII, so byte-wise runs can never split a UTF-8 codepoint.
+
+const TokenKind = enum { base, keyword, string, comment, number };
+
+const Token = struct {
+    kind: TokenKind,
+    text: []const u8,
+};
+
+const LangId = enum {
+    plaintext,
+    default,
+    zig,
+    rust,
+    python,
+    javascript,
+    bash,
+    json,
+    yaml,
+    toml,
+    markdown,
+};
+
+const Lang = struct {
+    keywords: []const []const u8,
+    /// `//` line comments (C-family).
+    slash_slash: bool = false,
+    /// `/* */` block comments, line-local (an unterminated `/*` styles the
+    /// rest of the line).
+    slash_star: bool = false,
+    /// `#` line comments (python/bash/yaml/toml).
+    hash: bool = false,
+    /// `--` line comments — NOT enabled for any v1 language (a default `--`
+    /// comment would mis-color `--flag`); the flag exists for future tables.
+    dash_dash: bool = false,
+};
+
+/// Canonical v1 language names (case-insensitive info match).
+const lang_names = [_]struct { name: []const u8, id: LangId }{
+    .{ .name = "zig", .id = .zig },
+    .{ .name = "rust", .id = .rust },
+    .{ .name = "python", .id = .python },
+    .{ .name = "javascript", .id = .javascript },
+    .{ .name = "bash", .id = .bash },
+    .{ .name = "json", .id = .json },
+    .{ .name = "yaml", .id = .yaml },
+    .{ .name = "toml", .id = .toml },
+    .{ .name = "markdown", .id = .markdown },
+};
+
+/// Language tables (v1 subset). Keywords are matched case-sensitively.
+fn langOf(id: LangId) Lang {
+    return switch (id) {
+        // No highlight at all (bare fences / indented blocks).
+        .plaintext => .{ .keywords = &.{} },
+        // Unknown info word: strings and numbers only — no comments, no
+        // keywords (a default `--` comment mis-colors `--flag`).
+        .default => .{ .keywords = &.{} },
+        .zig => .{
+            .keywords = &.{
+                "align", "and", "anytype", "asm", "async", "await", "break",
+                "callconv", "catch", "comptime", "const", "continue", "defer",
+                "else", "enum", "errdefer", "error", "export", "extern", "fn",
+                "for", "if", "inline", "noalias", "nosuspend", "opaque", "or",
+                "orelse", "packed", "pub", "resume", "return", "struct",
+                "suspend", "switch", "test", "threadlocal", "try", "union",
+                "unreachable", "usingnamespace", "var", "volatile", "while",
+                "true", "false", "null", "undefined",
+            },
+            .slash_slash = true,
+            .slash_star = true,
+        },
+        .rust => .{
+            .keywords = &.{
+                "as", "async", "await", "break", "const", "continue", "crate",
+                "dyn", "else", "enum", "extern", "false", "fn", "for", "if",
+                "impl", "in", "let", "loop", "match", "mod", "move", "mut",
+                "pub", "ref", "return", "self", "Self", "static", "struct",
+                "super", "trait", "true", "type", "unsafe", "use", "where",
+                "while", "yield",
+            },
+            .slash_slash = true,
+            .slash_star = true,
+        },
+        .python => .{
+            .keywords = &.{
+                "and", "as", "assert", "async", "await", "break", "class",
+                "continue", "def", "del", "elif", "else", "except", "False",
+                "finally", "for", "from", "global", "if", "import", "in",
+                "is", "lambda", "None", "nonlocal", "not", "or", "pass",
+                "raise", "return", "True", "try", "while", "with", "yield",
+            },
+            .hash = true,
+        },
+        .javascript => .{
+            .keywords = &.{
+                "async", "await", "break", "case", "catch", "class", "const",
+                "continue", "debugger", "default", "delete", "do", "else",
+                "export", "extends", "false", "finally", "for", "from",
+                "function", "get", "if", "import", "in", "instanceof", "let",
+                "new", "null", "of", "return", "set", "static", "super",
+                "switch", "this", "throw", "true", "try", "typeof",
+                "undefined", "var", "void", "while", "yield",
+            },
+            .slash_slash = true,
+            .slash_star = true,
+        },
+        .bash => .{
+            .keywords = &.{
+                "case", "do", "done", "elif", "else", "esac", "echo", "exit",
+                "export", "fi", "for", "function", "if", "in", "local",
+                "read", "readonly", "return", "select", "set", "shift",
+                "source", "then", "time", "trap", "unset", "until", "while",
+            },
+            .hash = true,
+        },
+        .json => .{
+            .keywords = &.{ "true", "false", "null" },
+        },
+        .yaml => .{
+            .keywords = &.{ "true", "false", "null", "yes", "no", "on", "off" },
+            .hash = true,
+        },
+        .toml => .{
+            .keywords = &.{ "true", "false" },
+            .hash = true,
+        },
+        .markdown => .{ .keywords = &.{} },
+    };
+}
+
+/// Resolve the fence's `info` string (first word, case-insensitive) to a
+/// language. null/empty info → plaintext (no highlight — bare ``` is the
+/// most common fence); a non-empty unknown word → DEFAULT (strings/numbers
+/// only). Aliases map to their canonical table (rs→rust, js/ts→javascript,
+/// py→python, sh→bash, yml→yaml).
+fn resolveLang(info: ?[]const u8) LangId {
+    const raw = info orelse return .plaintext;
+    var end: usize = 0;
+    while (end < raw.len and raw[end] != ' ' and raw[end] != '\t') end += 1;
+    if (end == 0) return .plaintext;
+    const word = raw[0..end];
+    for (lang_names) |entry| {
+        if (std.ascii.eqlIgnoreCase(word, entry.name)) return entry.id;
+    }
+    if (std.ascii.eqlIgnoreCase(word, "rs")) return .rust;
+    if (std.ascii.eqlIgnoreCase(word, "js") or std.ascii.eqlIgnoreCase(word, "ts")) return .javascript;
+    if (std.ascii.eqlIgnoreCase(word, "py")) return .python;
+    if (std.ascii.eqlIgnoreCase(word, "sh")) return .bash;
+    if (std.ascii.eqlIgnoreCase(word, "yml")) return .yaml;
+    return .default;
+}
+
+fn isIdentStart(c: u8) bool {
+    return std.ascii.isAlphabetic(c) or c == '_' or c >= 0x80;
+}
+
+fn isIdentChar(c: u8) bool {
+    return std.ascii.isAlphanumeric(c) or c == '_' or c >= 0x80;
+}
+
+/// Bytes that can begin a new token (all ASCII — non-ASCII bytes are never
+/// structural, so runs never split a UTF-8 codepoint).
+fn isStructural(c: u8) bool {
+    return c == ' ' or c == '\t' or c == '"' or c == '\'' or c == '`' or
+        c == '/' or c == '#' or c == '-' or std.ascii.isAlphanumeric(c);
+}
+
+fn isNumberStart(line: []const u8, i: usize) bool {
+    const c = line[i];
+    if (std.ascii.isDigit(c)) return true;
+    return c == '.' and i + 1 < line.len and std.ascii.isDigit(line[i + 1]);
+}
+
+/// Per-line tokenizer. Tokens slice `line` (the arena-backed literal).
+const Scanner = struct {
+    line: []const u8,
+    lang: Lang,
+    i: usize = 0,
+
+    fn next(self: *Scanner) ?Token {
+        const line = self.line;
+        while (self.i < line.len) {
+            const start = self.i;
+            const c = line[self.i];
+            if (c == ' ' or c == '\t') {
+                self.i += 1;
+                while (self.i < line.len and (line[self.i] == ' ' or line[self.i] == '\t')) self.i += 1;
+                return .{ .kind = .base, .text = line[start..self.i] };
+            }
+            if (c == '/' and self.i + 1 < line.len) {
+                const n = line[self.i + 1];
+                if (n == '/' and self.lang.slash_slash) return self.lineComment(start);
+                if (n == '*' and self.lang.slash_star) return self.blockComment(start);
+            }
+            if (c == '-' and self.i + 1 < line.len and line[self.i + 1] == '-' and self.lang.dash_dash) return self.lineComment(start);
+            if (c == '#' and self.lang.hash) return self.lineComment(start);
+            if (c == '"' or c == '\'' or c == '`') return self.string(start, c);
+            if (isNumberStart(line, self.i)) return self.number(start);
+            if (isIdentStart(c)) return self.ident(start);
+            // Base run: consume until the next byte that can start a token.
+            self.i += 1;
+            while (self.i < line.len and !isStructural(line[self.i])) self.i += 1;
+            return .{ .kind = .base, .text = line[start..self.i] };
+        }
+        return null;
+    }
+
+    /// String token with escaped-delimiter handling (`"a\"b"`, `'it\'s'`,
+    /// backticks in bash `$()`); an unterminated string styles the rest of
+    /// the line.
+    fn string(self: *Scanner, start: usize, delim: u8) Token {
+        const line = self.line;
+        var i = self.i + 1;
+        while (i < line.len) : (i += 1) {
+            if (line[i] == '\\' and i + 1 < line.len) {
+                i += 1; // escaped char — never the delimiter
+                continue;
+            }
+            if (line[i] == delim) {
+                i += 1;
+                break;
+            }
+        }
+        self.i = i;
+        return .{ .kind = .string, .text = line[start..i] };
+    }
+
+    fn lineComment(self: *Scanner, start: usize) Token {
+        self.i = self.line.len;
+        return .{ .kind = .comment, .text = self.line[start..] };
+    }
+
+    /// Block comment, line-local: an unterminated `/*` styles the rest of
+    /// the line (no cross-line state).
+    fn blockComment(self: *Scanner, start: usize) Token {
+        const line = self.line;
+        var i = self.i + 2;
+        while (i < line.len) : (i += 1) {
+            if (line[i] == '*' and i + 1 < line.len and line[i + 1] == '/') {
+                i += 2;
+                break;
+            }
+        }
+        self.i = i;
+        return .{ .kind = .comment, .text = line[start..i] };
+    }
+
+    fn number(self: *Scanner, start: usize) Token {
+        const line = self.line;
+        var i = self.i;
+        if (i + 1 < line.len and line[i] == '0' and (line[i + 1] == 'x' or line[i + 1] == 'X')) {
+            i += 2;
+            while (i < line.len and std.ascii.isHex(line[i])) i += 1;
+        } else {
+            while (i < line.len and std.ascii.isDigit(line[i])) i += 1;
+            if (i < line.len and line[i] == '.') {
+                i += 1;
+                while (i < line.len and std.ascii.isDigit(line[i])) i += 1;
+            }
+            if (i < line.len and (line[i] == 'e' or line[i] == 'E')) {
+                var j = i + 1;
+                if (j < line.len and (line[j] == '+' or line[j] == '-')) j += 1;
+                if (j < line.len and std.ascii.isDigit(line[j])) {
+                    i = j;
+                    while (i < line.len and std.ascii.isDigit(line[i])) i += 1;
+                }
+            }
+        }
+        self.i = i;
+        return .{ .kind = .number, .text = line[start..i] };
+    }
+
+    fn ident(self: *Scanner, start: usize) Token {
+        const line = self.line;
+        var i = self.i;
+        while (i < line.len and isIdentChar(line[i])) i += 1;
+        self.i = i;
+        const text = line[start..i];
+        for (self.lang.keywords) |kw| {
+            if (std.mem.eql(u8, kw, text)) return .{ .kind = .keyword, .text = text };
+        }
+        return .{ .kind = .base, .text = text };
+    }
+};
+
 fn renderCode(ctx: *Ctx, prefix: Prefix, cb: koino.nodes.NodeCodeBlock) void {
     if (!ctx.fits()) {
         ctx.overflow = true;
@@ -308,26 +623,62 @@ fn renderCode(ctx: *Ctx, prefix: Prefix, cb: koino.nodes.NodeCodeBlock) void {
     }
     // A code block's literal is a single trailing-\n string; render each
     // source line as one screen row (long lines clip at the window width —
-    // no wrap, no loss of row structure).
+    // no wrap, no loss of row structure). Row counts are identical with or
+    // without highlighting (measure parity: highlight is per-token styling
+    // only).
     var lit = cb.literal.items;
     if (lit.len > 0 and lit[lit.len - 1] == '\n') lit = lit[0 .. lit.len - 1];
     var lines = std.mem.splitScalar(u8, lit, '\n');
     var first = true;
+    // Fenced blocks with a non-empty info word get per-token syntax
+    // highlighting; indented (unfenced) blocks and bare fences (null/empty
+    // info) stay plain.
+    const lang_id = resolveLang(if (cb.info) |info| @as([]const u8, info) else null);
+    const highlight = cb.fenced and lang_id != .plaintext;
+    const lang = langOf(lang_id);
     while (lines.next()) |line| {
         if (!ctx.fits()) {
             ctx.overflow = true;
             return;
         }
-        _ = drawPrefixCells(ctx, prefix, ctx.row, first);
+        const content_col = drawPrefixCells(ctx, prefix, ctx.row, first);
         first = false;
         if (!ctx.measure) {
-            _ = ctx.win.printSegment(.{ .text = line, .style = ctx.style.code }, .{
-                .row_offset = ctx.row,
-                .col_offset = prefix.contentCol(),
-                .wrap = .none,
-            });
+            if (highlight) {
+                renderCodeLine(ctx, content_col, line, lang);
+            } else {
+                _ = ctx.win.printSegment(.{ .text = line, .style = ctx.style.code }, .{
+                    .row_offset = ctx.row,
+                    .col_offset = content_col,
+                    .wrap = .none,
+                });
+            }
         }
         ctx.row += 1;
+    }
+}
+
+/// Render one highlighted code line as per-token segments. Column tracking
+/// mirrors the single-segment path: tokens beyond the window width write
+/// nothing, so clipping (and therefore row counts) never change.
+fn renderCodeLine(ctx: *Ctx, content_col: u16, line: []const u8, lang: Lang) void {
+    const code = ctx.style.code;
+    var col = content_col;
+    var scanner = Scanner{ .line = line, .lang = lang };
+    while (scanner.next()) |token| {
+        const style: vaxis.Style = switch (token.kind) {
+            .keyword => .{ .fg = ctx.style.keyword.fg, .bg = code.bg, .dim = code.dim },
+            .string => .{ .fg = ctx.style.string.fg, .bg = code.bg, .dim = code.dim },
+            .comment => .{ .fg = ctx.style.comment.fg, .bg = code.bg, .dim = code.dim },
+            .number => .{ .fg = ctx.style.number.fg, .bg = code.bg, .dim = code.dim },
+            .base => code,
+        };
+        _ = ctx.win.printSegment(.{ .text = token.text, .style = style }, .{
+            .row_offset = ctx.row,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col +|= ctx.win.gwidth(token.text);
     }
 }
 
@@ -354,11 +705,13 @@ fn renderLiteralBlock(ctx: *Ctx, prefix: Prefix, lit: []const u8, style: vaxis.S
     }
 }
 
-/// GFM tables render as plain-text rows: `| c1 | c2 |` with best-effort
-/// per-column padding (two AST passes, no allocation). Cells are written
-/// grapheme-by-grapheme directly from the AST (arena-backed Text slices +
-/// literals) — never through a temp buffer, since cells borrow their
-/// grapheme slices for the screen's lifetime.
+/// GFM tables render as plain-text rows: `| c1 | c2 |` with per-column
+/// padding from the koino alignments (right → pad left, center → pad both,
+/// left/none → pad right; two AST passes, no allocation). The `.TableRow =
+/// .Header` row renders base + bold; every row stays one screen row. Cells
+/// are written grapheme-by-grapheme directly from the AST (arena-backed
+/// Text slices + literals) — never through a temp buffer, since cells borrow
+/// their grapheme slices for the screen's lifetime.
 fn renderTable(ctx: *Ctx, node: *koino.nodes.AstNode, prefix: Prefix) void {
     const max_cols = 16;
     var col_widths: [max_cols]u16 = [_]u16{0} ** max_cols;
@@ -381,7 +734,11 @@ fn renderTable(ctx: *Ctx, node: *koino.nodes.AstNode, prefix: Prefix) void {
     }
     if (col_count == 0) return;
 
-    // Pass 2: render rows.
+    const aligns = node.data.value.Table;
+
+    // Pass 2: render rows (the .Header row renders base + bold; alignment
+    // applies to ALL rows: right → pad left, center → pad both, left/none →
+    // pad right — pure padding on the measured widths, saturating).
     var row2 = node.first_child;
     while (row2) |r| : (row2 = r.next) {
         if (!ctx.fits()) {
@@ -389,6 +746,8 @@ fn renderTable(ctx: *Ctx, node: *koino.nodes.AstNode, prefix: Prefix) void {
             return;
         }
         if (r.data.value != .TableRow) continue;
+        var row_style = ctx.style.base;
+        if (r.data.value.TableRow == .Header) row_style.bold = true;
         _ = drawPrefixCells(ctx, prefix, ctx.row, true);
         var col = prefix.contentCol();
         var cell_opt = r.first_child;
@@ -400,17 +759,28 @@ fn renderTable(ctx: *Ctx, node: *koino.nodes.AstNode, prefix: Prefix) void {
                 continue;
             }
             const text_w = flatWidth(ctx, cell);
-            col = writeSeg(ctx, col, ctx.row, .{ .text = "| ", .style = ctx.style.base });
-            col = writeFlat(ctx, col, ctx.row, cell, ctx.style.base);
             const pad = col_widths[ci] -| text_w;
+            const cell_align = if (ci < aligns.len) aligns[ci] else koino.nodes.TableAlignment.None;
+            const left_pad: u16 = switch (cell_align) {
+                .Right => pad,
+                .Center => pad / 2,
+                .Left, .None => 0,
+            };
+            const right_pad = pad -| left_pad;
+            col = writeSeg(ctx, col, ctx.row, .{ .text = "| ", .style = row_style });
             var p: u16 = 0;
-            while (p < pad) : (p += 1) {
-                col = writeSeg(ctx, col, ctx.row, .{ .text = " ", .style = ctx.style.base });
+            while (p < left_pad) : (p += 1) {
+                col = writeSeg(ctx, col, ctx.row, .{ .text = " ", .style = row_style });
+            }
+            col = writeFlat(ctx, col, ctx.row, cell, row_style);
+            p = 0;
+            while (p < right_pad) : (p += 1) {
+                col = writeSeg(ctx, col, ctx.row, .{ .text = " ", .style = row_style });
             }
             ci += 1;
             cell_opt = cell.next;
         }
-        _ = writeSeg(ctx, col, ctx.row, .{ .text = "|", .style = ctx.style.base });
+        _ = writeSeg(ctx, col, ctx.row, .{ .text = "|", .style = row_style });
         ctx.row += 1;
     }
 }
@@ -662,6 +1032,8 @@ const test_palette = theme_mod.builtinDefault();
 const accent_idx: u8 = 3; // builtin accent_fg (yellow)
 const muted_idx: u8 = 8; // builtin muted_fg (brightBlack)
 const base_idx: u8 = 7; // builtin card_fg (white)
+const editor_idx: u8 = 2; // builtin editor_fg (green)
+const status_idx: u8 = 6; // builtin status_fg (cyan)
 
 fn expectTextAt(ts: *const TestScreen, col: u16, row: u16, expected: []const u8) !void {
     var buf: [16]u8 = undefined;
@@ -779,10 +1151,16 @@ test "md block: fenced code renders tinted literal lines without wrap" {
     try std.testing.expectEqual(@as(u16, 2), rows);
     try expectRowEquals(&ts, 0, "fn main() {}");
     try expectRowEquals(&ts, 1, "const x = 1;");
-    // Code tint: dim + fixed bg index 0, fg stays the base fg.
+    // Code tint kept on every cell: dim + fixed bg index 0.
     try expectFlag(&ts, 0, 0, .dim, true);
     try expectBgIndex(&ts, 0, 0, 0);
-    try expectFgIndex(&ts, 0, 0, base_idx);
+    // Highlight (md-phase2-001): `fn` / `const` are zig keywords → accent fg;
+    // `main` / `x` stay base; `1` is a number → status fg.
+    try expectFgIndex(&ts, 0, 0, accent_idx);
+    try expectFgIndex(&ts, 3, 0, base_idx);
+    try expectFgIndex(&ts, 0, 1, accent_idx);
+    try expectFgIndex(&ts, 6, 1, base_idx);
+    try expectFgIndex(&ts, 10, 1, status_idx);
 }
 
 test "md block: unordered list draws bullet and hangs continuation" {
@@ -870,6 +1248,387 @@ test "md block: table pads narrower cells to the column width" {
     try expectRowEquals(&ts, 0, "| a| longer|");
     // Body cell "b" pads to the 6-wide column so the closing pipes align.
     try expectRowEquals(&ts, 1, "| 1| b     |");
+}
+
+test "md table: header row cells render bold, body cells plain" {
+    const gpa = std.testing.allocator;
+    var ts = try TestScreen.init(gpa, 40, 8);
+    defer ts.deinit(gpa);
+    const rows = try ts.render("| a | b |\n|---|---|\n| 1 | 2 |\n", &test_palette);
+    try std.testing.expectEqual(@as(u16, 2), rows);
+    // Header row: "| a| b|" — cells bold (incl. the pipes), base fg kept.
+    try expectRowEquals(&ts, 0, "| a| b|");
+    try expectFlag(&ts, 2, 0, .bold, true);
+    try expectFlag(&ts, 5, 0, .bold, true);
+    try expectFgIndex(&ts, 2, 0, base_idx);
+    // Body row: same cells, not bold.
+    try expectFlag(&ts, 2, 1, .bold, false);
+    try expectFlag(&ts, 5, 1, .bold, false);
+}
+
+test "md table: right-aligned columns pad left, centered pad both" {
+    const gpa = std.testing.allocator;
+    var ts = try TestScreen.init(gpa, 40, 8);
+    defer ts.deinit(gpa);
+    // `:--` → Left, `--:` → Right: col1 (width 3) right-pads the 1-wide
+    // header cell so "b" sits at the column's right edge.
+    var rows = try ts.render("| a | b |\n|:--|--:|\n| 1 | xyz |\n", &test_palette);
+    try std.testing.expectEqual(@as(u16, 2), rows);
+    // Cell 2: "| " separator + 2 left-pad spaces + "b" (right edge).
+    try expectRowEquals(&ts, 0, "| a|   b|");
+    try expectRowEquals(&ts, 1, "| 1| xyz|");
+    // `:-:` → Center: "b" pads one space each side (plus the separator).
+    rows = try ts.render("| a | b |\n|:--|:-:|\n| 1 | xyz |\n", &test_palette);
+    try std.testing.expectEqual(@as(u16, 2), rows);
+    try expectRowEquals(&ts, 0, "| a|  b |");
+    try expectRowEquals(&ts, 1, "| 1| xyz|");
+}
+
+// ── code highlight (md-phase2-001) ─────────────────────────────────────────
+
+const TokExpect = struct { kind: TokenKind, text: []const u8 };
+
+fn expectTokens(line: []const u8, lang: Lang, expected: []const TokExpect) !void {
+    var scanner = Scanner{ .line = line, .lang = lang };
+    var idx: usize = 0;
+    while (scanner.next()) |token| {
+        try std.testing.expect(idx < expected.len);
+        try std.testing.expectEqual(expected[idx].kind, token.kind);
+        try std.testing.expectEqualStrings(expected[idx].text, token.text);
+        idx += 1;
+    }
+    try std.testing.expectEqual(expected.len, idx);
+}
+
+test "md highlight: language resolution from info first word + aliases" {
+    try std.testing.expectEqual(LangId.zig, resolveLang("zig"));
+    try std.testing.expectEqual(LangId.zig, resolveLang("Zig extra args"));
+    try std.testing.expectEqual(LangId.rust, resolveLang("rs"));
+    try std.testing.expectEqual(LangId.javascript, resolveLang("js"));
+    try std.testing.expectEqual(LangId.javascript, resolveLang("ts"));
+    try std.testing.expectEqual(LangId.python, resolveLang("py"));
+    try std.testing.expectEqual(LangId.bash, resolveLang("sh"));
+    try std.testing.expectEqual(LangId.bash, resolveLang("bash"));
+    try std.testing.expectEqual(LangId.yaml, resolveLang("yml"));
+    try std.testing.expectEqual(LangId.toml, resolveLang("toml"));
+    // null/empty info → plaintext (no highlight); unknown word → default.
+    try std.testing.expectEqual(LangId.plaintext, resolveLang(null));
+    try std.testing.expectEqual(LangId.plaintext, resolveLang(""));
+    try std.testing.expectEqual(LangId.plaintext, resolveLang("   "));
+    try std.testing.expectEqual(LangId.default, resolveLang("cobol"));
+}
+
+test "md highlight: per-language keyword sets and comment styles" {
+    // zig: `//` comments.
+    try expectTokens("const s = \"hi\"; // note", langOf(.zig), &.{
+        .{ .kind = .keyword, .text = "const" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "s" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "\"hi\"" },
+        .{ .kind = .base, .text = ";" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .comment, .text = "// note" },
+    });
+    // rust: `let`/`mut` keywords.
+    try expectTokens("let mut x = 1;", langOf(.rust), &.{
+        .{ .kind = .keyword, .text = "let" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .keyword, .text = "mut" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "x" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "1" },
+        .{ .kind = .base, .text = ";" },
+    });
+    // python: `#` comments (and `--` is NOT a comment).
+    try expectTokens("def f(): # note", langOf(.python), &.{
+        .{ .kind = .keyword, .text = "def" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "f" },
+        .{ .kind = .base, .text = "():" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .comment, .text = "# note" },
+    });
+    // javascript: `function` keyword.
+    try expectTokens("function f() {}", langOf(.javascript), &.{
+        .{ .kind = .keyword, .text = "function" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "f" },
+        .{ .kind = .base, .text = "()" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "{}" },
+    });
+    // bash: `echo` keyword + `#` comment.
+    try expectTokens("echo hi # note", langOf(.bash), &.{
+        .{ .kind = .keyword, .text = "echo" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "hi" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .comment, .text = "# note" },
+    });
+    // json / yaml / toml / markdown basics.
+    try expectTokens("{\"k\": null}", langOf(.json), &.{
+        .{ .kind = .base, .text = "{" },
+        .{ .kind = .string, .text = "\"k\"" },
+        .{ .kind = .base, .text = ":" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .keyword, .text = "null" },
+        .{ .kind = .base, .text = "}" },
+    });
+    try expectTokens("key: true", langOf(.yaml), &.{
+        .{ .kind = .base, .text = "key" },
+        .{ .kind = .base, .text = ":" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .keyword, .text = "true" },
+    });
+    try expectTokens("x = 1", langOf(.toml), &.{
+        .{ .kind = .base, .text = "x" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "1" },
+    });
+    // markdown: no comment style, no keywords (strings/numbers only).
+    try expectTokens("# hi", langOf(.markdown), &.{
+        .{ .kind = .base, .text = "#" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "hi" },
+    });
+}
+
+test "md highlight: numbers decimal/hex/float and non-numbers" {
+    try expectTokens("x = 0x1F + 3.14;", langOf(.zig), &.{
+        .{ .kind = .base, .text = "x" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "0x1F" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "+" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "3.14" },
+        .{ .kind = .base, .text = ";" },
+    });
+    try expectTokens("a = 1e9 + .5; b = -1", langOf(.zig), &.{
+        .{ .kind = .base, .text = "a" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "1e9" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "+" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = ".5" },
+        .{ .kind = .base, .text = ";" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "b" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "-" },
+        .{ .kind = .number, .text = "1" },
+    });
+    // `0x1F` hex letters, identifiers with digits (`x1`) stay identifiers.
+    try expectTokens("x1 = 0x", langOf(.zig), &.{
+        .{ .kind = .base, .text = "x1" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "0x" },
+    });
+}
+
+test "md highlight: escaped delimiters and unterminated strings" {
+    // Escaped quote inside a double-quoted string.
+    try expectTokens("const s = \"a\\\"b\";", langOf(.zig), &.{
+        .{ .kind = .keyword, .text = "const" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "s" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "\"a\\\"b\"" },
+        .{ .kind = .base, .text = ";" },
+    });
+    // Escaped quote inside a single-quoted string.
+    try expectTokens("s = 'it\\'s';", langOf(.zig), &.{
+        .{ .kind = .base, .text = "s" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "'it\\'s'" },
+        .{ .kind = .base, .text = ";" },
+    });
+    // Backticks (bash $()): the inner escaped backticks do not close.
+    try expectTokens("x=\"$(echo \\`hi\\`)\"", langOf(.bash), &.{
+        .{ .kind = .base, .text = "x" },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .string, .text = "\"$(echo \\`hi\\`)\"" },
+    });
+    try expectTokens("echo `date`", langOf(.bash), &.{
+        .{ .kind = .keyword, .text = "echo" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "`date`" },
+    });
+    // Unterminated string styles the rest of the line.
+    try expectTokens("x = \"open", langOf(.zig), &.{
+        .{ .kind = .base, .text = "x" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "\"open" },
+    });
+}
+
+test "md highlight: block comments are line-local, unterminated styles the rest" {
+    try expectTokens("/* c */ x", langOf(.zig), &.{
+        .{ .kind = .comment, .text = "/* c */" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "x" },
+    });
+    // Unterminated `/*` → comment to end of line; the NEXT line starts fresh.
+    try expectTokens("/* open", langOf(.zig), &.{
+        .{ .kind = .comment, .text = "/* open" },
+    });
+    try expectTokens("x = 1", langOf(.zig), &.{
+        .{ .kind = .base, .text = "x" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .number, .text = "1" },
+    });
+}
+
+test "md highlight: CJK-safe — multi-byte strings and identifiers never split" {
+    try expectTokens("变量 = \"你好\"", langOf(.zig), &.{
+        .{ .kind = .base, .text = "变量" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "=" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "\"你好\"" },
+    });
+}
+
+test "md highlight: default table has no comments — --flag stays plain" {
+    // The default fallback must not treat `--` as a comment (mis-colors
+    // `--flag`); `//` and `#` are only comments when the table enables them.
+    try expectTokens("run --flag \"x\"", langOf(.default), &.{
+        .{ .kind = .base, .text = "run" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "-" },
+        .{ .kind = .base, .text = "-" },
+        .{ .kind = .base, .text = "flag" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "\"x\"" },
+    });
+    try expectTokens("run --flag \"x\"", langOf(.python), &.{
+        .{ .kind = .base, .text = "run" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .base, .text = "-" },
+        .{ .kind = .base, .text = "-" },
+        .{ .kind = .base, .text = "flag" },
+        .{ .kind = .base, .text = " " },
+        .{ .kind = .string, .text = "\"x\"" },
+    });
+    // The `--` comment flag exists for future tables and works when enabled.
+    try expectTokens("-- note", .{ .keywords = &.{}, .dash_dash = true }, &.{
+        .{ .kind = .comment, .text = "-- note" },
+    });
+}
+
+test "md highlight: zig fence cells carry the derived fg indices" {
+    const gpa = std.testing.allocator;
+    var ts = try TestScreen.init(gpa, 40, 8);
+    defer ts.deinit(gpa);
+    const md = "```zig\nfn main() {}\nconst s = \"hi\"; // note\nconst n = 42;\n```\n";
+    const rows = try ts.render(md, &test_palette);
+    try std.testing.expectEqual(@as(u16, 3), rows);
+    // Keyword `fn` / `const` → accent fg.
+    try expectFgIndex(&ts, 0, 0, accent_idx);
+    try expectFgIndex(&ts, 0, 1, accent_idx);
+    try expectFgIndex(&ts, 0, 2, accent_idx);
+    // Identifier `main` stays the code base fg.
+    try expectFgIndex(&ts, 3, 0, base_idx);
+    // String `"hi"` → editor fg (both quote cells and the content).
+    try expectFgIndex(&ts, 10, 1, editor_idx);
+    try expectFgIndex(&ts, 13, 1, editor_idx);
+    // `// note` comment → muted fg.
+    try expectFgIndex(&ts, 16, 1, muted_idx);
+    // Number 42 → status fg.
+    try expectFgIndex(&ts, 10, 2, status_idx);
+    // Code tint kept on every highlighted cell.
+    try expectFlag(&ts, 0, 0, .dim, true);
+    try expectBgIndex(&ts, 16, 1, 0);
+    try expectRowEquals(&ts, 0, "fn main() {}");
+    try expectRowEquals(&ts, 1, "const s = \"hi\"; // note");
+    try expectRowEquals(&ts, 2, "const n = 42;");
+}
+
+test "md highlight: bare fence (null info) renders plain" {
+    const gpa = std.testing.allocator;
+    var ts = try TestScreen.init(gpa, 40, 8);
+    defer ts.deinit(gpa);
+    const rows = try ts.render("```\nfn main() {}\n```\n", &test_palette);
+    try std.testing.expectEqual(@as(u16, 1), rows);
+    try expectRowEquals(&ts, 0, "fn main() {}");
+    // No highlight: every cell keeps the plain code tint (base fg).
+    try expectFgIndex(&ts, 0, 0, base_idx);
+    try expectFgIndex(&ts, 3, 0, base_idx);
+    try expectFlag(&ts, 0, 0, .dim, true);
+}
+
+test "md highlight: unknown info word renders default (strings/numbers only)" {
+    const gpa = std.testing.allocator;
+    var ts = try TestScreen.init(gpa, 40, 8);
+    defer ts.deinit(gpa);
+    const md = "```cobol\nDATA 42 \"x\" // nope\n```\n";
+    const rows = try ts.render(md, &test_palette);
+    try std.testing.expectEqual(@as(u16, 1), rows);
+    // `DATA` is not a keyword in the default table → base fg.
+    try expectFgIndex(&ts, 0, 0, base_idx);
+    // `42` number → status fg; `"x"` string → editor fg.
+    try expectFgIndex(&ts, 5, 0, status_idx);
+    try expectFgIndex(&ts, 8, 0, editor_idx);
+    // `//` is NOT a comment in the default table → base fg.
+    try expectFgIndex(&ts, 12, 0, base_idx);
+}
+
+test "md highlight: indented code block stays plain" {
+    const gpa = std.testing.allocator;
+    var ts = try TestScreen.init(gpa, 40, 8);
+    defer ts.deinit(gpa);
+    const rows = try ts.render("    fn main() {}\n", &test_palette);
+    try std.testing.expectEqual(@as(u16, 1), rows);
+    try expectRowEquals(&ts, 0, "fn main() {}");
+    // Unfenced (indented) blocks never highlight, even with zig-looking code.
+    try expectFgIndex(&ts, 0, 0, base_idx);
+    try expectFgIndex(&ts, 3, 0, base_idx);
+    try expectFlag(&ts, 0, 0, .dim, true);
+}
+
+test "md measure: row counts identical with and without highlight" {
+    const gpa = std.testing.allocator;
+    const md_hl = "```zig\nfn main() {}\nconst x = 1;\n```\n";
+    const md_plain = "```\nfn main() {}\nconst x = 1;\n```\n";
+    const style = MdStyle.fromPalette(&test_palette);
+    var ts = try TestScreen.init(gpa, 40, 16);
+    defer ts.deinit(gpa);
+    // Painted counts (tall window, no clip) match measure counts for both
+    // the highlighted and the plain fence.
+    for ([_][]const u8{ md_hl, md_plain }) |md| {
+        _ = ts.arena.reset(.retain_capacity);
+        ts.screen.clear();
+        const doc = md_parse.parseMarkdown(ts.arena.allocator(), md) orelse return error.TestUnexpectedResult;
+        const painted = renderMarkdownIntoStyled(ts.arena.allocator(), ts.win(), doc, style);
+        const measured = measureMarkdownIntoStyled(ts.arena.allocator(), ts.win(), doc, style);
+        try std.testing.expectEqual(@as(u16, 2), painted);
+        try std.testing.expectEqual(painted, measured);
+    }
 }
 
 // ── inline render ──────────────────────────────────────────────────────────
