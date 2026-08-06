@@ -83,3 +83,24 @@ the plain backoff.
 # related
 
 - [provider retry doc](../modules/provider.md) if exists · hyper retry.rs (reference only)
+
+# commit
+
+- Implemented at `22b8980` (`zag-tui: stream thinking deltas into a
+  progressive card (Ctrl+T)` — combined three-slice green tree; this slice's
+  code and doc landed in the same commit). Verified on the combined tree:
+  default **793/793**, curl **792/792**, TUI std **1001/1002 + 1 skip**,
+  TUI curl **1000/1001 + 1 skip**; PTY fixtures **13/13**.
+- The actual ChatError set has **16 tags** (contract text says 17; the
+  exhaustive switch below covers every real tag, so the table is total
+  regardless of the count).
+- `error.NotSupported` was removed from the chatWithRetry clean-outcome
+  intercept so it reaches the table as retryable (per the Frozen choices
+  table; it was previously a de-facto `unsupported_control`). No existing
+  loop/agent test asserted the old path; production adapters only return
+  NotSupported from `embed`, a different seam.
+- Behavior change beyond the previously-retried set {RateLimited,
+  ServerError, HttpFailed} (all still retryable, equivalence-asserted in the
+  table test): BadStatus / WriteFailed / Unexpected / StreamFailed are now
+  retried (transient transport class). Timeout / Cancelled / UnsupportedControl
+  still return clean ChatOutcomes before the table.
