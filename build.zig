@@ -523,6 +523,31 @@ pub fn build(b: *std.Build) void {
         run_tui_process_tests = b.addRunArtifact(tui_process_tests);
     }
 
+    // rpc-v1-001: process-level --rpc fixture (real zag binary, pipes/PTY,
+    // headless mock provider over loopback). Runs under both std and curl
+    // backends; libc on the test artifact only (PTY + process control).
+    const rpc_fixture_opts = b.addOptions();
+    rpc_fixture_opts.addOptionPath("zag_bin", exe.getEmittedBin());
+    rpc_fixture_opts.addOptionPath("headless_mock_bin", headless_mock_server_exe.getEmittedBin());
+    rpc_fixture_opts.addOption(HttpBackend, "http_backend", http_backend);
+    const rpc_process_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("packages/zag-cli/src/rpc_process_fixture.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "rpc_fixture_options", .module = rpc_fixture_opts.createModule() },
+            },
+        }),
+    });
+    rpc_process_tests.root_module.link_libc = true;
+    const run_rpc_process_tests = b.addRunArtifact(rpc_process_tests);
+    const rpc_fixture_step = b.step(
+        "rpc-process-fixture",
+        "Process-level zag --rpc NDJSON fixture (pipes + PTY gates)",
+    );
+    rpc_fixture_step.dependOn(&run_rpc_process_tests.step);
+
     const test_step = b.step("test", "Run all tests + openai coverage + catalog + docs lint");
     test_step.dependOn(&run_openai_tests.step);
     test_step.dependOn(&run_types_tests.step);
@@ -535,6 +560,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_doctor_process_tests.step);
     test_step.dependOn(&run_headless_process_tests.step);
     test_step.dependOn(&run_sigint_process_tests.step);
+    test_step.dependOn(&run_rpc_process_tests.step);
     if (run_tui_tests) |rt| test_step.dependOn(&rt.step);
     if (run_tui_process_tests) |rt| test_step.dependOn(&rt.step);
     test_step.dependOn(openai_coverage_step);

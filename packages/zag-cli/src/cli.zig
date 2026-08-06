@@ -171,6 +171,7 @@ pub fn run(init: std.process.Init) !void {
     var want_doctor = false;
     var headless_mode: ?hw.HeadlessMode = null;
     var want_tui = false;
+    var want_rpc = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -181,6 +182,8 @@ pub fn run(init: std.process.Init) !void {
             verbose = true;
         } else if (std.mem.eql(u8, a, "--tui")) {
             want_tui = true;
+        } else if (std.mem.eql(u8, a, "--rpc")) {
+            want_rpc = true;
         } else if (std.mem.eql(u8, a, "--doctor")) {
             want_doctor = true;
         } else if (std.mem.eql(u8, a, "--yolo")) {
@@ -308,8 +311,35 @@ pub fn run(init: std.process.Init) !void {
         }
     }
 
+    // --rpc mode matrix (rpc-v1 §8.5 / rpc-v1-001 fixture class 1-2): long-lived
+    // server mode over stdin/stdout pipes; mutually exclusive with every other
+    // product surface. Violations exit 2 with empty stdout.
+    if (want_rpc) {
+        if (headless_mode != null) {
+            std.log.err("--rpc is mutually exclusive with --json/--json-stream", .{});
+            std.process.exit(2);
+        }
+        if (want_doctor) {
+            std.log.err("--rpc is mutually exclusive with --doctor", .{});
+            std.process.exit(2);
+        }
+        if (verbose) {
+            std.log.err("--rpc is mutually exclusive with --verbose/-v", .{});
+            std.process.exit(2);
+        }
+        if (prompt_parts.items.len > 0) {
+            std.log.err("--rpc is a long-lived server (no positional prompt)", .{});
+            std.process.exit(2);
+        }
+        if (want_tui) {
+            std.log.err("--rpc is mutually exclusive with --tui", .{});
+            std.process.exit(2);
+        }
+    }
+
     if (show_help) {
-        if (headless_mode) |_| {
+        if (headless_mode != null or want_rpc) {
+            // Headless + rpc keep stdout empty for protocol output.
             try printUsageToStderr(io);
         } else {
             try printUsage(io);
@@ -633,6 +663,59 @@ pub fn run(init: std.process.Init) !void {
             app.destroy();
             std.process.exit(result.exit_code);
         }
+    }
+
+    // ── rpc-v1 path (always compiled, like headless) ───────────────────────
+    // Same host assembly as the TUI with the pipe protocol in place of the
+    // terminal: Server.init → gate/lifecycle/observer binding → Agent.init →
+    // Guard.install → rpc_entry.runRpc. stdout is protocol-only in rpc mode.
+    if (want_rpc) {
+        const rpc_server = @import("rpc/server.zig");
+        const rpc_entry = @import("rpc_entry.zig");
+
+        var server = rpc_server.Server.init(gpa, io, &stdout_writer.interface, .{
+            .load_project_instructions = !no_project,
+            .skills_enabled = skills_enabled,
+            .project_skills_trust = project_skills_trust,
+            .user_skills_root = user_skills_root,
+            .templates_enabled = templates_enabled,
+            .project_templates_trust = project_templates_trust,
+            .user_templates_root = user_templates_root,
+            .base_system = default_system,
+            .permission = permission_mode.name(),
+            .shell_policy = shell_policy.name(),
+            .session_resumed = continue_session,
+        });
+
+        agent_opts.permission_gate = server.gate();
+        agent_opts.lifecycle = server.lifecycleObserver();
+        agent_opts.observer = server.observer();
+        // hunk reviewer: bound_hunk_reviewer already resolves rpc ask →
+        // null (review_unavailable if the handler ever runs), yolo →
+        // AutoAccept — same precedence as every non-TTY mode.
+
+        var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
+            server.emitFatal(.out_of_memory, "agent init failed");
+            std.process.exit(40);
+        };
+        var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
+            server.emitFatal(.internal_error, "sigint guard init failed");
+            std.process.exit(70);
+        };
+        const result = rpc_entry.runRpc(.{
+            .gpa = gpa,
+            .io = io,
+            .server = &server,
+            .agent = &agent,
+            .guard = &sigint_guard,
+            .session_path = session_path,
+            .open_mode = open_mode,
+            .load_project = !no_project,
+        });
+        // Guard freed inside runRpc. Session is server-owned (deinit+destroy
+        // inside runRpc). Explicit Agent then exit.
+        agent.deinit();
+        std.process.exit(result.exit_code);
     }
 
     var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
@@ -1373,6 +1456,7 @@ fn printUsage(io: Io) !void {
         \\  --doctor                   readiness report (no API key / provider / network)
         \\  --json                     headless one-shot: single JSON result envelope
         \\  --json-stream              headless one-shot: NDJSON event stream
+        \\  --rpc                      long-lived server over stdin/stdout pipes (rpc-v1)
         \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
@@ -1429,6 +1513,7 @@ fn printUsageToStderr(io: Io) !void {
         \\  --doctor                   readiness report (no API key / provider / network)
         \\  --json                     headless one-shot: single JSON result envelope
         \\  --json-stream              headless one-shot: NDJSON event stream
+        \\  --rpc                      long-lived server over stdin/stdout pipes (rpc-v1)
         \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)

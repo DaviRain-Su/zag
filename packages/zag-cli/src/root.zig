@@ -10,6 +10,10 @@ pub const cli = @import("cli.zig");
 pub const run = cli.run;
 pub const sigint = @import("sigint.zig");
 pub const cli_stream = @import("cli_stream.zig");
+pub const rpc_framing = @import("rpc/framing.zig");
+pub const rpc_protocol = @import("rpc/protocol.zig");
+pub const rpc_server = @import("rpc/server.zig");
+pub const rpc_entry = @import("rpc_entry.zig");
 
 pub const version = "0.5.0";
 
