@@ -307,6 +307,22 @@ fn pathUnderRoot(root: []const u8, candidate: []const u8) bool {
     return candidate[root.len] == std.fs.path.sep;
 }
 
+/// Free owned user-theme ids from a listThemeIds result. Builtin ids are
+/// compile-time literals and must NEVER be freed (a free of static memory
+/// aborts). Unknown ids are treated as owned.
+pub fn freeThemeList(gpa: std.mem.Allocator, list: []const []const u8) void {
+    for (list) |it| {
+        var is_builtin = false;
+        for (builtin_ids) |bid| {
+            if (std.mem.eql(u8, it, bid)) {
+                is_builtin = true;
+                break;
+            }
+        }
+        if (!is_builtin) gpa.free(@constCast(it));
+    }
+}
+
 /// Resolve active palette: built-in or selected user theme under
 /// themes_root, else builtin default (fail-closed).
 pub fn resolveActive(gpa: std.mem.Allocator, io: Io, opts: ThemeHostOptions) Palette {

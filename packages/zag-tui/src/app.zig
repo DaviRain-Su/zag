@@ -994,6 +994,22 @@ pub const App = struct {
                 if (self.state == .busy) return .closing;
                 return .none;
             },
+            .char => |ch| {
+                // Only the slash palette consumes text (live filter);
+                // other overlays are navigation-only.
+                if (self.overlay.kind == .slash_palette) {
+                    _ = self.editor.insert(ch);
+                    self.syncSlashOverlay();
+                }
+                return .none;
+            },
+            .backspace => {
+                if (self.overlay.kind == .slash_palette) {
+                    self.editor.backspace();
+                    self.syncSlashOverlay();
+                }
+                return .none;
+            },
             else => return .none,
         }
     }
@@ -1135,9 +1151,12 @@ pub const App = struct {
                 if (self.themes_root) |root| {
                     var list: std.ArrayList([]const u8) = .empty;
                     defer {
-                        for (list.items) |it| {
-                            if (!std.mem.eql(u8, it, theme_mod.builtin_id)) self.gpa.free(it);
-                        }
+                        // Builtin ids (compile-time literals) must never be
+                        // freed; only owned user-theme dups are. The old
+                        // single-id check freed the newer builtins
+                        // (ocean/mint/light) as if they were user themes →
+                        // free of static memory (crash).
+                        theme_mod.freeThemeList(self.gpa, list.items);
                         list.deinit(self.gpa);
                     }
                     if (self.host_io) |io| {
@@ -1804,6 +1823,26 @@ test "tui-theme: switching builtins never frees static memory" {
     try std.testing.expectEqualStrings(theme_mod.builtin_id, app.palette.id);
 }
 
+test "tui-theme: freeThemeList never frees builtin literals" {
+    // Regression: the theme overlay freed every non-zag-default id — the
+    // newer builtins (ocean/mint/light) are compile-time literals, and a
+    // free of static memory aborts. freeThemeList must free ONLY the owned
+    // user-theme dups.
+    const gpa = std.testing.allocator;
+    const user1 = try gpa.dupe(u8, "user-one");
+    const user2 = try gpa.dupe(u8, "user-two");
+    // No defers: freeThemeList takes ownership of the user-theme dups.
+    // Mixed list as listThemeIds returns: builtins first, users after.
+    const list = [_][]const u8{
+        theme_mod.builtin_ids[0],
+        theme_mod.builtin_ids[1],
+        theme_mod.builtin_ids[2],
+        theme_mod.builtin_ids[3],
+        user1,
+        user2,
+    };
+    theme_mod.freeThemeList(gpa, &list);
+}
 test "tui-input: page keys scroll rows and re-engage follow" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
