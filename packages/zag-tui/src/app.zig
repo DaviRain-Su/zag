@@ -13,6 +13,7 @@ const keys_mod = @import("keys.zig");
 const present = @import("present.zig");
 const permission_mod = @import("permission.zig");
 const render = @import("render.zig");
+const layout_mod = @import("layout.zig");
 const signal_host = @import("signal_host.zig");
 const terminal_mod = @import("terminal.zig");
 const theme_mod = @import("theme.zig");
@@ -132,6 +133,9 @@ pub const App = struct {
     overlay: overlay_mod.Overlay = .{},
     /// Transcript scroll: 0 = newest window (tui-transcript-001).
     scroll_from_bottom: usize = 0,
+    /// Cards region height of the last paint — PgUp/PgDn page by this many
+    /// transcript rows (tui-polish-001 input completeness).
+    last_cards_h: u16 = 0,
 
     model_label: []const u8 = "—",
     /// Borrowed catalog ids from host (CLI arena / static). Cap used at paint.
@@ -342,12 +346,8 @@ pub const App = struct {
                 self.last_run_started = true;
                 self.session_configured_ui.store(rs.session_configured, .release);
                 self.card_ring.demoteTerminalToOrdinary();
-                self.card_ring.publishOrdinary(
-                    self.gpa,
-                    red,
-                    "run_start",
-                    if (rs.session_configured) "session_configured=y" else "session_configured=n",
-                );
+                // No card (tui-polish-001 compaction): run start is already
+                // surfaced by the header cfg flag + state:busy.
             },
             .assistant_message => |m| {
                 // Turn boundary: the complete message arrived; next turn's
@@ -378,20 +378,19 @@ pub const App = struct {
                 self.card_ring.publishOrdinaryPrepared(cards_mod.PreparedCard.fromFixed(title, body));
             },
             .tool_end => |t| {
+                // Merge tool_start + tool_end into ONE `tool {name}` row: the
+                // live "tool start {name}" card (published by tool_start) is
+                // replaced by its final title + summary body. End-only emits
+                // (loop-driven) publish fresh via the replace fallback.
                 var name_buf: [c.card_title_max_bytes]u8 = undefined;
                 const name_n = present.presentInto(self.gpa, red, &name_buf, t.name);
                 var title_buf: [c.card_title_max_bytes]u8 = undefined;
-                const title = std.fmt.bufPrint(&title_buf, "tool end {s}", .{name_buf[0..name_n]}) catch "tool end";
-                self.card_ring.publishOrdinary(self.gpa, red, title, t.body);
+                const title = std.fmt.bufPrint(&title_buf, "tool {s}", .{name_buf[0..name_n]}) catch "tool";
+                self.card_ring.replaceNewestOrdinaryTitlePrefix(self.gpa, red, "tool start", title, t.body);
             },
-            .control_applied => |ctrl| {
-                const kind = switch (ctrl.kind) {
-                    .steering => "steering",
-                    .follow_up => "follow_up",
-                };
-                var title_buf: [64]u8 = undefined;
-                const title = std.fmt.bufPrint(&title_buf, "control kind={s} next_turn={d}", .{ kind, ctrl.next_turn }) catch "control";
-                self.card_ring.publishOrdinary(self.gpa, red, title, ctrl.text);
+            .control_applied => {
+                // No card (tui-polish-001 compaction): steering/follow-up are
+                // already surfaced by the header S:/F: counters.
             },
             // Deltas are UI-visible only and handled by onObserver; the
             // lifecycle path does not paint per-chunk text.
@@ -758,11 +757,7 @@ pub const App = struct {
             },
             .backspace => {
                 self.editor.backspace();
-                if (slash_route.slashFilter(self.editor.slice()) != null) {
-                    if (self.overlay.kind != .slash_palette) self.overlay.open(.slash_palette);
-                } else if (self.overlay.kind == .slash_palette) {
-                    self.overlay.close();
-                }
+                self.syncSlashOverlay();
                 return .none;
             },
             .delete => {
@@ -777,12 +772,44 @@ pub const App = struct {
                 self.editor.moveRight();
                 return .none;
             },
+            .home => {
+                self.editor.moveHome();
+                return .none;
+            },
+            .end => {
+                self.editor.moveEnd();
+                return .none;
+            },
+            .ctrl_a => {
+                self.editor.moveHome();
+                return .none;
+            },
+            .ctrl_e => {
+                self.editor.moveEnd();
+                return .none;
+            },
+            .ctrl_w => {
+                self.editor.deleteWordBack();
+                self.syncSlashOverlay();
+                return .none;
+            },
+            .ctrl_u => {
+                self.editor.killToStart();
+                self.syncSlashOverlay();
+                return .none;
+            },
+            .ctrl_k => {
+                self.editor.killToEnd();
+                self.syncSlashOverlay();
+                return .none;
+            },
             .page_up => {
-                self.scroll_from_bottom +|= 3;
+                // Page by the transcript window height (not a fixed 3 rows).
+                self.scroll_from_bottom +|= @max(self.last_cards_h, 1);
                 return .none;
             },
             .page_down => {
-                if (self.scroll_from_bottom >= 3) self.scroll_from_bottom -= 3 else self.scroll_from_bottom = 0;
+                self.scroll_from_bottom -|= @max(self.last_cards_h, 1);
                 return .none;
             },
             .up => {
@@ -813,14 +840,21 @@ pub const App = struct {
             },
             .char => |ch| {
                 _ = self.editor.insert(ch);
-                if (slash_route.slashFilter(self.editor.slice()) != null) {
-                    if (self.overlay.kind != .slash_palette) self.overlay.open(.slash_palette);
-                } else if (self.overlay.kind == .slash_palette) {
-                    self.overlay.close();
-                }
+                self.syncSlashOverlay();
                 return .none;
             },
             .unknown => return .none,
+        }
+    }
+
+    /// Reconcile the slash palette with the editor buffer after a buffer edit
+    /// (typing, backspace, Ctrl+W/U/K): open when the buffer filters, close
+    /// when it no longer does.
+    fn syncSlashOverlay(self: *App) void {
+        if (slash_route.slashFilter(self.editor.slice()) != null) {
+            if (self.overlay.kind != .slash_palette) self.overlay.open(.slash_palette);
+        } else if (self.overlay.kind == .slash_palette) {
+            self.overlay.close();
         }
     }
 
@@ -841,6 +875,24 @@ pub const App = struct {
             },
             .enter => {
                 self.activateOverlaySelection();
+                return .none;
+            },
+            .page_up => {
+                var i: usize = 0;
+                while (i < 5) : (i += 1) self.overlay.moveUp(count);
+                return .none;
+            },
+            .page_down => {
+                var i: usize = 0;
+                while (i < 5) : (i += 1) self.overlay.moveDown(count);
+                return .none;
+            },
+            .home => {
+                self.overlay.cursor = 0;
+                return .none;
+            },
+            .end => {
+                if (count > 0) self.overlay.cursor = count - 1;
                 return .none;
             },
             .ctrl_d => {
@@ -1119,7 +1171,11 @@ pub const App = struct {
             .cursor = self.overlay.cursor,
             .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
         };
-        try render.renderFrame(term, sz, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, self.scroll_from_bottom);
+        // Compute the layout once here: renderFrame draws it, and the cards
+        // region height is the page unit for PgUp/PgDn transcript scroll.
+        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, self.scroll_from_bottom);
+        self.last_cards_h = layout.cards.h;
+        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov);
         self.dirty = false;
         self.last_painted_size = sz;
     }
@@ -1369,10 +1425,12 @@ test "tui-layout: key input paints once" {
 
     _ = app.handleKey(.{ .char = "x" });
     try std.testing.expect(app.dirty);
-    rec.writeCell(79, 39, "X");
+    // Canary lives in the blank transcript interior — the frame's bottom
+    // border owns (79, 39) now (closed-frame geometry).
+    rec.writeCell(40, 20, "X");
     try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
-    try expectCellText(&rec, 79, 39, " ");
+    try expectCellText(&rec, 40, 20, " ");
 }
 
 test "tui-layout: worker join paints" {
@@ -1384,10 +1442,10 @@ test "tui-layout: worker join paints" {
 
     app.afterWorkerJoin();
     try std.testing.expect(app.dirty);
-    rec.writeCell(79, 39, "X");
+    rec.writeCell(40, 20, "X");
     try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
-    try expectCellText(&rec, 79, 39, " ");
+    try expectCellText(&rec, 40, 20, " ");
 }
 
 test "tui-layout: idle-terminal resize repaints (size re-read in paint)" {
@@ -1402,9 +1460,9 @@ test "tui-layout: idle-terminal resize repaints (size re-read in paint)" {
     // Simulate a resize between polls: last painted size no longer matches
     // the size paint() re-reads, so the size check fires and repaints.
     app.last_painted_size = .{ .cols = 79, .rows = 23 };
-    rec.writeCell(79, 39, "X");
+    rec.writeCell(40, 20, "X");
     try app.paint(&rec.pt.term);
-    try expectCellText(&rec, 79, 39, " "); // repainted → canary erased
+    try expectCellText(&rec, 40, 20, " "); // repainted → canary erased
     const last = app.last_painted_size orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 80), last.cols);
     try std.testing.expectEqual(@as(u16, 40), last.rows);
@@ -1448,4 +1506,82 @@ test "tui-layout: note update sets dirty" {
     app.setNote("hello");
     try std.testing.expect(app.dirty);
     try std.testing.expectEqualStrings("hello", app.noteSlice());
+}
+
+// ── tui-polish-001 input completeness: line editing + page scroll + overlay
+// navigation ────────────────────────────────────────────────────────────────
+
+test "tui-input: home/end/ctrl-a/ctrl-e move the editor cursor" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    _ = app.editor.insert("one\ntwo");
+    app.editor.cursor = 5;
+    _ = app.handleKey(.home);
+    try std.testing.expectEqual(@as(usize, 4), app.editor.cursor);
+    _ = app.handleKey(.end);
+    try std.testing.expectEqual(@as(usize, 7), app.editor.cursor);
+    _ = app.handleKey(.ctrl_a);
+    try std.testing.expectEqual(@as(usize, 4), app.editor.cursor);
+    _ = app.handleKey(.ctrl_e);
+    try std.testing.expectEqual(@as(usize, 7), app.editor.cursor);
+}
+
+test "tui-input: ctrl-w/u/k edit the buffer" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    _ = app.editor.insert("abc def");
+    app.editor.cursor = 7;
+    _ = app.handleKey(.ctrl_w);
+    try std.testing.expectEqualStrings("abc ", app.editor.slice());
+    _ = app.handleKey(.ctrl_u);
+    try std.testing.expectEqualStrings("", app.editor.slice());
+    _ = app.editor.insert("one\ntwo");
+    app.editor.cursor = 6;
+    _ = app.handleKey(.ctrl_k);
+    try std.testing.expectEqualStrings("one\ntw", app.editor.slice());
+}
+
+test "tui-input: page up/down scroll by the cards region height" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    app.last_cards_h = 14;
+    _ = app.handleKey(.page_up);
+    try std.testing.expectEqual(@as(usize, 14), app.scroll_from_bottom);
+    _ = app.handleKey(.page_down);
+    try std.testing.expectEqual(@as(usize, 0), app.scroll_from_bottom);
+    _ = app.handleKey(.page_down); // saturates at 0
+    try std.testing.expectEqual(@as(usize, 0), app.scroll_from_bottom);
+    _ = app.handleKey(.page_up);
+    _ = app.handleKey(.page_up);
+    try std.testing.expectEqual(@as(usize, 28), app.scroll_from_bottom);
+}
+
+test "tui-input: paint records the cards region height for paging" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var rec = try RecTerm.init(gpa);
+    defer rec.deinit(gpa);
+    try app.paint(&rec.pt.term); // 80×40
+    try std.testing.expect(app.last_cards_h > 0);
+    // 80×40: max_cards = 30, cards_gap = 36-3 = 33 → 30.
+    try std.testing.expectEqual(@as(u16, 30), app.last_cards_h);
+}
+
+test "tui-input: overlay home/end/page keys navigate" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    app.overlay.open(.help); // 6 lines
+    _ = app.handleKey(.end);
+    try std.testing.expectEqual(@as(usize, 5), app.overlay.cursor);
+    _ = app.handleKey(.home);
+    try std.testing.expectEqual(@as(usize, 0), app.overlay.cursor);
+    _ = app.handleKey(.page_down);
+    try std.testing.expectEqual(@as(usize, 5), app.overlay.cursor); // 5× moveDown
+    _ = app.handleKey(.page_up);
+    try std.testing.expectEqual(@as(usize, 0), app.overlay.cursor); // 5× moveUp
 }

@@ -81,11 +81,57 @@ pub const Editor = struct {
         if (self.cursor < self.len) self.cursor += 1;
     }
 
+    /// Home: first byte of the current line (after the previous `\n`).
+    pub fn moveHome(self: *Editor) void {
+        const line_start = if (std.mem.lastIndexOfScalar(u8, self.buf[0..self.cursor], '\n')) |i| i + 1 else 0;
+        self.cursor = line_start;
+    }
+
+    /// End: first byte of the next `\n` at/after the cursor, else buffer end.
+    pub fn moveEnd(self: *Editor) void {
+        const nl = std.mem.indexOfScalarPos(u8, self.buf[0..self.len], self.cursor, '\n');
+        self.cursor = nl orelse self.len;
+    }
+
+    /// Ctrl+W: delete the word (plus trailing whitespace) before the cursor.
+    pub fn deleteWordBack(self: *Editor) void {
+        var start = self.cursor;
+        while (start > 0 and isWordSeparator(self.buf[start - 1])) start -= 1;
+        while (start > 0 and !isWordSeparator(self.buf[start - 1])) start -= 1;
+        self.deleteRange(start, self.cursor);
+    }
+
+    /// Ctrl+U: kill from the current line start to the cursor.
+    pub fn killToStart(self: *Editor) void {
+        const line_start = if (std.mem.lastIndexOfScalar(u8, self.buf[0..self.cursor], '\n')) |i| i + 1 else 0;
+        self.deleteRange(line_start, self.cursor);
+    }
+
+    /// Ctrl+K: kill from the cursor to the end of the current line.
+    pub fn killToEnd(self: *Editor) void {
+        const nl = std.mem.indexOfScalarPos(u8, self.buf[0..self.len], self.cursor, '\n');
+        self.deleteRange(self.cursor, nl orelse self.len);
+    }
+
+    fn deleteRange(self: *Editor, start: usize, end: usize) void {
+        if (end <= start) return;
+        const after = self.len - end;
+        if (after > 0) {
+            std.mem.copyForwards(u8, self.buf[start..][0..after], self.buf[end..][0..after]);
+        }
+        self.len -= end - start;
+        self.cursor = start;
+    }
+
     pub fn submitValidUtf8(self: *const Editor) bool {
         if (self.len == 0) return false;
         return present.isValidUtf8(self.slice());
     }
 };
+
+fn isWordSeparator(b: u8) bool {
+    return b == ' ' or b == '\t' or b == '\n';
+}
 
 pub const History = struct {
     entries: [][c.history_entry_max_bytes]u8,
@@ -170,6 +216,69 @@ test "editor line cap" {
     }
     // Now at max lines; another newline must reject entirely.
     try std.testing.expect(!ed.insert("\n"));
+}
+
+test "editor moveHome/moveEnd are line-aware" {
+    var storage: [c.editor_max_bytes]u8 = undefined;
+    var ed = Editor.init(&storage);
+    _ = ed.insert("one\ntwo");
+    // Cursor in the middle of the second line.
+    ed.cursor = 5;
+    ed.moveHome();
+    try std.testing.expectEqual(@as(usize, 4), ed.cursor); // after the '\n'
+    ed.moveEnd();
+    try std.testing.expectEqual(@as(usize, 7), ed.cursor); // buffer end
+    // First line from cursor 0.
+    ed.cursor = 0;
+    ed.moveEnd();
+    try std.testing.expectEqual(@as(usize, 3), ed.cursor); // at the '\n'
+    ed.moveHome();
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+}
+
+test "editor deleteWordBack removes word plus whitespace" {
+    var storage: [c.editor_max_bytes]u8 = undefined;
+    var ed = Editor.init(&storage);
+    _ = ed.insert("abc def");
+    ed.cursor = 7; // end
+    ed.deleteWordBack();
+    try std.testing.expectEqualStrings("abc ", ed.slice());
+    try std.testing.expectEqual(@as(usize, 4), ed.cursor);
+    ed.deleteWordBack();
+    try std.testing.expectEqualStrings("", ed.slice());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+}
+
+test "editor killToStart kills to line start" {
+    var storage: [c.editor_max_bytes]u8 = undefined;
+    var ed = Editor.init(&storage);
+    _ = ed.insert("abc def");
+    ed.cursor = 7;
+    ed.killToStart();
+    try std.testing.expectEqualStrings("", ed.slice());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    // Multi-line: kills only the current line's prefix (cursor at line end).
+    _ = ed.insert("one\ntwo");
+    ed.cursor = 7;
+    ed.killToStart();
+    try std.testing.expectEqualStrings("one\n", ed.slice());
+    try std.testing.expectEqual(@as(usize, 4), ed.cursor);
+}
+
+test "editor killToEnd kills to line end" {
+    var storage: [c.editor_max_bytes]u8 = undefined;
+    var ed = Editor.init(&storage);
+    _ = ed.insert("one\ntwo");
+    ed.cursor = 0;
+    ed.killToEnd();
+    try std.testing.expectEqualStrings("\ntwo", ed.slice());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    ed.killToEnd(); // at '\n' — nothing on this line to kill
+    try std.testing.expectEqualStrings("\ntwo", ed.slice());
+    ed.cursor = 1;
+    ed.killToEnd();
+    try std.testing.expectEqualStrings("\n", ed.slice());
+    try std.testing.expectEqual(@as(usize, 1), ed.cursor);
 }
 
 test "history push only stores; ring 64" {

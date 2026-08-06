@@ -21,11 +21,11 @@ pub const Role = enum {
     status_fg,
     status_bg,
     card_fg,
-    card_bg,
+    card_border,
     editor_fg,
     editor_bg,
     modal_fg,
-    modal_bg,
+    modal_border,
     error_fg,
     muted_fg,
     accent_fg,
@@ -54,14 +54,14 @@ pub fn builtinDefault() Palette {
     styles[@intFromEnum(Role.status_fg)] = .{ .fg = .{ .index = 6 } }; // cyan
     styles[@intFromEnum(Role.status_bg)] = .{};
     styles[@intFromEnum(Role.card_fg)] = .{ .fg = .{ .index = 7 } };
-    styles[@intFromEnum(Role.card_bg)] = .{};
+    styles[@intFromEnum(Role.card_border)] = .{ .fg = .{ .index = 8 } }; // brightBlack — muted border vs content fg
     styles[@intFromEnum(Role.editor_fg)] = .{ .fg = .{ .index = 2 } }; // green
     styles[@intFromEnum(Role.editor_bg)] = .{};
     styles[@intFromEnum(Role.modal_fg)] = .{ .fg = .{ .index = 5 } }; // magenta
-    styles[@intFromEnum(Role.modal_bg)] = .{};
+    styles[@intFromEnum(Role.modal_border)] = .{ .fg = .{ .index = 8 } }; // brightBlack — muted border vs content fg
     styles[@intFromEnum(Role.error_fg)] = .{ .fg = .{ .index = 1 } };
     styles[@intFromEnum(Role.muted_fg)] = .{ .fg = .{ .index = 8 } };
-    styles[@intFromEnum(Role.accent_fg)] = .{ .fg = .{ .index = 6 } };
+    styles[@intFromEnum(Role.accent_fg)] = .{ .fg = .{ .index = 3 } }; // yellow — distinct from status cyan
     return .{ .id = builtin_id, .styles = styles };
 }
 
@@ -128,11 +128,11 @@ const role_names = [_]struct { []const u8, Role }{
     .{ "status_fg", .status_fg },
     .{ "status_bg", .status_bg },
     .{ "card_fg", .card_fg },
-    .{ "card_bg", .card_bg },
+    .{ "card_border", .card_border },
     .{ "editor_fg", .editor_fg },
     .{ "editor_bg", .editor_bg },
     .{ "modal_fg", .modal_fg },
-    .{ "modal_bg", .modal_bg },
+    .{ "modal_border", .modal_border },
     .{ "error_fg", .error_fg },
     .{ "muted_fg", .muted_fg },
     .{ "accent_fg", .accent_fg },
@@ -166,7 +166,10 @@ pub fn parseThemeJson(allocator: std.mem.Allocator, bytes: []const u8) ?struct {
         const spec = parseColorValue(raw) orelse return null;
         const color = colorToVaxis(spec);
         const idx = @intFromEnum(rn[1]);
-        styles[idx] = .{ .fg = color };
+        // `*_bg` roles (and the `bg` role itself) paint the background; all
+        // other roles paint the foreground (tui-polish-001 bg-parse fix).
+        const is_bg_role = std.mem.eql(u8, rn[0], "bg") or std.mem.endsWith(u8, rn[0], "_bg");
+        styles[idx] = if (is_bg_role) .{ .bg = color } else .{ .fg = color };
         seen[idx] = true;
     }
     for (role_names) |rn| {
@@ -242,12 +245,50 @@ test "parseThemeJson accepts full role set" {
     const raw =
         \\{"schemaVersion":"zag-theme-v1","id":"demo","colors":{
         \\"fg":"white","bg":"black","status_fg":"cyan","status_bg":"black",
-        \\"card_fg":"white","card_bg":"black","editor_fg":"green","editor_bg":"black",
-        \\"modal_fg":"magenta","modal_bg":"black","error_fg":"red","muted_fg":"brightBlack",
+        \\"card_fg":"white","card_border":"brightBlack","editor_fg":"green","editor_bg":"black",
+        \\"modal_fg":"magenta","modal_border":"brightBlack","error_fg":"red","muted_fg":"brightBlack",
         \\"accent_fg":"#33aaff"}}
     ;
     const parsed = parseThemeJson(gpa, raw) orelse return error.TestUnexpectedResult;
     defer gpa.free(parsed.id);
     try std.testing.expectEqualStrings("demo", parsed.palette.id);
     try std.testing.expect(parsed.palette.style(.accent_fg).fg == .rgb);
+}
+
+test "parseThemeJson maps bg roles to .bg and fg roles to .fg" {
+    const gpa = std.testing.allocator;
+    const raw =
+        \\{"schemaVersion":"zag-theme-v1","id":"roles","colors":{
+        \\"fg":"white","bg":"black","status_fg":"cyan","status_bg":"blue",
+        \\"card_fg":"white","card_border":"brightBlack","editor_fg":"green","editor_bg":"red",
+        \\"modal_fg":"magenta","modal_border":"brightBlack","error_fg":"red","muted_fg":"brightBlack",
+        \\"accent_fg":"yellow"}}
+    ;
+    const parsed = parseThemeJson(gpa, raw) orelse return error.TestUnexpectedResult;
+    defer gpa.free(parsed.id);
+    const p = &parsed.palette;
+    // `*_bg` roles (and bare `bg`) land on `.bg`…
+    try std.testing.expect(p.style(.bg).bg == .index);
+    try std.testing.expect(p.style(.status_bg).bg == .index);
+    try std.testing.expect(p.style(.editor_bg).bg == .index);
+    // …foreground roles land on `.fg`.
+    try std.testing.expect(p.style(.fg).fg == .index);
+    try std.testing.expect(p.style(.status_fg).fg == .index);
+    try std.testing.expect(p.style(.card_fg).fg == .index);
+    try std.testing.expect(p.style(.editor_fg).fg == .index);
+    // Border roles parse and apply as foreground styles.
+    try std.testing.expect(p.style(.card_border).fg == .index);
+    try std.testing.expect(p.style(.modal_border).fg == .index);
+}
+
+test "builtinDefault has distinct status and accent roles" {
+    const p = builtinDefault();
+    try std.testing.expect(p.style(.status_fg).fg == .index);
+    try std.testing.expect(p.style(.accent_fg).fg == .index);
+    const status_idx = p.style(.status_fg).fg.index;
+    const accent_idx = p.style(.accent_fg).fg.index;
+    try std.testing.expect(status_idx != accent_idx);
+    // Border roles default to the muted ramp (brightBlack).
+    try std.testing.expectEqual(@as(u8, 8), p.style(.card_border).fg.index);
+    try std.testing.expectEqual(@as(u8, 8), p.style(.modal_border).fg.index);
 }

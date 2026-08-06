@@ -34,7 +34,8 @@ pub const Layout = struct {
     /// Fixed band at the bottom: separator row + ONE clipped content row
     /// (full mode); single `> …` line (constrained).
     editor: Region,
-    /// Footer hint line (last row of the fixed editor band).
+    /// Footer hint line + the frame's bottom border row (full mode); the
+    /// status line alone (constrained).
     status: Region,
     /// Permission modal overlay region — never present in constrained mode.
     modal: ?Region,
@@ -77,15 +78,17 @@ pub fn compute(
         };
     }
 
-    // Full mode, bottom-up: fixed 3-row editor band at the bottom, the modal
-    // computed above it, transcript/cards filling the middle after the header.
+    // Full mode, bottom-up: fixed 4-row bottom band (editor separator +
+    // content row, then the status line + the frame's bottom border row),
+    // the modal computed above it, transcript/cards filling the middle
+    // after the header (tui-polish-001 closed-frame geometry).
     const note_rows: u16 = if (note_present) 1 else 0;
     const header_h: u16 = @min(3 + note_rows, rows);
 
-    const editor_y: u16 = if (rows >= 3) rows - 3 else 0;
-    const editor_h: u16 = @min(2, rows - editor_y);
-    const status_y: u16 = if (rows >= 1) rows - 1 else 0;
-    const status_h: u16 = if (rows >= 1) 1 else 0;
+    const editor_y: u16 = if (rows >= 4) rows - 4 else 0;
+    const editor_h: u16 = @min(2, rows -| editor_y);
+    const status_y: u16 = if (rows >= 2) rows - 2 else 0;
+    const status_h: u16 = @min(2, rows -| status_y);
 
     const gap: u16 = if (editor_y > header_h) editor_y - header_h else 0;
     const modal_h: u16 = if (modal_pending) @min(4, gap) else 0;
@@ -132,11 +135,12 @@ test "layout full mode geometry" {
     try std.testing.expectEqual(@as(u16, 14), l.cards.h);
     try std.testing.expectEqual(@as(usize, 5), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 0), l.cards_window.start);
-    // fixed 3-row editor band at the bottom.
-    try std.testing.expectEqual(@as(u16, 21), l.editor.y);
+    // Fixed bottom band: 2-row editor (separator + content) + 2-row status
+    // (line + frame bottom border).
+    try std.testing.expectEqual(@as(u16, 20), l.editor.y);
     try std.testing.expectEqual(@as(u16, 2), l.editor.h);
-    try std.testing.expectEqual(@as(u16, 23), l.status.y);
-    try std.testing.expectEqual(@as(u16, 1), l.status.h);
+    try std.testing.expectEqual(@as(u16, 22), l.status.y);
+    try std.testing.expectEqual(@as(u16, 2), l.status.h);
     try std.testing.expect(l.modal == null);
 }
 
@@ -145,36 +149,37 @@ test "layout full note adds a header row" {
     try std.testing.expectEqual(@as(u16, 4), l.header.h);
     try std.testing.expectEqual(@as(u16, 4), l.cards.y);
     try std.testing.expectEqual(@as(u16, 14), l.cards.h);
-    try std.testing.expectEqual(@as(u16, 21), l.editor.y);
-    try std.testing.expectEqual(@as(u16, 23), l.status.y);
+    try std.testing.expectEqual(@as(u16, 20), l.editor.y);
+    try std.testing.expectEqual(@as(u16, 22), l.status.y);
 }
 
 test "layout full modal presence and position" {
     const l = compute(.{ .cols = 80, .rows = 24 }, 5, true, false, 0);
     const m = l.modal orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(u16, 17), m.y); // bottom-up from editor band
+    try std.testing.expectEqual(@as(u16, 16), m.y); // bottom-up from editor band
     try std.testing.expectEqual(@as(u16, 4), m.h);
     try std.testing.expectEqual(@as(u16, 80), m.w);
-    // Modal consumes the gap; cards still get rows-10.
-    try std.testing.expectEqual(@as(u16, 14), l.cards.h);
+    // Modal consumes the gap; the editor band moved up one row so the
+    // frame's bottom border row fits, costing cards one row.
+    try std.testing.expectEqual(@as(u16, 13), l.cards.h);
     // Everything else unchanged.
     try std.testing.expectEqual(@as(u16, 3), l.header.h);
-    try std.testing.expectEqual(@as(u16, 21), l.editor.y);
-    try std.testing.expectEqual(@as(u16, 23), l.status.y);
+    try std.testing.expectEqual(@as(u16, 20), l.editor.y);
+    try std.testing.expectEqual(@as(u16, 22), l.status.y);
 }
 
 test "layout full note + modal clamps cards" {
     const l = compute(.{ .cols = 80, .rows = 24 }, 20, true, true, 0);
     try std.testing.expectEqual(@as(u16, 4), l.header.h);
     const m = l.modal orelse return error.TestUnexpectedResult;
-    try std.testing.expectEqual(@as(u16, 17), m.y);
-    // 4 (header) + 13 (cards) + 4 (modal) + 3 (editor band) = 24.
-    try std.testing.expectEqual(@as(u16, 13), l.cards.h);
+    try std.testing.expectEqual(@as(u16, 16), m.y);
+    // 4 (header) + 12 (cards) + 4 (modal) + 4 (bottom band) = 24.
+    try std.testing.expectEqual(@as(u16, 12), l.cards.h);
     // Window math is independent of the clamped region height.
     try std.testing.expectEqual(@as(usize, 14), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 6), l.cards_window.start);
-    try std.testing.expectEqual(@as(u16, 21), l.editor.y);
-    try std.testing.expectEqual(@as(u16, 23), l.status.y);
+    try std.testing.expectEqual(@as(u16, 20), l.editor.y);
+    try std.testing.expectEqual(@as(u16, 22), l.status.y);
 }
 
 test "layout rows <= 12 caps cards at 3" {
@@ -183,8 +188,8 @@ test "layout rows <= 12 caps cards at 3" {
     try std.testing.expectEqual(@as(usize, 3), l.cards_window.count);
     try std.testing.expectEqual(@as(usize, 5), l.cards_window.start);
     try std.testing.expectEqual(@as(u16, 3), l.cards.h);
-    try std.testing.expectEqual(@as(u16, 7), l.editor.y);
-    try std.testing.expectEqual(@as(u16, 9), l.status.y);
+    try std.testing.expectEqual(@as(u16, 6), l.editor.y);
+    try std.testing.expectEqual(@as(u16, 8), l.status.y);
 }
 
 test "layout rows 13 cards cap 3" {
@@ -199,10 +204,10 @@ test "layout rows 10 + note + modal clamps without overflow" {
     try std.testing.expectEqual(@as(u16, 4), l.header.h);
     const m = l.modal orelse return error.TestUnexpectedResult;
     try std.testing.expectEqual(@as(u16, 4), m.y);
-    try std.testing.expectEqual(@as(u16, 3), m.h); // gap is only 3
+    try std.testing.expectEqual(@as(u16, 2), m.h); // gap is only 2
     try std.testing.expectEqual(@as(u16, 0), l.cards.h); // cards absent
-    try std.testing.expectEqual(@as(u16, 7), l.editor.y);
-    try std.testing.expectEqual(@as(u16, 9), l.status.y);
+    try std.testing.expectEqual(@as(u16, 6), l.editor.y);
+    try std.testing.expectEqual(@as(u16, 8), l.status.y);
     // y + h <= rows for every region.
     try std.testing.expect(l.header.y + l.header.h <= 10);
     try std.testing.expect(l.cards.y + l.cards.h <= 10);

@@ -25,10 +25,17 @@ pub const AppKey = union(enum) {
     ctrl_c,
     ctrl_d,
     ctrl_j,
+    ctrl_a,
+    ctrl_e,
+    ctrl_w,
+    ctrl_u,
+    ctrl_k,
     alt_s,
     alt_f,
     page_up,
     page_down,
+    home,
+    end,
     unknown,
 };
 
@@ -49,6 +56,11 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
             'j' => return .ctrl_j,
             'c' => return .ctrl_c, // defensive — ISIG normally routes Ctrl+C to SIGINT
             'd' => return .ctrl_d,
+            'a' => return .ctrl_a,
+            'e' => return .ctrl_e,
+            'w' => return .ctrl_w,
+            'u' => return .ctrl_u,
+            'k' => return .ctrl_k,
             else => {},
         }
     }
@@ -65,6 +77,8 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
         vaxis.Key.delete => return .delete,
         vaxis.Key.page_up, vaxis.Key.kp_page_up => return .page_up,
         vaxis.Key.page_down, vaxis.Key.kp_page_down => return .page_down,
+        vaxis.Key.home, vaxis.Key.kp_home => return .home,
+        vaxis.Key.end, vaxis.Key.kp_end => return .end,
         else => {},
     }
 
@@ -116,6 +130,23 @@ test "mapKey: ctrl chords" {
     try std.testing.expect(mapKey(.{ .codepoint = 'j', .mods = .{ .ctrl = true } }, &out) == .ctrl_j);
     try std.testing.expect(mapKey(.{ .codepoint = 'c', .mods = .{ .ctrl = true } }, &out) == .ctrl_c);
     try std.testing.expect(mapKey(.{ .codepoint = 'd', .mods = .{ .ctrl = true } }, &out) == .ctrl_d);
+}
+
+test "mapKey: ctrl editing chords (a/e/w/u/k)" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(.{ .codepoint = 'a', .mods = .{ .ctrl = true } }, &out) == .ctrl_a);
+    try std.testing.expect(mapKey(.{ .codepoint = 'e', .mods = .{ .ctrl = true } }, &out) == .ctrl_e);
+    try std.testing.expect(mapKey(.{ .codepoint = 'w', .mods = .{ .ctrl = true } }, &out) == .ctrl_w);
+    try std.testing.expect(mapKey(.{ .codepoint = 'u', .mods = .{ .ctrl = true } }, &out) == .ctrl_u);
+    try std.testing.expect(mapKey(.{ .codepoint = 'k', .mods = .{ .ctrl = true } }, &out) == .ctrl_k);
+}
+
+test "mapKey: home / end (keypad and edit keys)" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(k(vaxis.Key.home), &out) == .home);
+    try std.testing.expect(mapKey(k(vaxis.Key.end), &out) == .end);
+    try std.testing.expect(mapKey(k(vaxis.Key.kp_home), &out) == .home);
+    try std.testing.expect(mapKey(k(vaxis.Key.kp_end), &out) == .end);
 }
 
 test "mapKey: printable ASCII encodes one byte" {

@@ -329,11 +329,13 @@ test "gate11_lifecycle_real_agent_ordering" {
     var saw_terminal = false;
     var assistant_cards: u32 = 0;
     for (snap[0..n]) |slot| {
+        // tui-polish-001 compaction: run_start no longer publishes a card
+        // (header cfg + state:busy surface it).
         if (std.mem.eql(u8, slot.titleSlice(), "run_start")) saw_start = true;
         if (std.mem.eql(u8, slot.titleSlice(), "run_terminal")) saw_terminal = true;
         if (std.mem.startsWith(u8, slot.titleSlice(), "assistant")) assistant_cards += 1;
     }
-    try std.testing.expect(saw_start);
+    try std.testing.expect(!saw_start);
     try std.testing.expect(saw_terminal);
     // Observer must not create a second distinct assistant identity card.
     try std.testing.expect(assistant_cards <= 1);
@@ -360,10 +362,71 @@ test "gate12_end_only_tool_end_via_lifecycle_emit" {
     var snap: [c.card_slots]cards.CardSlot = undefined;
     const n = app.card_ring.snapshot(&snap);
     try std.testing.expect(n >= 1);
-    try std.testing.expect(std.mem.startsWith(u8, snap[0].titleSlice(), "tool end"));
+    // tui-polish-001 compaction: end-only emit publishes the merged row title.
+    try std.testing.expectEqualStrings("tool write_file", snap[0].titleSlice());
     for (snap[0..n]) |s| {
         try std.testing.expect(!std.mem.startsWith(u8, s.titleSlice(), "tool start"));
     }
+}
+
+test "gate13b_tool_pair_merges_to_one_row" {
+    // tool_start + tool_end pair → exactly ONE `tool {name}` row; the live
+    // "tool start {name}" card is replaced (never a second final card).
+    const gpa = std.testing.allocator;
+    const app = try app_mod.App.create(gpa);
+    defer app.destroy();
+    var r = try coding.redact.Redactor.init(gpa, .{ .patterns = false });
+    defer r.deinit();
+    app.redactor = &r;
+    const obs = app_mod.App.lifecycleObserver(app);
+    obs.emit(.{ .tool_start = .{
+        .turn = 1,
+        .call_index = 0,
+        .id = "t1",
+        .name = "write_file",
+        .arguments = "{}",
+    } });
+    obs.emit(.{ .tool_end = .{
+        .turn = 1,
+        .call_index = 0,
+        .id = "t1",
+        .name = "write_file",
+        .body = "ok=true",
+    } });
+    var snap: [c.card_slots]cards.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    var tool_rows: u32 = 0;
+    for (snap[0..n]) |s| {
+        if (!s.occupied) continue;
+        if (std.mem.startsWith(u8, s.titleSlice(), "tool ")) {
+            tool_rows += 1;
+            try std.testing.expectEqualStrings("tool write_file", s.titleSlice());
+            try std.testing.expectEqualStrings("ok=true", s.bodySlice());
+        }
+        try std.testing.expect(!std.mem.startsWith(u8, s.titleSlice(), "tool start"));
+    }
+    try std.testing.expectEqual(@as(u32, 1), tool_rows);
+}
+
+test "gate13c_control_applied_publishes_no_card" {
+    // Steering/follow-up are surfaced by the header S:/F: counters; the
+    // lifecycle event must not add transcript noise.
+    const gpa = std.testing.allocator;
+    const app = try app_mod.App.create(gpa);
+    defer app.destroy();
+    var r = try coding.redact.Redactor.init(gpa, .{ .patterns = false });
+    defer r.deinit();
+    app.redactor = &r;
+    app_mod.App.lifecycleObserver(app).emit(.{
+        .control_applied = .{
+            .kind = .steering,
+            .next_turn = 1,
+            .text = "go on",
+        },
+    });
+    var snap: [c.card_slots]cards.CardSlot = undefined;
+    const n = app.card_ring.snapshot(&snap);
+    try std.testing.expectEqual(@as(usize, 0), n);
 }
 
 test "gate13_open_tool_plus_terminal_truth" {

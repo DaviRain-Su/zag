@@ -65,24 +65,24 @@ var last_drawn_state: ?UiState = null;
 
 /// Render full frame. Permission modal fields come from a lock-safe snapshot.
 /// `size` is the authoritative geometry: the screen is resized first if it
-/// drifted (belt-and-braces on top of winsize events).
+/// drifted (belt-and-braces on top of winsize events). `layout` is computed
+/// by the caller (paint() keeps the cards region height for page scrolling).
 pub fn renderFrame(
     term: *terminal.Terminal,
     size: terminal.Size,
+    layout: layout_mod.Layout,
     facts: StatusFacts,
     snap: []const cards.CardSlot,
     ed: *const editor.Editor,
     modal: permission.ModalSnapshot,
     palette: *const theme_mod.Palette,
     ov: OverlayPaint,
-    scroll_from_bottom: usize,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
         term.vx.queueRefresh();
         last_drawn_state = facts.state;
     }
-    const layout = layout_mod.compute(size, snap.len, modal.pending, facts.status_note.len > 0, scroll_from_bottom);
     // The vaxis screen borrows cell graphemes from the formatted lines; the
     // store must outlive `render()` below (and lives across paints).
     term.scratch.len = 0;
@@ -114,10 +114,42 @@ fn drawFrame(
             drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
         },
         .full => {
-            drawHeader(childRegion(root, layout.header), layout.mode, facts, palette, store);
-            drawCards(childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store);
-            drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
-            drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, palette, store);
+            // Closed frame (tui-polish-001): every region is a vaxis bordered
+            // child. The header's top border opens the frame, the cards/editor
+            // top borders draw `├ … ┤` separators on the shared side rails,
+            // and the status region's bottom border closes it. Labels are
+            // overlaid on the border rows (drawModal pattern).
+            const border_style = palette.style(.card_border);
+            const header_win = borderedChild(root, layout.header, .{
+                .where = .{ .other = .{ .top = true, .left = true, .right = true } },
+                .glyphs = .single_square,
+                .style = border_style,
+            });
+            const cards_win = borderedChild(root, layout.cards, .{
+                .where = .{ .other = .{ .top = true, .left = true, .right = true } },
+                .glyphs = .{ .custom = .{ "├", "─", "┤", "│", "┘", "└" } },
+                .style = border_style,
+            });
+            const editor_win = borderedChild(root, layout.editor, .{
+                .where = .{ .other = .{ .top = true, .left = true, .right = true } },
+                .glyphs = .{ .custom = .{ "├", "─", "┤", "│", "┘", "└" } },
+                .style = border_style,
+            });
+            const status_win = borderedChild(root, layout.status, .{
+                .where = .{ .other = .{ .left = true, .right = true, .bottom = true } },
+                .glyphs = .single_square,
+                .style = border_style,
+            });
+
+            drawHeader(header_win, layout.mode, facts, palette, store);
+            drawCards(cards_win, layout.cards_window, layout.mode, snap, palette, store);
+            drawEditor(editor_win, layout.mode, ed, palette);
+            drawStatus(status_win, layout.mode, facts, ed, palette, store);
+
+            overlayLineTitle(root, layout.header, " zag  tui ", palette.style(.status_fg));
+            overlayLineTitle(root, layout.cards, " transcript ", border_style);
+            overlayLineTitle(root, layout.editor, " editor ", border_style);
+
             if (layout.modal) |m| drawModal(root, m, modal, palette, store);
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
@@ -133,6 +165,26 @@ fn childRegion(root: vaxis.Window, region: layout_mod.Region) vaxis.Window {
     });
 }
 
+/// Bordered child over a layout region (interior insets by the drawn sides).
+fn borderedChild(root: vaxis.Window, region: layout_mod.Region, border: vaxis.Window.BorderOptions) vaxis.Window {
+    return root.child(.{
+        .x_off = region.x,
+        .y_off = region.y,
+        .width = region.w,
+        .height = region.h,
+        .border = border,
+    });
+}
+
+/// Overlay a label on a region's top border row (drawModal title pattern).
+fn overlayLineTitle(root: vaxis.Window, region: layout_mod.Region, text: []const u8, style: vaxis.Style) void {
+    _ = root.printSegment(.{ .text = text, .style = style }, .{
+        .col_offset = region.x + 2,
+        .row_offset = region.y,
+        .wrap = .none,
+    });
+}
+
 fn printLine(win: vaxis.Window, row: u16, text: []const u8) void {
     _ = win.printSegment(.{ .text = text }, .{ .row_offset = row, .wrap = .none });
 }
@@ -145,7 +197,7 @@ fn printLineStyled(win: vaxis.Window, row: u16, text: []const u8, style: vaxis.S
 }
 
 fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, palette: *const theme_mod.Palette, store: *terminal.LineStore) void {
-    const header_style = palette.style(.status_fg);
+    const header_style = mergedFgBg(palette, .status_fg, .status_bg);
     var row: u16 = 0;
     if (mode == .constrained) {
         if (row < win.height) {
@@ -153,12 +205,10 @@ fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, pale
         }
         return;
     }
+    // Full mode: the frame's top border + title are drawn by drawFrame; the
+    // interior starts at the id line.
     if (row < win.height) {
-        printLineStyled(win, row, "┌─ zag  tui ─", header_style);
-        row += 1;
-    }
-    if (row < win.height) {
-        if (store.format("│ id: {s}  open:{s} cfg:{s}", .{
+        if (store.format(" id: {s}  open:{s} cfg:{s}", .{
             facts.id_display,
             facts.open_display,
             if (facts.session_configured) "y" else "n",
@@ -176,7 +226,7 @@ fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, pale
                 facts.followup_pending,
             }) catch "";
         }
-        if (store.format("│ perm:{s}  shell:{s}  state:{s}{s}", .{
+        if (store.format(" perm:{s}  shell:{s}  state:{s}{s}", .{
             facts.perm,
             facts.shell,
             stateName(facts.state),
@@ -187,10 +237,18 @@ fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, pale
         row += 1;
     }
     if (facts.status_note.len > 0 and row < win.height) {
-        if (store.format("│ note: {s}", .{facts.status_note})) |s| {
+        if (store.format(" note: {s}", .{facts.status_note})) |s| {
             printLineStyled(win, row, s, header_style);
         }
     }
+}
+
+/// Merge an `*_fg` and an `*_bg` role into one style (bg roles parse to
+/// `.bg`; builtins leave the bg default).
+fn mergedFgBg(palette: *const theme_mod.Palette, fg_role: theme_mod.Role, bg_role: theme_mod.Role) vaxis.Style {
+    const fg = palette.style(fg_role);
+    const bg = palette.style(bg_role);
+    return .{ .fg = fg.fg, .bg = bg.bg };
 }
 
 fn drawCards(
@@ -201,38 +259,38 @@ fn drawCards(
     palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
 ) void {
-    const card_style = palette.style(.card_fg);
-    _ = card_style;
     var row: u16 = 0;
     const w: u16 = win.width;
     const title_limit = @min(@as(usize, 128), @max(@as(usize, w), 2) - 2);
     const body_limit = @min(@as(usize, 120), @max(@as(usize, w), 3) - 3);
 
     if (mode == .full) {
-        if (row < win.height) {
-            printLineStyled(win, row, "├─ transcript ─", palette.style(.muted_fg));
-            row += 1;
-        }
+        // The `├ … ┤` separator row is the region's border (drawFrame); the
+        // interior starts at the first card.
         if (window.count == 0) {
             if (row < win.height) {
-                printLine(win, row, "│ (no events yet)");
+                printLineStyled(win, row, "(no events yet)", palette.style(.card_fg));
             }
             return;
         }
         var i: usize = 0;
         while (i < window.count and row < win.height) : (i += 1) {
             const card = &snap[window.start + i];
+            const style = cardStyle(card.kind, palette);
             if (row < win.height) {
                 const title = present.utf8Prefix(card.titleSlice(), title_limit);
-                if (store.format("│ · {s}", .{title})) |s| {
-                    printLine(win, row, s);
+                if (store.format("· {s}", .{title})) |s| {
+                    printLineStyled(win, row, s, style);
                 }
                 row += 1;
             }
-            if (card.body_len > 0 and row < win.height) {
+            // Body preview only for assistant cards (tool/terminal/host-error
+            // rows stay single-title — transcript compaction).
+            const is_assistant = std.mem.startsWith(u8, card.titleSlice(), "assistant");
+            if (is_assistant and card.body_len > 0 and row < win.height) {
                 const preview = present.utf8Prefix(card.bodySlice(), body_limit);
-                if (store.format("│   {s}", .{preview})) |s| {
-                    printLine(win, row, s);
+                if (store.format("  {s}", .{preview})) |s| {
+                    printLineStyled(win, row, s, style);
                 }
                 row += 1;
             }
@@ -247,15 +305,25 @@ fn drawCards(
         const card = &snap[window.start + i];
         const title = present.utf8Prefix(card.titleSlice(), title_limit);
         if (store.format("· {s}", .{title})) |s| {
-            printLine(win, row, s);
+            printLineStyled(win, row, s, cardStyle(card.kind, palette));
         }
         row += 1;
     }
 }
 
+/// card.kind drives color: host_error → error_fg, terminal/drop_note →
+/// muted_fg, ordinary → card_fg.
+fn cardStyle(kind: cards.CardKind, palette: *const theme_mod.Palette) vaxis.Style {
+    return switch (kind) {
+        .host_error => palette.style(.error_fg),
+        .terminal, .drop_note => palette.style(.muted_fg),
+        .ordinary => palette.style(.card_fg),
+    };
+}
+
 fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor, palette: *const theme_mod.Palette) void {
-    const editor_style = palette.style(.editor_fg);
-    var row: u16 = 0;
+    const editor_style = mergedFgBg(palette, .editor_fg, .editor_bg);
+    const row: u16 = 0;
     const content = ed.slice();
     const first_line = singleLine(content);
     if (mode == .constrained) {
@@ -270,18 +338,17 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
         }
         return;
     }
+    // Full mode: the `├ … ┤` separator row is the region's border; the
+    // single fixed content row is the first editor line, clipped like card
+    // bodies. The interior ` > ` maps to the same absolute cursor column the
+    // pre-vaxis `│ > ` frame used (the `│` moved into the border).
     if (row < win.height) {
-        printLine(win, row, "├─ editor ─");
-        row += 1;
-    }
-    // Fixed content row: the first editor line, clipped like card bodies.
-    if (row < win.height) {
-        _ = win.printSegment(.{ .text = "│ > ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
+        _ = win.printSegment(.{ .text = " > ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
         if (first_line.len > 0) {
-            _ = win.printSegment(.{ .text = first_line }, .{ .row_offset = row, .col_offset = 4, .wrap = .none });
+            _ = win.printSegment(.{ .text = first_line }, .{ .row_offset = row, .col_offset = 3, .wrap = .none });
         }
         const prefix = if (ed.cursor <= first_line.len) content[0..ed.cursor] else first_line;
-        win.showCursor(4 + win.gwidth(prefix), row);
+        win.showCursor(3 + win.gwidth(prefix), row);
     }
 }
 
@@ -301,7 +368,7 @@ fn drawStatus(
         }
         return;
     }
-    if (store.format("│ model:{s} theme:{s} [{d}/{d}] [/ palette · PgUp/Dn]", .{
+    if (store.format(" model:{s} theme:{s} [{d}/{d}] [/ palette · PgUp/Dn]", .{
         facts.model,
         facts.theme_id,
         ed.len,
@@ -311,9 +378,9 @@ fn drawStatus(
     }
 }
 
-/// Modal overlay: rounded vaxis border + style (the visual upgrade), title
-/// printed over the top border, two content rows inside. Geometry is
-/// layout.zig's.
+/// Modal overlay: rounded vaxis border in `modal_border` + content in
+/// `modal_fg` (the visual upgrade), title printed over the top border, two
+/// content rows inside. Geometry is layout.zig's.
 fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.ModalSnapshot, palette: *const theme_mod.Palette, store: *terminal.LineStore) void {
     const modal_style = palette.style(.modal_fg);
     const inner = root.child(.{
@@ -324,7 +391,7 @@ fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.Mo
         .border = .{
             .where = .all,
             .glyphs = .single_rounded,
-            .style = modal_style,
+            .style = palette.style(.modal_border),
         },
     });
     if (inner.width == 0 or inner.height == 0) return;
@@ -343,12 +410,12 @@ fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.Mo
             modal.args_len,
             if (modal.tool_name_len == 0) "—" else modal.toolNameSlice(),
         })) |s| {
-            printLine(inner, row, s);
+            printLineStyled(inner, row, s, modal_style);
         }
         row += 1;
     }
     if (row < inner.height) {
-        printLine(inner, row, "[a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny");
+        printLineStyled(inner, row, "[a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny", modal_style);
     }
 }
 
@@ -373,7 +440,7 @@ fn drawHostOverlay(
         .border = .{
             .where = .all,
             .glyphs = .single_rounded,
-            .style = style,
+            .style = palette.style(.modal_border),
         },
     });
     if (box.width == 0 or box.height == 0) return;
@@ -503,6 +570,146 @@ fn expectRowContains(screen: *const vaxis.Screen, row: u16, needle: []const u8) 
     try std.testing.expect(std.mem.indexOf(u8, actual, needle) != null);
 }
 
+/// Assert the cell style fg at (col,row) is an index color equal to `expected`.
+fn expectCellFgIndex(screen: *const vaxis.Screen, col: u16, row: u16, expected: u8) !void {
+    const cell = screen.readCell(col, row) orelse return error.TestUnexpectedResult;
+    switch (cell.style.fg) {
+        .index => |i| try std.testing.expectEqual(expected, i),
+        else => return error.TestUnexpectedResult,
+    }
+}
+
+/// UTF-8 codepoint count of `s` (== cell count for single-width glyphs).
+fn utf8CellCount(s: []const u8) ?usize {
+    return std.unicode.utf8CountCodepoints(s) catch null;
+}
+
+/// Assert a bordered content row: `│` + interior padded to width-2 cells +
+/// `│`. Padding is CELL-based so multi-byte interior glyphs (· —) pad right.
+fn expectBorderedRow(screen: *const vaxis.Screen, row: u16, interior: []const u8) !void {
+    const interior_cells = utf8CellCount(interior) orelse return error.TestUnexpectedResult;
+    if (interior_cells > @as(usize, screen.width) - 2) return error.TestUnexpectedResult;
+    var buf: [1024]u8 = undefined;
+    var n: usize = 0;
+    const vertical: []const u8 = "│";
+    @memcpy(buf[n..][0..vertical.len], vertical);
+    n += vertical.len;
+    @memcpy(buf[n..][0..interior.len], interior);
+    n += interior.len;
+    const pad = @as(usize, screen.width) - 2 - interior_cells;
+    @memset(buf[n .. n + pad], ' ');
+    n += pad;
+    @memcpy(buf[n..][0..vertical.len], vertical);
+    n += vertical.len;
+    try expectRowEquals(screen, row, buf[0..n]);
+}
+
+/// Assert a separator row: `├─` + label + `─`… + `┤` (label cell count).
+fn expectSeparatorRow(screen: *const vaxis.Screen, row: u16, label: []const u8) !void {
+    const label_cells = utf8CellCount(label) orelse return error.TestUnexpectedResult;
+    var buf: [1024]u8 = undefined;
+    var n: usize = 0;
+    const prefix: []const u8 = "├─";
+    const h: []const u8 = "─";
+    const suffix: []const u8 = "┤";
+    @memcpy(buf[n..][0..prefix.len], prefix);
+    n += prefix.len;
+    @memcpy(buf[n..][0..label.len], label);
+    n += label.len;
+    var cells: usize = 2 + label_cells;
+    while (cells < @as(usize, screen.width) - 1) : (cells += 1) {
+        @memcpy(buf[n..][0..h.len], h);
+        n += h.len;
+    }
+    @memcpy(buf[n..][0..suffix.len], suffix);
+    n += suffix.len;
+    try expectRowEquals(screen, row, buf[0..n]);
+}
+
+/// Assert the frame's top border row: `┌─` + title + `─`… + `┐`.
+fn expectTopBorderRow(screen: *const vaxis.Screen, row: u16, title: []const u8) !void {
+    const title_cells = utf8CellCount(title) orelse return error.TestUnexpectedResult;
+    var buf: [1024]u8 = undefined;
+    var n: usize = 0;
+    const prefix: []const u8 = "┌─";
+    const h: []const u8 = "─";
+    const suffix: []const u8 = "┐";
+    @memcpy(buf[n..][0..prefix.len], prefix);
+    n += prefix.len;
+    @memcpy(buf[n..][0..title.len], title);
+    n += title.len;
+    var cells: usize = 2 + title_cells;
+    while (cells < @as(usize, screen.width) - 1) : (cells += 1) {
+        @memcpy(buf[n..][0..h.len], h);
+        n += h.len;
+    }
+    @memcpy(buf[n..][0..suffix.len], suffix);
+    n += suffix.len;
+    try expectRowEquals(screen, row, buf[0..n]);
+}
+
+/// Assert the frame's bottom border row: `└` + `─`… + `┘`.
+fn expectBottomBorderRow(screen: *const vaxis.Screen, row: u16) !void {
+    var buf: [1024]u8 = undefined;
+    var n: usize = 0;
+    const prefix: []const u8 = "└";
+    const h: []const u8 = "─";
+    const suffix: []const u8 = "┘";
+    @memcpy(buf[n..][0..prefix.len], prefix);
+    n += prefix.len;
+    var cells: usize = 1;
+    while (cells < @as(usize, screen.width) - 1) : (cells += 1) {
+        @memcpy(buf[n..][0..h.len], h);
+        n += h.len;
+    }
+    @memcpy(buf[n..][0..suffix.len], suffix);
+    n += suffix.len;
+    try expectRowEquals(screen, row, buf[0..n]);
+}
+
+/// Assert the modal's top border row (rounded, title overlaid): `╭─` +
+/// "permission (modal)" + `─`… + `╮`.
+fn expectModalTopRow(screen: *const vaxis.Screen, row: u16) !void {
+    const title: []const u8 = "permission (modal)";
+    const title_cells = utf8CellCount(title) orelse return error.TestUnexpectedResult;
+    var buf: [1024]u8 = undefined;
+    var n: usize = 0;
+    const prefix: []const u8 = "╭─";
+    const h: []const u8 = "─";
+    const suffix: []const u8 = "╮";
+    @memcpy(buf[n..][0..prefix.len], prefix);
+    n += prefix.len;
+    @memcpy(buf[n..][0..title.len], title);
+    n += title.len;
+    var cells: usize = 2 + title_cells;
+    while (cells < @as(usize, screen.width) - 1) : (cells += 1) {
+        @memcpy(buf[n..][0..h.len], h);
+        n += h.len;
+    }
+    @memcpy(buf[n..][0..suffix.len], suffix);
+    n += suffix.len;
+    try expectRowEquals(screen, row, buf[0..n]);
+}
+
+/// Assert the modal's bottom border row: `╰` + `─`… + `╯`.
+fn expectModalBottomRow(screen: *const vaxis.Screen, row: u16) !void {
+    var buf: [1024]u8 = undefined;
+    var n: usize = 0;
+    const prefix: []const u8 = "╰";
+    const h: []const u8 = "─";
+    const suffix: []const u8 = "╯";
+    @memcpy(buf[n..][0..prefix.len], prefix);
+    n += prefix.len;
+    var cells: usize = 1;
+    while (cells < @as(usize, screen.width) - 1) : (cells += 1) {
+        @memcpy(buf[n..][0..h.len], h);
+        n += h.len;
+    }
+    @memcpy(buf[n..][0..suffix.len], suffix);
+    n += suffix.len;
+    try expectRowEquals(screen, row, buf[0..n]);
+}
+
 /// Editor storage outlives the fixture (file-scope global).
 var fixture_editor_storage: [c.editor_max_bytes]u8 = undefined;
 
@@ -515,9 +722,11 @@ const RenderFixture = struct {
 };
 
 fn fixedFixture() RenderFixture {
-    var c0 = cards.CardSlot{ .occupied = true, .title_len = 9, .body_len = 20 };
-    @memcpy(c0.title[0..9], "run_start");
-    @memcpy(c0.body[0..20], "session_configured=y");
+    // Post-compaction transcript shape: a tool row (ordinary kind, body kept
+    // but NOT previewed) + an assistant card (body previewed).
+    var c0 = cards.CardSlot{ .occupied = true, .title_len = 15, .body_len = 13 };
+    @memcpy(c0.title[0..15], "tool write_file");
+    @memcpy(c0.body[0..13], "id=t1 args={}");
     var c1 = cards.CardSlot{ .occupied = true, .title_len = 16, .body_len = 11 };
     @memcpy(c1.title[0..16], "assistant turn=1");
     @memcpy(c1.body[0..11], "hello world");
@@ -555,46 +764,57 @@ fn fixedFixture() RenderFixture {
     };
 }
 
-// Full-mode parity (tui-vaxis-001): the pre-vaxis GOLDEN_FULL frame at
-// 80×24 translated into cells. Rows outside the modal match byte-for-byte;
-// the modal is the sanctioned visual upgrade (rounded border + style) with
-// the same interior content.
-test "render full-mode cells match pre-vaxis golden (80x24)" {
+// Full-mode frame (tui-polish-001): the four regions draw as vaxis bordered
+// children — top border with the "zag tui" title, `├ … ┤` separators on the
+// transcript/editor rows, shared side rails, bottom border closing the frame.
+// The permission modal keeps its rounded border + interior rows.
+test "render full-mode cells match the closed-frame golden (80x24)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
     var cs: CellScreen = undefined;
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, f.modal);
     defer cs.deinit(gpa);
 
-    try expectRowEquals(&cs.screen, 0, "┌─ zag  tui ─");
-    try expectRowEquals(&cs.screen, 1, "│ id: sess-abc  open:create_new cfg:y");
-    try expectRowEquals(&cs.screen, 2, "│ perm:ask  shell:protect  state:busy  S:2 F:1");
-    try expectRowEquals(&cs.screen, 3, "├─ transcript ─");
-    try expectRowEquals(&cs.screen, 4, "│ · run_start");
-    try expectRowEquals(&cs.screen, 5, "│   session_configured=y");
-    try expectRowEquals(&cs.screen, 6, "│ · assistant turn=1");
-    try expectRowEquals(&cs.screen, 7, "│   hello world");
-    try expectRowEquals(&cs.screen, 21, "├─ editor ─");
-    try expectRowEquals(&cs.screen, 22, "│ > ");
-    try expectRowEquals(&cs.screen, 23, "│ model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
-    // Rows the golden frame clears stay blank cells.
-    var row: u16 = 8;
-    while (row < 17) : (row += 1) try expectRowEquals(&cs.screen, row, "");
+    // Header: top border (title overlaid), two content rows, no bottom edge
+    // (the transcript separator is the cards region's top border).
+    try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
+    try expectBorderedRow(&cs.screen, 1, " id: sess-abc  open:create_new cfg:y");
+    try expectBorderedRow(&cs.screen, 2, " perm:ask  shell:protect  state:busy  S:2 F:1");
+    // Transcript separator + card rows (tool row single title, assistant
+    // title + body preview), then the cards region's side rails to row 15.
+    try expectSeparatorRow(&cs.screen, 3, " transcript ");
+    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 5, "· assistant turn=1");
+    try expectBorderedRow(&cs.screen, 6, "  hello world");
+    var row: u16 = 7;
+    while (row < 16) : (row += 1) try expectBorderedRow(&cs.screen, row, "");
+    // Modal: rounded border at rows 16-19 (full width), title + two rows.
+    try expectModalTopRow(&cs.screen, 16);
+    try expectBorderedRow(&cs.screen, 17, "risk:medium  args_len:23  tool:write_file");
+    try expectBorderedRow(&cs.screen, 18, "[a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny");
+    try expectModalBottomRow(&cs.screen, 19);
+    // Editor separator + content, status line, bottom border closes the frame.
+    try expectSeparatorRow(&cs.screen, 20, " editor ");
+    try expectBorderedRow(&cs.screen, 21, " > ");
+    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
+    try expectBottomBorderRow(&cs.screen, 23);
 
-    // Modal: rounded border cells present; interior content at the pre-vaxis
-    // positions (content starts one cell inside the border, like the old
-    // `│`-prefixed lines).
-    try expectCellEquals(&cs.screen, 0, 17, "╭");
-    try expectCellEquals(&cs.screen, 79, 17, "╮");
-    try expectCellEquals(&cs.screen, 0, 20, "╰");
-    try expectCellEquals(&cs.screen, 79, 20, "╯");
-    try expectCellEquals(&cs.screen, 0, 18, "│");
-    try expectCellEquals(&cs.screen, 79, 18, "│");
-    try expectCellEquals(&cs.screen, 0, 19, "│");
-    try expectCellEquals(&cs.screen, 79, 19, "│");
-    try expectRowContains(&cs.screen, 17, "permission (modal)");
-    try expectRowContains(&cs.screen, 18, "risk:medium  args_len:23  tool:write_file");
-    try expectRowContains(&cs.screen, 19, "[a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny");
+    // Cell-level frame closure: every corner/edge glyph of the outer frame.
+    try expectCellEquals(&cs.screen, 0, 0, "┌");
+    try expectCellEquals(&cs.screen, 79, 0, "┐");
+    try expectCellEquals(&cs.screen, 0, 23, "└");
+    try expectCellEquals(&cs.screen, 79, 23, "┘");
+    try expectCellEquals(&cs.screen, 0, 3, "├");
+    try expectCellEquals(&cs.screen, 79, 3, "┤");
+    try expectCellEquals(&cs.screen, 0, 20, "├");
+    try expectCellEquals(&cs.screen, 79, 20, "┤");
+    try expectCellEquals(&cs.screen, 0, 1, "│");
+    try expectCellEquals(&cs.screen, 79, 1, "│");
+    // Modal corner cells (rounded family).
+    try expectCellEquals(&cs.screen, 0, 16, "╭");
+    try expectCellEquals(&cs.screen, 79, 16, "╮");
+    try expectCellEquals(&cs.screen, 0, 19, "╰");
+    try expectCellEquals(&cs.screen, 79, 19, "╯");
 }
 
 test "render wide frame 130 cols matches golden rows (no truncation)" {
@@ -604,21 +824,23 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     try drawFixture(&cs, gpa, 130, 24, f.facts_full, &f.snap, &f.ed, f.modal);
     defer cs.deinit(gpa);
 
-    try expectRowEquals(&cs.screen, 0, "┌─ zag  tui ─");
-    try expectRowEquals(&cs.screen, 1, "│ id: sess-abc  open:create_new cfg:y");
-    try expectRowEquals(&cs.screen, 2, "│ perm:ask  shell:protect  state:busy  S:2 F:1");
-    try expectRowEquals(&cs.screen, 3, "├─ transcript ─");
-    try expectRowEquals(&cs.screen, 4, "│ · run_start");
-    try expectRowEquals(&cs.screen, 5, "│   session_configured=y");
-    try expectRowEquals(&cs.screen, 6, "│ · assistant turn=1");
-    try expectRowEquals(&cs.screen, 7, "│   hello world");
-    try expectRowEquals(&cs.screen, 21, "├─ editor ─");
-    try expectRowEquals(&cs.screen, 22, "│ > ");
-    try expectRowEquals(&cs.screen, 23, "│ model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
-    try expectRowContains(&cs.screen, 17, "permission (modal)");
+    try expectTopBorderRow(&cs.screen, 0, " zag  tui ");
+    try expectBorderedRow(&cs.screen, 1, " id: sess-abc  open:create_new cfg:y");
+    try expectBorderedRow(&cs.screen, 2, " perm:ask  shell:protect  state:busy  S:2 F:1");
+    try expectSeparatorRow(&cs.screen, 3, " transcript ");
+    try expectBorderedRow(&cs.screen, 4, "· tool write_file");
+    try expectBorderedRow(&cs.screen, 5, "· assistant turn=1");
+    try expectBorderedRow(&cs.screen, 6, "  hello world");
+    try expectSeparatorRow(&cs.screen, 20, " editor ");
+    try expectBorderedRow(&cs.screen, 21, " > ");
+    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
+    try expectBottomBorderRow(&cs.screen, 23);
+    try expectModalTopRow(&cs.screen, 16);
     // Wide modal border spans the full width.
-    try expectCellEquals(&cs.screen, 0, 17, "╭");
-    try expectCellEquals(&cs.screen, 129, 17, "╮");
+    try expectCellEquals(&cs.screen, 0, 16, "╭");
+    try expectCellEquals(&cs.screen, 129, 16, "╮");
+    try expectCellEquals(&cs.screen, 0, 23, "└");
+    try expectCellEquals(&cs.screen, 129, 23, "┘");
 }
 
 test "render constrained-mode cells match pre-vaxis golden (30x8)" {
@@ -631,7 +853,7 @@ test "render constrained-mode cells match pre-vaxis golden (30x8)" {
     try expectRowEquals(&cs.screen, 0, "[zag tui · constrained]");
     try expectRowEquals(&cs.screen, 1, "state=busy id=sess-abc");
     try expectRowEquals(&cs.screen, 2, "· assistant turn=1");
-    try expectRowEquals(&cs.screen, 3, "· run_start");
+    try expectRowEquals(&cs.screen, 3, "· tool write_file");
     try expectRowEquals(&cs.screen, 4, "> ");
     var row: u16 = 5;
     while (row < 8) : (row += 1) try expectRowEquals(&cs.screen, row, "");
@@ -655,22 +877,23 @@ test "render state:{s} text present in header cells (PTY marker contract)" {
     try expectRowContains(&cs_closing.screen, 2, "state:closing");
 }
 
-test "render body preview truncated to region width on UTF-8 boundary" {
+test "render body preview truncated to interior width on UTF-8 boundary" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
-    // 80 cols → body limit = min(120, 77) = 77. A 2-byte é straddles the cut;
-    // the whole codepoint must be dropped (76 a's, no é).
-    var long = cards.CardSlot{ .occupied = true, .title_len = 3, .body_len = 81 };
-    @memcpy(long.title[0..3], "big");
-    @memcpy(long.body[0..76], "a" ** 76);
-    @memcpy(long.body[76..78], "\xc3\xa9");
-    @memcpy(long.body[78..81], "xyz");
+    // 80 cols → interior width 78 → body limit = min(120, 78-3) = 75. A
+    // 2-byte é straddles the cut at byte 74; the whole codepoint must be
+    // dropped (74 a's, no é). Body previews only render for assistant cards.
+    var long = cards.CardSlot{ .occupied = true, .title_len = 16, .body_len = 79 };
+    @memcpy(long.title[0..16], "assistant turn=2");
+    @memcpy(long.body[0..74], "a" ** 74);
+    @memcpy(long.body[74..76], "\xc3\xa9");
+    @memcpy(long.body[76..79], "xyz");
     const snap = [_]cards.CardSlot{ long };
     var cs: CellScreen = undefined;
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectRowEquals(&cs.screen, 5, ("│   " ++ ("a" ** 76)));
+    try expectBorderedRow(&cs.screen, 5, ("  " ++ ("a" ** 74)));
     var row: u16 = 0;
     while (row < 24) : (row += 1) {
         var buf: [512]u8 = undefined;
@@ -678,11 +901,11 @@ test "render body preview truncated to region width on UTF-8 boundary" {
     }
 }
 
-test "render title truncated to region width (min-cap holds)" {
+test "render title truncated to interior width (min-cap holds)" {
     const gpa = std.testing.allocator;
     const f = fixedFixture();
-    // 80 cols → title cap = min(128, 78) = 78; the row clips at 80 cells
-    // (4 for "│ · " + 76 t's).
+    // 80 cols → interior width 78 → title cap = min(128, 78-2) = 76; the row
+    // clips at the interior width: "· " (3) + 75 t's, then the right rail.
     var slot = cards.CardSlot{ .occupied = true, .title_len = 100, .body_len = 0 };
     @memcpy(slot.title[0..100], "t" ** 100);
     const snap = [_]cards.CardSlot{ slot };
@@ -690,7 +913,7 @@ test "render title truncated to region width (min-cap holds)" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectRowEquals(&cs.screen, 4, ("│ · " ++ ("t" ** 76)));
+    try expectBorderedRow(&cs.screen, 4, ("· " ++ ("t" ** 75)));
     var row: u16 = 0;
     while (row < 24) : (row += 1) {
         var buf: [512]u8 = undefined;
@@ -707,11 +930,11 @@ test "render multi-line editor clipped to the fixed content row" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectRowEquals(&cs.screen, 22, "│ > line1");
-    try expectRowEquals(&cs.screen, 23, "│ model:— theme:zag-default [11/65536] [/ palette · PgUp/Dn]");
+    try expectBorderedRow(&cs.screen, 21, " > line1");
+    try expectBorderedRow(&cs.screen, 22, " model:— theme:zag-default [11/65536] [/ palette · PgUp/Dn]");
 }
 
-test "render header strings min-capped to region width" {
+test "render header strings min-capped to interior width" {
     const gpa = std.testing.allocator;
     var f = fixedFixture();
     f.facts_full.id_display = "x" ** 100;
@@ -719,8 +942,8 @@ test "render header strings min-capped to region width" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    // "│ id: " (8 cells) + 72 x's = 80; longer runs must not appear.
-    try expectRowEquals(&cs.screen, 1, ("│ id: " ++ ("x" ** 72)));
+    // Interior is 78 wide: " id: " (5 cells) + 73 x's; the right rail closes.
+    try expectBorderedRow(&cs.screen, 1, (" id: " ++ ("x" ** 73)));
 }
 
 test "render no-events frame" {
@@ -730,7 +953,38 @@ test "render no-events frame" {
     try drawFixture(&cs, gpa, 80, 24, f.facts_full, &.{}, &f.ed, .{});
     defer cs.deinit(gpa);
 
-    try expectRowEquals(&cs.screen, 4, "│ (no events yet)");
+    try expectBorderedRow(&cs.screen, 4, "(no events yet)");
+}
+
+test "render card kind drives fg style" {
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    // One card of each kind; the fg index at the title's first char follows
+    // the kind ramp: ordinary → card_fg (7), terminal/drop_note → muted_fg
+    // (8), host_error → error_fg (1).
+    var ordinary = cards.CardSlot{ .occupied = true, .title_len = 5, .body_len = 0 };
+    @memcpy(ordinary.title[0..5], "alpha");
+    var term_card = cards.CardSlot{ .occupied = true, .kind = .terminal, .title_len = 12, .body_len = 0 };
+    @memcpy(term_card.title[0..12], "run_terminal");
+    var host_error = cards.CardSlot{ .occupied = true, .kind = .host_error, .title_len = 10, .body_len = 0 };
+    @memcpy(host_error.title[0..10], "host_error");
+    var drop_note = cards.CardSlot{ .occupied = true, .kind = .drop_note, .title_len = 4, .body_len = 0 };
+    @memcpy(drop_note.title[0..4], "drop");
+    const snap = [_]cards.CardSlot{ ordinary, term_card, host_error, drop_note };
+    var cs: CellScreen = undefined;
+    try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+
+    // Title text starts at interior col 2 ("· " prefix) → absolute col 3.
+    try expectCellFgIndex(&cs.screen, 3, 4, 7); // ordinary → card_fg
+    try expectCellFgIndex(&cs.screen, 3, 5, 8); // terminal → muted_fg
+    try expectCellFgIndex(&cs.screen, 3, 6, 1); // host_error → error_fg
+    try expectCellFgIndex(&cs.screen, 3, 7, 8); // drop_note → muted_fg
+    // Tool/terminal/host-error cards render as single title rows.
+    try expectBorderedRow(&cs.screen, 4, "· alpha");
+    try expectBorderedRow(&cs.screen, 5, "· run_terminal");
+    try expectBorderedRow(&cs.screen, 6, "· host_error");
+    try expectBorderedRow(&cs.screen, 7, "· drop");
 }
 
 test "render degenerate 20x5 constrained never overflows" {
