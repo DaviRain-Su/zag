@@ -345,7 +345,10 @@ pub const App = struct {
             .run_start => |rs| {
                 self.last_run_started = true;
                 self.session_configured_ui.store(rs.session_configured, .release);
-                self.card_ring.demoteTerminalToOrdinary();
+                // The run_terminal reserve card stays a .terminal-kind card
+                // (drawCards skips it). Demoting it to ordinary put it into
+                // the transcript as "· run_terminal" — user-visible noise
+                // (user feedback).
                 // No card (tui-polish-001 compaction): run start is already
                 // surfaced by the header cfg flag + state:busy.
             },
