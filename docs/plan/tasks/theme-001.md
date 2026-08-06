@@ -1,11 +1,28 @@
 ---
 id: theme-001
 scope: host-shell/theme
-status: ready
+status: done
 priority: P1
 depends-on:
   - tui-minimal-001
 ---
+
+# objective
+
+Host-shell Theme: parse/catalog/role→vaxis.Style in `zag-tui`, fail-closed
+`zag-default`, thin CLI `ThemeHostOptions` (`$HOME/.agents/themes`).
+
+**Binding:** [theme.md](../../modules/theme.md)
+
+**Implementation tip:** canvas-track worktree (theme paint on vaxis render).
+
+# status truth
+
+| Track | Status |
+|-------|--------|
+| Contract freeze | **PASS** @ `9e1b9f9` |
+| Implementation | **done** — `packages/zag-tui/src/theme.zig` + render role styles |
+| Maturity | **unchanged** |
 
 # objective
 

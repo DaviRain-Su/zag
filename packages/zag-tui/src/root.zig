@@ -15,12 +15,16 @@ pub const editor = @import("editor.zig");
 pub const permission = @import("permission.zig");
 pub const keys = @import("keys.zig");
 pub const terminal = @import("terminal.zig");
+pub const theme = @import("theme.zig");
+pub const overlay = @import("overlay.zig");
+pub const slash_route = @import("slash_route.zig");
 pub const layout = @import("layout.zig");
 pub const render = @import("render.zig");
 pub const app = @import("app.zig");
 pub const App = app.App;
 pub const OpenDisplay = app.OpenDisplay;
 pub const TeardownProbe = app.TeardownProbe;
+pub const ThemeHostOptions = theme.ThemeHostOptions;
 
 pub const version = "0.5.0";
 

@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 first edit slice + minimal TUI(+streaming/layout) landed. **Host-shell track:** vaxis backend in flight (not merged as done); Theme `ready` but adapt-after-vaxis; post-TUI remote Gate still Phase A. **D-012 coding track:** `edit-transaction-001` **ready** (contract PASS); supervisor / `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
+| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 first edit slice + minimal TUI(+streaming/layout) + **vaxis backend done** @ `76360ab`. **Host-shell track:** Theme impl next; slash/overlay/transcript/model per [canvas gap](./plan/analysis/2026-08-06-tui-canvas-grok-gap.md); post-TUI remote Gate still Phase A. **D-012 coding track:** `edit-transaction` landed on main; supervisor / `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -30,7 +30,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Extension | E0 静态组合；E2 process；E3 WASM，按 Tool/events/commands/UI 分 Gate |
 | Skill | M2 E1 `skills-001` ✅ at `caafef5`（Runtime Extensions 仍 L0） |
 | Prompt Template | E1 `prompt-templates-001` ✅ at `61326ae` — binding [prompt-templates](./modules/prompt-templates.md); Runtime Extensions L0 |
-| Theme | host-shell passive data + host renderer; binding [theme.md](./modules/theme.md) / [theme-001](./plan/tasks/theme-001.md) (**contract PASS** @ `9e1b9f9`; `status: ready`; **no** implementation) |
+| Theme | host-shell passive data + host renderer; binding [theme.md](./modules/theme.md) / [theme-001](./plan/tasks/theme-001.md) (**done** — role→vaxis.Style; contract PASS @ `9e1b9f9`) |
 | Package | local runtime bundle（E1 + optional E2/E3）；不是执行 tier；E0 不可热安装 |
 | Custom Model | validated runtime data task，独立于 WASM |
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
@@ -196,9 +196,12 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest + review ([tools-edit](./modules/tools-edit.md)) | no multi-file txn (that is `edit-transaction-001`); Tools write/edit stays L2 |
 | [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **ready** — contract **PASS** (dual reviews zero blockers); binding [edit-transaction.md](./modules/edit-transaction.md); D-012 item 1 | dual review done; **fresh Goal** required for impl; orthogonal to TUI/Theme |
 | [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55`; streaming @ `2d57e84`; layout @ `189de9e` | host shell only; no maturity raise |
-| tui-vaxis-001 | **in flight** (binding draft + WIP; not closed) | quarantined backend only; no vxfw wholesale |
+| tui-vaxis-001 | **done** @ `76360ab` | quarantined backend only; no vxfw wholesale |
 | [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** Phase A; TARGET `f352b60…`; Gate green **No** | docs evidence; **no** remote `-Dtui`; no Phase B grant |
-| [theme-001](./plan/tasks/theme-001.md) | **ready** — contract **PASS** @ `9e1b9f9`; **no** merged implementation | implement only after vaxis base lands (adapt unmerged `ff509a6` candidate) |
+| [theme-001](./plan/tasks/theme-001.md) | **done** (canvas track) | after vaxis; [canvas gap](./plan/analysis/2026-08-06-tui-canvas-grok-gap.md) |
+| [tui-slash-host-001](./plan/tasks/tui-slash-host-001.md) | **done** | overlay + skill/template submit route |
+| [tui-transcript-001](./plan/tasks/tui-transcript-001.md) | **done** | scroll window over card ring |
+| [tui-model-settings-001](./plan/tasks/tui-model-settings-001.md) | **done** | model/settings/theme overlays |
 
 Host shell and D-012 coding route run **in parallel**. Theme must not block edit-transaction review/impl. Post-TUI remote Gate does not authorize Theme or vaxis.
 
@@ -230,8 +233,8 @@ public events/control/session
         ├─► runtime-model-catalog-001 (data-only)
         └─► extension-ui-schema-001 (basic intents first; stateful views later)
 
-host shell: tui-minimal → streaming/layout → **vaxis backend (in flight)** → theme-001
-            (Theme ready @ 9e1b9f9; impl after vaxis; adapt unmerged ff509a6)
+host shell: tui-minimal → streaming/layout → **vaxis ✅ `76360ab`** → theme → slash/overlay → transcript → model/settings (**canvas track done**)
+            (Theme ready @ 9e1b9f9; canvas gap 2026-08-06)
 ```
 
 E3 is a formal direction, not current implementation. The first WASM host is compute-only Tool scope; later hooks/commands/Provider/UI worlds require separate Gates. Engine choice remains open until measured/security evidence exists.

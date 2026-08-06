@@ -1,6 +1,7 @@
 //! Address-stable heap App: preallocation, dual-thread host, lifecycle publish.
 
 const std = @import("std");
+const Io = std.Io;
 const builtin = @import("builtin");
 const posix = std.posix;
 const coding = @import("zag-coding-agent");
@@ -14,6 +15,9 @@ const permission_mod = @import("permission.zig");
 const render = @import("render.zig");
 const signal_host = @import("signal_host.zig");
 const terminal_mod = @import("terminal.zig");
+const theme_mod = @import("theme.zig");
+const overlay_mod = @import("overlay.zig");
+const slash_route = @import("slash_route.zig");
 
 pub const SignalHost = signal_host.SignalHost;
 pub const UiState = render.UiState;
@@ -119,6 +123,27 @@ pub const App = struct {
     /// repaint because `paint()` re-reads `term.size()` on every call.
     last_painted_size: ?terminal_mod.Size = null,
 
+    /// theme-001 active palette (fail-closed builtin when load fails).
+    palette: theme_mod.Palette = theme_mod.builtinDefault(),
+    owned_theme_id: ?[]u8 = null,
+    themes_root: ?[]const u8 = null,
+    theme_selected: []const u8 = theme_mod.builtin_id,
+
+    overlay: overlay_mod.Overlay = .{},
+    /// Transcript scroll: 0 = newest window (tui-transcript-001).
+    scroll_from_bottom: usize = 0,
+
+    model_label: []const u8 = "—",
+    /// Borrowed catalog ids from host (CLI arena / static). Cap used at paint.
+    model_ids: []const []const u8 = &.{},
+    /// Scratch lines for overlay paint (rebuilt each paint).
+    overlay_line_bufs: [24][96]u8 = undefined,
+    overlay_line_lens: [24]usize = [_]usize{0} ** 24,
+    overlay_line_ptrs: [24][]const u8 = undefined,
+    overlay_line_count: usize = 0,
+    /// Io handle for Theme FS discovery (set by applyHostPresentation).
+    host_io: ?Io = null,
+
     pub fn create(gpa: std.mem.Allocator) error{ OutOfMemory, PipeFailed }!*App {
         const app = try gpa.create(App);
         errdefer gpa.destroy(app);
@@ -170,6 +195,10 @@ pub const App = struct {
             self.gpa.free(self.worker_prompt);
             self.worker_prompt = &[_]u8{};
         }
+        if (self.owned_theme_id) |id| {
+            self.gpa.free(id);
+            self.owned_theme_id = null;
+        }
         self.gpa.free(self.history_lens);
         self.gpa.free(self.history_entries);
         self.gpa.free(self.editor_storage);
@@ -198,6 +227,47 @@ pub const App = struct {
         self.open_display = open;
         self.perm_label = perm;
         self.shell_label = shell;
+    }
+
+    /// Host presentation options (theme + model catalog labels). Fail-closed theme.
+    pub fn applyHostPresentation(
+        self: *App,
+        io: Io,
+        theme_opts: theme_mod.ThemeHostOptions,
+        model_label: []const u8,
+        model_ids: []const []const u8,
+    ) void {
+        self.host_io = io;
+        self.themes_root = theme_opts.themes_root;
+        if (theme_opts.selected_id) |sel| self.theme_selected = sel;
+        self.reloadTheme();
+        self.model_label = model_label;
+        self.model_ids = model_ids;
+        self.dirty = true;
+    }
+
+    fn reloadTheme(self: *App) void {
+        if (self.owned_theme_id) |id| {
+            self.gpa.free(id);
+            self.owned_theme_id = null;
+        }
+        const io = self.host_io orelse {
+            self.palette = theme_mod.builtinDefault();
+            self.theme_selected = self.palette.id;
+            return;
+        };
+        const resolved = theme_mod.resolveActive(self.gpa, io, .{
+            .themes_root = self.themes_root,
+            .selected_id = self.theme_selected,
+        });
+        self.palette = resolved;
+        if (!std.mem.eql(u8, resolved.id, theme_mod.builtin_id)) {
+            // resolveActive may return owned id inside palette.id
+            if (resolved.id.ptr != theme_mod.builtin_id.ptr) {
+                self.owned_theme_id = @constCast(resolved.id);
+            }
+        }
+        self.theme_selected = self.palette.id;
     }
 
     pub fn idDisplay(self: *const App) []const u8 {
@@ -650,6 +720,10 @@ pub const App = struct {
             }
         }
 
+        if (self.overlay.isOpen()) {
+            return self.handleOverlayKey(key);
+        }
+
         switch (key) {
             .ctrl_c => return .none,
             .ctrl_d => {
@@ -679,10 +753,16 @@ pub const App = struct {
             },
             .escape => {
                 self.setNote("");
+                if (self.overlay.isOpen()) self.overlay.close();
                 return .none;
             },
             .backspace => {
                 self.editor.backspace();
+                if (slash_route.slashFilter(self.editor.slice()) != null) {
+                    if (self.overlay.kind != .slash_palette) self.overlay.open(.slash_palette);
+                } else if (self.overlay.kind == .slash_palette) {
+                    self.overlay.close();
+                }
                 return .none;
             },
             .delete => {
@@ -695,6 +775,14 @@ pub const App = struct {
             },
             .right => {
                 self.editor.moveRight();
+                return .none;
+            },
+            .page_up => {
+                self.scroll_from_bottom +|= 3;
+                return .none;
+            },
+            .page_down => {
+                if (self.scroll_from_bottom >= 3) self.scroll_from_bottom -= 3 else self.scroll_from_bottom = 0;
                 return .none;
             },
             .up => {
@@ -724,12 +812,171 @@ pub const App = struct {
                 return .none;
             },
             .char => |ch| {
-                // UTF-8-encoded codepoint (multi-byte in one insert).
                 _ = self.editor.insert(ch);
+                if (slash_route.slashFilter(self.editor.slice()) != null) {
+                    if (self.overlay.kind != .slash_palette) self.overlay.open(.slash_palette);
+                } else if (self.overlay.kind == .slash_palette) {
+                    self.overlay.close();
+                }
                 return .none;
             },
             .unknown => return .none,
         }
+    }
+
+    fn handleOverlayKey(self: *App, key: keys_mod.AppKey) KeyAction {
+        const count = self.rebuildOverlayLines();
+        switch (key) {
+            .escape => {
+                self.overlay.close();
+                return .none;
+            },
+            .up => {
+                self.overlay.moveUp(count);
+                return .none;
+            },
+            .down => {
+                self.overlay.moveDown(count);
+                return .none;
+            },
+            .enter => {
+                self.activateOverlaySelection();
+                return .none;
+            },
+            .ctrl_d => {
+                self.overlay.close();
+                if (self.state == .busy) return .closing;
+                return .none;
+            },
+            else => return .none,
+        }
+    }
+
+    fn activateOverlaySelection(self: *App) void {
+        const count = self.rebuildOverlayLines();
+        if (count == 0) {
+            self.overlay.close();
+            return;
+        }
+        self.overlay.clampCursor(count);
+        const line = self.overlay_line_ptrs[self.overlay.cursor];
+        switch (self.overlay.kind) {
+            .none => {},
+            .help, .slash_palette => {
+                if (overlay_mod.Builtin.fromName(line)) |b| {
+                    self.overlay.open(b.overlayKind());
+                    _ = self.rebuildOverlayLines();
+                    return;
+                }
+                if (std.mem.eql(u8, line, "skill:name")) {
+                    self.editor.clear();
+                    _ = self.editor.insert("/skill:");
+                    self.overlay.close();
+                    return;
+                }
+                if (std.mem.startsWith(u8, line, "(")) {
+                    self.overlay.close();
+                    return;
+                }
+                self.editor.clear();
+                _ = self.editor.insert("/");
+                _ = self.editor.insert(line);
+                self.overlay.close();
+            },
+            .settings => {
+                self.overlay.close();
+            },
+            .model => {
+                self.model_label = line;
+                if (self.agent) |agent| {
+                    // Host label only — wire model stays at resolve-time unless catalog row found.
+                    _ = agent;
+                }
+                self.setNote("model_selected");
+                self.overlay.close();
+            },
+            .theme => {
+                self.theme_selected = line;
+                self.reloadTheme();
+                self.setNote("theme_selected");
+                self.overlay.close();
+            },
+        }
+    }
+
+    fn rebuildOverlayLines(self: *App) usize {
+        var n: usize = 0;
+        const push = struct {
+            fn go(app: *App, text: []const u8, idx: *usize) void {
+                if (idx.* >= app.overlay_line_bufs.len) return;
+                const cap = app.overlay_line_bufs[idx.*].len;
+                const take = @min(text.len, cap);
+                @memcpy(app.overlay_line_bufs[idx.*][0..take], text[0..take]);
+                app.overlay_line_lens[idx.*] = take;
+                app.overlay_line_ptrs[idx.*] = app.overlay_line_bufs[idx.*][0..take];
+                idx.* += 1;
+            }
+        }.go;
+
+        switch (self.overlay.kind) {
+            .none => {},
+            .help => {
+                push(self, "help", &n);
+                push(self, "settings", &n);
+                push(self, "model", &n);
+                push(self, "theme", &n);
+                push(self, "skill:name", &n);
+                push(self, "(templates: /name)", &n);
+            },
+            .slash_palette => {
+                const filter = slash_route.slashFilter(self.editor.slice()) orelse "";
+                var matches: [overlay_mod.builtin_names.len][]const u8 = undefined;
+                const m = overlay_mod.matchBuiltins(filter, &matches);
+                var i: usize = 0;
+                while (i < m) : (i += 1) push(self, matches[i], &n);
+                if (n == 0) push(self, "(no builtin match — Enter submits)", &n);
+            },
+            .settings => {
+                push(self, self.perm_label, &n);
+                push(self, self.shell_label, &n);
+                push(self, self.model_label, &n);
+                push(self, self.palette.id, &n);
+            },
+            .model => {
+                if (self.model_ids.len == 0) {
+                    push(self, self.model_label, &n);
+                } else {
+                    for (self.model_ids) |id| {
+                        if (n >= self.overlay_line_bufs.len) break;
+                        push(self, id, &n);
+                    }
+                }
+            },
+            .theme => {
+                push(self, theme_mod.builtin_id, &n);
+                // User themes are discovered lazily at select time; listBuiltin only here.
+                if (self.themes_root) |root| {
+                    var list: std.ArrayList([]const u8) = .empty;
+                    defer {
+                        for (list.items) |it| {
+                            if (!std.mem.eql(u8, it, theme_mod.builtin_id)) self.gpa.free(it);
+                        }
+                        list.deinit(self.gpa);
+                    }
+                    if (self.host_io) |io| {
+                        theme_mod.listThemeIds(self.gpa, io, root, &list) catch {};
+                    }
+                    for (list.items) |id| {
+                        if (std.mem.eql(u8, id, theme_mod.builtin_id)) continue;
+                        if (n >= self.overlay_line_bufs.len) break;
+                        push(self, id, &n);
+                    }
+                }
+            },
+        }
+        self.overlay_line_count = n;
+        self.overlay.clampCursor(n);
+        return n;
     }
 
     fn enqueueControl(self: *App, kind: enum { steering, follow_up }) void {
@@ -771,24 +1018,55 @@ pub const App = struct {
         const agent = self.agent orelse return error.StartFailed;
         const session = self.session orelse return error.StartFailed;
         const text = self.editor.slice();
-        self.history.pushAccepted(text);
-        const owned = self.gpa.dupe(u8, text) catch return error.StartFailed;
-        self.worker_prompt = owned;
-        self.editor.clear();
-        self.state = .busy;
-        self.setNote("(starting…)");
-        self.worker_finished.store(false, .release);
-        self.worker_had_error.store(false, .release);
-        self.worker_active = true;
-
-        const thread = std.Thread.spawn(.{}, workerMain, .{ self, agent, session }) catch {
-            self.worker_active = false;
-            self.state = .idle;
-            self.gpa.free(self.worker_prompt);
-            self.worker_prompt = &[_]u8{};
-            return error.StartFailed;
+        const routed = slash_route.routeSubmit(self.gpa, session, text) catch |err| {
+            const note: []const u8 = switch (err) {
+                error.UnknownSkill => "unknown_skill",
+                error.UnknownTemplate => "unknown_template",
+                error.ArgumentsTooLarge => "template_args_too_large",
+                error.ExpansionTooLarge => "template_expansion_too_large",
+                error.OutOfMemory => "slash_oom",
+            };
+            self.setNote(note);
+            return;
         };
-        self.worker = thread;
+        switch (routed) {
+            .open_overlay => |kind| {
+                self.history.pushAccepted(text);
+                self.editor.clear();
+                self.overlay.open(kind);
+                _ = self.rebuildOverlayLines();
+                return;
+            },
+            .note => |n| {
+                self.setNote(n);
+                return;
+            },
+            .prompt => |p| {
+                self.history.pushAccepted(text);
+                const owned: []u8 = if (p.owned)
+                    @constCast(p.text)
+                else
+                    (self.gpa.dupe(u8, p.text) catch return error.StartFailed);
+                self.worker_prompt = owned;
+                self.editor.clear();
+                self.overlay.close();
+                self.scroll_from_bottom = 0;
+                self.state = .busy;
+                self.setNote("(starting…)");
+                self.worker_finished.store(false, .release);
+                self.worker_had_error.store(false, .release);
+                self.worker_active = true;
+
+                const thread = std.Thread.spawn(.{}, workerMain, .{ self, agent, session }) catch {
+                    self.worker_active = false;
+                    self.state = .idle;
+                    self.gpa.free(self.worker_prompt);
+                    self.worker_prompt = &[_]u8{};
+                    return error.StartFailed;
+                };
+                self.worker = thread;
+            },
+        }
     }
 
     fn workerMain(self: *App, agent: *coding.Agent, session: *coding.Session) void {
@@ -822,6 +1100,7 @@ pub const App = struct {
             follow = @intCast(s.followUpPending());
         }
         const modal = self.permission.snapshot();
+        if (self.overlay.isOpen()) _ = self.rebuildOverlayLines();
         const facts = render.StatusFacts{
             .id_display = self.idDisplay(),
             .open_display = self.open_display.label(),
@@ -832,8 +1111,15 @@ pub const App = struct {
             .status_note = self.noteSlice(),
             .steering_pending = steer,
             .followup_pending = follow,
+            .model = self.model_label,
+            .theme_id = self.palette.id,
         };
-        try render.renderFrame(term, sz, facts, self.snap_buf[0..n], &self.editor, modal);
+        const ov = render.OverlayPaint{
+            .kind = self.overlay.kind,
+            .cursor = self.overlay.cursor,
+            .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
+        };
+        try render.renderFrame(term, sz, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, self.scroll_from_bottom);
         self.dirty = false;
         self.last_painted_size = sz;
     }

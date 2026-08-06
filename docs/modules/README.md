@@ -32,7 +32,10 @@
 | [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55` (PASS @ `c7a8f3a`); post-TUI remote Gate Phase A **in-progress** (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui`) | `packages/zag-tui` + CLI `-Dtui` wire; local macOS Gates; **no** maturity raise | unique package; dual-thread host; `-Dtui` default false |
 | [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | Provider stream → Loop/Façade events → progressive TUI card | default streaming transport; headless/session/Trace wire unchanged |
 | [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | `zag-tui` layout + presenter | pure geometry and dirty-flag paint; no cell diff/virtualization |
-| [theme.md](./theme.md) | M2 / C9 host-shell Theme **contract PASS** @ `9e1b9f9` ([theme-001](../plan/tasks/theme-001.md) `status: ready`) | dual re-reviews PASS zero blockers; **no** implementation; **no** maturity raise | owner `zag-tui` only; passive data; fail-closed built-in; orthogonal to post-TUI remote Gate |
+| [tui-vaxis.md](./tui-vaxis.md) | C9 backend ✅ `76360ab` | quarantined vaxis in `zag-tui` | no vxfw wholesale |
+| [theme.md](./theme.md) | M2 / C9 Theme ✅ canvas | `theme.zig` + role→Style | owner `zag-tui` only; fail-closed built-in |
+| [tui-slash-host.md](./tui-slash-host.md) | C9 canvas ✅ | overlay + slash palette | reuse skill/template expand; no Core slash |
+| [tui-transcript.md](./tui-transcript.md) | C9 canvas ✅ | scroll transcript region | keep streaming deltas; PTY markers |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1 Skills @ `caafef5`; E1 Prompt Templates @ `61326ae`; E2/E3 unimplemented; Runtime Extensions L0 | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |

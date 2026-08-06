@@ -16,6 +16,8 @@ const layout_mod = @import("layout.zig");
 const permission = @import("permission.zig");
 const present = @import("present.zig");
 const terminal = @import("terminal.zig");
+const theme_mod = @import("theme.zig");
+const overlay_mod = @import("overlay.zig");
 
 pub const UiState = enum {
     idle,
@@ -35,6 +37,14 @@ pub const StatusFacts = struct {
     status_note: []const u8 = "",
     steering_pending: u32 = 0,
     followup_pending: u32 = 0,
+    model: []const u8 = "—",
+    theme_id: []const u8 = theme_mod.builtin_id,
+};
+
+pub const OverlayPaint = struct {
+    kind: overlay_mod.Kind = .none,
+    cursor: usize = 0,
+    lines: []const []const u8 = &.{},
 };
 
 pub fn stateName(s: UiState) []const u8 {
@@ -46,12 +56,6 @@ pub fn stateName(s: UiState) []const u8 {
         .closed => "closed",
     };
 }
-
-// ── styles (the sanctioned visual upgrade; layout is still layout.zig's) ───
-
-const header_style: vaxis.Style = .{ .fg = .{ .index = 6 } }; // cyan
-const status_style: vaxis.Style = .{ .fg = .{ .index = 2 } }; // green
-const modal_style: vaxis.Style = .{ .fg = .{ .index = 5 } }; // magenta
 
 /// Last UiState drawn by renderFrame (single-app renderer). On transitions a
 /// full refresh is queued so the PTY marker contract ("state:{s}" appears
@@ -69,18 +73,21 @@ pub fn renderFrame(
     snap: []const cards.CardSlot,
     ed: *const editor.Editor,
     modal: permission.ModalSnapshot,
+    palette: *const theme_mod.Palette,
+    ov: OverlayPaint,
+    scroll_from_bottom: usize,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
         term.vx.queueRefresh();
         last_drawn_state = facts.state;
     }
-    const layout = layout_mod.compute(size, snap.len, modal.pending, facts.status_note.len > 0);
+    const layout = layout_mod.compute(size, snap.len, modal.pending, facts.status_note.len > 0, scroll_from_bottom);
     // The vaxis screen borrows cell graphemes from the formatted lines; the
     // store must outlive `render()` below (and lives across paints).
     term.scratch.len = 0;
     const root = term.vx.window();
-    drawFrame(root, layout, facts, snap, ed, modal, &term.scratch);
+    drawFrame(root, layout, facts, snap, ed, modal, palette, ov, &term.scratch);
     term.render() catch return error.WriteFailed;
 }
 
@@ -94,22 +101,25 @@ fn drawFrame(
     snap: []const cards.CardSlot,
     ed: *const editor.Editor,
     modal: permission.ModalSnapshot,
+    palette: *const theme_mod.Palette,
+    ov: OverlayPaint,
     store: *terminal.LineStore,
 ) void {
     root.clear();
     switch (layout.mode) {
         .constrained => {
-            drawHeader(childRegion(root, layout.header), layout.mode, facts, store);
-            drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, store);
-            drawCards(childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, store);
-            drawEditor(childRegion(root, layout.editor), layout.mode, ed);
+            drawHeader(childRegion(root, layout.header), layout.mode, facts, palette, store);
+            drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, palette, store);
+            drawCards(childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store);
+            drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
         },
         .full => {
-            drawHeader(childRegion(root, layout.header), layout.mode, facts, store);
-            drawCards(childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, store);
-            drawEditor(childRegion(root, layout.editor), layout.mode, ed);
-            drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, store);
-            if (layout.modal) |m| drawModal(root, m, modal, store);
+            drawHeader(childRegion(root, layout.header), layout.mode, facts, palette, store);
+            drawCards(childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store);
+            drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
+            drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, palette, store);
+            if (layout.modal) |m| drawModal(root, m, modal, palette, store);
+            if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
     }
 }
@@ -134,7 +144,8 @@ fn printLineStyled(win: vaxis.Window, row: u16, text: []const u8, style: vaxis.S
     _ = win.printSegment(.{ .text = capped, .style = style }, .{ .row_offset = row, .wrap = .none });
 }
 
-fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, store: *terminal.LineStore) void {
+fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, palette: *const theme_mod.Palette, store: *terminal.LineStore) void {
+    const header_style = palette.style(.status_fg);
     var row: u16 = 0;
     if (mode == .constrained) {
         if (row < win.height) {
@@ -187,8 +198,11 @@ fn drawCards(
     window: layout_mod.CardsWindow,
     mode: layout_mod.Mode,
     snap: []const cards.CardSlot,
+    palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
 ) void {
+    const card_style = palette.style(.card_fg);
+    _ = card_style;
     var row: u16 = 0;
     const w: u16 = win.width;
     const title_limit = @min(@as(usize, 128), @max(@as(usize, w), 2) - 2);
@@ -196,7 +210,7 @@ fn drawCards(
 
     if (mode == .full) {
         if (row < win.height) {
-            printLine(win, row, "├─ cards ─");
+            printLineStyled(win, row, "├─ transcript ─", palette.style(.muted_fg));
             row += 1;
         }
         if (window.count == 0) {
@@ -239,13 +253,14 @@ fn drawCards(
     }
 }
 
-fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor) void {
+fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor, palette: *const theme_mod.Palette) void {
+    const editor_style = palette.style(.editor_fg);
     var row: u16 = 0;
     const content = ed.slice();
     const first_line = singleLine(content);
     if (mode == .constrained) {
         if (row < win.height) {
-            _ = win.printSegment(.{ .text = "> " }, .{ .row_offset = row, .wrap = .none });
+            _ = win.printSegment(.{ .text = "> ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
             if (first_line.len > 0) {
                 _ = win.printSegment(.{ .text = first_line }, .{ .row_offset = row, .col_offset = 2, .wrap = .none });
             }
@@ -261,7 +276,7 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
     }
     // Fixed content row: the first editor line, clipped like card bodies.
     if (row < win.height) {
-        _ = win.printSegment(.{ .text = "│ > " }, .{ .row_offset = row, .wrap = .none });
+        _ = win.printSegment(.{ .text = "│ > ", .style = editor_style }, .{ .row_offset = row, .wrap = .none });
         if (first_line.len > 0) {
             _ = win.printSegment(.{ .text = first_line }, .{ .row_offset = row, .col_offset = 4, .wrap = .none });
         }
@@ -275,8 +290,10 @@ fn drawStatus(
     mode: layout_mod.Mode,
     facts: StatusFacts,
     ed: *const editor.Editor,
+    palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
 ) void {
+    const status_style = palette.style(.accent_fg);
     if (win.height < 1) return;
     if (mode == .constrained) {
         if (store.format("state={s} id={s}", .{ stateName(facts.state), facts.id_display })) |s| {
@@ -284,7 +301,9 @@ fn drawStatus(
         }
         return;
     }
-    if (store.format("│ [{d}/{d}]  [submit:Enter · nl:Alt+Enter]", .{
+    if (store.format("│ model:{s} theme:{s} [{d}/{d}] [/ palette · PgUp/Dn]", .{
+        facts.model,
+        facts.theme_id,
         ed.len,
         c.editor_max_bytes,
     })) |s| {
@@ -295,7 +314,8 @@ fn drawStatus(
 /// Modal overlay: rounded vaxis border + style (the visual upgrade), title
 /// printed over the top border, two content rows inside. Geometry is
 /// layout.zig's.
-fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.ModalSnapshot, store: *terminal.LineStore) void {
+fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.ModalSnapshot, palette: *const theme_mod.Palette, store: *terminal.LineStore) void {
+    const modal_style = palette.style(.modal_fg);
     const inner = root.child(.{
         .x_off = region.x,
         .y_off = region.y,
@@ -329,6 +349,55 @@ fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.Mo
     }
     if (row < inner.height) {
         printLine(inner, row, "[a]=allow   [d]=deny   Esc/Enter/EOF/fail=deny");
+    }
+}
+
+fn drawHostOverlay(
+    root: vaxis.Window,
+    layout: layout_mod.Layout,
+    ov: OverlayPaint,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+) void {
+    _ = store;
+    const style = palette.style(.modal_fg);
+    const h: u16 = @min(12, @max(layout.cards.h, 4));
+    const w: u16 = @min(root.width, 60);
+    const y: u16 = layout.cards.y;
+    const x: u16 = if (root.width > w) (root.width - w) / 2 else 0;
+    const box = root.child(.{
+        .x_off = x,
+        .y_off = y,
+        .width = w,
+        .height = h,
+        .border = .{
+            .where = .all,
+            .glyphs = .single_rounded,
+            .style = style,
+        },
+    });
+    if (box.width == 0 or box.height == 0) return;
+    const title: []const u8 = switch (ov.kind) {
+        .none => return,
+        .help => "help",
+        .slash_palette => "slash",
+        .settings => "settings",
+        .model => "model",
+        .theme => "theme",
+    };
+    _ = root.printSegment(.{ .text = title, .style = style }, .{
+        .col_offset = x + 2,
+        .row_offset = y,
+        .wrap = .none,
+    });
+    var row: u16 = 0;
+    for (ov.lines, 0..) |line, i| {
+        if (row >= box.height) break;
+        const marker_ch: []const u8 = if (i == ov.cursor) "> " else "  ";
+        var buf: [256]u8 = undefined;
+        const rendered = std.fmt.bufPrint(&buf, "{s}{s}", .{ marker_ch, line }) catch line;
+        printLineStyled(box, row, rendered, style);
+        row += 1;
     }
 }
 
@@ -383,8 +452,9 @@ fn drawFixture(
     modal: permission.ModalSnapshot,
 ) !void {
     cs.* = try CellScreen.init(gpa, cols, rows);
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0);
-    drawFrame(cs.root(cols, rows), layout, facts, snap, ed, modal, &cs.store);
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0);
+    const palette = theme_mod.builtinDefault();
+    drawFrame(cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store);
 }
 
 /// Cell text of one row (graphemes joined left to right).
@@ -499,14 +569,14 @@ test "render full-mode cells match pre-vaxis golden (80x24)" {
     try expectRowEquals(&cs.screen, 0, "┌─ zag  tui ─");
     try expectRowEquals(&cs.screen, 1, "│ id: sess-abc  open:create_new cfg:y");
     try expectRowEquals(&cs.screen, 2, "│ perm:ask  shell:protect  state:busy  S:2 F:1");
-    try expectRowEquals(&cs.screen, 3, "├─ cards ─");
+    try expectRowEquals(&cs.screen, 3, "├─ transcript ─");
     try expectRowEquals(&cs.screen, 4, "│ · run_start");
     try expectRowEquals(&cs.screen, 5, "│   session_configured=y");
     try expectRowEquals(&cs.screen, 6, "│ · assistant turn=1");
     try expectRowEquals(&cs.screen, 7, "│   hello world");
     try expectRowEquals(&cs.screen, 21, "├─ editor ─");
     try expectRowEquals(&cs.screen, 22, "│ > ");
-    try expectRowEquals(&cs.screen, 23, "│ [0/65536]  [submit:Enter · nl:Alt+Enter]");
+    try expectRowEquals(&cs.screen, 23, "│ model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
     // Rows the golden frame clears stay blank cells.
     var row: u16 = 8;
     while (row < 17) : (row += 1) try expectRowEquals(&cs.screen, row, "");
@@ -537,14 +607,14 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     try expectRowEquals(&cs.screen, 0, "┌─ zag  tui ─");
     try expectRowEquals(&cs.screen, 1, "│ id: sess-abc  open:create_new cfg:y");
     try expectRowEquals(&cs.screen, 2, "│ perm:ask  shell:protect  state:busy  S:2 F:1");
-    try expectRowEquals(&cs.screen, 3, "├─ cards ─");
+    try expectRowEquals(&cs.screen, 3, "├─ transcript ─");
     try expectRowEquals(&cs.screen, 4, "│ · run_start");
     try expectRowEquals(&cs.screen, 5, "│   session_configured=y");
     try expectRowEquals(&cs.screen, 6, "│ · assistant turn=1");
     try expectRowEquals(&cs.screen, 7, "│   hello world");
     try expectRowEquals(&cs.screen, 21, "├─ editor ─");
     try expectRowEquals(&cs.screen, 22, "│ > ");
-    try expectRowEquals(&cs.screen, 23, "│ [0/65536]  [submit:Enter · nl:Alt+Enter]");
+    try expectRowEquals(&cs.screen, 23, "│ model:— theme:zag-default [0/65536] [/ palette · PgUp/Dn]");
     try expectRowContains(&cs.screen, 17, "permission (modal)");
     // Wide modal border spans the full width.
     try expectCellEquals(&cs.screen, 0, 17, "╭");
@@ -638,7 +708,7 @@ test "render multi-line editor clipped to the fixed content row" {
     defer cs.deinit(gpa);
 
     try expectRowEquals(&cs.screen, 22, "│ > line1");
-    try expectRowEquals(&cs.screen, 23, "│ [11/65536]  [submit:Enter · nl:Alt+Enter]");
+    try expectRowEquals(&cs.screen, 23, "│ model:— theme:zag-default [11/65536] [/ palette · PgUp/Dn]");
 }
 
 test "render header strings min-capped to region width" {

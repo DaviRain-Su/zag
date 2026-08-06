@@ -555,6 +555,18 @@ pub fn run(init: std.process.Init) !void {
                 .templates_enabled = host_opts.templates_enabled,
                 .project_templates_trust = host_opts.project_templates_trust,
                 .user_templates_root = host_opts.user_templates_root,
+                .theme = .{
+                    .themes_root = resolveUserThemesRoot(arena, init.environ_map) catch null,
+                    .selected_id = null,
+                },
+                .model_label = resolved.config.model,
+                .model_ids = blk: {
+                    const models = ai.catalog.models;
+                    const ids = arena.alloc([]const u8, @min(models.len, 48)) catch break :blk &.{};
+                    var mi: usize = 0;
+                    while (mi < ids.len) : (mi += 1) ids[mi] = models[mi].id;
+                    break :blk ids;
+                },
             };
             const result = tui_entry.runTui(.{
                 .gpa = gpa,
@@ -642,6 +654,13 @@ fn resolveUserTemplatesRoot(arena: std.mem.Allocator, env: *const std.process.En
     const home = env.get("HOME") orelse return null;
     if (home.len == 0) return null;
     return try std.fmt.allocPrint(arena, "{s}/.agents/prompts", .{home});
+}
+
+/// CLI-only: `$HOME/.agents/themes` when HOME is set.
+fn resolveUserThemesRoot(arena: std.mem.Allocator, env: *const std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
+    const home = env.get("HOME") orelse return null;
+    if (home.len == 0) return null;
+    return try std.fmt.allocPrint(arena, "{s}/.agents/themes", .{home});
 }
 
 /// Pure open-mode decision for CLI flags.
