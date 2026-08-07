@@ -202,11 +202,16 @@ fn waitBoundedDrain(
     acc: ?*std.ArrayList(u8),
     gpa: ?std.mem.Allocator,
 ) ?u32 {
-    var elapsed: u64 = 0;
+    var start_tv: std.c.timeval = undefined;
+    _ = std.c.gettimeofday(&start_tv, null);
+    const started_us = @as(i128, start_tv.sec) * 1_000_000 + start_tv.usec;
     const step_ms: i32 = 20;
     while (true) {
         if (waitPeek(pid)) |st| return st;
-        if (elapsed >= bound_ms) return null;
+        var now_tv: std.c.timeval = undefined;
+        _ = std.c.gettimeofday(&now_tv, null);
+        const now_us = @as(i128, now_tv.sec) * 1_000_000 + now_tv.usec;
+        if (now_us -| started_us >= @as(i128, bound_ms) * 1000) return null;
         if (master) |m| {
             var pfds = [_]posix.pollfd{.{ .fd = m, .events = posix.POLL.IN, .revents = 0 }};
             _ = posix.poll(&pfds, step_ms) catch {};
@@ -223,7 +228,6 @@ fn waitBoundedDrain(
         } else {
             std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(step_ms)), .real) catch {};
         }
-        elapsed += @intCast(step_ms);
     }
 }
 
@@ -378,6 +382,9 @@ const PtySession = struct {
     slave: posix.fd_t,
     keep_slave: bool,
     pid: ?posix.pid_t = null,
+    /// Exit status observed by waitMarker's waitPeek (curl backend: the
+    /// child can exit before the closing marker is read; waitExit reuses it).
+    last_status: ?u32 = null,
     acc: std.ArrayList(u8) = .empty,
     gpa: std.mem.Allocator,
 
@@ -470,8 +477,8 @@ const PtySession = struct {
         while (elapsed < bound_ms) {
             if (self.pid) |p| {
                 if (waitPeek(p)) |st| {
+                    self.last_status = st;
                     self.pid = null;
-                    _ = st;
                     _ = io;
                     return std.mem.indexOf(u8, self.acc.items, marker) != null;
                 }
@@ -501,9 +508,12 @@ const PtySession = struct {
     }
 
     fn waitExit(self: *PtySession, io: Io, bound_ms: u64) ?u32 {
-        const pid = self.pid orelse return null;
+        const pid = self.pid orelse return self.last_status;
         const st = waitBoundedDrain(io, pid, bound_ms, self.master, &self.acc, self.gpa);
-        if (st != null) self.pid = null;
+        if (st != null) {
+            self.last_status = st;
+            self.pid = null;
+        }
         return st;
     }
 };
@@ -667,9 +677,15 @@ test "gate31_pty_busy_first_sigint_closing_alive_std_second_130" {
     var saw_closing = try pty.waitMarker(io, state_closing, 3000);
     if (!saw_closing) saw_closing = try pty.waitMarker(io, note_closing, 800);
     try std.testing.expect(saw_closing);
-    try std.testing.expect(pidAlive(pid));
-    // No hard exit yet.
-    try std.testing.expect(pty.pid != null);
+    // Curl actively cancels: the process may already be gone by the time the
+    // closing marker lands — pid-alive is only guaranteed for the std
+    // backend (still blocked in receiveHead). The curl branch below asserts
+    // the cooperative exit instead.
+    if (http_backend == .std) {
+        try std.testing.expect(pidAlive(pid));
+        // No hard exit yet.
+        try std.testing.expect(pty.pid != null);
+    }
 
     switch (http_backend) {
         .std => {
@@ -690,9 +706,15 @@ test "gate31_pty_busy_first_sigint_closing_alive_std_second_130" {
             try std.testing.expect(std.mem.indexOf(u8, pty.acc.items, "stop=completed") == null);
         },
         .curl => {
-            // Curl actively cancels: first SIGINT completes cooperatively.
-            // Do not claim unacknowledged second-SIGINT 130 on curl.
-            const st = pty.waitExit(io, 8000);
+            // Curl backend limitation: libcurl does not invoke the XFERINFO
+            // progress callback while waiting for the response head (no
+            // transfer activity), so a provider that stalls before the head
+            // cannot be cancelled promptly — the request only observes the
+            // cancel flag once data starts flowing (or the mock replies).
+            // The gate therefore bounds at the TUI shutdown join bound (30s)
+            // plus margin, and asserts the cooperative exit actually happens
+            // (no unacknowledged second-SIGINT 130 claim).
+            const st = pty.waitExit(io, 35_000);
             try std.testing.expect(st != null);
             const code = exitCode(st.?).?;
             try std.testing.expect(code == 0 or code == 1);
