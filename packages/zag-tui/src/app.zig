@@ -743,7 +743,11 @@ pub const App = struct {
                 pollfds[1].events = 0;
             }
 
-            _ = posix.poll(&pollfds, c.poll_timeout_ms) catch {};
+            const nready = posix.poll(&pollfds, c.poll_timeout_ms) catch 0;
+            // Animate busy spinner / tasks pane while waiting (grok tick).
+            if (nready == 0 and (self.state == .busy or self.state == .closing or self.tasks_visible)) {
+                self.dirty = true;
+            }
 
             if (pollfds[0].revents & (posix.POLL.IN | posix.POLL.ERR) != 0) {
                 // Worker wakes and bridge events share the pipe: drain it,
@@ -1969,6 +1973,11 @@ pub const App = struct {
         }
         const modal = self.permission.snapshot();
         if (self.overlay.isOpen()) _ = self.rebuildOverlayLines();
+        var running_tasks: u32 = 0;
+        if (self.subagent_registry) |reg| {
+            running_tasks = @intCast(reg.countByStatus(.running) + reg.countByStatus(.pending));
+        }
+        const tick_ms: u64 = @import("zag-types").monoNowNs() / std.time.ns_per_ms;
         const facts = render.StatusFacts{
             .id_display = self.idDisplay(),
             .open_display = self.open_display.label(),
@@ -1983,6 +1992,8 @@ pub const App = struct {
             .theme_id = self.palette.id,
             .show_thinking = self.show_thinking,
             .scroll = self.sb.scroll_offset,
+            .running_tasks = running_tasks,
+            .tick_ms = tick_ms,
         };
         const ov = render.OverlayPaint{
             .kind = self.overlay.kind,
@@ -2026,7 +2037,8 @@ pub const App = struct {
         // borderless; reserve 1 col for the scrollbar track and 1 row for the
         // scrollback paint window math (viewport_h = h-1 keeps prior paging
         // contracts).
-        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible);
+        const turn_vis = self.state == .busy or self.state == .closing or self.state == .@"error";
+        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible, turn_vis);
         const viewport_h: usize = @max(layout.cards.h -| 1, 1);
         const content_w: u16 = @max(layout.cards.w -| 1, 1);
         self.last_viewport_h = viewport_h;
@@ -2038,7 +2050,6 @@ pub const App = struct {
             render.measureCardHeight,
             scrollback_mod.estimateCard,
         );
-        const tick_ms: u64 = @import("zag-types").monoNowNs() / std.time.ns_per_ms;
         const tasks_opts = render.TasksPaneOpts{
             .cursor = self.tasks_cursor,
             .expanded = self.tasks_expanded,
@@ -2233,13 +2244,13 @@ test "tui-thinking: meta line shows the toggle state" {
     defer app.destroy();
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40 → editor top border at row 37
+    try app.paint(&rec.pt.term); // 80×40 idle: shortcuts=1, editor_y=36
     var buf: [512]u8 = undefined;
-    const off = readRow(&rec, 37, &buf);
+    const off = readRow(&rec, 36, &buf);
     try std.testing.expect(std.mem.indexOf(u8, off, "think:off") != null);
     _ = app.handleKey(.ctrl_t);
     try app.paint(&rec.pt.term);
-    const on = readRow(&rec, 37, &buf);
+    const on = readRow(&rec, 36, &buf);
     try std.testing.expect(std.mem.indexOf(u8, on, "think:on") != null);
 }
 
@@ -2509,11 +2520,11 @@ test "tui-layout: first paint always happens" {
     try std.testing.expect(!app.dirty);
     try std.testing.expect(app.last_painted_size != null);
     // Cell proof: borderless transcript + rounded editor box at the bottom.
-    // 80×40: editor_y = 37 (h=3). Empty transcript shows the placeholder.
+    // 80×40 idle: shortcuts=1, editor_y=36 (h=3).
     try expectCellText(&rec, 0, 0, "("); // "(no events yet)"
-    try expectCellText(&rec, 0, 37, "╭");
-    try expectCellText(&rec, 1, 38, "❯");
-    try expectCellText(&rec, 0, 39, "╰");
+    try expectCellText(&rec, 0, 36, "╭");
+    try expectCellText(&rec, 1, 37, "❯");
+    try expectCellText(&rec, 0, 38, "╰");
 }
 
 test "tui-layout: no-change poll skips render (canary survives)" {
@@ -2743,7 +2754,7 @@ test "tui-input: page keys scroll rows and re-engage follow" {
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
     try app.paint(&rec.pt.term); // 80×40 → cards 37, viewport 36
-    try std.testing.expectEqual(@as(usize, 36), app.last_viewport_h);
+    try std.testing.expectEqual(@as(usize, 35), app.last_viewport_h);
     try std.testing.expect(app.sb.total_height > 29); // overflows
     try std.testing.expect(app.sb.follow_mode); // fresh paint follows
     const bottom = app.sb.scroll_offset;
@@ -2829,8 +2840,8 @@ test "tui-input: alt+enter multiline grows the editor region" {
     try std.testing.expectEqual(@as(usize, 3), app.editor.lineCount());
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40: editor 2+3=5, cards 35, viewport 34
-    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
+    try app.paint(&rec.pt.term); // 80×40: shortcuts=1, editor 2+3=5 → cards 34, viewport 33
+    try std.testing.expectEqual(@as(usize, 33), app.last_viewport_h);
     // Prompt glyph is visible in the editor box.
     var buf: [512]u8 = undefined;
     var found_prompt = false;
@@ -2850,8 +2861,8 @@ test "tui-input: paint records the cards viewport height for paging" {
     defer rec.deinit(gpa);
     try app.paint(&rec.pt.term); // 80×40
     try std.testing.expect(app.last_viewport_h > 0);
-    // 80×40: editor h=3 → cards h=37 → viewport = 37-1 = 36.
-    try std.testing.expectEqual(@as(usize, 36), app.last_viewport_h);
+    // 80×40 idle: shortcuts=1, editor h=3 → cards h=36 → viewport = 35.
+    try std.testing.expectEqual(@as(usize, 35), app.last_viewport_h);
 }
 
 test "tui-input: overlay home/end/page keys navigate" {

@@ -47,6 +47,10 @@ pub const StatusFacts = struct {
     show_thinking: bool = false,
     /// Transcript scroll offset (0 = newest window); shown as feedback.
     scroll: usize = 0,
+    /// Live subagent count for status chips (0 = omit).
+    running_tasks: u32 = 0,
+    /// Monotonic ms for busy spinner animation.
+    tick_ms: u64 = 0,
 };
 
 /// Per-row rendering kind for overlay lines (session-tree-001): resume
@@ -148,12 +152,10 @@ fn drawFrame(
             drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
         },
         .full => {
-            // Minimal chrome (omp/grok-inspired): borderless transcript + a
-            // self-contained rounded input box at the bottom. No top title
-            // bar, no side rails, no separate status band.
+            // Grok-inspired stack:
+            //   cards → tasks → modal → turn_status → editor → shortcuts
             const border_style = palette.style(.card_border);
             const cards_win = childRegion(root, layout.cards);
-            // Editor: full rounded box. Top border carries the status chips.
             const editor_win = borderedChild(root, layout.editor, .{
                 .where = .all,
                 .glyphs = .single_rounded,
@@ -161,12 +163,13 @@ fn drawFrame(
             });
 
             drawCards(gpa, cards_win, layout.cards_window, layout.mode, snap, palette, store, sb);
-            // Status chips sit in the editor top border (omp StatusLine-in-border).
             drawEditorStatusBorder(root, layout.editor, facts, palette, store);
             drawEditor(editor_win, layout.mode, ed, palette);
+            drawTurnStatus(childRegion(root, layout.turn_status), facts, palette, store);
+            drawShortcutsBar(childRegion(root, layout.shortcuts), facts, modal.pending, tasks_opts.focused, palette, store);
 
             if (layout.modal) |m| drawModal(root, m, modal, palette, store);
-            if (layout.tasks_overlay) |t| drawTasksOverlay(root, t, subagents, palette, store, tasks_opts);
+            if (layout.tasks_overlay) |tr| drawTasksOverlay(root, tr, subagents, palette, store, tasks_opts);
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
     }
@@ -319,10 +322,10 @@ fn drawCards(
             const line = blk: {
                 if (std.mem.startsWith(u8, title, "tool start ")) {
                     const name = if (title.len > "tool start ".len) title["tool start ".len..] else title;
-                    break :blk store.format("◐ {s}", .{name});
+                    break :blk store.format("⠋ {s}", .{toolPrettyName(name)});
                 } else if (std.mem.startsWith(u8, title, "tool ")) {
                     const name = if (title.len > "tool ".len) title["tool ".len..] else title;
-                    break :blk store.format("✓ {s}", .{name});
+                    break :blk store.format("✓ {s}", .{toolPrettyName(name)});
                 } else if (card.kind == .host_error or std.mem.eql(u8, title, "host_error")) {
                     break :blk store.format("✗ {s}", .{title});
                 } else {
@@ -417,30 +420,29 @@ fn renderCardInto(
             printLineStyled(win, 0, s, style);
         }
     } else if (is_tool_start) {
-        // "tool start {name}" → "◐ {name}"
+        // grok verb title; args stay in the indented body (not duplicated here).
         const name = if (title.len > "tool start ".len) title["tool start ".len..] else title;
-        if (store.format("◐ {s}", .{name})) |s| {
-            printLineStyled(win, 0, s, style);
-        }
+        const pretty = toolPrettyName(name);
+        if (store.format("⠋ {s}", .{pretty})) |s| printLineStyled(win, 0, s, style);
     } else if (is_tool_done) {
-        // "tool {name}" → "✓ {name}" (or "✗" when host_error body)
         const name = if (title.len > "tool ".len) title["tool ".len..] else title;
+        const pretty = toolPrettyName(name);
         const failed = toolBodyLooksFailed(card.bodySlice());
         const icon: []const u8 = if (failed) "✗" else "✓";
         const done_style = if (failed) palette.style(.tool_error_fg) else palette.style(.tool_success_fg);
-        if (store.format("{s} {s}", .{ icon, name })) |s| {
-            printLineStyled(win, 0, s, done_style);
-        }
+        if (store.format("{s} {s}", .{ icon, pretty })) |s| printLineStyled(win, 0, s, done_style);
     } else if (is_host_error) {
         if (store.format("✗ {s}", .{title})) |s| {
             printLineStyled(win, 0, s, palette.style(.error_fg));
         }
     } else if (is_thinking) {
-        if (store.format("💭 {s}", .{title})) |s| {
-            var muted = palette.style(.muted_fg);
-            muted.italic = true;
-            printLineStyled(win, 0, s, muted);
-        }
+        // grok ThinkingBlock: progressive → "Thinking…"; final → "Thought"
+        var muted = palette.style(.muted_fg);
+        muted.italic = true;
+        const progressive = std.mem.startsWith(u8, title_raw, "thinking progressive");
+        const label: []const u8 = if (progressive) "Thinking…" else "Thought";
+        // Body-only cards: title row + dim body below.
+        printLineStyled(win, 0, label, muted);
     } else {
         if (store.format("· {s}", .{title})) |s| {
             printLineStyled(win, 0, s, style);
@@ -465,6 +467,118 @@ fn renderCardInto(
         else
             _ = md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
     }
+}
+
+
+/// Grok-style tool verb: bash→Bash, read_file→Read, edit_file→Edit, …
+fn toolPrettyName(name: []const u8) []const u8 {
+    // Common coding-agent tools (keep short for the title row).
+    if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "shell")) return "Bash";
+    if (std.mem.eql(u8, name, "read") or std.mem.eql(u8, name, "read_file")) return "Read";
+    if (std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "edit_file") or std.mem.eql(u8, name, "apply_patch")) return "Edit";
+    if (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "write_file")) return "Write";
+    if (std.mem.eql(u8, name, "grep") or std.mem.eql(u8, name, "search")) return "Search";
+    if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "find")) return "Glob";
+    if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "Task")) return "Task";
+    if (std.mem.eql(u8, name, "todo") or std.mem.eql(u8, name, "TodoWrite")) return "Todo";
+    // Fallback: first char upper if ascii alpha.
+    if (name.len == 0) return name;
+    return name; // keep original id when unknown
+}
+
+/// First interesting token from a tool body for the title-row preview
+/// (path, command head). Collapses whitespace; caps length.
+fn toolBodyPreview(body: []const u8) []const u8 {
+    if (body.len == 0) return "";
+    // Prefer a path-like first line / JSON "path"/"command"/"file" value.
+    var line = body;
+    if (std.mem.indexOfScalar(u8, body, '\n')) |nl| line = body[0..nl];
+    line = std.mem.trim(u8, line, " \t\r");
+    // Strip common JSON wrappers: {"path":"…"} / {"command":"…"}
+    inline for (.{ "\"path\":\"", "\"file\":\"", "\"command\":\"", "\"pattern\":\"", "\"query\":\"" }) |key| {
+        if (std.mem.indexOf(u8, line, key)) |at| {
+            const rest = line[at + key.len ..];
+            if (std.mem.indexOfScalar(u8, rest, '"')) |end| {
+                return singleLine(rest[0..end]);
+            }
+        }
+    }
+    // Strip markdown code fence openers.
+    if (std.mem.startsWith(u8, line, "```")) {
+        if (std.mem.indexOfScalar(u8, body, '\n')) |nl| {
+            const rest = std.mem.trim(u8, body[nl + 1 ..], " \t\r\n");
+            if (std.mem.indexOfScalar(u8, rest, '\n')) |n2| return singleLine(rest[0..n2]);
+            return singleLine(rest);
+        }
+    }
+    return singleLine(line);
+}
+
+/// Grok turn-status strip: spinner + "Working…" / "Waiting on you" / error.
+fn drawTurnStatus(
+    win: vaxis.Window,
+    facts: StatusFacts,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+) void {
+    if (win.height == 0 or win.width == 0) return;
+    const frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
+    const spin = frames[@intCast((facts.tick_ms / 80) % frames.len)];
+    var style = palette.style(.muted_fg);
+    const text: []const u8 = switch (facts.state) {
+        .busy => blk: {
+            style = palette.style(.tool_running_fg);
+            if (facts.running_tasks > 0) {
+                break :blk store.format("{s} Working · {d} task{s}", .{
+                    spin,
+                    facts.running_tasks,
+                    if (facts.running_tasks == 1) "" else "s",
+                }) orelse "Working…";
+            }
+            break :blk store.format("{s} Working…", .{spin}) orelse "Working…";
+        },
+        .closing => "closing…",
+        .@"error" => blk: {
+            style = palette.style(.error_fg);
+            break :blk "error — see transcript";
+        },
+        else => return, // idle/closed: region should be h=0
+    };
+    // Left accent bar + label (grok diamond/pulse simplified).
+    _ = win.printSegment(.{ .text = "◆ ", .style = style }, .{ .row_offset = 0, .wrap = .none });
+    _ = win.printSegment(.{ .text = present.utf8Prefix(text, win.width -| 2), .style = style }, .{
+        .row_offset = 0,
+        .col_offset = 2,
+        .wrap = .none,
+    });
+}
+
+/// Grok ShortcutsBar under the prompt: context-sensitive key hints.
+fn drawShortcutsBar(
+    win: vaxis.Window,
+    facts: StatusFacts,
+    modal_pending: bool,
+    tasks_focused: bool,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+) void {
+    if (win.height == 0 or win.width == 0) return;
+    const muted = palette.style(.muted_fg);
+    const key_st = palette.style(.accent_fg);
+    const hints: []const u8 = if (modal_pending)
+        "a allow  ·  d deny  ·  esc cancel  ·  ctrl+o auto"
+    else if (tasks_focused)
+        "j/k nav  ·  space expand  ·  esc back  ·  ctrl+k close"
+    else if (facts.state == .busy)
+        "esc note  ·  alt+s steer  ·  alt+f follow-up  ·  ctrl+c cancel  ·  F1 help"
+    else
+        "enter send  ·  / commands  ·  ctrl+k tasks  ·  ctrl+o perm  ·  F1 help";
+
+    // Paint key tokens in accent when simple "word word" pairs — keep whole
+    // line muted for v1 simplicity (readable, low noise).
+    _ = key_st;
+    const line = store.format(" {s}", .{hints}) orelse hints;
+    printLineStyled(win, 0, present.utf8Prefix(line, win.width), muted);
 }
 
 fn toolBodyLooksFailed(body: []const u8) bool {
@@ -673,13 +787,26 @@ fn drawEditorStatusBorder(
     const muted = palette.style(.muted_fg);
     // Leave room for `╭─` and `─╮`.
     const max_w = region.w -| 4;
-    const chips = store.format(" {s} · {s} · perm:{s} · think:{s} · state:{s} ", .{
-        facts.model,
-        facts.theme_id,
-        facts.perm,
-        if (facts.show_thinking) "on" else "off",
-        stateName(facts.state),
-    }) orelse return;
+    // grok status chips. Keep contiguous `perm:` / `state:` / `think:` markers.
+    const chips = blk: {
+        if (facts.running_tasks > 0) {
+            break :blk store.format(" {s} · {s} · perm:{s} · think:{s} · tasks:{d} · state:{s} ", .{
+                facts.model,
+                facts.theme_id,
+                facts.perm,
+                if (facts.show_thinking) "on" else "off",
+                facts.running_tasks,
+                stateName(facts.state),
+            });
+        }
+        break :blk store.format(" {s} · {s} · perm:{s} · think:{s} · state:{s} ", .{
+            facts.model,
+            facts.theme_id,
+            facts.perm,
+            if (facts.show_thinking) "on" else "off",
+            stateName(facts.state),
+        });
+    } orelse return;
     const text = present.utf8Prefix(chips, max_w);
     _ = root.printSegment(.{ .text = text, .style = style }, .{
         .col_offset = region.x + 2,
@@ -1165,7 +1292,8 @@ fn drawFixture(
     modal: permission.ModalSnapshot,
 ) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount(), false);
+    const turn_vis = facts.state == .busy or facts.state == .closing or facts.state == .@"error";
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis);
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
@@ -1186,7 +1314,8 @@ fn drawOverlayFixture(
     ov: OverlayPaint,
 ) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, false, facts.status_note.len > 0, 0, ed.lineCount(), false);
+    const turn_vis = facts.state == .busy or facts.state == .closing or facts.state == .@"error";
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, false, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis);
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
@@ -1448,33 +1577,34 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    // Minimal chrome: borderless transcript at top, rounded input at bottom.
-    // Geometry @80x24, 1-line editor, modal: cards=0..16, modal=17..20, editor=21..23.
-    // Transcript rows use contains (last col is the scrollbar track).
-    try expectRowContains(&cs.screen, 0, "✓ write_file");
+    // Geometry @80x24 busy+modal+1-line editor:
+    //   shortcuts=23, editor=20..22, turn=19, modal=15..18, cards=0..14
+    try expectRowContains(&cs.screen, 0, "✓ Write");
     try expectRowContains(&cs.screen, 1, "id=t1 args={}");
     try expectRowContains(&cs.screen, 3, "hello world");
 
-    // Modal still rounded, full width.
-    try expectModalTopRow(&cs.screen, 17);
-    try expectRowContains(&cs.screen, 18, "risk:medium");
-    try expectRowContains(&cs.screen, 18, "write_file");
-    try expectRowContains(&cs.screen, 19, "[a]=allow");
-    try expectModalBottomRow(&cs.screen, 20);
+    try expectModalTopRow(&cs.screen, 15);
+    try expectRowContains(&cs.screen, 16, "risk:medium");
+    try expectRowContains(&cs.screen, 16, "write_file");
+    try expectRowContains(&cs.screen, 17, "[a]=allow");
+    try expectModalBottomRow(&cs.screen, 18);
 
-    // Editor box: rounded corners + status chips on the top border + ❯ prompt.
-    try expectCellEquals(&cs.screen, 0, 21, "╭");
-    try expectCellEquals(&cs.screen, 79, 21, "╮");
-    try expectRowContains(&cs.screen, 21, "perm:ask");
-    try expectRowContains(&cs.screen, 21, "busy");
-    try expectCellEquals(&cs.screen, 0, 22, "│");
-    try expectCellEquals(&cs.screen, 1, 22, "❯");
-    try expectCellEquals(&cs.screen, 2, 22, " ");
-    try expectCellEquals(&cs.screen, 0, 23, "╰");
-    try expectCellEquals(&cs.screen, 79, 23, "╯");
-    // No full-frame side rails on the transcript.
+    // Turn-status strip (busy).
+    try expectRowContains(&cs.screen, 19, "Working");
+
+    // Editor box + shortcuts bar under it.
+    try expectCellEquals(&cs.screen, 0, 20, "╭");
+    try expectCellEquals(&cs.screen, 79, 20, "╮");
+    try expectRowContains(&cs.screen, 20, "perm:ask");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+    try expectCellEquals(&cs.screen, 0, 21, "│");
+    try expectCellEquals(&cs.screen, 1, 21, "❯");
+    try expectCellEquals(&cs.screen, 0, 22, "╰");
+    try expectCellEquals(&cs.screen, 79, 22, "╯");
+    // Modal pending → permission shortcut hints on the bottom bar.
+    try expectRowContains(&cs.screen, 23, "allow");
+    try expectRowContains(&cs.screen, 23, "deny");
     try expectCellEquals(&cs.screen, 0, 0, "✓");
-
 }
 
 test "render wide frame 130 cols matches golden rows (no truncation)" {
@@ -1486,18 +1616,18 @@ test "render wide frame 130 cols matches golden rows (no truncation)" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    try expectRowContains(&cs.screen, 0, "✓ write_file");
+    try expectRowContains(&cs.screen, 0, "✓ Write");
     try expectRowContains(&cs.screen, 1, "id=t1 args={}");
     try expectRowContains(&cs.screen, 3, "hello world");
-    try expectCellEquals(&cs.screen, 0, 21, "╭");
-    try expectCellEquals(&cs.screen, 129, 21, "╮");
-    try expectRowContains(&cs.screen, 21, "busy");
-    try expectCellEquals(&cs.screen, 1, 22, "❯");
-    try expectCellEquals(&cs.screen, 0, 23, "╰");
-    try expectCellEquals(&cs.screen, 129, 23, "╯");
-    try expectModalTopRow(&cs.screen, 17);
-    try expectCellEquals(&cs.screen, 0, 17, "╭");
-    try expectCellEquals(&cs.screen, 129, 17, "╮");
+    try expectCellEquals(&cs.screen, 0, 20, "╭");
+    try expectCellEquals(&cs.screen, 129, 20, "╮");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+    try expectCellEquals(&cs.screen, 1, 21, "❯");
+    try expectCellEquals(&cs.screen, 0, 22, "╰");
+    try expectCellEquals(&cs.screen, 129, 22, "╯");
+    try expectModalTopRow(&cs.screen, 15);
+    try expectCellEquals(&cs.screen, 0, 15, "╭");
+    try expectCellEquals(&cs.screen, 129, 15, "╮");
 
 }
 
@@ -1514,7 +1644,7 @@ test "render constrained-mode cells match pre-vaxis golden (30x8)" {
     try expectRowEquals(&cs.screen, 1, "state=busy perm:ask id=sess-ab");
     // Constrained shows newest-first titles with icons.
     try expectRowEquals(&cs.screen, 2, "· assistant turn=1");
-    try expectRowEquals(&cs.screen, 3, "✓ write_file");
+    try expectRowEquals(&cs.screen, 3, "✓ Write");
     try expectRowEquals(&cs.screen, 4, "❯ ");
     var row: u16 = 5;
     while (row < 8) : (row += 1) try expectRowEquals(&cs.screen, row, "");
@@ -1529,10 +1659,10 @@ test "render state:{s} text present in the status meta line (PTY marker contract
     var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
     defer sb.deinit();
-    // Status chips live in the editor top border (row 21 with 1-line editor).
-    // Format: " model · theme · perm:ask · think:off · busy "
-    try expectRowContains(&cs.screen, 21, "busy");
-    try expectRowContains(&cs.screen, 21, "perm:ask");
+    // Status chips on editor top border. busy+shortcuts → editor_y=20.
+    // Format keeps contiguous "state:busy" / "perm:ask" PTY markers.
+    try expectRowContains(&cs.screen, 20, "state:busy");
+    try expectRowContains(&cs.screen, 20, "perm:ask");
 
 }
 
@@ -1585,13 +1715,13 @@ test "render multi-line editor grows and shows the cursor window" {
     var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &ed, .{});
     defer cs.deinit(gpa);
     defer sb.deinit();
-    // editor_h = 2 borders + 3 content = 5; editor_y = 19.
-    try expectCellEquals(&cs.screen, 0, 19, "╭");
-    try expectCellEquals(&cs.screen, 0, 23, "╰");
-    try expectCellEquals(&cs.screen, 1, 20, "❯");
-    try expectRowContains(&cs.screen, 20, "one");
-    try expectRowContains(&cs.screen, 21, "two");
-    try expectRowContains(&cs.screen, 22, "three");
+    // busy: shortcuts=1 + turn=1 + editor_h=5 → editor_y=18, ╰ at 22, shortcuts 23.
+    try expectCellEquals(&cs.screen, 0, 18, "╭");
+    try expectCellEquals(&cs.screen, 0, 22, "╰");
+    try expectCellEquals(&cs.screen, 1, 19, "❯");
+    try expectRowContains(&cs.screen, 19, "one");
+    try expectRowContains(&cs.screen, 20, "two");
+    try expectRowContains(&cs.screen, 21, "three");
 
 }
 
@@ -1606,9 +1736,9 @@ test "render status strings min-capped to interior width" {
     var sb = try drawFixture(&cs, gpa, 40, 24, facts, &f.snap, &f.ed, .{});
     defer cs.deinit(gpa);
     defer sb.deinit();
-    // Status chips are truncated into the editor top border; no crash.
-    try expectCellEquals(&cs.screen, 0, 21, "╭");
-    try expectCellEquals(&cs.screen, 39, 21, "╮");
+    // Status chips truncated into editor top border (busy → editor_y=20).
+    try expectCellEquals(&cs.screen, 0, 20, "╭");
+    try expectCellEquals(&cs.screen, 39, 20, "╮");
 
 }
 
@@ -1622,8 +1752,8 @@ test "render no-events frame" {
     defer cs.deinit(gpa);
     defer sb.deinit();
     try expectRowContains(&cs.screen, 0, "(no events yet)");
-    try expectCellEquals(&cs.screen, 0, 21, "╭");
-    try expectCellEquals(&cs.screen, 1, 22, "❯");
+    try expectCellEquals(&cs.screen, 0, 20, "╭");
+    try expectCellEquals(&cs.screen, 1, 21, "❯");
 
 }
 
@@ -1768,7 +1898,7 @@ test "md transcript: assistant card renders multi-line markdown body" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    try expectRowEquals(&cs.screen, 0, "✓ write_file");
+    try expectRowEquals(&cs.screen, 0, "✓ Write");
     try expectRowEquals(&cs.screen, 1, "  id=t1 args={}");
     // Assistant body flush-left at row 3 (tool 2 rows + gap).
     try expectCellEquals(&cs.screen, 0, 3, "T");
@@ -1825,7 +1955,7 @@ test "md transcript: tall assistant body clips at the cards region height" {
     }
     try std.testing.expect(found_tail);
     sb.scrollUp(200);
-    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1, false);
+    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1, false, false);
     _ = sb.prepare(&snap, @max(layout2.cards.w -| 1, 1), @max(layout2.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
     const palette2 = theme_mod.builtinDefault();
     drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb, null, .{});
@@ -1885,7 +2015,7 @@ test "md transcript: tool rows show status icon and indented body" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    try expectRowEquals(&cs.screen, 0, "✓ write_file");
+    try expectRowEquals(&cs.screen, 0, "✓ Write");
     try expectRowEquals(&cs.screen, 1, "  id=t1 args={}");
     try expectRowEquals(&cs.screen, 3, "✓ run_shell");
     try expectRowEquals(&cs.screen, 4, "  ok=true");
