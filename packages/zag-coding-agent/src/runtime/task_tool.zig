@@ -1,64 +1,82 @@
-//! `task` tool handler — model-facing subagent dispatch (subagents-001).
+//! `task` tool handler — model-facing subagent dispatch (subagents-001 + P1 async).
 //!
-//! The handler borrows a `TaskToolState` (instance pointer) that carries
-//! the parent Agent's resources needed to spawn a child. The state is
-//! Agent-owned and heap-stable (like `ApplyHunkState`).
+//! Default path is **background**: the handler records a running registry
+//! entry, spawns a detached OS thread that runs `subagent.spawn`, and returns
+//! immediately with `status: started`. The parent agent loop is no longer
+//! blocked for the child's entire lifetime — the TUI stays interactive.
+//!
+//! Optional `"await": true` keeps the old synchronous path for tests and
+//! callers that need the full child output in the same tool result.
 //!
 //! When the model calls `task`, the handler:
-//! 1. parses prompt + description + subagent_type + max_turns
+//! 1. parses prompt + description + subagent_type + max_turns [+ await]
 //! 2. checks depth (MAX_SUBAGENT_DEPTH=1)
-//! 3. calls `subagent.spawn()` which creates a child Agent + Session,
-//!    runs reply, and returns the result
-//! 4. formats the result as a tool result body
-//! 5. records the subagent in the registry for TUI display
-//!
-//! The spawn is synchronous and foreground — the parent loop blocks until
-//! the child completes. This is the grok-build `await_to_completion=true`
-//! foreground path, adapted to zag's synchronous architecture.
+//! 3. records the subagent in the registry (running)
+//! 4a. await=false (default): start background thread → return "started"
+//! 4b. await=true: spawn() synchronously → return full result body
+//! 5. background path finishes via Registry.finishEntry + optional wake
 
 const std = @import("std");
+const builtin = @import("builtin");
+
+fn spinLock(m: *std.atomic.Mutex) void {
+    while (!m.tryLock()) std.atomic.spinLoopHint();
+}
+
 const core = @import("zag-agent-core");
 const tool = core.tool;
 const subagent_mod = @import("../subagent.zig");
-const agent_mod = @import("../agent.zig");
 const permissions = @import("../permissions.zig");
 const redact_mod = @import("../redact.zig");
 const shell_policy_mod = @import("../shell_policy.zig");
 const edit_tools = @import("edit_tools.zig");
 
+/// Optional UI wake callback (TUI sets this so paint runs when a child finishes).
+pub const WakeFn = *const fn (?*anyopaque) void;
+
 /// Agent-owned heap-stable state for the `task` tool.
-/// Borrowed by the handler via the `instance` pointer.
-/// Lifetime: same as the parent Agent (created at Agent.init, freed at deinit).
 pub const TaskToolState = struct {
-    /// Parent's GPA (borrowed — same as Agent.gpa).
     gpa: std.mem.Allocator,
-    /// Parent's IO handle (borrowed).
+    /// Used only for the await=true path; background workers own Io.Threaded.
     io: std.Io,
-    /// Parent's provider port (borrowed — shared for child calls).
     provider: core.provider.Provider,
-    /// Parent's redactor (borrowed — cloned into child).
     redactor: *const redact_mod.Redactor,
-    /// Parent's permission mode.
     permission_mode: permissions.Mode = .ask,
-    /// Parent's shell policy mode.
     shell_policy_mode: shell_policy_mod.Mode = .protect,
-    /// Parent's nesting depth (0 = top-level). Set by Agent.reply when
-    /// composing the toolset; the task tool reads this to enforce
-    /// MAX_SUBAGENT_DEPTH.
     parent_depth: u32 = 0,
-    /// Parent's apply_hunk_state (borrowed for child's toolset when
-    /// the child is a `task` type with full toolset).
     apply_hunk_state: *edit_tools.ApplyHunkState,
-    /// Subagent registry (borrowed from Agent). The handler records each
-    /// spawn in the registry for TUI display.
     registry: ?*subagent_mod.Registry = null,
+    wake_fn: ?WakeFn = null,
+    wake_ctx: ?*anyopaque = null,
+    bg_mutex: std.atomic.Mutex = .unlocked,
+    bg_jobs: std.ArrayList(*BgJob) = .empty,
 };
 
-/// Tool definition re-exported for convenience.
+/// Heap job for one background subagent. Worker owns and frees it.
+pub const BgJob = struct {
+    gpa: std.mem.Allocator,
+    threaded: *std.Io.Threaded,
+    prompt: []u8,
+    description: []u8,
+    id: []u8,
+    subagent_type: subagent_mod.SubagentType,
+    max_turns: u32,
+    parent_depth: u32,
+    permission_mode: permissions.Mode,
+    shell_policy_mode: shell_policy_mod.Mode,
+    provider: core.provider.Provider,
+    redactor: *const redact_mod.Redactor,
+    apply_hunk_state: edit_tools.ApplyHunkState = .{},
+    registry: ?*subagent_mod.Registry,
+    reg_idx: ?usize,
+    wake_fn: ?WakeFn,
+    wake_ctx: ?*anyopaque,
+    owner: *TaskToolState,
+};
+
 pub const task_def = subagent_mod.task_def;
 pub const task_descriptor = subagent_mod.task_descriptor;
 
-/// Model-facing `task` tool value. Instance must point to a `TaskToolState`.
 pub fn makeTaskTool(state: *TaskToolState) tool.Tool {
     return .{
         .descriptor = subagent_mod.task_descriptor,
@@ -67,7 +85,28 @@ pub fn makeTaskTool(state: *TaskToolState) tool.Tool {
     };
 }
 
-/// `task` tool handler. See module docs for the full flow.
+/// Wait until all detached background jobs have unregistered (Agent.deinit).
+pub fn joinBackground(state: *TaskToolState) void {
+    // Detached workers unregister themselves; wait until none remain.
+    var spins: u64 = 0;
+    while (true) {
+        spinLock(&state.bg_mutex);
+        const n = state.bg_jobs.items.len;
+        state.bg_mutex.unlock();
+        if (n == 0) break;
+        std.atomic.spinLoopHint();
+        spins +|= 1;
+        // Safety: never hang deinit forever in tests if a worker stuck.
+        if (spins > 10_000_000) break;
+    }
+    spinLock(&state.bg_mutex);
+    // Free any straggler pointers without joining (detached); drop list storage.
+    state.bg_jobs.clearRetainingCapacity();
+    state.bg_jobs.deinit(state.gpa);
+    state.bg_jobs = .empty;
+    state.bg_mutex.unlock();
+}
+
 pub fn handleTask(
     ctx: tool.Context,
     instance: ?*anyopaque,
@@ -75,7 +114,6 @@ pub fn handleTask(
 ) tool.HandlerError![]u8 {
     const state: *TaskToolState = @ptrCast(@alignCast(instance.?));
 
-    // Parse arguments.
     const prompt = tool.requireStringField(ctx.allocator, arguments_json, "prompt") catch
         return softError(ctx.allocator, "invalid_arguments", "missing or invalid 'prompt' field");
     defer ctx.allocator.free(prompt);
@@ -84,7 +122,6 @@ pub fn handleTask(
         return softError(ctx.allocator, "invalid_arguments", "missing or invalid 'description' field");
     defer ctx.allocator.free(description);
 
-    // Optional subagent_type (default "task").
     const type_str = tool.optionalStringField(ctx.allocator, arguments_json, "subagent_type") catch
         return softError(ctx.allocator, "invalid_arguments", "invalid 'subagent_type' field");
     defer if (type_str) |s| ctx.allocator.free(s);
@@ -94,34 +131,30 @@ pub fn handleTask(
     else
         .task;
 
-    // Optional max_turns (default 20, matching SubagentRequest default).
     const max_turns: u32 = parseMaxTurns(ctx.allocator, arguments_json) catch default_max_turns;
+    const await_completion = parseAwait(ctx.allocator, arguments_json);
 
     if (prompt.len == 0) return softError(ctx.allocator, "invalid_arguments", "prompt must not be empty");
     if (description.len == 0) return softError(ctx.allocator, "invalid_arguments", "description must not be empty");
 
-    // Depth check: a subagent at parent_depth cannot spawn if parent_depth >= MAX_SUBAGENT_DEPTH.
     if (!subagent_mod.depthAllowed(state.parent_depth)) {
         return softError(ctx.allocator, "depth_exceeded", "max subagent nesting depth (1) exceeded; a subagent cannot spawn further subagents");
     }
 
-    // Record in registry (if available). Own id + description so the TUI can
-    // still display them after this handler returns (args are freed below).
     var reg_idx: ?usize = null;
     if (state.registry) |reg| {
         reg_idx = reg.allocSlot();
         const entry = reg.get(reg_idx.?);
-        reg.setIdentity(reg_idx.?, description) catch {
-            // Fall back to empty identity; slot stays free-looking if id empty.
-        };
+        reg.setIdentity(reg_idx.?, description) catch {};
         entry.subagent_type = subagent_type;
         entry.status = .running;
         entry.started_ms = nowMs();
+        spinLock(&reg.mutex);
         reg.depth = state.parent_depth + 1;
         reg.active_count += 1;
+        reg.mutex.unlock();
     }
 
-    // Spawn the subagent. Prefer the registry-owned id when available.
     const spawn_id: []const u8 = blk: {
         if (reg_idx) |idx| {
             if (state.registry) |reg| {
@@ -131,6 +164,113 @@ pub fn handleTask(
         }
         break :blk "task_call";
     };
+
+    if (await_completion) {
+        return spawnAwait(ctx.allocator, state, prompt, description, spawn_id, subagent_type, max_turns, reg_idx);
+    }
+
+    // Background path.
+    const job = state.gpa.create(BgJob) catch {
+        failReg(state, reg_idx, "out_of_memory");
+        return softError(ctx.allocator, "spawn_failed", "OutOfMemory");
+    };
+
+    const threaded = state.gpa.create(std.Io.Threaded) catch {
+        state.gpa.destroy(job);
+        failReg(state, reg_idx, "out_of_memory");
+        return softError(ctx.allocator, "spawn_failed", "OutOfMemory");
+    };
+    threaded.* = std.Io.Threaded.init(state.gpa, .{});
+
+    const prompt_owned = state.gpa.dupe(u8, prompt) catch {
+        threaded.deinit();
+        state.gpa.destroy(threaded);
+        state.gpa.destroy(job);
+        failReg(state, reg_idx, "out_of_memory");
+        return softError(ctx.allocator, "spawn_failed", "OutOfMemory");
+    };
+    const desc_owned = state.gpa.dupe(u8, description) catch {
+        state.gpa.free(prompt_owned);
+        threaded.deinit();
+        state.gpa.destroy(threaded);
+        state.gpa.destroy(job);
+        failReg(state, reg_idx, "out_of_memory");
+        return softError(ctx.allocator, "spawn_failed", "OutOfMemory");
+    };
+    const id_owned = state.gpa.dupe(u8, spawn_id) catch {
+        state.gpa.free(desc_owned);
+        state.gpa.free(prompt_owned);
+        threaded.deinit();
+        state.gpa.destroy(threaded);
+        state.gpa.destroy(job);
+        failReg(state, reg_idx, "out_of_memory");
+        return softError(ctx.allocator, "spawn_failed", "OutOfMemory");
+    };
+
+    job.* = .{
+        .gpa = state.gpa,
+        .threaded = threaded,
+        .prompt = prompt_owned,
+        .description = desc_owned,
+        .id = id_owned,
+        .subagent_type = subagent_type,
+        .max_turns = max_turns,
+        .parent_depth = state.parent_depth,
+        .permission_mode = state.permission_mode,
+        .shell_policy_mode = state.shell_policy_mode,
+        .provider = state.provider,
+        .redactor = state.redactor,
+        .apply_hunk_state = .{},
+        .registry = state.registry,
+        .reg_idx = reg_idx,
+        .wake_fn = state.wake_fn,
+        .wake_ctx = state.wake_ctx,
+        .owner = state,
+    };
+
+    spinLock(&state.bg_mutex);
+    const append_ok = state.bg_jobs.append(state.gpa, job);
+    state.bg_mutex.unlock();
+    append_ok catch {
+        destroyJob(job);
+        failReg(state, reg_idx, "out_of_memory");
+        return softError(ctx.allocator, "spawn_failed", "OutOfMemory");
+    };
+
+    const th = std.Thread.spawn(.{}, bgWorkerMain, .{job}) catch {
+        unregisterJob(state, job);
+        destroyJob(job);
+        failReg(state, reg_idx, "thread_spawn_failed");
+        return softError(ctx.allocator, "spawn_failed", "ThreadSpawnFailed");
+    };
+    th.detach();
+
+    return std.fmt.allocPrint(
+        ctx.allocator,
+        \\status: started
+        \\id: {s}
+        \\subagent_type: {s}
+        \\description: {s}
+        \\max_turns: {d}
+        \\
+        \\The subagent is running in the background. Continue helping the user.
+        \\Do not claim the subagent finished until a later status update appears.
+        \\
+    ,
+        .{ spawn_id, subagent_type.name(), description, max_turns },
+    ) catch return error.OutOfMemory;
+}
+
+fn spawnAwait(
+    allocator: std.mem.Allocator,
+    state: *TaskToolState,
+    prompt: []const u8,
+    description: []const u8,
+    spawn_id: []const u8,
+    subagent_type: subagent_mod.SubagentType,
+    max_turns: u32,
+    reg_idx: ?usize,
+) tool.HandlerError![]u8 {
     const request: subagent_mod.SubagentRequest = .{
         .id = spawn_id,
         .prompt = prompt,
@@ -139,7 +279,6 @@ pub fn handleTask(
         .max_turns = max_turns,
         .parent_depth = state.parent_depth,
     };
-
     const spawn_ctx: subagent_mod.SpawnContext = .{
         .gpa = state.gpa,
         .io = state.io,
@@ -153,59 +292,110 @@ pub fn handleTask(
     };
 
     const result = subagent_mod.spawn(spawn_ctx) catch |err| {
-        // Record failure in registry.
-        if (reg_idx) |idx| {
-            if (state.registry) |reg| {
-                const entry = reg.get(idx);
-                entry.status = .failed;
-                entry.error_message = std.fmt.allocPrint(state.gpa, "{s}", .{@errorName(err)}) catch null;
-                entry.finished_ms = nowMs();
-                reg.active_count = if (reg.active_count > 0) reg.active_count - 1 else 0;
-                reg.depth = 0;
-            }
-        }
-        return softError(ctx.allocator, "spawn_failed", @errorName(err));
+        failReg(state, reg_idx, @errorName(err));
+        return softError(allocator, "spawn_failed", @errorName(err));
     };
 
-    // NOTE: result.output is gpa-allocated by spawn() for every non-empty
-    // body — including the budget-exhausted diagnostic that carries
-    // success=false (subagent.zig finalizeChildOutput). It must remain valid
-    // until both registry recording and formatResult are done. Free it after
-    // formatResult returns. Literal "" error outputs have len 0 and are never
-    // freed, so the gate is len > 0, not success.
-
-    // Record result in registry.
     if (reg_idx) |idx| {
         if (state.registry) |reg| {
-            const entry = reg.get(idx);
-            entry.status = if (result.success) .completed else
-                (if (std.mem.eql(u8, result.stop_reason, "cancelled")) .cancelled else .failed);
-            entry.turns = result.turns;
-            entry.output = state.gpa.dupe(u8, result.output) catch &[_]u8{};
-            if (result.error_message) |em| {
-                entry.error_message = state.gpa.dupe(u8, em) catch null;
-            }
-            entry.finished_ms = nowMs();
-            reg.active_count = if (reg.active_count > 0) reg.active_count - 1 else 0;
-            reg.depth = 0;
+            const st: subagent_mod.Status = if (result.success)
+                .completed
+            else if (std.mem.eql(u8, result.stop_reason, "cancelled"))
+                .cancelled
+            else
+                .failed;
+            reg.finishEntry(idx, st, result.turns, result.output, result.error_message);
         }
     }
 
-    // Format the tool result body (uses result.output before free).
-    const body = formatResult(ctx.allocator, result);
-    // Free spawn-allocated output after all uses (registry + format).
-    // success=false may still own a diagnostic body (len > 0); the only
-    // non-owned outputs are literal "" (len 0).
+    const body = formatResult(allocator, result);
     if (result.output.len > 0) state.gpa.free(result.output);
     return body;
 }
 
-/// Maximum output bytes included in the tool result body (prevents
-/// oversized tool results from causing provider 400 errors).
+fn bgWorkerMain(job: *BgJob) void {
+    defer {
+        unregisterJob(job.owner, job);
+        destroyJob(job);
+    }
+
+    const io = job.threaded.io();
+    const request: subagent_mod.SubagentRequest = .{
+        .id = job.id,
+        .prompt = job.prompt,
+        .description = job.description,
+        .subagent_type = job.subagent_type,
+        .max_turns = job.max_turns,
+        .parent_depth = job.parent_depth,
+    };
+    const spawn_ctx: subagent_mod.SpawnContext = .{
+        .gpa = job.gpa,
+        .io = io,
+        .provider = job.provider,
+        .parent_redactor = job.redactor,
+        .permission_mode = job.permission_mode,
+        .shell_policy_mode = job.shell_policy_mode,
+        .parent_depth = job.parent_depth,
+        .apply_hunk_state = &job.apply_hunk_state,
+        .request = request,
+    };
+
+    const result = subagent_mod.spawn(spawn_ctx) catch |err| {
+        if (job.reg_idx) |idx| {
+            if (job.registry) |reg| {
+                reg.finishEntry(idx, .failed, 0, "", @errorName(err));
+            }
+        }
+        if (job.wake_fn) |wf| wf(job.wake_ctx);
+        return;
+    };
+
+    if (job.reg_idx) |idx| {
+        if (job.registry) |reg| {
+            const st: subagent_mod.Status = if (result.success)
+                .completed
+            else if (std.mem.eql(u8, result.stop_reason, "cancelled"))
+                .cancelled
+            else
+                .failed;
+            reg.finishEntry(idx, st, result.turns, result.output, result.error_message);
+        }
+    }
+    if (result.output.len > 0) job.gpa.free(result.output);
+    if (job.wake_fn) |wf| wf(job.wake_ctx);
+}
+
+fn unregisterJob(state: *TaskToolState, job: *BgJob) void {
+    spinLock(&state.bg_mutex);
+    defer state.bg_mutex.unlock();
+    for (state.bg_jobs.items, 0..) |j, i| {
+        if (j == job) {
+            _ = state.bg_jobs.orderedRemove(i);
+            break;
+        }
+    }
+}
+
+fn destroyJob(job: *BgJob) void {
+    const gpa = job.gpa;
+    gpa.free(job.prompt);
+    gpa.free(job.description);
+    gpa.free(job.id);
+    job.threaded.deinit();
+    gpa.destroy(job.threaded);
+    gpa.destroy(job);
+}
+
+fn failReg(state: *TaskToolState, reg_idx: ?usize, err_name: []const u8) void {
+    if (reg_idx) |idx| {
+        if (state.registry) |reg| {
+            reg.finishEntry(idx, .failed, 0, "", err_name);
+        }
+    }
+}
+
 const max_output_bytes: usize = 8 * 1024;
 
-/// Format the subagent result as a tool result body for the model.
-/// Output is truncated to `max_output_bytes` to avoid provider rejections.
 fn formatResult(allocator: std.mem.Allocator, result: subagent_mod.SubagentResult) tool.HandlerError![]u8 {
     var out: std.Io.Writer.Allocating = .init(allocator);
     defer out.deinit();
@@ -219,7 +409,6 @@ fn formatResult(allocator: std.mem.Allocator, result: subagent_mod.SubagentResul
         out.writer.print("error: {s}\n", .{em}) catch return error.OutOfMemory;
     }
 
-    // Truncate output to avoid provider 400 on oversized tool results.
     const output = result.output;
     if (output.len <= max_output_bytes) {
         out.writer.print("\n--- output ---\n{s}\n", .{output}) catch return error.OutOfMemory;
@@ -232,22 +421,12 @@ fn formatResult(allocator: std.mem.Allocator, result: subagent_mod.SubagentResul
     return out.toOwnedSlice() catch return error.OutOfMemory;
 }
 
-/// Soft tool error: format a structured error body.
 fn softError(allocator: std.mem.Allocator, code: []const u8, detail: []const u8) tool.HandlerError![]u8 {
-    const tool_error = @import("zag-agent-core").tool_error;
-    _ = tool_error;
-    // Simple format: the loop wraps this as a tool result.
     return std.fmt.allocPrint(allocator, "error: {s}\ndetail: {s}", .{ code, detail }) catch return error.OutOfMemory;
 }
 
-/// Default child turn budget for the `task` tool. Kept in sync with
-/// `subagent_mod.SubagentRequest.max_turns` (both 20, matching the parent
-/// loop's `default_max_turns`). Read-only recon (scout/reviewer) burns turns
-/// on tool calls, so the old 10 was too tight and often ended on a
-/// tool-call-only message with an empty final text.
 const default_max_turns: u32 = 20;
 
-/// Parse optional max_turns from arguments JSON (default 20, clamped 1..50).
 fn parseMaxTurns(allocator: std.mem.Allocator, arguments_json: []const u8) !u32 {
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch return default_max_turns;
     defer parsed.deinit();
@@ -258,12 +437,20 @@ fn parseMaxTurns(allocator: std.mem.Allocator, arguments_json: []const u8) !u32 
     return v;
 }
 
-/// Monotonic milliseconds for the registry timestamps.
+fn parseAwait(allocator: std.mem.Allocator, arguments_json: []const u8) bool {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, arguments_json, .{}) catch return false;
+    defer parsed.deinit();
+    if (parsed.value != .object) return false;
+    const val = parsed.value.object.get("await") orelse return false;
+    return switch (val) {
+        .bool => |b| b,
+        else => false,
+    };
+}
+
 fn nowMs() u64 {
     return @import("zag-types").monoNowNs() / std.time.ns_per_ms;
 }
-
-// ── Tests ────────────────────────────────────────────────────────────────────
 
 test "parseMaxTurns defaults to 20" {
     const gpa = std.testing.allocator;
@@ -276,6 +463,13 @@ test "parseMaxTurns clamps to 1..50" {
     try std.testing.expectEqual(@as(u32, 5), try parseMaxTurns(gpa, "{\"max_turns\":5}"));
     try std.testing.expectEqual(@as(u32, 1), try parseMaxTurns(gpa, "{\"max_turns\":0}"));
     try std.testing.expectEqual(@as(u32, 50), try parseMaxTurns(gpa, "{\"max_turns\":100}"));
+}
+
+test "parseAwait defaults false" {
+    const gpa = std.testing.allocator;
+    try std.testing.expect(!parseAwait(gpa, "{}"));
+    try std.testing.expect(parseAwait(gpa, "{\"await\":true}"));
+    try std.testing.expect(!parseAwait(gpa, "{\"await\":false}"));
 }
 
 test "formatResult includes type, status, turns, output" {

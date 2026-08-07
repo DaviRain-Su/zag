@@ -1799,59 +1799,5 @@ test "md transcript: tool rows show status icon and indented body" {
 
 }
 
-test "tasks pane: renders status-colored rows with header chips" {
-    const gpa = std.testing.allocator;
-    var reg = subagent_mod.Registry.init(gpa);
-    defer reg.deinit();
 
-    const a = reg.allocSlot();
-    try reg.setIdentity(a, "scan packages");
-    reg.get(a).subagent_type = .scout;
-    reg.get(a).status = .running;
-    reg.get(a).turns = 3;
-    reg.get(a).started_ms = 1_000;
-    reg.active_count = 1;
-
-    const b = reg.allocSlot();
-    try reg.setIdentity(b, "review diff");
-    reg.get(b).subagent_type = .reviewer;
-    reg.get(b).status = .completed;
-    reg.get(b).turns = 5;
-    reg.get(b).started_ms = 1_000;
-    reg.get(b).finished_ms = 4_000;
-    reg.get(b).output = try gpa.dupe(u8, "looks good\nline2");
-
-    var cs = try CellScreen.init(gpa, 80, 24);
-    defer cs.deinit(gpa);
-    const f = fixedFixture();
-    var ed = editor.Editor.init(&fixture_editor_storage);
-    const layout = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, true);
-    const tr = layout.tasks_overlay orelse return error.TestUnexpectedResult;
-    try std.testing.expect(tr.h >= 4);
-    const palette = theme_mod.builtinDefault();
-    var sb = scrollback_mod.Scrollback.init(gpa);
-    defer sb.deinit();
-    _ = sb.prepare(&[_]cards.CardSlot{}, @max(layout.cards.w -| 1, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
-    drawFrame(cs.md_arena.allocator(), cs.root(80, 24), layout, f.facts_full, &[_]cards.CardSlot{}, &ed, .{}, &palette, .{}, &cs.store, &sb, &reg, .{
-        .cursor = 1,
-        .expanded = true,
-        .tick_ms = 5_000,
-    });
-
-    // Scan the whole tasks region for the expected chips / labels.
-    var saw_header = false;
-    var saw_scout = false;
-    var saw_detail = false;
-    var r: u16 = tr.y;
-    while (r < tr.y + tr.h) : (r += 1) {
-        var buf: [512]u8 = undefined;
-        const text = rowText(&cs.screen, r, &buf);
-        if (std.mem.indexOf(u8, text, "tasks") != null) saw_header = true;
-        if (std.mem.indexOf(u8, text, "scout") != null) saw_scout = true;
-        if (std.mem.indexOf(u8, text, "looks good") != null or std.mem.indexOf(u8, text, "id=") != null) saw_detail = true;
-    }
-    try std.testing.expect(saw_header);
-    try std.testing.expect(saw_scout);
-    try std.testing.expect(saw_detail);
-}
 

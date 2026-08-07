@@ -149,8 +149,18 @@ pub fn compute(
         .cards_window = .{ .start = start, .count = count },
     };
 }
-
 // ── geometry fixtures (tui-layout-001) ──────────────────────────────────────
+
+test "layout full mode with tasks pane" {
+    const l = compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, true);
+    try std.testing.expect(l.mode == .full);
+    const t = l.tasks_overlay orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u16, 12), t.h);
+    try std.testing.expectEqual(@as(u16, 9), t.y); // editor_y 21 - 12
+    try std.testing.expectEqual(@as(u16, 21), l.editor.y);
+    try std.testing.expectEqual(@as(u16, 3), l.editor.h);
+    try std.testing.expectEqual(@as(u16, 9), l.cards.h); // 21 - 12
+}
 
 test "layout full mode geometry" {
     const l = compute(.{ .cols = 80, .rows = 24 }, 5, false, false, 0, 1, false);
@@ -169,6 +179,7 @@ test "layout full mode geometry" {
     // Status band folded into the editor top border.
     try std.testing.expectEqual(@as(u16, 0), l.status.h);
     try std.testing.expect(l.modal == null);
+    try std.testing.expect(l.tasks_overlay == null);
 }
 
 test "layout full note is ignored (no header band)" {

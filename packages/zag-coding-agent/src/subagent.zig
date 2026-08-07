@@ -31,6 +31,11 @@
 //! blocks during `running` and the child result is available immediately.
 
 const std = @import("std");
+
+fn spinLock(m: *std.atomic.Mutex) void {
+    while (!m.tryLock()) std.atomic.spinLoopHint();
+}
+
 const builtin = @import("builtin");
 const core = @import("zag-agent-core");
 const ai = @import("zag-ai");
@@ -302,19 +307,25 @@ pub const Registry = struct {
     total_spawned: u64 = 0,
     /// Current nesting depth (0 = no subagent running).
     depth: u32 = 0,
+    /// Protects entries/counters for background task completion (P1 async).
+    mutex: std.atomic.Mutex = .unlocked,
 
     pub fn init(gpa: std.mem.Allocator) Registry {
         return .{ .gpa = gpa };
     }
 
     pub fn deinit(self: *Registry) void {
+        spinLock(&self.mutex);
         for (&self.entries) |*e| e.freeOwned(self.gpa);
+        self.mutex.unlock();
         self.* = undefined;
     }
 
     /// Allocate a slot in the ring buffer for a new subagent.
     /// Returns the index. Does NOT set status (caller sets pending→running).
     pub fn allocSlot(self: *Registry) usize {
+        spinLock(&self.mutex);
+        defer self.mutex.unlock();
         const idx = self.head;
         const slot = &self.entries[idx];
         slot.freeOwned(self.gpa);
@@ -327,7 +338,9 @@ pub const Registry = struct {
     /// Assign a unique owned id (`task-N`) and owned description to a slot.
     /// Does not touch status/timestamps/output.
     pub fn setIdentity(self: *Registry, idx: usize, description: []const u8) error{OutOfMemory}!void {
-        const e = self.get(idx);
+        spinLock(&self.mutex);
+        defer self.mutex.unlock();
+        const e = &self.entries[idx];
         if (e.id.len > 0) {
             self.gpa.free(e.id);
             e.id = &[_]u8{};
@@ -346,18 +359,54 @@ pub const Registry = struct {
         e.description = try self.gpa.dupe(u8, description);
     }
 
-    /// Get a mutable entry by index.
+    /// Get a mutable entry by index. Caller must hold `mutex` when writing
+    /// from a background thread, or use `finishEntry`.
     pub fn get(self: *Registry, idx: usize) *Entry {
         return &self.entries[idx];
     }
 
-    /// Get a const entry by index.
     pub fn getConst(self: *const Registry, idx: usize) *const Entry {
         return &self.entries[idx];
     }
 
-    /// Count of entries with a specific status.
+    /// Thread-safe completion write from a background worker.
+    pub fn finishEntry(
+        self: *Registry,
+        idx: usize,
+        status: Status,
+        turns: u32,
+        output: []const u8,
+        error_message: ?[]const u8,
+    ) void {
+        spinLock(&self.mutex);
+        defer self.mutex.unlock();
+        const e = &self.entries[idx];
+        e.status = status;
+        e.turns = turns;
+        if (e.output.len > 0) {
+            self.gpa.free(e.output);
+            e.output = &[_]u8{};
+        }
+        if (output.len > 0) {
+            e.output = self.gpa.dupe(u8, output) catch &[_]u8{};
+        }
+        if (e.error_message) |em| {
+            self.gpa.free(em);
+            e.error_message = null;
+        }
+        if (error_message) |em| {
+            e.error_message = self.gpa.dupe(u8, em) catch null;
+        }
+        e.finished_ms = @import("zag-types").monoNowNs() / std.time.ns_per_ms;
+        if (self.active_count > 0) self.active_count -= 1;
+        if (self.depth > 0) self.depth -= 1;
+    }
+
     pub fn countByStatus(self: *const Registry, want: Status) usize {
+        // Cast away const for mutex — lock is interior mutability.
+        const m: *std.atomic.Mutex = @constCast(&self.mutex);
+        spinLock(m);
+        defer m.unlock();
         var n: usize = 0;
         for (self.entries) |e| {
             if (e.status == want) n += 1;
@@ -365,8 +414,10 @@ pub const Registry = struct {
         return n;
     }
 
-    /// Number of entries with any non-default state (id != "").
     pub fn liveCount(self: *const Registry) usize {
+        const m: *std.atomic.Mutex = @constCast(&self.mutex);
+        spinLock(m);
+        defer m.unlock();
         var n: usize = 0;
         for (self.entries) |e| {
             if (e.id.len > 0) n += 1;
@@ -374,15 +425,19 @@ pub const Registry = struct {
         return n;
     }
 
-    /// Snapshot all live entries into a caller-provided slice.
-    /// Returns the number of entries copied.
     pub fn snapshotInto(self: *const Registry, out: []Entry) usize {
+        const m: *std.atomic.Mutex = @constCast(&self.mutex);
+        spinLock(m);
+        defer m.unlock();
         var n: usize = 0;
-        // Walk in insertion order (oldest first): start from tail.
-        const live = self.liveCount();
+        const live = blk: {
+            var c: usize = 0;
+            for (self.entries) |e| {
+                if (e.id.len > 0) c += 1;
+            }
+            break :blk c;
+        };
         if (live == 0) return 0;
-        // The ring head points at the next-write slot; the oldest live entry
-        // is at (head - live) mod max. Walk forward from there.
         const start = if (live <= max_registry_entries)
             (self.head + max_registry_entries - live) % max_registry_entries
         else

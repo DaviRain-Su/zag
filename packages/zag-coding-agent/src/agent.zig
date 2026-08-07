@@ -1371,6 +1371,16 @@ pub const Agent = struct {
             tr.setRedactor(null);
             tr.deinit();
         }
+        // P1 async: clear wake; join background jobs if any.
+        self.task_tool_state.wake_fn = null;
+        self.task_tool_state.wake_ctx = null;
+        // joinBackground can spin; only call when jobs were tracked.
+        if (self.task_tool_state.bg_jobs.items.len > 0) {
+            task_tool.joinBackground(self.task_tool_state);
+        } else {
+            self.task_tool_state.bg_jobs.deinit(self.gpa);
+            self.task_tool_state.bg_jobs = .empty;
+        }
         self.subagent_registry.deinit();
         self.gpa.destroy(self.subagent_registry);
         self.gpa.destroy(self.task_tool_state);
