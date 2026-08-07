@@ -769,14 +769,12 @@ fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.Mo
     }
 }
 
-/// Grok-inspired tasks pane (subagents-001 TUI): full-width strip above the
-/// editor listing live registry entries with status color, elapsed time,
-/// turns, and an optional expanded output preview for the selected row.
+/// Grok-inspired tasks pane: full-width strip above the editor.
 ///
-/// `opts.cursor` is the selected entry index (0 = newest-first position 0).
-/// `opts.expanded` shows the selected entry's output / error under its row.
-/// `opts.tick_ms` drives a simple spinner for running entries.
-
+/// Each row (mirrors grok `render_agent_overlay`):
+///   [sel] [icon] Type  description………………  [Nt] [elapsed]
+/// Icon is status-colored; selection is a left marker + reverse/accent bar.
+/// Expanded selection shows up to 4 lines of output/error under the row.
 fn drawTasksOverlay(
     root: vaxis.Window,
     region: layout_mod.Region,
@@ -786,7 +784,8 @@ fn drawTasksOverlay(
     opts: TasksPaneOpts,
 ) void {
     if (region.w == 0 or region.h == 0) return;
-    const border = palette.style(.card_border);
+    const border_role: theme_mod.Role = if (opts.focused) .accent_fg else .card_border;
+    const border = palette.style(border_role);
     const muted = palette.style(.muted_fg);
     const box = borderedChild(root, region, .{
         .where = .all,
@@ -795,44 +794,48 @@ fn drawTasksOverlay(
     });
     if (box.width == 0 or box.height == 0) return;
 
-    // Header chip on the top border: " tasks N · running R "
-    var live: usize = 0;
-    var running: usize = 0;
     var snap_buf: [subagent_mod.max_registry_entries]subagent_mod.Entry = undefined;
     var n: usize = 0;
+    var running: usize = 0;
     if (registry) |reg| {
         n = reg.snapshotInto(&snap_buf);
-        live = n;
         running = reg.countByStatus(.running) + reg.countByStatus(.pending);
     }
-    // Newest-first for the pane (grok sorts running-first then newest).
-    // Reverse the oldest-first snapshot into a stack buffer of indices.
+
+    // Order: running/pending first, then newest-first within each group.
     var order: [subagent_mod.max_registry_entries]usize = undefined;
-    var oi: usize = 0;
-    while (oi < n) : (oi += 1) order[oi] = n - 1 - oi;
-    // Stable-ish running-first: bubble running/pending to the front.
-    var a: usize = 0;
-    while (a + 1 < n) : (a += 1) {
-        var b = a + 1;
-        while (b < n) : (b += 1) {
-            const ea = snap_buf[order[a]].status;
-            const eb = snap_buf[order[b]].status;
-            const ra = ea == .running or ea == .pending;
-            const rb = eb == .running or eb == .pending;
-            if (!ra and rb) {
-                const tmp = order[a];
-                order[a] = order[b];
-                order[b] = tmp;
+    {
+        var oi: usize = 0;
+        while (oi < n) : (oi += 1) order[oi] = n - 1 - oi; // newest first
+        var a: usize = 0;
+        while (a + 1 < n) : (a += 1) {
+            var b = a + 1;
+            while (b < n) : (b += 1) {
+                const ea = snap_buf[order[a]].status;
+                const eb = snap_buf[order[b]].status;
+                const ra = ea == .running or ea == .pending;
+                const rb = eb == .running or eb == .pending;
+                if (!ra and rb) {
+                    const tmp = order[a];
+                    order[a] = order[b];
+                    order[b] = tmp;
+                }
             }
         }
     }
 
-    if (store.format(" tasks {d} · running {d}{s} ", .{
-        live,
-        running,
-        if (opts.focused) " · FOCUSED" else "",
-    })) |hdr| {
-        _ = root.printSegment(.{ .text = hdr, .style = palette.style(.status_fg) }, .{
+    // Title in top border (grok: compact "Tasks" chrome).
+    const hdr: ?[]const u8 = if (opts.focused)
+        (if (running > 0)
+            store.format(" Tasks {d} · {d} running · j/k Space ", .{ n, running })
+        else
+            store.format(" Tasks {d} · j/k Space ", .{n}))
+    else if (running > 0)
+        store.format(" Tasks {d} · {d} running ", .{ n, running })
+    else
+        store.format(" Tasks {d} ", .{n});
+    if (hdr) |h| {
+        _ = root.printSegment(.{ .text = h, .style = palette.style(.status_fg) }, .{
             .col_offset = region.x + 2,
             .row_offset = region.y,
             .wrap = .none,
@@ -840,7 +843,6 @@ fn drawTasksOverlay(
     }
 
     if (n == 0) {
-        // Should not normally paint: layout hides the region when empty.
         printLineStyled(box, 0, "(no subagents)", muted);
         return;
     }
@@ -851,57 +853,152 @@ fn drawTasksOverlay(
     while (i < n and row < box.height) : (i += 1) {
         const e = &snap_buf[order[i]];
         const selected = i == cursor;
-        const st = statusStyle(e.status, palette);
+        const icon_style = statusStyle(e.status, palette);
         const glyph = statusGlyph(e.status, opts.tick_ms);
-        const marker: []const u8 = if (selected) (if (opts.expanded) "▾ " else "▸ ") else "  ";
+        const type_label = typeTitle(e.subagent_type);
         const elapsed = formatElapsed(e.started_ms, e.finished_ms, opts.tick_ms);
-        // Left: marker glyph type: description … Right: turns + elapsed
-        if (store.format("{s}{s} {s}: {s}", .{
-            marker,
-            glyph,
-            e.subagent_type.name(),
-            singleLine(e.description),
-        })) |left| {
-            const left_capped = present.utf8Prefix(left, box.width -| 12);
-            printLineStyled(box, row, left_capped, if (selected) palette.style(.accent_fg) else st);
-            if (store.format(" {s} · {d}t", .{ elapsed, e.turns })) |right| {
-                const rw = box.gwidth(right);
-                if (rw < box.width) {
-                    _ = box.printSegment(.{ .text = right, .style = muted }, .{
-                        .row_offset = row,
-                        .col_offset = box.width - rw,
-                        .wrap = .none,
-                    });
-                }
+
+        // Right cluster first so we know how much width to reserve.
+        // grok: "Nt · elapsed" / just elapsed when turns==0.
+        const right: []const u8 = blk: {
+            if (e.turns > 0) {
+                break :blk store.format("{d}t · {s}", .{ e.turns, elapsed }) orelse elapsed;
             }
+            break :blk elapsed;
+        };
+        const right_w: u16 = box.gwidth(right);
+        const pad: u16 = 1;
+        const right_col: u16 = if (box.width > right_w + pad) box.width - right_w else 0;
+
+        // Left: "▸ ⠋ Scout  description…"
+        const sel_mark: []const u8 = if (selected)
+            (if (opts.expanded) "▾ " else "▸ ")
+        else
+            "  ";
+        const desc = singleLine(e.description);
+        // Build left without description, measure, then fit description by
+        // display width (not bytes) so CJK/emoji don't collide with metrics.
+        const left_head = store.format("{s}{s} {s}  ", .{ sel_mark, glyph, type_label }) orelse sel_mark;
+        const head_w: u16 = box.gwidth(left_head);
+        const desc_budget: u16 = if (right_col > head_w + 1) right_col - head_w - 1 else 0;
+        const desc_fit = fitDisplay(box, desc, desc_budget);
+
+        // Paint selection bar background on the whole row when focused+selected.
+        if (selected and opts.focused) {
+            var col_i: u16 = 0;
+            while (col_i < box.width) : (col_i += 1) {
+                box.writeCell(col_i, row, .{
+                    .char = .{ .grapheme = " ", .width = 1 },
+                    .style = .{ .bg = palette.style(.status_bg).bg, .fg = palette.style(.accent_fg).fg },
+                });
+            }
+        }
+
+        // Icon + type in status color; description muted (or accent when selected).
+        var col: u16 = 0;
+        _ = box.printSegment(.{ .text = sel_mark, .style = if (selected) palette.style(.accent_fg) else muted }, .{
+            .row_offset = row,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col +|= box.gwidth(sel_mark);
+
+        _ = box.printSegment(.{ .text = glyph, .style = icon_style }, .{
+            .row_offset = row,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col +|= box.gwidth(glyph);
+        // space after icon
+        col +|= 1;
+
+        _ = box.printSegment(.{ .text = type_label, .style = if (selected) palette.style(.accent_fg) else icon_style }, .{
+            .row_offset = row,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col +|= box.gwidth(type_label);
+        col +|= 2; // gap before description
+
+        if (desc_fit.len > 0 and col < right_col) {
+            const desc_style: vaxis.Style = if (selected) palette.style(.fg) else muted;
+            _ = box.printSegment(.{ .text = desc_fit, .style = desc_style }, .{
+                .row_offset = row,
+                .col_offset = col,
+                .wrap = .none,
+            });
+        }
+
+        // Right-aligned metrics (elapsed / turns).
+        if (right_w > 0 and right_col < box.width) {
+            _ = box.printSegment(.{ .text = right, .style = muted }, .{
+                .row_offset = row,
+                .col_offset = right_col,
+                .wrap = .none,
+            });
         }
         row += 1;
 
-        // Expanded detail under the selected row.
+        // Expanded detail (grok view-output): status line + output preview.
         if (selected and opts.expanded and row < box.height) {
+            if (store.format("    {s} · {s}", .{ e.status.name(), e.id })) |meta| {
+                printAt(box, row, 0, present.utf8Prefix(meta, box.width), muted);
+                row += 1;
+            }
             const detail: []const u8 = blk: {
                 if (e.error_message) |em| if (em.len > 0) break :blk em;
                 if (e.output.len > 0) break :blk e.output;
-                break :blk "(no output yet)";
+                if (e.status == .running or e.status == .pending) break :blk "working…";
+                break :blk "(no output)";
             };
-            // Up to 3 detail lines, indented, muted.
             var lines = std.mem.splitScalar(u8, detail, '\n');
             var di: usize = 0;
             while (lines.next()) |ln| : (di += 1) {
-                if (di >= 3 or row >= box.height) break;
-                if (store.format("    {s}", .{singleLine(ln)})) |s| {
-                    printLineStyled(box, row, present.utf8Prefix(s, box.width), muted);
-                }
-                row += 1;
-            }
-            if (e.id.len > 0 and row < box.height) {
-                if (store.format("    id={s}  status={s}", .{ e.id, e.status.name() })) |s| {
-                    printLineStyled(box, row, present.utf8Prefix(s, box.width), muted);
+                if (di >= 4 or row >= box.height) break;
+                const body = singleLine(ln);
+                if (body.len == 0) continue;
+                if (store.format("    {s}", .{body})) |s| {
+                    printAt(box, row, 0, present.utf8Prefix(s, box.width), muted);
                     row += 1;
                 }
             }
         }
     }
+}
+
+
+/// Truncate `text` so its vaxis display width is ≤ `max_w`.
+fn fitDisplay(win: vaxis.Window, text: []const u8, max_w: u16) []const u8 {
+    if (max_w == 0 or text.len == 0) return "";
+    if (win.gwidth(text) <= max_w) return text;
+    // Walk UTF-8 codepoints; keep the longest prefix that still fits.
+    var i: usize = 0;
+    var best: usize = 0;
+    while (i < text.len) {
+        const len = std.unicode.utf8ByteSequenceLength(text[i]) catch break;
+        if (i + len > text.len) break;
+        const cand = text[0 .. i + len];
+        if (win.gwidth(cand) > max_w) break;
+        best = i + len;
+        i += len;
+    }
+    return text[0..best];
+}
+
+fn printAt(win: vaxis.Window, row: u16, col: u16, text: []const u8, style: vaxis.Style) void {
+    _ = win.printSegment(.{ .text = text, .style = style }, .{
+        .row_offset = row,
+        .col_offset = col,
+        .wrap = .none,
+    });
+}
+
+fn typeTitle(t: subagent_mod.SubagentType) []const u8 {
+    return switch (t) {
+        .task => "Task",
+        .scout => "Scout",
+        .reviewer => "Reviewer",
+    };
 }
 
 fn statusStyle(status: subagent_mod.Status, palette: *const theme_mod.Palette) vaxis.Style {
@@ -914,8 +1011,8 @@ fn statusStyle(status: subagent_mod.Status, palette: *const theme_mod.Palette) v
     };
 }
 
-/// One-cell status indicator; running entries animate with tick_ms.
 fn statusGlyph(status: subagent_mod.Status, tick_ms: u64) []const u8 {
+    // braille spinner (grok-style motion)
     const frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
     return switch (status) {
         .pending => "○",
@@ -927,16 +1024,11 @@ fn statusGlyph(status: subagent_mod.Status, tick_ms: u64) []const u8 {
 }
 
 fn formatElapsed(started_ms: u64, finished_ms: u64, now_ms: u64) []const u8 {
-    // Static buffers are fine: LineStore.format copies into its own buffer
-    // before the next call. We still keep a small local that formatElapsed
-    // returns via a threadlocal-ish approach — caller must copy immediately.
     const end = if (finished_ms > started_ms) finished_ms else now_ms;
     const ms = if (end > started_ms) end - started_ms else 0;
     const sec = ms / 1000;
     const mins = sec / 60;
     const s = sec % 60;
-    // Use a process-local rotating buffer pair to keep the slice valid until
-    // the next formatElapsed call (draw path formats once per row).
     const Pair = struct {
         var bufs: [2][16]u8 = undefined;
         var i: usize = 0;
@@ -947,6 +1039,7 @@ fn formatElapsed(started_ms: u64, finished_ms: u64, now_ms: u64) []const u8 {
     }
     return std.fmt.bufPrint(&Pair.bufs[Pair.i], "{d}s", .{s}) catch "?";
 }
+
 
 fn drawHostOverlay(
     root: vaxis.Window,
