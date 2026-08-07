@@ -41,7 +41,10 @@ const stream_response_body =
 ;
 
 /// Last user message content from an OpenAI-style chat request body.
-fn lastUserText(gpa: std.mem.Allocator, body: []const u8) ?[]const u8 {
+/// Returns a gpa-owned copy (the parsed tree is freed before the caller
+/// uses the slice — returning into the tree was a use-after-free: the
+/// second connection's echo text came back as NUL bytes).
+fn lastUserText(gpa: std.mem.Allocator, body: []const u8) !?[]u8 {
     const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
     defer parsed.deinit();
     const root = parsed.value;
@@ -57,7 +60,8 @@ fn lastUserText(gpa: std.mem.Allocator, body: []const u8) ?[]const u8 {
         if (content != .string) continue;
         last = content.string;
     }
-    return last;
+    if (last) |t| return try gpa.dupe(u8, t);
+    return null;
 }
 
 /// Explicit empty OBJECT for SSE deltas — an anonymous `{}` literal would
@@ -76,15 +80,15 @@ fn writeJson(out: *std.Io.Writer.Allocating, value: anytype) !void {
     try jw.write(value);
 }
 
-/// JSON body for a tool-call request: `{"path": "rpc_fixture_out.txt",
-/// "content": "<echoed>"}`.
-fn toolArgsJson(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
+/// JSON body for a tool-call request: `{"path": "<tool-path>", "content":
+/// "<echoed>"}`.
+fn toolArgsJson(gpa: std.mem.Allocator, text: []const u8, tool_path: []const u8) ![]u8 {
     var out: std.Io.Writer.Allocating = .init(gpa);
     defer out.deinit();
     var jw: std.json.Stringify = .{ .writer = &out.writer, .options = .{} };
     try jw.beginObject();
     try jw.objectField("path");
-    try jw.write("rpc_fixture_out.txt");
+    try jw.write(tool_path);
     try jw.objectField("content");
     try jw.write(text);
     try jw.endObject();
@@ -93,17 +97,25 @@ fn toolArgsJson(gpa: std.mem.Allocator, text: []const u8) ![]u8 {
 
 /// Build one chat response body. `echo_text` is the last user content
 /// (when --echo / --tool-call); `serve_index` counts accepted connections.
+/// Tool calls are served for the first `tool_call_count` connections
+/// (default 1 — backwards compatible) or, when `tool_call_every > 0`, for
+/// every `tool_call_every`-th connection (alternating mode); `tool_path` is
+/// the write path in the tool arguments (default `rpc_fixture_out.txt`).
 fn buildResponseBody(
     gpa: std.mem.Allocator,
     stream: bool,
     echo_text: ?[]const u8,
     tool_call: bool,
     serve_index: usize,
+    tool_call_count: usize,
+    tool_call_every: usize,
+    tool_path: []const u8,
 ) ![]u8 {
     var body: std.Io.Writer.Allocating = .init(gpa);
     defer body.deinit();
 
-    const wants_tool_call = tool_call and serve_index == 0;
+    const wants_tool_call = tool_call and
+        if (tool_call_every > 0) serve_index % tool_call_every == 0 else serve_index < tool_call_count;
     const text = echo_text orelse "Hello from mock";
     var final_text: []const u8 = text;
     var owned_final: ?[]u8 = null;
@@ -114,14 +126,19 @@ fn buildResponseBody(
     defer if (owned_final) |f| gpa.free(f);
 
     if (wants_tool_call) {
-        const args_json = try toolArgsJson(gpa, text);
+        const args_json = try toolArgsJson(gpa, text, tool_path);
         defer gpa.free(args_json);
+        // Unique per-connection call id: the fixture runs multiple prompts in
+        // one process, and a duplicate tool-call id in the transcript would
+        // break the agent's history validation.
+        const call_id = try std.fmt.allocPrint(gpa, "call_mock_{d}", .{serve_index});
+        defer gpa.free(call_id);
         if (stream) {
             try writeSseData(&body, .{
                 .id = "r1", .object = "chat.completion.chunk", .created = @as(u32, 1), .model = "mock-model",
                 .choices = &.{.{ .index = @as(u32, 0), .delta = .{
                     .role = "assistant",
-                    .tool_calls = &.{.{ .index = @as(u32, 0), .id = "call_rpc_1", .type = "function", .function = .{ .name = "write_file", .arguments = "" } } },
+                    .tool_calls = &.{.{ .index = @as(u32, 0), .id = call_id, .type = "function", .function = .{ .name = "write_file", .arguments = "" } } },
                 }, .finish_reason = null } },
             });
             try writeSseData(&body, .{
@@ -140,7 +157,7 @@ fn buildResponseBody(
                 .id = "r1", .object = "chat.completion", .created = @as(u32, 1), .model = "mock-model",
                 .choices = &.{.{ .index = @as(u32, 0), .message = .{
                     .role = "assistant", .content = "",
-                    .tool_calls = &.{.{ .id = "call_rpc_1", .type = "function", .function = .{ .name = "write_file", .arguments = args_json } } },
+                    .tool_calls = &.{.{ .id = call_id, .type = "function", .function = .{ .name = "write_file", .arguments = args_json } } },
                 }, .finish_reason = "tool_calls" } },
             });
         }
@@ -173,8 +190,11 @@ fn buildResponse(
     echo_text: ?[]const u8,
     tool_call: bool,
     serve_index: usize,
+    tool_call_count: usize,
+    tool_call_every: usize,
+    tool_path: []const u8,
 ) ![]u8 {
-    const body = try buildResponseBody(gpa, stream, echo_text, tool_call, serve_index);
+    const body = try buildResponseBody(gpa, stream, echo_text, tool_call, serve_index, tool_call_count, tool_call_every, tool_path);
     defer gpa.free(body);
     return std.fmt.allocPrint(
         gpa,
@@ -188,7 +208,7 @@ fn buildResponse(
 }
 
 fn usage() void {
-    std.log.err("usage: headless-mock-server --port-file PATH [--stream] [--max-requests N] [--echo] [--tool-call] [--stall-ms N] [--ready-file PATH]", .{});
+    std.log.err("usage: headless-mock-server --port-file PATH [--stream] [--max-requests N] [--echo] [--tool-call] [--tool-call-count N] [--tool-call-every N] [--tool-path PATH] [--stall-ms N] [--ready-file PATH]", .{});
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -201,8 +221,12 @@ pub fn main(init: std.process.Init) !void {
     var max_requests: usize = 1; // legacy default: single request then exit
     var echo_mode = false;
     var tool_call_mode = false;
+    var tool_call_count: usize = 1; // legacy default: first connection only
+    var tool_call_every: usize = 0; // alternating mode (off by default)
+    var tool_path: []const u8 = "rpc_fixture_out.txt";
     var stall_ms: u64 = 0;
     var ready_file: ?[]const u8 = null;
+    var log_file: ?[]const u8 = null;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         const a = args[i];
@@ -229,6 +253,33 @@ pub fn main(init: std.process.Init) !void {
             echo_mode = true;
         } else if (std.mem.eql(u8, a, "--tool-call")) {
             tool_call_mode = true;
+        } else if (std.mem.eql(u8, a, "--tool-call-count")) {
+            i += 1;
+            if (i >= args.len) {
+                usage();
+                return error.MissingToolCallCount;
+            }
+            tool_call_count = std.fmt.parseInt(usize, args[i], 10) catch {
+                usage();
+                return error.InvalidToolCallCount;
+            };
+        } else if (std.mem.eql(u8, a, "--tool-call-every")) {
+            i += 1;
+            if (i >= args.len) {
+                usage();
+                return error.MissingToolCallEvery;
+            }
+            tool_call_every = std.fmt.parseInt(usize, args[i], 10) catch {
+                usage();
+                return error.InvalidToolCallEvery;
+            };
+        } else if (std.mem.eql(u8, a, "--tool-path")) {
+            i += 1;
+            if (i >= args.len) {
+                usage();
+                return error.MissingToolPath;
+            }
+            tool_path = args[i];
         } else if (std.mem.eql(u8, a, "--stall-ms")) {
             i += 1;
             if (i >= args.len) {
@@ -246,6 +297,13 @@ pub fn main(init: std.process.Init) !void {
                 return error.MissingReadyFile;
             }
             ready_file = args[i];
+        } else if (std.mem.eql(u8, a, "--log-file")) {
+            i += 1;
+            if (i >= args.len) {
+                usage();
+                return error.MissingLogFile;
+            }
+            log_file = args[i];
         } else if (std.mem.startsWith(u8, a, "-")) {
             usage();
             return error.UnknownFlag;
@@ -324,10 +382,13 @@ pub fn main(init: std.process.Init) !void {
         // so a request asking for `"stream":true` gets the SSE response. `--stream`
         // still forces SSE regardless of the request body.
         var wants_stream = force_stream;
-        var echo_text: ?[]const u8 = null;
+        var echo_text: ?[]u8 = null;
+        defer if (echo_text) |t| gpa.free(t);
+        var req_body: ?[]u8 = null;
+        defer if (req_body) |b| gpa.free(b);
         if (content_length > 0 and content_length <= 1024 * 1024) {
             const body = try gpa.alloc(u8, content_length);
-            defer gpa.free(body);
+            req_body = body;
             const full_body = blk: {
                 reader.interface.readSliceAll(body) catch |err| switch (err) {
                     error.EndOfStream => break :blk false,
@@ -340,7 +401,7 @@ pub fn main(init: std.process.Init) !void {
                     std.mem.indexOf(u8, body, "\"stream\":true") != null or
                     std.mem.indexOf(u8, body, "\"stream\": true") != null;
                 if (echo_mode or tool_call_mode) {
-                    echo_text = lastUserText(gpa, body);
+                    echo_text = lastUserText(gpa, body) catch null;
                 }
             }
         }
@@ -356,13 +417,29 @@ pub fn main(init: std.process.Init) !void {
             try rfile.writeStreamingAll(io, ready_text);
         }
 
+        // Optional per-connection log (fixture diagnostics; additive).
+        if (log_file) |lf| {
+            var lfile: Io.File = Io.Dir.cwd().openFile(io, lf, .{ .mode = .write_only }) catch
+                (try Io.Dir.cwd().createFile(io, lf, .{}));
+            defer lfile.close(io);
+            var log_buf: [2048]u8 = undefined;
+            const wants_tool_here = tool_call_mode and
+                (if (tool_call_every > 0) served % tool_call_every == 0 else served < tool_call_count);
+            const log_line = std.fmt.bufPrint(
+                &log_buf,
+                "served={d} stream={s} tool_call={s} content_length={d}\n",
+                .{ served, if (wants_stream) "y" else "n", if (wants_tool_here) "y" else "n", content_length },
+            ) catch "";
+            try lfile.writeStreamingAll(io, log_line);
+        }
+
         if (stall_ms > 0) {
             // Block before the response head so a std-backend request stays in
             // receiveHead (real-time so it advances while the process idles).
             std.Io.sleep(io, std.Io.Duration.fromMilliseconds(@intCast(stall_ms)), .real) catch {};
         }
 
-        const response = try buildResponse(gpa, wants_stream, echo_text, tool_call_mode, served);
+        const response = try buildResponse(gpa, wants_stream, echo_text, tool_call_mode, served, tool_call_count, tool_call_every, tool_path);
         defer gpa.free(response);
 
         var writer = std.Io.net.Stream.writer(conn, io, &write_buf);

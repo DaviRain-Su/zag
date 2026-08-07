@@ -172,6 +172,7 @@ pub fn run(init: std.process.Init) !void {
     var headless_mode: ?hw.HeadlessMode = null;
     var want_tui = false;
     var want_rpc = false;
+    var want_acp = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -184,6 +185,8 @@ pub fn run(init: std.process.Init) !void {
             want_tui = true;
         } else if (std.mem.eql(u8, a, "--rpc")) {
             want_rpc = true;
+        } else if (std.mem.eql(u8, a, "--acp")) {
+            want_acp = true;
         } else if (std.mem.eql(u8, a, "--doctor")) {
             want_doctor = true;
         } else if (std.mem.eql(u8, a, "--yolo")) {
@@ -337,9 +340,40 @@ pub fn run(init: std.process.Init) !void {
         }
     }
 
+    // --acp mode matrix (acp.md §10.2 / acp-001 fixture class 1-2): the ACP
+    // adapter is a long-lived JSON-RPC 2.0 server over stdin/stdout pipes;
+    // mutually exclusive with every other product surface. Violations exit 2
+    // with empty stdout.
+    if (want_acp) {
+        if (headless_mode != null) {
+            std.log.err("--acp is mutually exclusive with --json/--json-stream", .{});
+            std.process.exit(2);
+        }
+        if (want_doctor) {
+            std.log.err("--acp is mutually exclusive with --doctor", .{});
+            std.process.exit(2);
+        }
+        if (verbose) {
+            std.log.err("--acp is mutually exclusive with --verbose/-v", .{});
+            std.process.exit(2);
+        }
+        if (prompt_parts.items.len > 0) {
+            std.log.err("--acp is a long-lived server (no positional prompt)", .{});
+            std.process.exit(2);
+        }
+        if (want_tui) {
+            std.log.err("--acp is mutually exclusive with --tui", .{});
+            std.process.exit(2);
+        }
+        if (want_rpc) {
+            std.log.err("--acp is mutually exclusive with --rpc", .{});
+            std.process.exit(2);
+        }
+    }
+
     if (show_help) {
-        if (headless_mode != null or want_rpc) {
-            // Headless + rpc keep stdout empty for protocol output.
+        if (headless_mode != null or want_rpc or want_acp) {
+            // Headless / rpc / acp keep stdout empty for protocol output.
             try printUsageToStderr(io);
         } else {
             try printUsage(io);
@@ -389,6 +423,13 @@ pub fn run(init: std.process.Init) !void {
     var resolve_result = ai.resolve(gpa, io, init.environ_map, config_path) catch |err| {
         if (headless_mode) |mode| {
             headlessErrorExit(gpa, io, mode, null, resolveErrorToHeadless(err));
+        }
+        if (want_acp) {
+            // acp.md §10.4: startup failures → stderr diagnostic + headless
+            // exit code, NO stdout bytes (no JSON-RPC error channel
+            // pre-initialize).
+            std.log.err("acp: provider resolve failed: {s}", .{@errorName(err)});
+            std.process.exit(resolveErrorToAcpExit(err));
         }
         switch (err) {
             error.MissingApiKey => {
@@ -454,6 +495,10 @@ pub fn run(init: std.process.Init) !void {
     const wire = resolved.createWire(gpa, io) catch |err| {
         if (headless_mode) |mode| {
             headlessErrorExit(gpa, io, mode, null, wireErrorToHeadless(err));
+        }
+        if (want_acp) {
+            std.log.err("acp: wire adapter init failed: {s}", .{@errorName(err)});
+            std.process.exit(wireErrorToAcpExit(err));
         }
         std.log.err("wire adapter init failed: {s}", .{@errorName(err)});
         std.process.exit(1);
@@ -714,6 +759,67 @@ pub fn run(init: std.process.Init) !void {
         });
         // Guard freed inside runRpc. Session is server-owned (deinit+destroy
         // inside runRpc). Explicit Agent then exit.
+        agent.deinit();
+        std.process.exit(result.exit_code);
+    }
+
+    // ── acp-v1 path (always compiled, like headless/rpc; acp.md §10.2) ─────
+    // Third host assembly: JSON-RPC 2.0 over stdio in place of the terminal
+    // and the rpc envelope. Startup failures write stderr + exit code with
+    // NO stdout bytes (acp.md §10.4). stdout is protocol-only in acp mode.
+    if (want_acp) {
+        const acp_server = @import("acp/server.zig");
+        const acp_entry = @import("acp_entry.zig");
+
+        var server = acp_server.Server.init(gpa, io, &stdout_writer.interface, .{
+            .load_project_instructions = !no_project,
+            .skills_enabled = skills_enabled,
+            .project_skills_trust = project_skills_trust,
+            .user_skills_root = user_skills_root,
+            .templates_enabled = templates_enabled,
+            .project_templates_trust = project_templates_trust,
+            .user_templates_root = user_templates_root,
+            .base_system = default_system,
+            .permission_mode = permission_mode,
+            .shell_policy = shell_policy,
+            .remember_writes = remember_writes,
+        });
+        server.cwd_abs = Io.Dir.cwd().realPathFileAlloc(io, ".", gpa) catch {
+            std.log.err("acp: cannot resolve the process working directory", .{});
+            std.process.exit(70);
+        };
+
+        agent_opts.permission_gate = server.gate();
+        agent_opts.lifecycle = server.lifecycleObserver();
+        agent_opts.observer = server.observer();
+        // The protocol owns stdin: interactive hunk review can never read
+        // the wire. ask → null (review_unavailable if the handler runs),
+        // yolo → AutoAccept.
+        agent_opts.hunk_reviewer = if (permission_mode == .yolo)
+            coding.autoAcceptHunkReviewer()
+        else
+            null;
+
+        var agent = coding.Agent.init(gpa, io, wire_prov.asProvider(), agent_opts) catch {
+            std.log.err("acp: agent init failed (out of memory)", .{});
+            std.process.exit(40);
+        };
+        var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
+            std.log.err("acp: sigint guard init failed", .{});
+            std.process.exit(70);
+        };
+        const result = acp_entry.runAcp(.{
+            .gpa = gpa,
+            .io = io,
+            .server = &server,
+            .agent = &agent,
+            .guard = &sigint_guard,
+            .session_path = session_path,
+            .open_mode = open_mode,
+            .load_project = !no_project,
+        });
+        // Guard freed inside runAcp. Session is server-owned (deinit+destroy
+        // inside runAcp). Explicit Agent then exit.
         agent.deinit();
         std.process.exit(result.exit_code);
     }
@@ -1329,6 +1435,22 @@ fn wireErrorToHeadless(err: ai.WireError) hw.HeadlessError {
     };
 }
 
+/// acp.md §10.4: startup `provider_configuration` → 30, `provider_error` →
+/// 31, OOM → 40. stderr diagnostic only (no stdout bytes).
+fn resolveErrorToAcpExit(err: anyerror) u8 {
+    return switch (err) {
+        error.OutOfMemory => 40,
+        else => 30,
+    };
+}
+
+fn wireErrorToAcpExit(err: ai.WireError) u8 {
+    return switch (err) {
+        error.OutOfMemory => 40,
+        else => 31,
+    };
+}
+
 fn replyErrorToHeadless(err: coding.agent.ReplyError) hw.HeadlessError {
     return switch (err) {
         error.ProviderFailed => .{ .code = .provider_error, .message = "Provider request failed." },
@@ -1457,6 +1579,7 @@ fn printUsage(io: Io) !void {
         \\  --json                     headless one-shot: single JSON result envelope
         \\  --json-stream              headless one-shot: NDJSON event stream
         \\  --rpc                      long-lived server over stdin/stdout pipes (rpc-v1)
+        \\  --acp                      ACP v1 server: JSON-RPC 2.0 over stdin/stdout pipes
         \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
@@ -1514,6 +1637,7 @@ fn printUsageToStderr(io: Io) !void {
         \\  --json                     headless one-shot: single JSON result envelope
         \\  --json-stream              headless one-shot: NDJSON event stream
         \\  --rpc                      long-lived server over stdin/stdout pipes (rpc-v1)
+        \\  --acp                      ACP v1 server: JSON-RPC 2.0 over stdin/stdout pipes
         \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)

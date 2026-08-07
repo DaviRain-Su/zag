@@ -14,6 +14,9 @@ pub const rpc_framing = @import("rpc/framing.zig");
 pub const rpc_protocol = @import("rpc/protocol.zig");
 pub const rpc_server = @import("rpc/server.zig");
 pub const rpc_entry = @import("rpc_entry.zig");
+pub const acp_protocol = @import("acp/protocol.zig");
+pub const acp_server = @import("acp/server.zig");
+pub const acp_entry = @import("acp_entry.zig");
 
 pub const version = "0.5.0";
 
