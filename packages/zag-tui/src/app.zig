@@ -174,6 +174,8 @@ pub const App = struct {
     /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
     /// text publishes as a `· thinking` card ahead of the assistant turn.
     show_thinking: bool = false,
+    /// Grok-style thinking body fold (Ctrl+E when editor empty).
+    thinking_expanded: bool = false,
     /// Subagent tasks pane (Ctrl+K). Collapsed/hidden when the registry is
     /// empty — only auto-opens while a subagent is running, and never steals
     /// Enter from the editor unless the pane is focused.
@@ -1047,7 +1049,14 @@ pub const App = struct {
                 return .none;
             },
             .ctrl_e => {
-                self.editor.moveEnd();
+                // Grok: Ctrl+E expands thinking. Keep emacs end-of-line when
+                // the editor has content; empty buffer toggles the fold.
+                if (self.editor.len == 0) {
+                    self.thinking_expanded = !self.thinking_expanded;
+                    self.setNote(if (self.thinking_expanded) "thinking:expanded" else "thinking:collapsed");
+                } else {
+                    self.editor.moveEnd();
+                }
                 return .none;
             },
             .ctrl_w => {
@@ -2043,6 +2052,11 @@ pub const App = struct {
         const content_w: u16 = @max(layout.cards.w -| 1, 1);
         self.last_viewport_h = viewport_h;
         // Settle geometry + re-pin follow before painting (review #7 order).
+        // Card fold/truncate opts must be set BEFORE measure (prepare) and draw.
+        render.setCardPaintOpts(.{
+            .thinking_expanded = self.thinking_expanded,
+            .tool_body_max_lines = 6,
+        });
         _ = self.sb.prepare(
             self.snap_buf[0..n],
             content_w,

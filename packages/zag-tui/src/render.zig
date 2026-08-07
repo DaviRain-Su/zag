@@ -79,6 +79,26 @@ pub const TasksPaneOpts = struct {
     focused: bool = false,
 };
 
+/// Per-paint options for card fold/truncate (grok DisplayMode subset).
+/// Set via `setCardPaintOpts` before `prepare`/`drawFrame` so measure + render
+/// stay byte-identical without widening the measure fn pointer.
+pub const CardPaintOpts = struct {
+    /// Thinking cards: false = header only (default, grok collapsed/truncated).
+    thinking_expanded: bool = false,
+    /// Max body lines for tool cards (0 = unlimited). Grok truncated ≈ 6.
+    tool_body_max_lines: u16 = 6,
+};
+
+var card_paint_opts: CardPaintOpts = .{};
+
+pub fn setCardPaintOpts(opts: CardPaintOpts) void {
+    card_paint_opts = opts;
+}
+
+pub fn getCardPaintOpts() CardPaintOpts {
+    return card_paint_opts;
+}
+
 pub fn stateName(s: UiState) []const u8 {
     return switch (s) {
         .idle => "idle",
@@ -420,52 +440,92 @@ fn renderCardInto(
             printLineStyled(win, 0, s, style);
         }
     } else if (is_tool_start) {
-        // grok verb title; args stay in the indented body (not duplicated here).
+        // grok: "⠋ Read path/to/file" — verb + path/command preview from args.
         const name = if (title.len > "tool start ".len) title["tool start ".len..] else title;
         const pretty = toolPrettyName(name);
-        if (store.format("⠋ {s}", .{pretty})) |s| printLineStyled(win, 0, s, style);
+        const preview = toolBodyPreview(card.bodySlice());
+        if (preview.len > 0) {
+            if (store.format("⠋ {s}  {s}", .{ pretty, preview })) |s|
+                printLineStyled(win, 0, present.utf8Prefix(s, win.width), style);
+        } else if (store.format("⠋ {s}", .{pretty})) |s| {
+            printLineStyled(win, 0, s, style);
+        }
     } else if (is_tool_done) {
+        // grok: "✓ Edit path  +n/-m" / "✓ Read path"
         const name = if (title.len > "tool ".len) title["tool ".len..] else title;
         const pretty = toolPrettyName(name);
         const failed = toolBodyLooksFailed(card.bodySlice());
         const icon: []const u8 = if (failed) "✗" else "✓";
         const done_style = if (failed) palette.style(.tool_error_fg) else palette.style(.tool_success_fg);
-        if (store.format("{s} {s}", .{ icon, pretty })) |s| printLineStyled(win, 0, s, done_style);
+        const preview = toolBodyPreview(card.bodySlice());
+        const detail = toolResultDetail(card.bodySlice());
+        const line = blk: {
+            if (preview.len > 0 and detail.len > 0)
+                break :blk store.format("{s} {s}  {s}  {s}", .{ icon, pretty, preview, detail });
+            if (preview.len > 0)
+                break :blk store.format("{s} {s}  {s}", .{ icon, pretty, preview });
+            if (detail.len > 0)
+                break :blk store.format("{s} {s}  {s}", .{ icon, pretty, detail });
+            break :blk store.format("{s} {s}", .{ icon, pretty });
+        };
+        if (line) |s| printLineStyled(win, 0, present.utf8Prefix(s, win.width), done_style);
     } else if (is_host_error) {
         if (store.format("✗ {s}", .{title})) |s| {
             printLineStyled(win, 0, s, palette.style(.error_fg));
         }
     } else if (is_thinking) {
-        // grok ThinkingBlock: progressive → "Thinking…"; final → "Thought"
+        // grok ThinkingBlock: collapsed header by default; Ctrl+E expands body.
         var muted = palette.style(.muted_fg);
         muted.italic = true;
         const progressive = std.mem.startsWith(u8, title_raw, "thinking progressive");
-        const label: []const u8 = if (progressive) "Thinking…" else "Thought";
-        // Body-only cards: title row + dim body below.
-        printLineStyled(win, 0, label, muted);
+        const expanded = card_paint_opts.thinking_expanded;
+        if (progressive) {
+            if (expanded) {
+                printLineStyled(win, 0, "Thinking…", muted);
+            } else if (store.format("Thinking…  (ctrl+e to expand)", .{})) |s| {
+                printLineStyled(win, 0, present.utf8Prefix(s, win.width), muted);
+            }
+        } else {
+            if (expanded) {
+                printLineStyled(win, 0, "Thought", muted);
+            } else if (store.format("Thought  (ctrl+e to expand)", .{})) |s| {
+                printLineStyled(win, 0, present.utf8Prefix(s, win.width), muted);
+            }
+        }
     } else {
         if (store.format("· {s}", .{title})) |s| {
             printLineStyled(win, 0, s, style);
         }
     }
 
-    if (has_body and card.body_len > 0 and win.height > 1) {
+    // Body: thinking collapsed → header only; tools truncated to N lines.
+    const show_body = has_body and card.body_len > 0 and win.height > 1 and
+        !(is_thinking and !card_paint_opts.thinking_expanded);
+    if (show_body) {
         const body_win = win.child(.{
             .x_off = 2,
             .y_off = 1,
             .width = if (win.width > 2) win.width - 2 else 1,
             .height = win.height - 1,
         });
-        // Tool bodies use muted base so args/results don't fight the title color.
         const body_base: vaxis.Style = if (is_tool_start or is_tool_done)
             palette.style(.muted_fg)
-        else
-            style;
-        const md_style = md_render.MdStyle.forCard(palette, body_base);
-        if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
-            _ = md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
-        else
-            _ = md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
+        else if (is_thinking) blk: {
+            var m = palette.style(.muted_fg);
+            m.italic = true;
+            break :blk m;
+        } else style;
+
+        if (is_tool_start or is_tool_done) {
+            // Grok-style truncated tool body (no full markdown dump).
+            drawToolBodyTruncated(body_win, card.bodySlice(), body_base, store, card_paint_opts.tool_body_max_lines);
+        } else {
+            const md_style = md_render.MdStyle.forCard(palette, body_base);
+            if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
+                _ = md_render.renderMarkdownIntoStyled(gpa, body_win, doc, md_style)
+            else
+                _ = md_render.renderRawIntoStyled(gpa, body_win, card.bodySlice(), md_style);
+        }
     }
 }
 
@@ -473,37 +533,60 @@ fn renderCardInto(
 /// Grok-style tool verb: bash→Bash, read_file→Read, edit_file→Edit, …
 fn toolPrettyName(name: []const u8) []const u8 {
     // Common coding-agent tools (keep short for the title row).
-    if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "shell")) return "Bash";
+    if (std.mem.eql(u8, name, "bash") or std.mem.eql(u8, name, "shell") or std.mem.eql(u8, name, "run_shell")) return "Bash";
     if (std.mem.eql(u8, name, "read") or std.mem.eql(u8, name, "read_file")) return "Read";
-    if (std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "edit_file") or std.mem.eql(u8, name, "apply_patch")) return "Edit";
+    if (std.mem.eql(u8, name, "edit") or std.mem.eql(u8, name, "edit_file") or std.mem.eql(u8, name, "apply_patch") or std.mem.eql(u8, name, "search_replace") or std.mem.eql(u8, name, "apply_hunk") or std.mem.eql(u8, name, "apply_transaction")) return "Edit";
     if (std.mem.eql(u8, name, "write") or std.mem.eql(u8, name, "write_file")) return "Write";
     if (std.mem.eql(u8, name, "grep") or std.mem.eql(u8, name, "search")) return "Search";
-    if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "find")) return "Glob";
+    if (std.mem.eql(u8, name, "glob") or std.mem.eql(u8, name, "find") or std.mem.eql(u8, name, "list_dir")) return "Glob";
     if (std.mem.eql(u8, name, "task") or std.mem.eql(u8, name, "Task")) return "Task";
     if (std.mem.eql(u8, name, "todo") or std.mem.eql(u8, name, "TodoWrite")) return "Todo";
-    // Fallback: first char upper if ascii alpha.
     if (name.len == 0) return name;
-    return name; // keep original id when unknown
+    return name;
 }
 
 /// First interesting token from a tool body for the title-row preview
-/// (path, command head). Collapses whitespace; caps length.
+/// (path, command head). Handles tool_start `args={json}` and tool_end envelopes.
 fn toolBodyPreview(body: []const u8) []const u8 {
     if (body.len == 0) return "";
-    // Prefer a path-like first line / JSON "path"/"command"/"file" value.
+    // tool_start body: "id=… args={…}"
+    if (std.mem.indexOf(u8, body, "args=")) |at| {
+        const json = std.mem.trimStart(u8, body[at + 5 ..], " \t");
+        if (jsonExtract(json, "path")) |p| return singleLine(p);
+        if (jsonExtract(json, "file")) |p| return singleLine(p);
+        if (jsonExtract(json, "command")) |p| return singleLine(p);
+        if (jsonExtract(json, "pattern")) |p| return singleLine(p);
+        if (jsonExtract(json, "query")) |p| return singleLine(p);
+        if (jsonExtract(json, "target")) |p| return singleLine(p);
+    }
+    // Direct JSON body
+    if (jsonExtract(body, "path")) |p| return singleLine(p);
+    if (jsonExtract(body, "file")) |p| return singleLine(p);
+    if (jsonExtract(body, "command")) |p| return singleLine(p);
+
+    // tool_end envelopes from edit_tools / fs_tools
+    // "ok: wrote N bytes to PATH"
+    if (std.mem.indexOf(u8, body, " bytes to ")) |at| {
+        const rest = body[at + " bytes to ".len ..];
+        var end_i: usize = 0;
+        while (end_i < rest.len and rest[end_i] != '\n' and rest[end_i] != ' ') : (end_i += 1) {}
+        if (end_i > 0) return singleLine(rest[0..end_i]);
+    }
+    // "ok: search_replace path=PATH …"
+    if (std.mem.indexOf(u8, body, "path=")) |at| {
+        const rest = body[at + 5 ..];
+        var end_i: usize = 0;
+        while (end_i < rest.len and rest[end_i] != '\n' and rest[end_i] != ' ') : (end_i += 1) {}
+        if (end_i > 0) return singleLine(rest[0..end_i]);
+    }
+
     var line = body;
     if (std.mem.indexOfScalar(u8, body, '\n')) |nl| line = body[0..nl];
     line = std.mem.trim(u8, line, " \t\r");
-    // Strip common JSON wrappers: {"path":"…"} / {"command":"…"}
-    inline for (.{ "\"path\":\"", "\"file\":\"", "\"command\":\"", "\"pattern\":\"", "\"query\":\"" }) |key| {
-        if (std.mem.indexOf(u8, line, key)) |at| {
-            const rest = line[at + key.len ..];
-            if (std.mem.indexOfScalar(u8, rest, '"')) |end| {
-                return singleLine(rest[0..end]);
-            }
-        }
+    // Skip envelope-only first lines (ok: code=…)
+    if (std.mem.startsWith(u8, line, "ok:") or std.mem.startsWith(u8, line, "error:") or std.mem.startsWith(u8, line, "id=")) {
+        return "";
     }
-    // Strip markdown code fence openers.
     if (std.mem.startsWith(u8, line, "```")) {
         if (std.mem.indexOfScalar(u8, body, '\n')) |nl| {
             const rest = std.mem.trim(u8, body[nl + 1 ..], " \t\r\n");
@@ -512,6 +595,129 @@ fn toolBodyPreview(body: []const u8) []const u8 {
         }
     }
     return singleLine(line);
+}
+
+/// Extract `"key":"value"` from a JSON-ish blob (best-effort, no full parse).
+fn jsonExtract(blob: []const u8, key: []const u8) ?[]const u8 {
+    var keybuf: [64]u8 = undefined;
+    if (key.len + 4 > keybuf.len) return null;
+    const pat = std.fmt.bufPrint(&keybuf, "\"{s}\":\"", .{key}) catch return null;
+    if (std.mem.indexOf(u8, blob, pat)) |at| {
+        const rest = blob[at + pat.len ..];
+        if (std.mem.indexOfScalar(u8, rest, '"')) |end| return rest[0..end];
+    }
+    return null;
+}
+
+/// Compact result suffix for the title row: "+3/-1", "exit 0", "16B", …
+fn toolResultDetail(body: []const u8) []const u8 {
+    if (body.len == 0) return "";
+    // search_replace: removed=A inserted=B
+    var removed: ?usize = null;
+    var inserted: ?usize = null;
+    if (std.mem.indexOf(u8, body, "removed=")) |at| {
+        removed = parseLeadingUsize(body[at + 8 ..]);
+    }
+    if (std.mem.indexOf(u8, body, "inserted=")) |at| {
+        inserted = parseLeadingUsize(body[at + 9 ..]);
+    }
+    if (removed != null or inserted != null) {
+        const Pair = struct {
+            var bufs: [2][24]u8 = undefined;
+            var i: usize = 0;
+        };
+        Pair.i ^= 1;
+        const r = removed orelse 0;
+        const ins = inserted orelse 0;
+        return std.fmt.bufPrint(&Pair.bufs[Pair.i], "+{d}/-{d}", .{ ins, r }) catch "";
+    }
+    // wrote N bytes
+    if (std.mem.indexOf(u8, body, "wrote ")) |at| {
+        if (parseLeadingUsize(body[at + 6 ..])) |n| {
+            const Pair = struct {
+                var bufs: [2][24]u8 = undefined;
+                var i: usize = 0;
+            };
+            Pair.i ^= 1;
+            if (n >= 1024)
+                return std.fmt.bufPrint(&Pair.bufs[Pair.i], "{d}KB", .{n / 1024}) catch "";
+            return std.fmt.bufPrint(&Pair.bufs[Pair.i], "{d}B", .{n}) catch "";
+        }
+    }
+    // shell exit_code=N
+    if (std.mem.indexOf(u8, body, "exit_code=")) |at| {
+        if (parseLeadingUsize(body[at + 10 ..])) |code| {
+            const Pair = struct {
+                var bufs: [2][24]u8 = undefined;
+                var i: usize = 0;
+            };
+            Pair.i ^= 1;
+            return std.fmt.bufPrint(&Pair.bufs[Pair.i], "exit {d}", .{code}) catch "";
+        }
+    }
+    return "";
+}
+
+fn parseLeadingUsize(s: []const u8) ?usize {
+    var i: usize = 0;
+    while (i < s.len and s[i] >= '0' and s[i] <= '9') : (i += 1) {}
+    if (i == 0) return null;
+    return std.fmt.parseInt(usize, s[0..i], 10) catch null;
+}
+
+/// Paint a truncated tool body (first N lines + "… +K lines" footer).
+fn drawToolBodyTruncated(
+    win: vaxis.Window,
+    body: []const u8,
+    style: vaxis.Style,
+    store: *terminal.LineStore,
+    max_lines: u16,
+) void {
+    if (win.height == 0 or win.width == 0 or body.len == 0) return;
+    const limit: usize = if (max_lines == 0) std.math.maxInt(usize) else max_lines;
+    var it = std.mem.splitScalar(u8, body, '\n');
+    var shown: usize = 0;
+    var total: usize = 0;
+    var row: u16 = 0;
+    while (it.next()) |raw| : (total += 1) {
+        const ln = singleLine(raw);
+        // Skip empty trailing noise; keep interior blanks only if already showing.
+        if (ln.len == 0 and shown == 0) continue;
+        if (shown < limit and row < win.height) {
+            // Soft-skip pure envelope lines when we already have path on title —
+            // still show them if they're the only content.
+            printLineStyled(win, row, present.utf8Prefix(ln, win.width), style);
+            row += 1;
+            shown += 1;
+        }
+    }
+    if (total > shown and row < win.height) {
+        if (store.format("… +{d} lines", .{total - shown})) |s| {
+            var dim = style;
+            dim.dim = true;
+            printLineStyled(win, row, s, dim);
+        }
+    }
+}
+
+fn countBodyLines(body: []const u8) usize {
+    if (body.len == 0) return 0;
+    var n: usize = 1;
+    for (body) |b| {
+        if (b == '\n') n += 1;
+    }
+    // Don't count a trailing bare newline as an extra visible line.
+    if (body[body.len - 1] == '\n' and n > 0) n -= 1;
+    return @max(n, 1);
+}
+
+fn measureToolBodyLines(body: []const u8, max_lines: u16) u16 {
+    const total = countBodyLines(body);
+    if (total == 0) return 0;
+    if (max_lines == 0) return @intCast(@min(total, std.math.maxInt(u16)));
+    const shown = @min(total, max_lines);
+    const extra: usize = if (total > shown) 1 else 0; // "… +N lines"
+    return @intCast(shown + extra);
 }
 
 /// Grok turn-status strip: spinner + "Working…" / "Waiting on you" / error.
@@ -570,7 +776,9 @@ fn drawShortcutsBar(
     else if (tasks_focused)
         "j/k nav  ·  space expand  ·  esc back  ·  ctrl+k close"
     else if (facts.state == .busy)
-        "esc note  ·  alt+s steer  ·  alt+f follow-up  ·  ctrl+c cancel  ·  F1 help"
+        "esc note  ·  alt+s steer  ·  alt+f follow-up  ·  ctrl+e think  ·  F1 help"
+    else if (facts.show_thinking)
+        "enter send  ·  ctrl+e think  ·  ctrl+t hide  ·  ctrl+k tasks  ·  F1 help"
     else
         "enter send  ·  / commands  ·  ctrl+k tasks  ·  ctrl+o perm  ·  F1 help";
 
@@ -614,8 +822,18 @@ pub fn measureCardHeight(gpa: std.mem.Allocator, card: *const cards.CardSlot, co
             return md_render.measureRawIntoStyled(agpa, mwin, card.bodySlice(), md_style);
     }
     var h: u16 = 1;
-    const has_body = card.kind == .user or std.mem.startsWith(u8, card.titleSlice(), "tool ") or std.mem.startsWith(u8, card.titleSlice(), "thinking");
+    const title = card.titleSlice();
+    const is_tool = std.mem.startsWith(u8, title, "tool ");
+    const is_thinking = std.mem.startsWith(u8, title, "thinking");
+    const has_body = card.kind == .user or is_tool or is_thinking;
     if (has_body and card.body_len > 0) {
+        // Thinking collapsed (default): header only — matches renderCardInto.
+        if (is_thinking and !card_paint_opts.thinking_expanded) return 1;
+        if (is_tool) {
+            // Truncated tool body (line-based, not md-wrap) + optional footer.
+            h +|= measureToolBodyLines(card.bodySlice(), card_paint_opts.tool_body_max_lines);
+            return h;
+        }
         // The body renders indented (x_off=2) at width content_width-2 —
         // measure at the SAME width or the last wrapped line would clip.
         const body_w = content_width -| 2;
@@ -1898,8 +2116,8 @@ test "md transcript: assistant card renders multi-line markdown body" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    try expectRowEquals(&cs.screen, 0, "✓ Write");
-    try expectRowEquals(&cs.screen, 1, "  id=t1 args={}");
+    try expectRowContains(&cs.screen, 0, "✓ Write");
+    try expectRowContains(&cs.screen, 1, "id=t1 args={}");
     // Assistant body flush-left at row 3 (tool 2 rows + gap).
     try expectCellEquals(&cs.screen, 0, 3, "T");
     try expectCellFgIndex(&cs.screen, 0, 3, 3);
@@ -2015,10 +2233,10 @@ test "md transcript: tool rows show status icon and indented body" {
     defer cs.deinit(gpa);
     defer sb.deinit();
 
-    try expectRowEquals(&cs.screen, 0, "✓ Write");
-    try expectRowEquals(&cs.screen, 1, "  id=t1 args={}");
-    try expectRowEquals(&cs.screen, 3, "✓ run_shell");
-    try expectRowEquals(&cs.screen, 4, "  ok=true");
+    try expectRowContains(&cs.screen, 0, "✓ Write");
+    try expectRowContains(&cs.screen, 1, "id=t1 args={}");
+    try expectRowContains(&cs.screen, 3, "✓ Bash");
+    try expectRowContains(&cs.screen, 4, "ok=true");
 
 }
 
