@@ -196,6 +196,22 @@ pub const App = struct {
     /// Transcript interior viewport height at the last paint — PgUp/PgDn
     /// page by this many rows.
     last_viewport_h: usize = 0,
+    /// Tool verb-group structure at the last paint (render.toolGroupSignature).
+    /// When it changes, sibling collapse heights are stale in the scrollback
+    /// ui_seq-keyed cache, so paint() invalidates the measure cache.
+    last_tool_group_sig: u64 = 0,
+
+    /// cwd basename ambient chip (grok-style status line); refreshed each
+    /// paint from `Io.Dir.cwd().realPath`. len 0 = omit the chip.
+    cwd_tail_buf: [64]u8 = undefined,
+    cwd_tail_len: usize = 0,
+    /// Git branch ambient chip from `.git/HEAD` (best-effort read, no
+    /// subprocess; short sha when detached). len 0 = omit the chip.
+    git_branch_buf: [64]u8 = undefined,
+    git_branch_len: usize = 0,
+    /// Total tokens of the last completed run (`.run_terminal` with ok=true);
+    /// 0 = omit the `[tok:…]` chip.
+    last_total_tokens: u32 = 0,
 
     model_label: []const u8 = "—",
     /// Owned copy of the selected model id (stable across overlay rebuilds).
@@ -459,6 +475,46 @@ pub const App = struct {
         return self.status_note[0..self.status_note_len];
     }
 
+    /// Refresh the cwd-tail + git-branch ambient chips (best-effort, no
+    /// subprocess; any error → empty → chip omitted). `io` is the paint
+    /// terminal's Io (`term.threaded.io()`); Io.Dir.cwd() is borrowed.
+    fn refreshAmbientFacts(self: *App, io: Io) void {
+        // cwd basename: realpath(".") → last path component.
+        self.cwd_tail_len = 0;
+        var real_buf: [1024]u8 = undefined;
+        if (Io.Dir.cwd().realPath(io, &real_buf)) |n| {
+            const path = real_buf[0..n];
+            if (std.mem.lastIndexOfScalar(u8, path, '/')) |i| {
+                const tail = path[i + 1 ..];
+                self.cwd_tail_len = @min(tail.len, self.cwd_tail_buf.len);
+                @memcpy(self.cwd_tail_buf[0..self.cwd_tail_len], tail[0..self.cwd_tail_len]);
+            }
+        } else |_| {}
+
+        // Git branch: read `.git/HEAD` without spawning git.
+        self.git_branch_len = 0;
+        var head_buf: [128]u8 = undefined;
+        if (Io.Dir.cwd().readFile(io, ".git/HEAD", &head_buf)) |head| {
+            const trimmed = std.mem.trim(u8, head, " \t\r\n");
+            const ref_prefix = "ref: refs/heads/";
+            if (std.mem.startsWith(u8, trimmed, ref_prefix)) {
+                const name = trimmed[ref_prefix.len..];
+                self.git_branch_len = @min(name.len, self.git_branch_buf.len);
+                @memcpy(self.git_branch_buf[0..self.git_branch_len], name[0..self.git_branch_len]);
+            } else {
+                // Detached HEAD: raw sha → short form (first 7 hex chars).
+                var sha: usize = 0;
+                while (sha < 7 and sha < trimmed.len) : (sha += 1) {
+                    const ch = trimmed[sha];
+                    const is_hex = (ch >= '0' and ch <= '9') or (ch >= 'a' and ch <= 'f') or (ch >= 'A' and ch <= 'F');
+                    if (!is_hex) break;
+                }
+                self.git_branch_len = sha;
+                @memcpy(self.git_branch_buf[0..sha], trimmed[0..sha]);
+            }
+        } else |_| {}
+    }
+
     fn onLifecycle(ptr: ?*anyopaque, event: coding.LifecycleEvent) void {
         const self: *App = @ptrCast(@alignCast(ptr.?));
         const red = self.redactor;
@@ -574,6 +630,8 @@ pub const App = struct {
                 // itself failed); reset here so the next reply starts clean.
                 self.delta_len = 0;
                 self.thinking_len = 0;
+                // Token chip source: only truthful successful runs advance it.
+                if (term.ok) self.last_total_tokens = term.usage.total_tokens;
                 var body_buf: [128]u8 = undefined;
                 const stop = @tagName(term.stop_reason);
                 const body = std.fmt.bufPrint(&body_buf, "ok={any} stop={s} turns={d} p={d} c={d} t={d}", .{
@@ -1987,6 +2045,9 @@ pub const App = struct {
             running_tasks = @intCast(reg.countByStatus(.running) + reg.countByStatus(.pending));
         }
         const tick_ms: u64 = @import("zag-types").monoNowNs() / std.time.ns_per_ms;
+        // Ambient chips (cwd basename + git branch) refresh per paint —
+        // cheap realpath + tiny `.git/HEAD` read, fail-closed to empty.
+        self.refreshAmbientFacts(term.threaded.io());
         const facts = render.StatusFacts{
             .id_display = self.idDisplay(),
             .open_display = self.open_display.label(),
@@ -2003,6 +2064,9 @@ pub const App = struct {
             .scroll = self.sb.scroll_offset,
             .running_tasks = running_tasks,
             .tick_ms = tick_ms,
+            .cwd_tail = self.cwd_tail_buf[0..self.cwd_tail_len],
+            .git_branch = self.git_branch_buf[0..self.git_branch_len],
+            .last_tokens = self.last_total_tokens,
         };
         const ov = render.OverlayPaint{
             .kind = self.overlay.kind,
@@ -2057,6 +2121,15 @@ pub const App = struct {
             .thinking_expanded = self.thinking_expanded,
             .tool_body_max_lines = 6,
         });
+        render.setCardPaintSnap(self.snap_buf[0..n]);
+        // Verb-group collapse changes sibling heights without touching their
+        // ui_seq, so the scrollback ui_seq-keyed geometry cache would go
+        // stale; invalidate when the group structure changed since last paint.
+        const group_sig = render.toolGroupSignature(self.snap_buf[0..n]);
+        if (group_sig != self.last_tool_group_sig) {
+            self.sb.invalidateMeasure();
+            self.last_tool_group_sig = group_sig;
+        }
         _ = self.sb.prepare(
             self.snap_buf[0..n],
             content_w,
@@ -2266,6 +2339,31 @@ test "tui-thinking: meta line shows the toggle state" {
     try app.paint(&rec.pt.term);
     const on = readRow(&rec, 36, &buf);
     try std.testing.expect(std.mem.indexOf(u8, on, "think:on") != null);
+}
+
+test "tui-polish: last_total_tokens tracks completed runs only" {
+    const gpa = std.testing.allocator;
+    var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
+    defer r.deinit();
+    var app = try newTestApp(gpa, &r);
+    defer app.destroy();
+    try std.testing.expectEqual(@as(u32, 0), app.last_total_tokens);
+    // Failed run does not advance the token chip.
+    App.onLifecycle(app, .{ .run_terminal = .{
+        .turns = 1,
+        .ok = false,
+        .stop_reason = .cancelled,
+        .usage = .{ .prompt_tokens = 1, .completion_tokens = 1, .total_tokens = 2 },
+    } });
+    try std.testing.expectEqual(@as(u32, 0), app.last_total_tokens);
+    // Completed run updates the chip source (total_tokens, not the delta).
+    App.onLifecycle(app, .{ .run_terminal = .{
+        .turns = 1,
+        .ok = true,
+        .stop_reason = .completed,
+        .usage = .{ .prompt_tokens = 900, .completion_tokens = 1100, .total_tokens = 2000 },
+    } });
+    try std.testing.expectEqual(@as(u32, 2000), app.last_total_tokens);
 }
 
 /// Newest card whose title starts with "thinking" (progressive or final), or null.

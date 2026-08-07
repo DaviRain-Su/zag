@@ -156,6 +156,14 @@ pub const Scrollback = struct {
         self.rebuildVy();
     }
 
+    /// Force re-measure of every visible card on the next prepare. Called by
+    /// the renderer host when a paint option changes card heights without
+    /// changing any ui_seq (e.g. tool verb-group collapse), where the
+    /// ui_seq-keyed cache would otherwise trust stale geometry.
+    pub fn invalidateMeasure(self: *Scrollback) void {
+        self.invalidateAll();
+    }
+
     /// Per-frame entry. Order (review #7): sync → settle → re-pin →
     /// paint window. `measure` runs the exact measurement (markdown
     /// render in measure mode); `estimate` is the cheap fallback when a

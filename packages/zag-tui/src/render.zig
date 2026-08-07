@@ -51,6 +51,13 @@ pub const StatusFacts = struct {
     running_tasks: u32 = 0,
     /// Monotonic ms for busy spinner animation.
     tick_ms: u64 = 0,
+    /// Basename of the working directory (grok-style ambient chip), e.g.
+    /// "zag". Empty = omit the chip.
+    cwd_tail: []const u8 = "",
+    /// Git branch from `.git/HEAD` (short sha when detached); empty = omit.
+    git_branch: []const u8 = "",
+    /// Total tokens of the last completed run (0 = omit the `[tok:…]` chip).
+    last_tokens: u32 = 0,
 };
 
 /// Per-row rendering kind for overlay lines (session-tree-001): resume
@@ -87,9 +94,18 @@ pub const CardPaintOpts = struct {
     thinking_expanded: bool = false,
     /// Max body lines for tool cards (0 = unlimited). Grok truncated ≈ 6.
     tool_body_max_lines: u16 = 6,
+    /// Collapse consecutive completed tool cards sharing a verb into
+    /// header-only rows, keeping only the newest card's body (grok verb
+    /// folding). Running `tool start` cards never join a group.
+    tool_groups_collapsed: bool = true,
 };
 
 var card_paint_opts: CardPaintOpts = .{};
+
+/// Snapshot backing the current paint (set via `setCardPaintSnap` before
+/// measure + draw). Measure and render resolve tool-verb groups by index
+/// into this slice; valid only during one prepare + draw pass.
+var card_paint_snap: []const cards.CardSlot = &.{};
 
 pub fn setCardPaintOpts(opts: CardPaintOpts) void {
     card_paint_opts = opts;
@@ -97,6 +113,13 @@ pub fn setCardPaintOpts(opts: CardPaintOpts) void {
 
 pub fn getCardPaintOpts() CardPaintOpts {
     return card_paint_opts;
+}
+
+/// Store the snapshot backing the current paint. Call alongside
+/// `setCardPaintOpts` (before `prepare`/`drawFrame`) so measureCardHeight
+/// and renderCardInto can resolve tool-verb groups by snap index.
+pub fn setCardPaintSnap(snap: []const cards.CardSlot) void {
+    card_paint_snap = snap;
 }
 
 pub fn stateName(s: UiState) []const u8 {
@@ -193,6 +216,10 @@ fn drawFrame(
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
     }
+    // The paint snap is only valid during one measure+draw pass (its backing
+    // buffer may be a test-local array); drop it so later direct measure
+    // calls can never scan a dangling slice.
+    card_paint_snap = &.{};
 }
 
 /// Test/measurement hook: paint a frame into `root` (tui-scrollback-001
@@ -345,7 +372,14 @@ fn drawCards(
                     break :blk store.format("⠋ {s}", .{toolPrettyName(name)});
                 } else if (std.mem.startsWith(u8, title, "tool ")) {
                     const name = if (title.len > "tool ".len) title["tool ".len..] else title;
-                    break :blk store.format("✓ {s}", .{toolPrettyName(name)});
+                    const pretty = toolPrettyName(name);
+                    if (card_paint_opts.tool_groups_collapsed) {
+                        const g = toolGroupInfo(snap, window.start + i);
+                        if (g.size > 1) {
+                            if (store.format("✓ {s} ×{d}", .{ g.pretty, g.size })) |s2| break :blk s2;
+                        }
+                    }
+                    break :blk store.format("✓ {s}", .{pretty});
                 } else if (card.kind == .host_error or std.mem.eql(u8, title, "host_error")) {
                     break :blk store.format("✗ {s}", .{title});
                 } else {
@@ -434,6 +468,19 @@ fn renderCardInto(
     const title = present.utf8Prefix(title_raw, title_limit);
     const has_body = card.kind == .user or is_tool_start or is_tool_done or is_thinking;
 
+    // Verb-group collapse (grok tool folding): older siblings of a consecutive
+    // same-verb completed-tool run render header-only (their measured height
+    // is 1, so the body window is absent anyway); the newest keeps its body
+    // and gets a ×N count suffix on the title.
+    var tool_group: ToolGroupInfo = .{};
+    if (is_tool_done and card_paint_opts.tool_groups_collapsed) {
+        if (snapIndexOf(card)) |idx| {
+            const g = toolGroupInfo(card_paint_snap, idx);
+            if (g.size > 1) tool_group = g;
+        }
+    }
+    const grouped_header_only = tool_group.size > 1 and !tool_group.is_newest_in_group;
+
     // omp-inspired status line: icon + title
     if (card.kind == .user) {
         if (store.format("❯ {s}", .{title})) |s| {
@@ -451,9 +498,14 @@ fn renderCardInto(
             printLineStyled(win, 0, s, style);
         }
     } else if (is_tool_done) {
-        // grok: "✓ Edit path  +n/-m" / "✓ Read path"
+        // grok: "✓ Edit ×3 path  +n/-m" / "✓ Read path" — the ×N count
+        // suffix appears only on the NEWEST card of a collapsed group.
         const name = if (title.len > "tool ".len) title["tool ".len..] else title;
         const pretty = toolPrettyName(name);
+        const count_title: []const u8 = if (tool_group.size > 1 and tool_group.is_newest_in_group)
+            (store.format("{s} ×{d}", .{ tool_group.pretty, tool_group.size }) orelse pretty)
+        else
+            pretty;
         const failed = toolBodyLooksFailed(card.bodySlice());
         const icon: []const u8 = if (failed) "✗" else "✓";
         const done_style = if (failed) palette.style(.tool_error_fg) else palette.style(.tool_success_fg);
@@ -461,12 +513,12 @@ fn renderCardInto(
         const detail = toolResultDetail(card.bodySlice());
         const line = blk: {
             if (preview.len > 0 and detail.len > 0)
-                break :blk store.format("{s} {s}  {s}  {s}", .{ icon, pretty, preview, detail });
+                break :blk store.format("{s} {s}  {s}  {s}", .{ icon, count_title, preview, detail });
             if (preview.len > 0)
-                break :blk store.format("{s} {s}  {s}", .{ icon, pretty, preview });
+                break :blk store.format("{s} {s}  {s}", .{ icon, count_title, preview });
             if (detail.len > 0)
-                break :blk store.format("{s} {s}  {s}", .{ icon, pretty, detail });
-            break :blk store.format("{s} {s}", .{ icon, pretty });
+                break :blk store.format("{s} {s}  {s}", .{ icon, count_title, detail });
+            break :blk store.format("{s} {s}", .{ icon, count_title });
         };
         if (line) |s| printLineStyled(win, 0, present.utf8Prefix(s, win.width), done_style);
     } else if (is_host_error) {
@@ -498,9 +550,11 @@ fn renderCardInto(
         }
     }
 
-    // Body: thinking collapsed → header only; tools truncated to N lines.
+    // Body: thinking collapsed → header only; tools truncated to N lines;
+    // grouped non-newest tools → header only (height 1 from measure).
     const show_body = has_body and card.body_len > 0 and win.height > 1 and
-        !(is_thinking and !card_paint_opts.thinking_expanded);
+        !(is_thinking and !card_paint_opts.thinking_expanded) and
+        !grouped_header_only;
     if (show_body) {
         const body_win = win.child(.{
             .x_off = 2,
@@ -518,7 +572,7 @@ fn renderCardInto(
 
         if (is_tool_start or is_tool_done) {
             // Grok-style truncated tool body (no full markdown dump).
-            drawToolBodyTruncated(body_win, card.bodySlice(), body_base, store, card_paint_opts.tool_body_max_lines);
+            drawToolBodyTruncated(body_win, card.bodySlice(), body_base, palette, store, card_paint_opts.tool_body_max_lines);
         } else {
             const md_style = md_render.MdStyle.forCard(palette, body_base);
             if (md_parse.parseMarkdown(gpa, card.bodySlice())) |doc|
@@ -543,6 +597,75 @@ fn toolPrettyName(name: []const u8) []const u8 {
     if (std.mem.eql(u8, name, "todo") or std.mem.eql(u8, name, "TodoWrite")) return "Todo";
     if (name.len == 0) return name;
     return name;
+}
+
+/// Verb-group membership of one card in a snapshot (grok tool folding):
+/// consecutive completed tool cards (`tool ` but not `tool start `) sharing
+/// the same `toolPrettyName` form a group; the newest (highest index) keeps
+/// its body, older siblings collapse to header-only rows.
+const ToolGroupInfo = struct {
+    /// Group size (1 = lone tool card; 0 = not a completed tool card).
+    size: usize = 0,
+    /// True when this card is the newest of its group (keeps its body).
+    is_newest_in_group: bool = false,
+    /// `toolPrettyName` of the shared verb ("" when not a tool card).
+    pretty: []const u8 = "",
+};
+
+fn isToolDoneTitle(title: []const u8) bool {
+    return std.mem.startsWith(u8, title, "tool ") and !std.mem.startsWith(u8, title, "tool start ");
+}
+
+fn toolNameOf(title: []const u8) []const u8 {
+    return if (title.len > "tool ".len) title["tool ".len..] else title;
+}
+
+/// Group info for snap[index]: maximal consecutive run of completed tool
+/// cards with the same pretty verb containing `index`. O(group size), called
+/// per card per paint (bounded by the 125-slot ring).
+fn toolGroupInfo(snap: []const cards.CardSlot, index: usize) ToolGroupInfo {
+    if (index >= snap.len) return .{};
+    if (!isToolDoneTitle(snap[index].titleSlice())) return .{};
+    const pretty = toolPrettyName(toolNameOf(snap[index].titleSlice()));
+    var start = index;
+    while (start > 0 and
+        isToolDoneTitle(snap[start - 1].titleSlice()) and
+        std.mem.eql(u8, toolPrettyName(toolNameOf(snap[start - 1].titleSlice())), pretty)) : (start -= 1) {}
+    var end = index;
+    while (end + 1 < snap.len and
+        isToolDoneTitle(snap[end + 1].titleSlice()) and
+        std.mem.eql(u8, toolPrettyName(toolNameOf(snap[end + 1].titleSlice())), pretty)) : (end += 1) {}
+    return .{
+        .size = end - start + 1,
+        .is_newest_in_group = (end == index),
+        .pretty = pretty,
+    };
+}
+
+/// Resolve a card's index in the current paint snapshot: ui_seq match (the
+/// ring assigns a monotonic id per publish), falling back to slot-address
+/// identity for hand-built test slots with ui_seq == 0.
+fn snapIndexOf(card: *const cards.CardSlot) ?usize {
+    for (card_paint_snap, 0..) |*s, i| {
+        if (s.ui_seq != 0 and s.ui_seq == card.ui_seq) return i;
+        if (@intFromPtr(s) == @intFromPtr(card)) return i;
+    }
+    return null;
+}
+
+/// Cheap per-paint signature of the tool-verb-group structure (which cards
+/// collapse). The app compares consecutive paints: when it changes, cached
+/// scrollback heights for unchanged ui_seqs are stale (a sibling's collapse
+/// status changed), so the measure cache must be invalidated before prepare.
+pub fn toolGroupSignature(snap: []const cards.CardSlot) u64 {
+    var h: u64 = 0x9e3779b97f4a7c15;
+    for (snap, 0..) |*s, i| {
+        _ = s;
+        const g = toolGroupInfo(snap, i);
+        if (g.size == 0) continue;
+        h = (h ^ (@as(u64, g.size) << 32 | @as(u64, @intFromBool(g.is_newest_in_group)))) *% 0x100000001b3;
+    }
+    return h;
 }
 
 /// First interesting token from a tool body for the title-row preview
@@ -585,6 +708,11 @@ fn toolBodyPreview(body: []const u8) []const u8 {
     line = std.mem.trim(u8, line, " \t\r");
     // Skip envelope-only first lines (ok: code=…)
     if (std.mem.startsWith(u8, line, "ok:") or std.mem.startsWith(u8, line, "error:") or std.mem.startsWith(u8, line, "id=")) {
+        return "";
+    }
+    // Diff bodies: skip the header lines (---/+++/@@) — the diff itself
+    // paints in the body.
+    if (std.mem.startsWith(u8, line, "--- ") or std.mem.startsWith(u8, line, "+++ ") or std.mem.startsWith(u8, line, "@@")) {
         return "";
     }
     if (std.mem.startsWith(u8, line, "```")) {
@@ -665,38 +793,270 @@ fn parseLeadingUsize(s: []const u8) ?usize {
     return std.fmt.parseInt(usize, s[0..i], 10) catch null;
 }
 
-/// Paint a truncated tool body (first N lines + "… +K lines" footer).
+/// Per-line paint kind for tool bodies (grok tool-body polish): diff
+/// `+`/`-` markers and bash stderr get status colors; diff context and bash
+/// stdout stay on the base muted tool style.
+const ToolLineKind = enum {
+    plain,
+    success,
+    err,
+    muted,
+};
+
+const ToolBodyMode = enum {
+    /// Generic envelope / summary dump (ok:/error:/id= …), no sections.
+    dump,
+    /// Bash output with `--- stdout ---` / `--- stderr ---` sections.
+    bash,
+    /// Unified-diff-shaped body: color `+`/`-` lines, mute context.
+    diff,
+    /// File text: line-number gutter + plain content.
+    file,
+};
+
+const ToolBodyLine = struct {
+    text: []const u8,
+    kind: ToolLineKind,
+    /// 0-based source line number (gutter uses it; counts skipped lines too).
+    line_no: usize,
+};
+
+/// Drives a tool body exactly as the truncated painter renders it. Both
+/// measureToolBodyLines and drawToolBodyTruncated iterate this, so the
+/// measured row count always equals the painted rows (leading-blank drop,
+/// envelope skip, bash section selection, diff coloring all included; the
+/// gutter only changes cell width, never the row count).
+const ToolBodyScan = struct {
+    body: []const u8,
+    mode: ToolBodyMode,
+    /// Skip the envelope first line (the title row already shows the path)
+    /// when more content follows it.
+    skip_envelope: bool,
+    /// First paint-region byte offset (bash: right after the first section
+    /// marker line; everything before it is the envelope + markers).
+    start: usize = 0,
+    in_stderr: bool = false,
+    pos: usize = 0,
+    line_no: usize = 0,
+    /// Any non-blank line yielded yet (leading blanks drop).
+    started: bool = false,
+
+    fn init(body: []const u8) ToolBodyScan {
+        const stdout_at = std.mem.indexOf(u8, body, "--- stdout ---");
+        const stderr_at = std.mem.indexOf(u8, body, "--- stderr ---");
+        if (stdout_at != null or stderr_at != null) {
+            const first = if (stdout_at) |a| (if (stderr_at) |b| @min(a, b) else a) else stderr_at.?;
+            var start = first + "--- stdout ---".len;
+            while (start < body.len and body[start] != '\n') : (start += 1) {}
+            if (start < body.len and body[start] == '\n') start += 1;
+            return .{
+                .body = body,
+                .mode = .bash,
+                .skip_envelope = false,
+                .start = start,
+                .in_stderr = (stderr_at != null) and (stdout_at == null or stderr_at.? < stdout_at.?),
+            };
+        }
+        if (hasDiffMarkers(body)) {
+            return .{
+                .body = body,
+                .mode = .diff,
+                .skip_envelope = isEnvelopeLine(singleLine(body)) and
+                    toolBodyPreview(body).len > 0 and hasMoreThanFirstLine(body),
+            };
+        }
+        if (isEnvelopeLine(singleLine(body))) {
+            return .{
+                .body = body,
+                .mode = .dump,
+                .skip_envelope = toolBodyPreview(body).len > 0 and hasMoreThanFirstLine(body),
+            };
+        }
+        return .{ .body = body, .mode = .file, .skip_envelope = false };
+    }
+
+    /// Next painted line, or null when exhausted — mirrors the painter.
+    fn next(self: *ToolBodyScan) ?ToolBodyLine {
+        while (self.pos < self.body.len) {
+            var end = self.pos;
+            while (end < self.body.len and self.body[end] != '\n') : (end += 1) {}
+            const raw = self.body[self.pos..end];
+            const line_no = self.line_no;
+            self.line_no += 1;
+            self.pos = if (end < self.body.len) end + 1 else end;
+
+            if (self.mode == .bash) {
+                // Skip everything up to and including the first section
+                // marker; later marker lines flip stdout/stderr.
+                if (self.pos <= self.start) {
+                    if (std.mem.startsWith(u8, raw, "--- stderr ---")) self.in_stderr = true;
+                    continue;
+                }
+                if (std.mem.startsWith(u8, raw, "--- stdout ---")) {
+                    self.in_stderr = false;
+                    continue;
+                }
+                if (std.mem.startsWith(u8, raw, "--- stderr ---")) {
+                    self.in_stderr = true;
+                    continue;
+                }
+                if (raw.len == 0 and !self.started) continue;
+                self.started = true;
+                return .{ .text = raw, .kind = if (self.in_stderr) .err else .plain, .line_no = line_no };
+            }
+
+            // Envelope skip: the title row already shows the path.
+            if (self.skip_envelope and line_no == 0) continue;
+
+            if (self.mode == .diff) {
+                if (raw.len == 0 and !self.started) continue;
+                self.started = true;
+                const kind: ToolLineKind = if (std.mem.startsWith(u8, raw, "+") and !std.mem.startsWith(u8, raw, "+++"))
+                    .success
+                else if (std.mem.startsWith(u8, raw, "-") and !std.mem.startsWith(u8, raw, "---"))
+                    .err
+                else
+                    .muted;
+                return .{ .text = raw, .kind = kind, .line_no = line_no };
+            }
+
+            if (raw.len == 0 and !self.started) continue;
+            self.started = true;
+            return .{ .text = raw, .kind = .plain, .line_no = line_no };
+        }
+        return null;
+    }
+};
+
+/// Body has at least one diff-marker line: `+`/`-` prefix that is not a
+/// `+++`/`---` file header (git-diff style).
+fn hasDiffMarkers(body: []const u8) bool {
+    var it = std.mem.splitScalar(u8, body, '\n');
+    while (it.next()) |raw| {
+        if (std.mem.startsWith(u8, raw, "+") and !std.mem.startsWith(u8, raw, "+++")) return true;
+        if (std.mem.startsWith(u8, raw, "-") and !std.mem.startsWith(u8, raw, "---")) return true;
+    }
+    return false;
+}
+
+/// Pure tool-result envelope first line (`ok:`/`error:`/`id=` forms). Bodies
+/// like this are summaries, not file text — no gutter, envelope-skip rules.
+fn isEnvelopeLine(line: []const u8) bool {
+    return std.mem.startsWith(u8, line, "ok:") or std.mem.startsWith(u8, line, "ok=") or
+        std.mem.startsWith(u8, line, "error:") or std.mem.startsWith(u8, line, "error=") or
+        std.mem.startsWith(u8, line, "id=");
+}
+
+/// True when the first line is followed by any non-blank content.
+fn hasMoreThanFirstLine(body: []const u8) bool {
+    const nl = std.mem.indexOfScalar(u8, body, '\n') orelse return false;
+    var i = nl + 1;
+    while (i < body.len) : (i += 1) {
+        if (body[i] != '\n') return true;
+    }
+    return false;
+}
+
+/// Gutter width: digits of the source line count, clamped to 3–4 cols.
+fn gutterWidth(body: []const u8) u16 {
+    const total = countBodyLines(body);
+    var digits: u16 = 1;
+    var n: usize = total;
+    while (n >= 10) : (n /= 10) digits += 1;
+    return @min(@max(digits, 3), 4);
+}
+
+/// Paint a truncated tool body (first N lines + "… +K lines" footer) with
+/// grok-style polish: read/file-text bodies get a muted line-number gutter,
+/// diff bodies color `+`/`-` markers, bash bodies show the stdout/stderr
+/// sections with stderr in tool_error_fg.
 fn drawToolBodyTruncated(
     win: vaxis.Window,
     body: []const u8,
     style: vaxis.Style,
+    palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
     max_lines: u16,
 ) void {
     if (win.height == 0 or win.width == 0 or body.len == 0) return;
-    const limit: usize = if (max_lines == 0) std.math.maxInt(usize) else max_lines;
-    var it = std.mem.splitScalar(u8, body, '\n');
-    var shown: usize = 0;
-    var total: usize = 0;
-    var row: u16 = 0;
-    while (it.next()) |raw| : (total += 1) {
-        const ln = singleLine(raw);
-        // Skip empty trailing noise; keep interior blanks only if already showing.
-        if (ln.len == 0 and shown == 0) continue;
-        if (shown < limit and row < win.height) {
-            // Soft-skip pure envelope lines when we already have path on title —
-            // still show them if they're the only content.
-            printLineStyled(win, row, present.utf8Prefix(ln, win.width), style);
-            row += 1;
-            shown += 1;
-        }
+    const scan_ctx = ToolBodyScan.init(body);
+    // Count first so the "… +N lines" footer is exact; the body is ≤ 4096
+    // bytes, so the second pass is cheap and keeps measure == paint.
+    var visible: usize = 0;
+    {
+        var s = scan_ctx;
+        while (s.next() != null) : (visible += 1) {}
     }
-    if (total > shown and row < win.height) {
-        if (store.format("… +{d} lines", .{total - shown})) |s| {
+    if (visible == 0) return;
+    const limit: usize = if (max_lines == 0) std.math.maxInt(usize) else max_lines;
+    const shown = @min(visible, limit);
+    const footer = visible > shown;
+    const success_style = palette.style(.tool_success_fg);
+    const error_style = palette.style(.tool_error_fg);
+    const gutter_w: u16 = if (scan_ctx.mode == .file) gutterWidth(body) else 0;
+    var s = scan_ctx;
+    var row: u16 = 0;
+    var painted: usize = 0;
+    while (s.next()) |ln| {
+        if (painted >= shown or row >= win.height) break;
+        const line_style: vaxis.Style = switch (ln.kind) {
+            .success => success_style,
+            .err => error_style,
+            else => style,
+        };
+        if (gutter_w > 0 and win.width > gutter_w + 1) {
+            paintGutterLine(win, row, gutter_w, ln.line_no, ln.text, line_style, style, store);
+        } else {
+            printLineStyled(win, row, present.utf8Prefix(ln.text, win.width), line_style);
+        }
+        row += 1;
+        painted += 1;
+    }
+    if (footer and row < win.height) {
+        if (store.format("… +{d} lines", .{visible - shown})) |f| {
             var dim = style;
             dim.dim = true;
-            printLineStyled(win, row, s, dim);
+            printLineStyled(win, row, f, dim);
         }
+    }
+}
+
+/// Paint one file-text line with a right-aligned muted line-number gutter.
+/// vaxis borrows cell graphemes (no copy), so the number is formatted into
+/// the LineStore — a stack buffer would dangle by render time. The gutter
+/// consumes cells only; the row count is unchanged (measure lockstep).
+fn paintGutterLine(
+    win: vaxis.Window,
+    row: u16,
+    gutter_w: u16,
+    line_no: usize,
+    text: []const u8,
+    content_style: vaxis.Style,
+    muted: vaxis.Style,
+    store: *terminal.LineStore,
+) void {
+    const num = store.format("{d}", .{line_no + 1}) orelse return;
+    const num_w: u16 = @intCast(num.len);
+    const pad = if (gutter_w > num_w) gutter_w - num_w else 0;
+    const gut_w = gutter_w + 1; // gutter + separator space
+    if (gut_w >= win.width) {
+        printLineStyled(win, row, present.utf8Prefix(text, win.width), content_style);
+        return;
+    }
+    const pad_strs = [_][]const u8{ "", " ", "  ", "   " };
+    var col: u16 = 0;
+    if (pad > 0) {
+        _ = win.printSegment(.{ .text = pad_strs[@intCast(pad)], .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+        col += pad;
+    }
+    _ = win.printSegment(.{ .text = num, .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+    col += num_w;
+    _ = win.printSegment(.{ .text = " ", .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+    col += 1;
+    if (col >= win.width) return;
+    const content = present.utf8Prefix(text, win.width - col);
+    if (content.len > 0) {
+        _ = win.printSegment(.{ .text = content, .style = content_style }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
     }
 }
 
@@ -711,13 +1071,19 @@ fn countBodyLines(body: []const u8) usize {
     return @max(n, 1);
 }
 
+/// Row count the truncated tool painter actually paints (post envelope /
+/// section selection + leading-blank drop) plus the "… +N lines" footer.
+/// Iterates the SAME ToolBodyScan as drawToolBodyTruncated, so measure and
+/// render stay in lockstep (the gutter changes width, never the count).
 fn measureToolBodyLines(body: []const u8, max_lines: u16) u16 {
-    const total = countBodyLines(body);
-    if (total == 0) return 0;
-    if (max_lines == 0) return @intCast(@min(total, std.math.maxInt(u16)));
-    const shown = @min(total, max_lines);
-    const extra: usize = if (total > shown) 1 else 0; // "… +N lines"
-    return @intCast(shown + extra);
+    var s = ToolBodyScan.init(body);
+    var visible: usize = 0;
+    while (s.next() != null) : (visible += 1) {}
+    if (visible == 0) return 0;
+    const limit: usize = if (max_lines == 0) std.math.maxInt(usize) else max_lines;
+    const shown = @min(visible, limit);
+    const extra: usize = if (visible > shown) 1 else 0; // "… +N lines"
+    return @intCast(@min(shown + extra, std.math.maxInt(u16)));
 }
 
 /// Grok turn-status strip: spinner + "Working…" / "Waiting on you" / error.
@@ -830,6 +1196,15 @@ pub fn measureCardHeight(gpa: std.mem.Allocator, card: *const cards.CardSlot, co
         // Thinking collapsed (default): header only — matches renderCardInto.
         if (is_thinking and !card_paint_opts.thinking_expanded) return 1;
         if (is_tool) {
+            // Verb-group collapse (grok): older siblings of a same-verb
+            // completed-tool run are header-only; the newest keeps its body.
+            // `tool start` cards never join (toolGroupInfo returns size 0).
+            if (card_paint_opts.tool_groups_collapsed and isToolDoneTitle(title)) {
+                if (snapIndexOf(card)) |idx| {
+                    const g = toolGroupInfo(card_paint_snap, idx);
+                    if (g.size > 1 and !g.is_newest_in_group) return 1;
+                }
+            }
             // Truncated tool body (line-based, not md-wrap) + optional footer.
             h +|= measureToolBodyLines(card.bodySlice(), card_paint_opts.tool_body_max_lines);
             return h;
@@ -991,6 +1366,81 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
     win.showCursor(@intCast(col_base + win.gwidth(prefix)), @intCast(cl));
 }
 
+/// Assemble the editor top-border status chips (grok-style ambient chips):
+/// `model · theme · cwd · git · perm · think · tasks? · [tok] · state`.
+/// Optional chips are dropped in priority order (git → cwd → tasks → tokens)
+/// when the line exceeds `max_w` bytes so the mandatory contiguous
+/// `perm:` / `think:` / `state:` markers stay visible; the final fallback
+/// caps the core line with utf8Prefix. Returns a slice into `scratch`.
+fn buildStatusChips(scratch: []u8, facts: StatusFacts, max_w: usize) []const u8 {
+    var tok_buf: [24]u8 = undefined;
+    var tasks_buf: [24]u8 = undefined;
+    var perm_buf: [48]u8 = undefined;
+    var think_buf: [48]u8 = undefined;
+    var state_buf: [48]u8 = undefined;
+
+    const perm_seg = std.fmt.bufPrint(&perm_buf, "perm:{s}", .{facts.perm}) catch "perm:?";
+    const think_seg = std.fmt.bufPrint(&think_buf, "think:{s}", .{if (facts.show_thinking) "on" else "off"}) catch "think:?";
+    const state_seg = std.fmt.bufPrint(&state_buf, "state:{s}", .{stateName(facts.state)}) catch "state:?";
+    const tasks_seg = if (facts.running_tasks > 0)
+        std.fmt.bufPrint(&tasks_buf, "tasks:{d}", .{facts.running_tasks}) catch ""
+    else "";
+    // Tokens: `[tok:{d}k]` at >= 1000 (integer division), else `[tok:{d}]`.
+    const tok_seg = if (facts.last_tokens > 0)
+        (if (facts.last_tokens >= 1000)
+            std.fmt.bufPrint(&tok_buf, "[tok:{d}k]", .{facts.last_tokens / 1000})
+        else
+            std.fmt.bufPrint(&tok_buf, "[tok:{d}]", .{facts.last_tokens})) catch ""
+    else "";
+
+    var level: usize = 0;
+    while (true) : (level += 1) {
+        const segs = [_][]const u8{
+            facts.model,
+            facts.theme_id,
+            if (level >= 2) "" else facts.cwd_tail,
+            if (level >= 1) "" else facts.git_branch,
+            perm_seg,
+            think_seg,
+            if (level >= 3) "" else tasks_seg,
+            if (level >= 4) "" else tok_seg,
+            state_seg,
+        };
+        // Join non-empty segments with " · ", wrapped in spaces. `n` advances
+        // only on successful bufPrint writes, so a scratch overflow leaves a
+        // valid prefix (used by the final utf8Prefix cap below).
+        var n: usize = 0;
+        scratch[n] = ' ';
+        n += 1;
+        var first = true;
+        var overflowed = false;
+        for (segs) |seg| {
+            if (overflowed) break;
+            if (seg.len == 0) continue;
+            const out = if (first)
+                std.fmt.bufPrint(scratch[n..], "{s}", .{seg})
+            else
+                std.fmt.bufPrint(scratch[n..], " · {s}", .{seg});
+            if (out) |s| {
+                n += s.len;
+                first = false;
+            } else |_| {
+                overflowed = true;
+            }
+        }
+        if (!overflowed and n < scratch.len) {
+            scratch[n] = ' ';
+            n += 1;
+        } else {
+            overflowed = true;
+        }
+        const line = scratch[0..n];
+        if (level == 4) return present.utf8Prefix(line, max_w); // final cap
+        if (overflowed) continue; // scratch exhausted — drop more chips
+        if (line.len <= max_w) return line;
+    }
+}
+
 /// Paint compact status chips into the editor region's top border row
 /// (omp-style: status lives inside `╭─ … ─╮`).
 fn drawEditorStatusBorder(
@@ -1006,26 +1456,9 @@ fn drawEditorStatusBorder(
     // Leave room for `╭─` and `─╮`.
     const max_w = region.w -| 4;
     // grok status chips. Keep contiguous `perm:` / `state:` / `think:` markers.
-    const chips = blk: {
-        if (facts.running_tasks > 0) {
-            break :blk store.format(" {s} · {s} · perm:{s} · think:{s} · tasks:{d} · state:{s} ", .{
-                facts.model,
-                facts.theme_id,
-                facts.perm,
-                if (facts.show_thinking) "on" else "off",
-                facts.running_tasks,
-                stateName(facts.state),
-            });
-        }
-        break :blk store.format(" {s} · {s} · perm:{s} · think:{s} · state:{s} ", .{
-            facts.model,
-            facts.theme_id,
-            facts.perm,
-            if (facts.show_thinking) "on" else "off",
-            stateName(facts.state),
-        });
-    } orelse return;
-    const text = present.utf8Prefix(chips, max_w);
+    var scratch: [512]u8 = undefined;
+    const chips = buildStatusChips(&scratch, facts, max_w);
+    const text = store.format("{s}", .{chips}) orelse return;
     _ = root.printSegment(.{ .text = text, .style = style }, .{
         .col_offset = region.x + 2,
         .row_offset = region.y,
@@ -1515,6 +1948,7 @@ fn drawFixture(
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
+    setCardPaintSnap(snap);
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
     drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null, .{});
     return sb;
@@ -1537,6 +1971,7 @@ fn drawOverlayFixture(
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
+    setCardPaintSnap(snap);
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
     drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null, .{});
     return sb;
@@ -1881,6 +2316,71 @@ test "render state:{s} text present in the status meta line (PTY marker contract
     // Format keeps contiguous "state:busy" / "perm:ask" PTY markers.
     try expectRowContains(&cs.screen, 20, "state:busy");
     try expectRowContains(&cs.screen, 20, "perm:ask");
+
+}
+
+test "status meta: ambient chips (cwd/git/tokens) render on the editor border" {
+
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var facts = f.facts_full;
+    facts.cwd_tail = "zag";
+    facts.git_branch = "main";
+    facts.last_tokens = 12345;
+    // 100 cols: the full chip line (model/theme/cwd/git/perm/think/tok/state
+    // ≈ 88 bytes) fits inside max_w = 96, so nothing is dropped.
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 100, 24, facts, &f.snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    // busy+shortcuts → editor_y=20. Chips join with " · "; tokens >= 1000
+    // render as "{d}k". Mandatory PTY markers stay contiguous.
+    try expectRowContains(&cs.screen, 20, "· zag · main · perm:ask");
+    try expectRowContains(&cs.screen, 20, "think:off");
+    try expectRowContains(&cs.screen, 20, "[tok:12k]");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+
+}
+
+test "status meta: token chip shows the raw count below 1000" {
+
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var facts = f.facts_full;
+    facts.cwd_tail = "zag";
+    facts.last_tokens = 999;
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    try expectRowContains(&cs.screen, 20, "[tok:999]");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+
+}
+
+test "status meta: narrow border drops ambient chips before perm/think/state" {
+
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var facts = f.facts_full;
+    facts.cwd_tail = "zag";
+    facts.git_branch = "main";
+    facts.last_tokens = 12345;
+    // 70 cols: the full chip line (≈88B) does not fit max_w = 66, so the
+    // optional chips drop in priority order (git → cwd → tasks → tokens);
+    // the mandatory core (≈59B) survives intact with the PTY markers.
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 70, 24, facts, &f.snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    try expectRowContains(&cs.screen, 20, "perm:ask");
+    try expectRowContains(&cs.screen, 20, "think:off");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+    // The ambient chips were dropped, not truncated mid-marker.
+    var buf: [512]u8 = undefined;
+    const row = rowText(&cs.screen, 20, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, row, "main") == null);
+    try std.testing.expect(std.mem.indexOf(u8, row, "[tok:12k]") == null);
 
 }
 
@@ -2238,6 +2738,232 @@ test "md transcript: tool rows show status icon and indented body" {
     try expectRowContains(&cs.screen, 3, "✓ Bash");
     try expectRowContains(&cs.screen, 4, "ok=true");
 
+}
+
+// ── grok tool-body polish + verb groups ──────────────────────────────────
+
+test "tool groups: toolGroupInfo counts consecutive same-verb completed tools" {
+
+    const a = mdCard("tool read_file", .ordinary, "a");
+    const b = mdCard("tool read", .ordinary, "b"); // read alias → same "Read"
+    const cb = mdCard("tool bash", .ordinary, "c");
+    const d = mdCard("tool run_shell", .ordinary, "d"); // shell alias → same "Bash"
+    const e = mdCard("tool write_file", .ordinary, "e");
+    const snap = [_]cards.CardSlot{ a, b, cb, d, e };
+
+    const g0 = toolGroupInfo(&snap, 0);
+    try std.testing.expectEqual(@as(usize, 2), g0.size);
+    try std.testing.expect(!g0.is_newest_in_group);
+    try std.testing.expectEqualStrings("Read", g0.pretty);
+    const g1 = toolGroupInfo(&snap, 1);
+    try std.testing.expectEqual(@as(usize, 2), g1.size);
+    try std.testing.expect(g1.is_newest_in_group);
+    try std.testing.expectEqualStrings("Read", g1.pretty);
+
+    const g2 = toolGroupInfo(&snap, 2);
+    try std.testing.expectEqual(@as(usize, 2), g2.size);
+    try std.testing.expect(!g2.is_newest_in_group);
+    const g3 = toolGroupInfo(&snap, 3);
+    try std.testing.expectEqual(@as(usize, 2), g3.size);
+    try std.testing.expect(g3.is_newest_in_group);
+
+    // Lone Write card: size 1, trivially newest.
+    const g4 = toolGroupInfo(&snap, 4);
+    try std.testing.expectEqual(@as(usize, 1), g4.size);
+    try std.testing.expect(g4.is_newest_in_group);
+
+    // Non-tool and tool-start cards never join a group, and they break a run.
+    const t0 = mdCard("assistant turn=1", .ordinary, "hi");
+    const t1 = mdCard("tool start read_file", .ordinary, "id=t1 args={}");
+    const snap2 = [_]cards.CardSlot{ t0, t1, a, b };
+    try std.testing.expectEqual(@as(usize, 0), toolGroupInfo(&snap2, 0).size);
+    try std.testing.expectEqual(@as(usize, 0), toolGroupInfo(&snap2, 1).size);
+    // a at index 2: left run broken by the tool-start card, but b still
+    // joins from the right → group {2,3}, a not newest.
+    const ga = toolGroupInfo(&snap2, 2);
+    try std.testing.expectEqual(@as(usize, 2), ga.size);
+    try std.testing.expect(!ga.is_newest_in_group);
+    const gb = toolGroupInfo(&snap2, 3);
+    try std.testing.expectEqual(@as(usize, 2), gb.size);
+    try std.testing.expect(gb.is_newest_in_group);
+}
+
+test "tool groups: measureCardHeight collapses non-newest grouped tools to 1 row" {
+
+    const gpa = std.testing.allocator;
+    const a = mdCard("tool read_file", .ordinary, "alpha\nbeta\ngamma\ndelta\nepsilon\nzeta\neta");
+    const b = mdCard("tool read", .ordinary, "one\ntwo");
+    const snap = [_]cards.CardSlot{ a, b };
+    setCardPaintSnap(&snap);
+    defer setCardPaintSnap(&.{});
+    setCardPaintOpts(.{ .tool_groups_collapsed = true });
+    defer setCardPaintOpts(.{});
+
+    // Older sibling collapses to the title row only.
+    try std.testing.expectEqual(@as(u16, 1), measureCardHeight(gpa, &snap[0], 80));
+    // Newest keeps title + truncated body (2 lines).
+    try std.testing.expectEqual(@as(u16, 3), measureCardHeight(gpa, &snap[1], 80));
+
+    // A tool-start card never joins: the completed tool keeps its body.
+    const s = mdCard("tool start read_file", .ordinary, "id=t1 args={}");
+    const snap2 = [_]cards.CardSlot{ s, a };
+    setCardPaintSnap(&snap2);
+    try std.testing.expectEqual(@as(u16, 8), measureCardHeight(gpa, &snap2[1], 80)); // 7-line body + title
+
+    // Collapse disabled → every tool card measures with its body.
+    setCardPaintOpts(.{ .tool_groups_collapsed = false });
+    try std.testing.expectEqual(@as(u16, 8), measureCardHeight(gpa, &snap[0], 80));
+    try std.testing.expectEqual(@as(u16, 3), measureCardHeight(gpa, &snap[1], 80));
+}
+
+test "tool groups: non-newest grouped tool renders header-only, newest gets ×N" {
+
+    const gpa = std.testing.allocator;
+    const snap = [_]cards.CardSlot{
+        mdCard("tool read_file", .ordinary, "alpha\nbeta\ngamma"),
+        mdCard("tool read", .ordinary, "one\ntwo"),
+    };
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // Older sibling: header-only (row 0), no body rows, no count suffix.
+    try expectRowContains(&cs.screen, 0, "✓ Read");
+    try expectRowContains(&cs.screen, 0, "alpha");
+    var buf: [512]u8 = undefined;
+    const r0 = rowText(&cs.screen, 0, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r0, "×") == null);
+    // Newest (row 2): count suffix + truncated body.
+    try expectRowContains(&cs.screen, 2, "✓ Read ×2");
+    try expectRowContains(&cs.screen, 3, "one");
+    try expectRowContains(&cs.screen, 4, "two");
+}
+
+test "tool body: measureToolBodyLines matches painted rows for all modes" {
+
+    // Bash sections: only the stdout/stderr content lines paint (2 rows).
+    const bash = "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=3 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n--- stdout ---\nout\n--- stderr ---\nerr\n";
+    try std.testing.expectEqual(@as(u16, 2), measureToolBodyLines(bash, 6));
+    // Empty sections → no body rows (title only).
+    try std.testing.expectEqual(@as(u16, 0), measureToolBodyLines("ok: code=shell_success\n--- stdout ---\n--- stderr ---\n", 6));
+
+    // Diff: 6 lines fit the 6-line cap (no footer)…
+    const diff = "--- a/src/x.zig\n+++ b/src/x.zig\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx\n";
+    try std.testing.expectEqual(@as(u16, 6), measureToolBodyLines(diff, 6));
+    // …a 7th line adds the "… +N lines" footer row.
+    const diff7 = "--- a/src/x.zig\n+++ b/src/x.zig\n@@ -1,2 +1,2 @@\n-old\n+new\n ctx\nmore\n";
+    try std.testing.expectEqual(@as(u16, 7), measureToolBodyLines(diff7, 6));
+
+    // Leading blanks drop; the gutter never changes the row count.
+    try std.testing.expectEqual(@as(u16, 1), measureToolBodyLines("\n\nfoo", 6));
+    try std.testing.expectEqual(@as(u16, 3), measureToolBodyLines("alpha\nbeta\ngamma\n", 6));
+
+    // Envelope-only bodies keep their one line (path is not on the title).
+    try std.testing.expectEqual(@as(u16, 1), measureToolBodyLines("ok: wrote 16 bytes to target.txt", 6));
+    // Envelope with a path on the title AND more content → envelope skipped.
+    try std.testing.expectEqual(@as(u16, 2), measureToolBodyLines("ok: search_replace path=x removed=1 inserted=1\nline1\nline2", 6));
+}
+
+test "tool body: diff markers paint colored without panic" {
+
+    const gpa = std.testing.allocator;
+    const body = "--- a/src/x.zig\n+++ b/src/x.zig\n@@ -1,2 +1,2 @@\n-old line\n+new line\n context\n";
+    const snap = [_]cards.CardSlot{mdCard("tool apply_patch", .ordinary, body)};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // Title (diff headers don't leak into the preview) + all 6 body rows.
+    try expectRowContains(&cs.screen, 0, "✓ Edit");
+    try expectRowContains(&cs.screen, 1, "--- a/src/x.zig");
+    try expectRowContains(&cs.screen, 2, "+++ b/src/x.zig");
+    try expectRowContains(&cs.screen, 4, "-old line");
+    try expectRowContains(&cs.screen, 5, "+new line");
+    try expectRowContains(&cs.screen, 6, " context");
+    // Body starts at x_off=2 (builtin default: success=2 green, error=1,
+    // muted=8). `-` line error-colored, `+` line success-colored, context
+    // and diff headers muted.
+    try expectCellFgIndex(&cs.screen, 2, 4, 1);
+    try expectCellFgIndex(&cs.screen, 2, 5, 2);
+    try expectCellFgIndex(&cs.screen, 2, 1, 8);
+    try expectCellFgIndex(&cs.screen, 2, 6, 8);
+}
+
+test "tool body: bash stdout/stderr sections paint with stderr colored" {
+
+    const gpa = std.testing.allocator;
+    const body = "ok: code=shell_success format=shell-v1 exit_code=0 stdout_bytes=3 stderr_bytes=3 stdout_encoding=utf8 stderr_encoding=utf8 stdout_truncated=false stderr_truncated=false\n--- stdout ---\nout\n--- stderr ---\nerr\n";
+    const snap = [_]cards.CardSlot{mdCard("tool bash", .ordinary, body)};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // Envelope + markers skipped; stdout muted, stderr error-colored.
+    try expectRowContains(&cs.screen, 0, "✓ Bash  exit 0");
+    try expectRowContains(&cs.screen, 1, "out");
+    try expectRowContains(&cs.screen, 2, "err");
+    var buf: [512]u8 = undefined;
+    const r0 = rowText(&cs.screen, 0, &buf);
+    try std.testing.expect(std.mem.indexOf(u8, r0, "ok: code=") == null);
+    try expectCellFgIndex(&cs.screen, 2, 1, 8); // stdout → muted
+    try expectCellFgIndex(&cs.screen, 2, 2, 1); // stderr → tool_error_fg
+}
+
+test "tool body: file text paints a muted line-number gutter" {
+
+    const gpa = std.testing.allocator;
+    const snap = [_]cards.CardSlot{mdCard("tool read_file", .ordinary, "alpha\nbeta\ngamma")};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // Gutter right-aligned in 3 cols at x_off=2: "  1 alpha" …
+    try expectRowContains(&cs.screen, 1, "alpha");
+    try expectCellEquals(&cs.screen, 4, 1, "1"); // right-aligned number
+    try expectCellFgIndex(&cs.screen, 4, 1, 8); // muted gutter
+    try expectCellEquals(&cs.screen, 6, 1, "a"); // content starts after gutter + space
+    try expectRowContains(&cs.screen, 2, "beta");
+    try expectRowContains(&cs.screen, 3, "gamma");
 }
 
 
