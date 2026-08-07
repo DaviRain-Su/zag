@@ -158,6 +158,47 @@ pub const DualQueues = struct {
         return self.follow_up.pending();
     }
 
+    /// Copy pending control messages for the TUI (harness-steering-001 queue
+    /// pane). Order: steering FIFO first, then follow_up FIFO. Each entry's
+    /// kind is written to `out_kinds[i]` and up to `text_bufs[i].len` bytes of
+    /// its text (UTF-8, already validated at enqueue) to `text_bufs[i]`; the
+    /// actual byte count goes to `out_lens[i]`. Returns the number of entries
+    /// copied = min of the three slice lengths (callers cap at 8 = 4+4).
+    /// Thread-safe: locks `mu` for the whole copy, so the TUI can paint
+    /// without holding the lock across the render pass. No allocation.
+    pub fn copyPending(
+        self: *DualQueues,
+        out_kinds: []Kind,
+        text_bufs: [][128]u8, // UI preview cap 128 is fine
+        out_lens: []usize,
+    ) usize {
+        self.lock();
+        defer self.unlock();
+        const n = @min(@min(out_kinds.len, text_bufs.len), out_lens.len);
+        var count: usize = 0;
+        while (count < n and count < self.steering.count) : (count += 1) {
+            const idx = (self.steering.head + count) % capacity;
+            const len = self.steering.lens[idx];
+            const src = self.steering.backing[idx * message_max_bytes ..][0..len];
+            out_kinds[count] = .steering;
+            const cap = @min(text_bufs[count].len, src.len);
+            @memcpy(text_bufs[count][0..cap], src[0..cap]);
+            out_lens[count] = cap;
+        }
+        var fcount: usize = 0;
+        while (count < n and fcount < self.follow_up.count) : (fcount += 1) {
+            const idx = (self.follow_up.head + fcount) % capacity;
+            const len = self.follow_up.lens[idx];
+            const src = self.follow_up.backing[idx * message_max_bytes ..][0..len];
+            out_kinds[count] = .follow_up;
+            const cap = @min(text_bufs[count].len, src.len);
+            @memcpy(text_bufs[count][0..cap], src[0..cap]);
+            out_lens[count] = cap;
+            count += 1;
+        }
+        return count;
+    }
+
     /// Atomic boundary selection under one lock (Core ControlInput.peek).
     pub fn peek(self: *DualQueues, boundary: Boundary) ?Item {
         self.lock();
@@ -280,6 +321,61 @@ test "control_queue would_complete steering priority under lock" {
     q.commit(.steering);
     const next = q.peek(.would_complete).?;
     try std.testing.expectEqual(Kind.follow_up, next.kind);
+}
+
+test "control_queue copyPending steering then follow_up FIFO" {
+    const gpa = std.testing.allocator;
+    var q = try DualQueues.init(gpa);
+    defer q.deinit(gpa);
+
+    // Interleaved enqueue: steering FIFO must come out first, then follow_up.
+    try q.enqueueSteering("s1");
+    try q.enqueueFollowUp("f1");
+    try q.enqueueSteering("s2");
+    try q.enqueueFollowUp("f2");
+
+    var kinds: [8]Kind = undefined;
+    var bufs: [8][128]u8 = undefined;
+    var lens: [8]usize = undefined;
+    const n = q.copyPending(&kinds, &bufs, &lens);
+    try std.testing.expectEqual(@as(usize, 4), n);
+    try std.testing.expectEqual(Kind.steering, kinds[0]);
+    try std.testing.expectEqualStrings("s1", bufs[0][0..lens[0]]);
+    try std.testing.expectEqual(Kind.steering, kinds[1]);
+    try std.testing.expectEqualStrings("s2", bufs[1][0..lens[1]]);
+    try std.testing.expectEqual(Kind.follow_up, kinds[2]);
+    try std.testing.expectEqualStrings("f1", bufs[2][0..lens[2]]);
+    try std.testing.expectEqual(Kind.follow_up, kinds[3]);
+    try std.testing.expectEqualStrings("f2", bufs[3][0..lens[3]]);
+
+    // Caller cap: fewer buffers than pending → copy stops at the cap.
+    var kinds2: [2]Kind = undefined;
+    var bufs2: [2][128]u8 = undefined;
+    var lens2: [2]usize = undefined;
+    try std.testing.expectEqual(@as(usize, 2), q.copyPending(&kinds2, &bufs2, &lens2));
+    try std.testing.expectEqual(Kind.steering, kinds2[0]);
+    try std.testing.expectEqual(Kind.steering, kinds2[1]);
+
+    // Empty queues copy nothing.
+    q.clear();
+    var kinds3: [4]Kind = undefined;
+    var bufs3: [4][128]u8 = undefined;
+    var lens3: [4]usize = undefined;
+    try std.testing.expectEqual(@as(usize, 0), q.copyPending(&kinds3, &bufs3, &lens3));
+
+    // Long text truncates to the preview buffer cap without corrupting.
+    try q.enqueueSteering("s-long");
+    try q.enqueueFollowUp("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"); // > 128
+    var kinds4: [2]Kind = undefined;
+    var bufs4: [2][128]u8 = undefined;
+    var lens4: [2]usize = undefined;
+    try std.testing.expectEqual(@as(usize, 2), q.copyPending(&kinds4, &bufs4, &lens4));
+    try std.testing.expectEqual(@as(usize, 6), lens4[0]); // "s-long" fits whole
+    try std.testing.expectEqualStrings("s-long", bufs4[0][0..lens4[0]]);
+    try std.testing.expectEqual(@as(usize, 128), lens4[1]); // follow-up truncated
+    // Pending counts unchanged by copy.
+    try std.testing.expectEqual(@as(usize, 1), q.steeringPending());
+    try std.testing.expectEqual(@as(usize, 1), q.followUpPending());
 }
 
 test "control_queue enqueue copies caller bytes" {

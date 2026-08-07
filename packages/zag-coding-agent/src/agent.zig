@@ -465,6 +465,13 @@ pub const Session = struct {
         return self.control_queues.followUpPending();
     }
 
+    /// Copy pending control messages for the TUI queue pane (steering first
+    /// FIFO, then follow_up FIFO) into caller buffers. See
+    /// control_queue.DualQueues.copyPending. Thread-safe; no allocation.
+    pub fn copyControlPending(self: *Session, out_kinds: []control_queue_mod.Kind, text_bufs: [][128]u8, out_lens: []usize) usize {
+        return self.control_queues.copyPending(out_kinds, text_bufs, out_lens);
+    }
+
     /// Idle-only: discard unapplied process-memory control items.
     pub fn clearControlQueues(self: *Session) void {
         self.control_queues.clear();
@@ -8605,6 +8612,43 @@ test "harness-steering: clearControlQueues idle drop" {
     session.clearControlQueues();
     try std.testing.expectEqual(@as(usize, 0), session.steeringPending());
     try std.testing.expectEqual(@as(usize, 0), session.followUpPending());
+}
+
+test "harness-steering: copyControlPending mirrors pending counts in order" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+
+    var session = try Session.start(gpa, io, .{
+        .base_system = "sys",
+        .load_project_instructions = false,
+    });
+    defer session.deinit();
+
+    try session.enqueueSteering("steer-one");
+    try session.enqueueFollowUp("follow-one");
+    try session.enqueueSteering("steer-two");
+    try session.enqueueFollowUp("follow-two");
+
+    var kinds: [8]control_queue_mod.Kind = undefined;
+    var bufs: [8][128]u8 = undefined;
+    var lens: [8]usize = undefined;
+    const n = session.copyControlPending(&kinds, &bufs, &lens);
+    // Counts match the session pending surface.
+    try std.testing.expectEqual(@as(usize, 2), session.steeringPending());
+    try std.testing.expectEqual(@as(usize, 2), session.followUpPending());
+    try std.testing.expectEqual(@as(usize, 4), n);
+    try std.testing.expectEqual(control_queue_mod.Kind.steering, kinds[0]);
+    try std.testing.expectEqualStrings("steer-one", bufs[0][0..lens[0]]);
+    try std.testing.expectEqual(control_queue_mod.Kind.steering, kinds[1]);
+    try std.testing.expectEqualStrings("steer-two", bufs[1][0..lens[1]]);
+    try std.testing.expectEqual(control_queue_mod.Kind.follow_up, kinds[2]);
+    try std.testing.expectEqualStrings("follow-one", bufs[2][0..lens[2]]);
+    try std.testing.expectEqual(control_queue_mod.Kind.follow_up, kinds[3]);
+    try std.testing.expectEqualStrings("follow-two", bufs[3][0..lens[3]]);
+
+    // Copy is non-destructive.
+    try std.testing.expectEqual(@as(usize, 2), session.steeringPending());
+    try std.testing.expectEqual(@as(usize, 2), session.followUpPending());
 }
 
 test "harness-steering: applied user saves; pending not serialized" {

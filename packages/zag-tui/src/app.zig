@@ -189,6 +189,20 @@ pub const App = struct {
     tasks_focused: bool = false,
     /// Auto-opened because a subagent is running (auto-closes when idle).
     tasks_auto: bool = false,
+    /// Grok-style control queue strip (harness-steering-001): visible iff the
+    /// session has pending steering/follow-up messages (snapshot each paint).
+    /// v1 is auto-visible display only — no focus, no keys.
+    queue_visible: bool = false,
+    /// Selected row in the queue strip (reserved for focus UX; v1 unfocused).
+    queue_cursor: usize = 0,
+    /// Per-paint snapshot of pending control messages (steering first FIFO,
+    /// then follow_up FIFO; cap 8 = 4 + 4 queue capacity).
+    queue_kinds: [8]coding.control_queue.Kind = undefined,
+    queue_text_bufs: [8][128]u8 = undefined,
+    queue_text_lens: [8]usize = [_]usize{0} ** 8,
+    /// Parallel text slices into `queue_text_bufs` (valid during the paint).
+    queue_text_ptrs: [8][]const u8 = undefined,
+    queue_n: usize = 0,
     overlay: overlay_mod.Overlay = .{},
     /// Row-level transcript scrollback (tui-scrollback-001): geometry
     /// cache + virtual_y + follow mode. Survives frames.
@@ -2038,6 +2052,19 @@ pub const App = struct {
             steer = @intCast(s.steeringPending());
             follow = @intCast(s.followUpPending());
         }
+        // Control queue strip snapshot (grok-style): copy pending messages
+        // without holding the session mutex across paint. Visible iff any are
+        // pending (v1 auto-show/auto-hide; no user pinning).
+        self.queue_n = 0;
+        if (session) |s| {
+            self.queue_n = s.copyControlPending(&self.queue_kinds, &self.queue_text_bufs, &self.queue_text_lens);
+            var qi: usize = 0;
+            while (qi < self.queue_n) : (qi += 1) {
+                self.queue_text_ptrs[qi] = self.queue_text_bufs[qi][0..self.queue_text_lens[qi]];
+            }
+        }
+        self.queue_visible = self.queue_n > 0;
+        if (self.queue_cursor >= self.queue_n) self.queue_cursor = self.queue_n -| 1;
         const modal = self.permission.snapshot();
         if (self.overlay.isOpen()) _ = self.rebuildOverlayLines();
         var running_tasks: u32 = 0;
@@ -2111,7 +2138,7 @@ pub const App = struct {
         // scrollback paint window math (viewport_h = h-1 keeps prior paging
         // contracts).
         const turn_vis = self.state == .busy or self.state == .closing or self.state == .@"error";
-        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible, turn_vis);
+        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible, turn_vis, self.queue_visible);
         const viewport_h: usize = @max(layout.cards.h -| 1, 1);
         const content_w: u16 = @max(layout.cards.w -| 1, 1);
         self.last_viewport_h = viewport_h;
@@ -2143,7 +2170,13 @@ pub const App = struct {
             .tick_ms = tick_ms,
             .focused = self.tasks_focused,
         };
-        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb, self.subagent_registry, tasks_opts);
+        const queue_opts = render.QueuePaneOpts{
+            .cursor = self.queue_cursor,
+            .focused = false, // v1: auto-visible display, no keyboard focus
+            .kinds = self.queue_kinds[0..self.queue_n],
+            .texts = self.queue_text_ptrs[0..self.queue_n],
+        };
+        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb, self.subagent_registry, tasks_opts, queue_opts);
         self.dirty = false;
         self.last_painted_size = sz;
     }

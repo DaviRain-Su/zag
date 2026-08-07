@@ -22,6 +22,7 @@ const theme_mod = @import("theme.zig");
 const overlay_mod = @import("overlay.zig");
 const scrollback_mod = @import("scrollback.zig");
 const subagent_mod = @import("zag-coding-agent").subagent;
+const control_queue_mod = @import("zag-coding-agent").control_queue;
 
 pub const UiState = enum {
     idle,
@@ -84,6 +85,20 @@ pub const TasksPaneOpts = struct {
     tick_ms: u64 = 0,
     /// Header shows a focus marker when the pane owns j/k/Space.
     focused: bool = false,
+};
+
+/// Grok-style control queue strip options (harness-steering-001 TUI): a
+/// full-width box above the turn-status/editor stack listing pending
+/// steering/follow-up messages (steering FIFO first, then follow_up FIFO).
+pub const QueuePaneOpts = struct {
+    /// Selected row (reserved for focus UX; v1 renders unfocused).
+    cursor: usize = 0,
+    /// Focus marker in the header (v1: always false — auto-visible display).
+    focused: bool = false,
+    /// Parallel to `texts`: per-row kind.
+    kinds: []const control_queue_mod.Kind = &.{},
+    /// Parallel to `kinds`: per-row preview text (caller-capped at 128 B).
+    texts: []const []const u8 = &.{},
 };
 
 /// Per-paint options for card fold/truncate (grok DisplayMode subset).
@@ -155,6 +170,7 @@ pub fn renderFrame(
     sb: *scrollback_mod.Scrollback,
     subagents: ?*const subagent_mod.Registry,
     tasks_opts: TasksPaneOpts,
+    queue_opts: QueuePaneOpts,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
@@ -163,7 +179,7 @@ pub fn renderFrame(
         last_drawn_state = facts.state;
     }
     const root = term.vx.window();
-    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb, subagents, tasks_opts);
+    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb, subagents, tasks_opts, queue_opts);
     term.render() catch return error.WriteFailed;
 }
 
@@ -185,6 +201,7 @@ fn drawFrame(
     sb: *scrollback_mod.Scrollback,
     subagents: ?*const subagent_mod.Registry,
     tasks_opts: TasksPaneOpts,
+    queue_opts: QueuePaneOpts,
 ) void {
     root.clear();
     switch (layout.mode) {
@@ -196,7 +213,7 @@ fn drawFrame(
         },
         .full => {
             // Grok-inspired stack:
-            //   cards → tasks → modal → turn_status → editor → shortcuts
+            //   cards → tasks → modal → queue → turn_status → editor → shortcuts
             const border_style = palette.style(.card_border);
             const cards_win = childRegion(root, layout.cards);
             const editor_win = borderedChild(root, layout.editor, .{
@@ -213,6 +230,7 @@ fn drawFrame(
 
             if (layout.modal) |m| drawModal(root, m, modal, palette, store);
             if (layout.tasks_overlay) |tr| drawTasksOverlay(root, tr, subagents, palette, store, tasks_opts);
+            if (layout.queue_overlay) |qr| drawQueueOverlay(root, qr, palette, store, queue_opts);
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
         },
     }
@@ -239,8 +257,9 @@ pub fn drawFrameInto(
     sb: *scrollback_mod.Scrollback,
     subagents: ?*const subagent_mod.Registry,
     tasks_opts: TasksPaneOpts,
+    queue_opts: QueuePaneOpts,
 ) void {
-    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb, subagents, tasks_opts);
+    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb, subagents, tasks_opts, queue_opts);
 }
 
 fn childRegion(root: vaxis.Window, region: layout_mod.Region) vaxis.Window {
@@ -795,12 +814,13 @@ fn parseLeadingUsize(s: []const u8) ?usize {
 
 /// Per-line paint kind for tool bodies (grok tool-body polish): diff
 /// `+`/`-` markers and bash stderr get status colors; diff context and bash
-/// stdout stay on the base muted tool style.
+/// stdout stay on the base muted tool style; `@@` hunk headers go dim.
 const ToolLineKind = enum {
     plain,
     success,
     err,
     muted,
+    hunk,
 };
 
 const ToolBodyMode = enum {
@@ -819,6 +839,12 @@ const ToolBodyLine = struct {
     kind: ToolLineKind,
     /// 0-based source line number (gutter uses it; counts skipped lines too).
     line_no: usize,
+    /// Unified-diff hunk numbers for `-`/`+`/context lines (null when the
+    /// line is a header or the mode doesn't track hunks). The diff gutter
+    /// paints both sides; like the file gutter it changes cells, never the
+    /// row count, so measure stays in lockstep.
+    old_no: ?usize = null,
+    new_no: ?usize = null,
 };
 
 /// Drives a tool body exactly as the truncated painter renders it. Both
@@ -836,6 +862,14 @@ const ToolBodyScan = struct {
     /// marker line; everything before it is the envelope + markers).
     start: usize = 0,
     in_stderr: bool = false,
+    /// 0-based line index of a `--- git diff ---` marker, when present:
+    /// envelope lines before it are skipped and everything after it paints
+    /// as unified diff (even if the earlier lines were dump/envelope).
+    git_marker_line: ?usize = null,
+    /// Current hunk line numbers (diff mode): advance per `-`/`+`/context
+    /// line, reset by `@@` hunk headers.
+    diff_old: usize = 0,
+    diff_new: usize = 0,
     pos: usize = 0,
     line_no: usize = 0,
     /// Any non-blank line yielded yet (leading blanks drop).
@@ -855,6 +889,22 @@ const ToolBodyScan = struct {
                 .skip_envelope = false,
                 .start = start,
                 .in_stderr = (stderr_at != null) and (stdout_at == null or stderr_at.? < stdout_at.?),
+            };
+        }
+        // Edit tools often append "--- git diff ---" + unified diff to the
+        // envelope. The diff section wins: envelope lines before the marker
+        // are skipped (the title already shows path/detail) and the marker
+        // itself paints as a muted section header.
+        if (std.mem.indexOf(u8, body, "--- git diff ---")) |at| {
+            var marker_ln: usize = 0;
+            for (body[0..at]) |b| {
+                if (b == '\n') marker_ln += 1;
+            }
+            return .{
+                .body = body,
+                .mode = .diff,
+                .skip_envelope = false,
+                .git_marker_line = marker_ln,
             };
         }
         if (hasDiffMarkers(body)) {
@@ -909,15 +959,43 @@ const ToolBodyScan = struct {
             if (self.skip_envelope and line_no == 0) continue;
 
             if (self.mode == .diff) {
+                if (self.git_marker_line) |marker_ln| {
+                    if (line_no < marker_ln) {
+                        // Envelope/noise before the `--- git diff ---`
+                        // marker: the title row carries the path/detail, so
+                        // the diff section wins the body. Keep any
+                        // non-envelope preamble as plain.
+                        if (raw.len == 0 or isEnvelopeLine(raw)) continue;
+                        self.started = true;
+                        return .{ .text = raw, .kind = .plain, .line_no = line_no };
+                    }
+                    if (line_no == marker_ln) continue; // the marker line itself
+                }
                 if (raw.len == 0 and !self.started) continue;
                 self.started = true;
-                const kind: ToolLineKind = if (std.mem.startsWith(u8, raw, "+") and !std.mem.startsWith(u8, raw, "+++"))
-                    .success
-                else if (std.mem.startsWith(u8, raw, "-") and !std.mem.startsWith(u8, raw, "---"))
-                    .err
-                else
-                    .muted;
-                return .{ .text = raw, .kind = kind, .line_no = line_no };
+                if (parseHunkHeader(raw)) |h| {
+                    self.diff_old = h.old;
+                    self.diff_new = h.new;
+                    return .{ .text = raw, .kind = .hunk, .line_no = line_no };
+                }
+                if (std.mem.startsWith(u8, raw, "+") and !std.mem.startsWith(u8, raw, "+++")) {
+                    const n = self.diff_new;
+                    self.diff_new += 1;
+                    return .{ .text = raw, .kind = .success, .line_no = line_no, .new_no = n };
+                }
+                if (std.mem.startsWith(u8, raw, "-") and !std.mem.startsWith(u8, raw, "---")) {
+                    const n = self.diff_old;
+                    self.diff_old += 1;
+                    return .{ .text = raw, .kind = .err, .line_no = line_no, .old_no = n };
+                }
+                if (std.mem.startsWith(u8, raw, " ")) {
+                    const o = self.diff_old;
+                    const n = self.diff_new;
+                    self.diff_old += 1;
+                    self.diff_new += 1;
+                    return .{ .text = raw, .kind = .muted, .line_no = line_no, .old_no = o, .new_no = n };
+                }
+                return .{ .text = raw, .kind = .muted, .line_no = line_no };
             }
 
             if (raw.len == 0 and !self.started) continue;
@@ -928,15 +1006,54 @@ const ToolBodyScan = struct {
     }
 };
 
-/// Body has at least one diff-marker line: `+`/`-` prefix that is not a
-/// `+++`/`---` file header (git-diff style).
+/// Body has at least one diff-marker line: a `@@` hunk header or a
+/// `+`/`-` prefix that is not a `+++`/`---` file header (git-diff style).
 fn hasDiffMarkers(body: []const u8) bool {
     var it = std.mem.splitScalar(u8, body, '\n');
     while (it.next()) |raw| {
+        if (std.mem.startsWith(u8, raw, "@@ ")) return true;
         if (std.mem.startsWith(u8, raw, "+") and !std.mem.startsWith(u8, raw, "+++")) return true;
         if (std.mem.startsWith(u8, raw, "-") and !std.mem.startsWith(u8, raw, "---")) return true;
     }
     return false;
+}
+
+const HunkHeader = struct {
+    old: usize,
+    new: usize,
+};
+
+/// Parse a unified-diff hunk header `@@ -a[,b] +c[,d] @@ …` into the
+/// 1-based start line of the old (a) and new (c) sides. `-0,0` new-file
+/// hunks yield old = 0. Returns null for anything that doesn't look like a
+/// hunk header.
+fn parseHunkHeader(line: []const u8) ?HunkHeader {
+    if (!std.mem.startsWith(u8, line, "@@ ")) return null;
+    var i: usize = 3; // skip "@@ "
+    if (i >= line.len or line[i] != '-') return null;
+    i += 1;
+    const old = readDigits(line, &i) orelse return null;
+    if (i < line.len and line[i] == ',') {
+        i += 1;
+        _ = readDigits(line, &i) orelse return null;
+    }
+    if (i >= line.len or line[i] != ' ') return null;
+    i += 1;
+    if (i >= line.len or line[i] != '+') return null;
+    i += 1;
+    const new = readDigits(line, &i) orelse return null;
+    return .{ .old = old, .new = new };
+}
+
+/// Read a run of ASCII digits at `i`, advancing past them.
+fn readDigits(s: []const u8, i: *usize) ?usize {
+    const start = i.*;
+    var n: usize = 0;
+    while (i.* < s.len and s[i.*] >= '0' and s[i.*] <= '9') : (i.* += 1) {
+        n = n * 10 + (s[i.*] - '0');
+    }
+    if (i.* == start) return null;
+    return n;
 }
 
 /// Pure tool-result envelope first line (`ok:`/`error:`/`id=` forms). Bodies
@@ -966,6 +1083,49 @@ fn gutterWidth(body: []const u8) u16 {
     return @min(@max(digits, 3), 4);
 }
 
+/// Diff gutter width: digits of the widest old/new hunk line number the
+/// body displays, clamped to 2–4 cols per side. Mirrors the scan's hunk
+/// counter rules exactly (and skips the pre-marker envelope), so the
+/// painted numbers always right-align within the gutter.
+fn diffGutterWidth(body: []const u8) u16 {
+    const marker_ln = blk: {
+        if (std.mem.indexOf(u8, body, "--- git diff ---")) |at| {
+            var ln: usize = 0;
+            for (body[0..at]) |b| {
+                if (b == '\n') ln += 1;
+            }
+            break :blk ln;
+        }
+        break :blk std.math.maxInt(usize);
+    };
+    var max_n: usize = 0;
+    var old: usize = 0;
+    var new: usize = 0;
+    var ln: usize = 0;
+    var it = std.mem.splitScalar(u8, body, '\n');
+    while (it.next()) |raw| : (ln += 1) {
+        if (ln <= marker_ln) continue; // envelope + marker itself
+        if (parseHunkHeader(raw)) |h| {
+            old = h.old;
+            new = h.new;
+        } else if (std.mem.startsWith(u8, raw, "+") and !std.mem.startsWith(u8, raw, "+++")) {
+            max_n = @max(max_n, new);
+            new += 1;
+        } else if (std.mem.startsWith(u8, raw, "-") and !std.mem.startsWith(u8, raw, "---")) {
+            max_n = @max(max_n, old);
+            old += 1;
+        } else if (std.mem.startsWith(u8, raw, " ")) {
+            max_n = @max(max_n, @max(old, new));
+            old += 1;
+            new += 1;
+        }
+    }
+    var digits: u16 = 1;
+    var n = max_n;
+    while (n >= 10) : (n /= 10) digits += 1;
+    return @min(@max(digits, 2), 4);
+}
+
 /// Paint a truncated tool body (first N lines + "… +K lines" footer) with
 /// grok-style polish: read/file-text bodies get a muted line-number gutter,
 /// diff bodies color `+`/`-` markers, bash bodies show the stdout/stderr
@@ -993,7 +1153,7 @@ fn drawToolBodyTruncated(
     const footer = visible > shown;
     const success_style = palette.style(.tool_success_fg);
     const error_style = palette.style(.tool_error_fg);
-    const gutter_w: u16 = if (scan_ctx.mode == .file) gutterWidth(body) else 0;
+    const gutter_w: u16 = if (scan_ctx.mode == .file) gutterWidth(body) else if (scan_ctx.mode == .diff) diffGutterWidth(body) else 0;
     var s = scan_ctx;
     var row: u16 = 0;
     var painted: usize = 0;
@@ -1002,10 +1162,17 @@ fn drawToolBodyTruncated(
         const line_style: vaxis.Style = switch (ln.kind) {
             .success => success_style,
             .err => error_style,
+            .hunk => blk: {
+                var d = style;
+                d.dim = true;
+                break :blk d;
+            },
             else => style,
         };
-        if (gutter_w > 0 and win.width > gutter_w + 1) {
+        if (scan_ctx.mode == .file and win.width > gutter_w + 1) {
             paintGutterLine(win, row, gutter_w, ln.line_no, ln.text, line_style, style, store);
+        } else if (scan_ctx.mode == .diff and (ln.old_no != null or ln.new_no != null) and win.width > gutter_w * 2 + 3) {
+            paintDiffGutterLine(win, row, gutter_w, ln.old_no, ln.new_no, ln.text, line_style, style, store);
         } else {
             printLineStyled(win, row, present.utf8Prefix(ln.text, win.width), line_style);
         }
@@ -1053,6 +1220,67 @@ fn paintGutterLine(
     col += num_w;
     _ = win.printSegment(.{ .text = " ", .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
     col += 1;
+    if (col >= win.width) return;
+    const content = present.utf8Prefix(text, win.width - col);
+    if (content.len > 0) {
+        _ = win.printSegment(.{ .text = content, .style = content_style }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+    }
+}
+
+/// Paint one unified-diff content line with a compact dual gutter:
+/// right-aligned old/new hunk line numbers (muted, blank where a side
+/// doesn't exist), `|`, then the colored content. Like the file gutter,
+/// this consumes cells only — the row count is unchanged (measure lockstep).
+fn paintDiffGutterLine(
+    win: vaxis.Window,
+    row: u16,
+    w: u16,
+    old_no: ?usize,
+    new_no: ?usize,
+    text: []const u8,
+    content_style: vaxis.Style,
+    muted: vaxis.Style,
+    store: *terminal.LineStore,
+) void {
+    const prefix_w = w * 2 + 3; // "old new | " with one separator space each side
+    if (prefix_w >= win.width) {
+        printLineStyled(win, row, present.utf8Prefix(text, win.width), content_style);
+        return;
+    }
+    const old_s = if (old_no) |n| store.format("{d}", .{n}) else null;
+    const new_s = if (new_no) |n| store.format("{d}", .{n}) else null;
+    const pad_strs = [_][]const u8{ "", " ", "  ", "   " };
+    var col: u16 = 0;
+    // Old side: right-aligned number in `w` cells (blank when absent).
+    if (old_s) |s| {
+        const sw: u16 = @intCast(@min(s.len, w));
+        const pad = w - sw;
+        if (pad > 0) {
+            _ = win.printSegment(.{ .text = pad_strs[@intCast(pad)], .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+            col += pad;
+        }
+        _ = win.printSegment(.{ .text = s, .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+        col += sw;
+    } else {
+        col += w;
+    }
+    col += 1; // separator space (blank cell)
+    // New side: same layout.
+    if (new_s) |s| {
+        const sw: u16 = @intCast(@min(s.len, w));
+        const pad = w - sw;
+        if (pad > 0) {
+            _ = win.printSegment(.{ .text = pad_strs[@intCast(pad)], .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+            col += pad;
+        }
+        _ = win.printSegment(.{ .text = s, .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+        col += sw;
+    } else {
+        col += w;
+    }
+    _ = win.printSegment(.{ .text = "|", .style = muted }, .{ .row_offset = row, .col_offset = col, .wrap = .none });
+    col += 1;
+    col += 1; // separator after "|"
     if (col >= win.width) return;
     const content = present.utf8Prefix(text, win.width - col);
     if (content.len > 0) {
@@ -1745,6 +1973,99 @@ fn drawTasksOverlay(
 }
 
 
+/// Grok-style control queue strip: full-width box above the turn-status /
+/// editor stack listing pending steering (`S`, accent) and follow-up (`F`,
+/// muted) control messages — steering FIFO first, then follow_up FIFO.
+///
+/// The box hugs its content: top border (carrying the `queue {n}` title) +
+/// one row per entry + bottom border, clamped to the reserved `region`. The
+/// layout reserves up to 4 rows when pending; if fewer entries fit the extra
+/// reserved rows stay blank (cleared) — no other content overlaps them.
+fn drawQueueOverlay(
+    root: vaxis.Window,
+    region: layout_mod.Region,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+    opts: QueuePaneOpts,
+) void {
+    if (region.w == 0 or region.h == 0) return;
+    const n = @min(opts.kinds.len, opts.texts.len);
+    if (n == 0) return;
+
+    const used_h: u16 = @min(region.h, @as(u16, @intCast(n + 2)));
+    const box = borderedChild(root, .{
+        .x = region.x,
+        .y = region.y,
+        .w = region.w,
+        .h = used_h,
+    }, .{
+        .where = .all,
+        .glyphs = .single_rounded,
+        .style = palette.style(.card_border),
+    });
+    if (box.width == 0 or box.height == 0) return;
+
+    const muted = palette.style(.muted_fg);
+    const accent = palette.style(.accent_fg);
+
+    // Title in the top border (grok: compact "queue {n}" chrome).
+    if (store.format(" queue {d} ", .{n})) |h| {
+        _ = root.printSegment(.{ .text = h, .style = palette.style(.status_fg) }, .{
+            .col_offset = region.x + 2,
+            .row_offset = region.y,
+            .wrap = .none,
+        });
+    }
+
+    const cursor = @min(opts.cursor, n - 1);
+    var row: u16 = 0;
+    var i: usize = 0;
+    while (i < n and row < box.height) : (i += 1) {
+        const selected = opts.focused and i == cursor;
+        const kind = opts.kinds[i];
+        const letter: []const u8 = if (kind == .steering) "S" else "F";
+        const letter_style: vaxis.Style = if (kind == .steering) accent else muted;
+
+        var col: u16 = 0;
+        if (selected) {
+            _ = box.printSegment(.{ .text = "▸ ", .style = accent }, .{
+                .row_offset = row,
+                .col_offset = col,
+                .wrap = .none,
+            });
+            col +|= 2;
+        } else {
+            col +|= 2; // keep rows aligned whether or not focused
+        }
+        if (store.format("#{d} ", .{i + 1})) |num| {
+            _ = box.printSegment(.{ .text = num, .style = muted }, .{
+                .row_offset = row,
+                .col_offset = col,
+                .wrap = .none,
+            });
+            col +|= box.gwidth(num);
+        }
+        _ = box.printSegment(.{ .text = letter, .style = letter_style }, .{
+            .row_offset = row,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col +|= box.gwidth(letter);
+        col +|= 2; // gap before the preview text
+
+        const body = singleLine(opts.texts[i]);
+        const text_fit = fitDisplay(box, body, box.width -| col);
+        if (text_fit.len > 0 and col < box.width) {
+            _ = box.printSegment(.{ .text = text_fit, .style = muted }, .{
+                .row_offset = row,
+                .col_offset = col,
+                .wrap = .none,
+            });
+        }
+        row += 1;
+    }
+}
+
 /// Truncate `text` so its vaxis display width is ≤ `max_w`.
 fn fitDisplay(win: vaxis.Window, text: []const u8, max_w: u16) []const u8 {
     if (max_w == 0 or text.len == 0) return "";
@@ -1944,13 +2265,13 @@ fn drawFixture(
 ) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
     const turn_vis = facts.state == .busy or facts.state == .closing or facts.state == .@"error";
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis);
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis, false);
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
     setCardPaintSnap(snap);
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
-    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null, .{});
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null, .{}, .{});
     return sb;
 }
 
@@ -1967,13 +2288,13 @@ fn drawOverlayFixture(
 ) !scrollback_mod.Scrollback {
     cs.* = try CellScreen.init(gpa, cols, rows);
     const turn_vis = facts.state == .busy or facts.state == .closing or facts.state == .@"error";
-    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, false, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis);
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, false, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis, false);
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
     setCardPaintSnap(snap);
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
-    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null, .{});
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null, .{}, .{});
     return sb;
 }
 
@@ -2258,6 +2579,55 @@ test "render full-mode cells match the closed-frame golden (80x24)" {
     try expectRowContains(&cs.screen, 23, "allow");
     try expectRowContains(&cs.screen, 23, "deny");
     try expectCellEquals(&cs.screen, 0, 0, "✓");
+}
+
+test "render queue overlay paints S and F markers" {
+    const gpa = std.testing.allocator;
+    var cs: CellScreen = undefined;
+    defer cs.deinit(gpa);
+    cs = try CellScreen.init(gpa, 80, 24);
+
+    var ed_storage: [c.editor_max_bytes]u8 = undefined;
+    var ed = editor.Editor.init(&ed_storage);
+
+    const facts = StatusFacts{
+        .id_display = "sess-q",
+        .open_display = "n/a",
+        .session_configured = true,
+        .perm = "ask",
+        .shell = "protect",
+        .state = .idle,
+    };
+    const snap = [_]cards.CardSlot{};
+    // Queue visible (idle, 1-line editor): box hugs content at y=16..19
+    // (editor_y 20 − 4 reserved rows), cards 0..15.
+    const layout = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, false, false, true);
+    try std.testing.expect(layout.queue_overlay != null);
+    const palette = theme_mod.builtinDefault();
+    var sb = scrollback_mod.Scrollback.init(gpa);
+    defer sb.deinit();
+    setCardPaintSnap(&snap);
+    _ = sb.prepare(&snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+
+    var kinds = [_]control_queue_mod.Kind{ .steering, .follow_up };
+    var texts = [_][]const u8{ "first line of steering", "follow-up text" };
+    const queue_opts = QueuePaneOpts{
+        .kinds = &kinds,
+        .texts = &texts,
+    };
+    drawFrame(cs.md_arena.allocator(), cs.root(80, 24), layout, facts, &snap, &ed, .{}, &palette, .{}, &cs.store, &sb, null, .{}, queue_opts);
+
+    // Title in the top border carries the pending count.
+    try expectRowContains(&cs.screen, 16, "queue 2");
+    // Row 1: `#1 S  first line of steering` — steering letter present.
+    try expectRowContains(&cs.screen, 17, "#1 S");
+    try expectRowContains(&cs.screen, 17, "first line of steering");
+    // Row 2: `#2 F  follow-up text` — follow-up marker present.
+    try expectRowContains(&cs.screen, 18, "#2 F");
+    try expectRowContains(&cs.screen, 18, "follow-up text");
+    // Box closes at content height (2 rows → bottom border on row 19).
+    try expectCellEquals(&cs.screen, 0, 19, "╰");
+    try expectCellEquals(&cs.screen, 79, 19, "╯");
 }
 
 test "render wide frame 130 cols matches golden rows (no truncation)" {
@@ -2673,10 +3043,10 @@ test "md transcript: tall assistant body clips at the cards region height" {
     }
     try std.testing.expect(found_tail);
     sb.scrollUp(200);
-    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1, false, false);
+    const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1, false, false, false);
     _ = sb.prepare(&snap, @max(layout2.cards.w -| 1, 1), @max(layout2.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
     const palette2 = theme_mod.builtinDefault();
-    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb, null, .{});
+    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb, null, .{}, .{});
     try expectRowContains(&cs.screen, 0, "line 1");
     const head = rowText(&cs.screen, 0, &buf);
     try std.testing.expect(std.mem.indexOf(u8, head, "line 30") == null);
@@ -2901,12 +3271,144 @@ test "tool body: diff markers paint colored without panic" {
     try expectRowContains(&cs.screen, 5, "+new line");
     try expectRowContains(&cs.screen, 6, " context");
     // Body starts at x_off=2 (builtin default: success=2 green, error=1,
-    // muted=8). `-` line error-colored, `+` line success-colored, context
-    // and diff headers muted.
-    try expectCellFgIndex(&cs.screen, 2, 4, 1);
-    try expectCellFgIndex(&cs.screen, 2, 5, 2);
+    // muted=8). Diff content lines carry a compact dual gutter (width 2
+    // here): old/new hunk numbers right-aligned, then `|`, then the text.
+    // `-` line error-colored, `+` line success-colored, context and diff
+    // headers muted, `@@` hunk header dim.
+    // -old line: old side "1" at col 3, `|` at col 7, text at col 9.
+    try expectCellEquals(&cs.screen, 3, 4, "1");
+    try expectCellFgIndex(&cs.screen, 3, 4, 8);
+    try expectCellEquals(&cs.screen, 7, 4, "|");
+    try expectCellFgIndex(&cs.screen, 9, 4, 1);
+    // +new line: new side "1" at col 6, text at col 9.
+    try expectCellEquals(&cs.screen, 6, 5, "1");
+    try expectCellFgIndex(&cs.screen, 9, 5, 2);
+    // File headers stay flush-left (no gutter) and muted.
     try expectCellFgIndex(&cs.screen, 2, 1, 8);
-    try expectCellFgIndex(&cs.screen, 2, 6, 8);
+    // Context line: both sides numbered, text muted at col 9.
+    try expectCellEquals(&cs.screen, 6, 6, "2");
+    try expectCellFgIndex(&cs.screen, 9, 6, 8);
+    // Hunk header is dim on the muted base.
+    try expectCellFgIndex(&cs.screen, 2, 3, 8);
+    const hunk_cell = cs.screen.readCell(2, 3) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(hunk_cell.style.dim);
+}
+
+test "tool body: git-diff section after envelope paints diff colors" {
+
+    const gpa = std.testing.allocator;
+    // Edit tools append "--- git diff ---" + unified diff after the
+    // envelope; the diff section wins and the envelope line is skipped.
+    const body = "ok: apply_patch path=src/x.zig removed=1 inserted=1\n--- git diff ---\n@@ -1,3 +1,4 @@\n context\n-old\n+new\n";
+    const snap = [_]cards.CardSlot{mdCard("tool apply_patch", .ordinary, body)};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // Title + 4 diff rows (hunk, context, -old, +new); no envelope, no marker.
+    try expectRowContains(&cs.screen, 0, "✓ Edit");
+    try expectRowContains(&cs.screen, 1, "@@ -1,3 +1,4 @@");
+    try expectRowContains(&cs.screen, 3, "-old");
+    try expectRowContains(&cs.screen, 4, "+new");
+    var buf: [512]u8 = undefined;
+    var row: u16 = 1;
+    while (row < 5) : (row += 1) {
+        const r = rowText(&cs.screen, row, &buf);
+        try std.testing.expect(std.mem.indexOf(u8, r, "ok:") == null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "git diff") == null);
+    }
+    // `-` err-colored, `+` success-colored, context muted, all with the
+    // dual gutter (text at col 9); hunk header dim.
+    try expectCellFgIndex(&cs.screen, 9, 3, 1);
+    try expectCellFgIndex(&cs.screen, 9, 4, 2);
+    try expectCellFgIndex(&cs.screen, 9, 2, 8);
+    try expectCellEquals(&cs.screen, 3, 3, "2"); // old side of `-old`
+    try expectCellFgIndex(&cs.screen, 3, 3, 8); // muted gutter number
+    const hunk_cell = cs.screen.readCell(2, 1) orelse return error.TestUnexpectedResult;
+    try std.testing.expect(hunk_cell.style.dim);
+    // Measure agrees with the painted row count (4 body rows, no footer).
+    try std.testing.expectEqual(@as(u16, 4), measureToolBodyLines(body, 6));
+}
+
+test "tool body: envelope lines before git-diff marker are skipped entirely" {
+
+    const gpa = std.testing.allocator;
+    const body = "ok: search_replace path=src/a.zig removed=2 inserted=3\nid=evt_0001\nerror: none\n--- git diff ---\n@@ -1,2 +1,3 @@\n-old\n+new\n";
+    const snap = [_]cards.CardSlot{mdCard("tool search_replace", .ordinary, body)};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // Only marker + diff count: hunk, -old, +new = 3 rows.
+    try expectRowContains(&cs.screen, 1, "@@ -1,2 +1,3 @@");
+    try expectRowContains(&cs.screen, 2, "-old");
+    try expectRowContains(&cs.screen, 3, "+new");
+    var buf: [512]u8 = undefined;
+    var row: u16 = 1;
+    while (row < 4) : (row += 1) {
+        const r = rowText(&cs.screen, row, &buf);
+        try std.testing.expect(std.mem.indexOf(u8, r, "ok:") == null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "id=") == null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "error:") == null);
+        try std.testing.expect(std.mem.indexOf(u8, r, "git diff") == null);
+    }
+    try expectCellFgIndex(&cs.screen, 9, 2, 1);
+    try expectCellFgIndex(&cs.screen, 9, 3, 2);
+    // Measure == painted rows (3).
+    try std.testing.expectEqual(@as(u16, 3), measureToolBodyLines(body, 8));
+}
+
+test "tool body: measureToolBodyLines equals painted rows for a git-diff body" {
+
+    const gpa = std.testing.allocator;
+    const body = "ok: apply_patch path=src/big.zig removed=2 inserted=2\n--- git diff ---\n@@ -1,5 +1,5 @@\n line1\n-old2\n+new2\n line3\n-old4\n+new4\n line5\n";
+    const snap = [_]cards.CardSlot{mdCard("tool apply_patch", .ordinary, body)};
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const facts = StatusFacts{
+        .id_display = "sess-x",
+        .open_display = "n_a",
+        .session_configured = false,
+        .perm = "yolo",
+        .shell = "protect",
+        .state = .idle,
+    };
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+
+    // 8 visible diff rows; the 6-line cap shows 6 + "… +2 lines" footer.
+    try std.testing.expectEqual(@as(u16, 8), measureToolBodyLines(body, 8));
+    try std.testing.expectEqual(@as(u16, 7), measureToolBodyLines(body, 6));
+    try expectRowContains(&cs.screen, 1, "@@ -1,5 +1,5 @@");
+    try expectRowContains(&cs.screen, 6, "-old4");
+    try expectRowContains(&cs.screen, 7, "… +2 lines");
+    // Hunk numbering advances per line: first context at old/new 1,
+    // +new2 at new 2.
+    try expectCellEquals(&cs.screen, 3, 2, "1");
+    try expectCellEquals(&cs.screen, 6, 4, "2");
+    try expectCellFgIndex(&cs.screen, 9, 3, 1); // -old2 err-colored
+    try expectCellFgIndex(&cs.screen, 9, 4, 2); // +new2 success-colored
 }
 
 test "tool body: bash stdout/stderr sections paint with stderr colored" {
