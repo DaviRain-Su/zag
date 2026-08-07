@@ -174,15 +174,18 @@ pub const App = struct {
     /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
     /// text publishes as a `· thinking` card ahead of the assistant turn.
     show_thinking: bool = false,
-    /// Subagent tasks overlay toggle (Ctrl+K / Ctrl+G): when on, the live
-    /// subagent registry renders above the editor band (grok-style pane).
+    /// Subagent tasks pane (Ctrl+K). Collapsed/hidden when the registry is
+    /// empty — only auto-opens while a subagent is running, and never steals
+    /// Enter from the editor unless the pane is focused.
     tasks_visible: bool = false,
     /// Selected row in the tasks pane (0 = top / running-first).
     tasks_cursor: usize = 0,
     /// Expanded detail under the selected tasks row.
     tasks_expanded: bool = false,
-    /// Auto-opened the pane because a subagent is running (closes when idle
-    /// only if the user did not manually toggle it on).
+    /// Keyboard focus is on the tasks pane (j/k/Space). When false the
+    /// editor keeps Enter / arrows / history — fixes "can't send message".
+    tasks_focused: bool = false,
+    /// Auto-opened because a subagent is running (auto-closes when idle).
     tasks_auto: bool = false,
     overlay: overlay_mod.Overlay = .{},
     /// Row-level transcript scrollback (tui-scrollback-001): geometry
@@ -928,9 +931,9 @@ pub const App = struct {
             return self.handleOverlayKey(key);
         }
 
-        // When the tasks pane is open, arrow keys / j/k / enter navigate it
-        // (grok Tasks pane). Other keys fall through to the editor.
-        if (self.tasks_visible) {
+        // Tasks pane keys only when FOCUSED (Ctrl+K). Otherwise every key —
+        // especially Enter — belongs to the editor so the user can always send.
+        if (self.tasks_visible and self.tasks_focused) {
             switch (key) {
                 .up => {
                     if (self.tasks_cursor > 0) self.tasks_cursor -= 1;
@@ -949,20 +952,22 @@ pub const App = struct {
                         self.tasks_cursor +|= 1;
                         return .none;
                     }
-                },
-                .enter => {
-                    self.tasks_expanded = !self.tasks_expanded;
-                    return .none;
+                    // Space toggles expand (Enter is reserved for send).
+                    if (std.mem.eql(u8, ch, " ")) {
+                        self.tasks_expanded = !self.tasks_expanded;
+                        return .none;
+                    }
                 },
                 .escape => {
                     if (self.tasks_expanded) {
                         self.tasks_expanded = false;
                     } else {
-                        self.tasks_visible = false;
-                        self.tasks_auto = false;
+                        // Unfocus first; second Esc (or Ctrl+K) hides.
+                        self.tasks_focused = false;
                     }
                     return .none;
                 },
+                // Enter falls through → send message.
                 else => {},
             }
         }
@@ -1043,12 +1048,33 @@ pub const App = struct {
                 return .none;
             },
             .ctrl_k => {
-                // Grok Ctrl+G / zag Ctrl+K: toggle the subagent tasks pane.
-                // Manual toggle clears the auto-open flag so the pane stays
-                // where the user put it.
-                self.tasks_visible = !self.tasks_visible;
-                self.tasks_auto = false;
-                if (!self.tasks_visible) self.tasks_expanded = false;
+                // Collapsible tasks pane (grok Ctrl+G):
+                //   empty registry → stay hidden (nothing to show)
+                //   hidden → show + focus
+                //   shown unfocused → focus
+                //   focused → hide
+                const live: usize = if (self.subagent_registry) |reg| reg.liveCount() else 0;
+                if (live == 0) {
+                    self.tasks_visible = false;
+                    self.tasks_focused = false;
+                    self.tasks_expanded = false;
+                    self.tasks_auto = false;
+                    self.setNote("no_subagents");
+                    return .none;
+                }
+                if (!self.tasks_visible) {
+                    self.tasks_visible = true;
+                    self.tasks_focused = true;
+                    self.tasks_auto = false;
+                } else if (!self.tasks_focused) {
+                    self.tasks_focused = true;
+                    self.tasks_auto = false;
+                } else {
+                    self.tasks_visible = false;
+                    self.tasks_focused = false;
+                    self.tasks_expanded = false;
+                    self.tasks_auto = false;
+                }
                 return .none;
             },
             .page_up => {
@@ -1606,8 +1632,6 @@ pub const App = struct {
         var n: usize = 0;
         // Row kinds default to `.normal` for every overlay; the resume
         // branch re-marks group-header rows `.muted` as it pushes them.
-        // (Reset here — not per branch — so a stale muted flag from a
-        // previous resume listing can never leak into another overlay.)
         @memset(&self.resume_row_kinds, .normal);
         const push = struct {
             fn go(app: *App, text: []const u8, idx: *usize) void {
@@ -1632,10 +1656,10 @@ pub const App = struct {
                 push(self, "── 权限 / 显示 ──", &n);
                 push(self, "Ctrl+O         权限模式 ask/auto/bypass", &n);
                 push(self, "Ctrl+T         thinking 显示开关", &n);
-                push(self, "Ctrl+K         subagent tasks 面板", &n);
-                push(self, "  j/k · ↑/↓    选择任务", &n);
-                push(self, "  Enter        展开/折叠输出", &n);
-                push(self, "  Esc          关闭展开 / 关闭面板", &n);
+                push(self, "Ctrl+K         tasks 面板（可收缩，无任务时隐藏）", &n);
+                push(self, "  j/k · ↑/↓    选择任务（聚焦后）", &n);
+                push(self, "  Space        展开/折叠输出", &n);
+                push(self, "  Esc          取消聚焦", &n);
                 push(self, "── 滚动 ──", &n);
                 push(self, "PgUp/PgDn      滚动 transcript（行）", &n);
                 push(self, "鼠标滚轮        滚动 transcript", &n);
@@ -1957,23 +1981,36 @@ pub const App = struct {
             .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
             .row_kinds = self.resume_row_kinds[0..self.overlay_line_count],
         };
-        // Auto-open the tasks pane while any subagent is running (grok shows
-        // the strip live). Closes again when the registry goes idle — but only
-        // if the user did not manually toggle it.
+        // Collapsible tasks pane (grok-style):
+        //   - empty registry → always hidden (no empty box)
+        //   - running/pending → auto-open (unfocused so Enter still sends)
+        //   - idle after auto-open → auto-close
         if (self.subagent_registry) |reg| {
+            const live = reg.liveCount();
             const running = reg.countByStatus(.running) + reg.countByStatus(.pending);
-            if (running > 0) {
+            if (live == 0) {
+                self.tasks_visible = false;
+                self.tasks_focused = false;
+                self.tasks_expanded = false;
+                self.tasks_auto = false;
+            } else if (running > 0) {
                 if (!self.tasks_visible) {
                     self.tasks_visible = true;
                     self.tasks_auto = true;
+                    self.tasks_focused = false; // never steal Enter while running
                 }
             } else if (self.tasks_auto) {
                 self.tasks_visible = false;
-                self.tasks_auto = false;
+                self.tasks_focused = false;
                 self.tasks_expanded = false;
+                self.tasks_auto = false;
             }
-            const live = reg.liveCount();
             if (live > 0 and self.tasks_cursor >= live) self.tasks_cursor = live - 1;
+        } else {
+            self.tasks_visible = false;
+            self.tasks_focused = false;
+            self.tasks_expanded = false;
+            self.tasks_auto = false;
         }
 
         // Compute the layout once here: renderFrame draws it. Cards region is
@@ -1997,6 +2034,7 @@ pub const App = struct {
             .cursor = self.tasks_cursor,
             .expanded = self.tasks_expanded,
             .tick_ms = tick_ms,
+            .focused = self.tasks_focused,
         };
         try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb, self.subagent_registry, tasks_opts);
         self.dirty = false;
@@ -2596,7 +2634,7 @@ test "tui-input: home/end/ctrl-a/ctrl-e move the editor cursor" {
     try std.testing.expectEqual(@as(usize, 7), app.editor.cursor);
 }
 
-test "tui-input: ctrl-w/u edit the buffer; ctrl-k toggles the tasks overlay" {
+test "tui-input: ctrl-w/u edit the buffer; ctrl-k collapses empty tasks" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
@@ -2606,12 +2644,45 @@ test "tui-input: ctrl-w/u edit the buffer; ctrl-k toggles the tasks overlay" {
     try std.testing.expectEqualStrings("abc ", app.editor.slice());
     _ = app.handleKey(.ctrl_u);
     try std.testing.expectEqualStrings("", app.editor.slice());
-    // Ctrl+K (rebound from kill-to-end): toggles the subagent tasks overlay.
-    try std.testing.expect(!app.tasks_visible); // default off
-    _ = app.handleKey(.ctrl_k);
-    try std.testing.expect(app.tasks_visible);
+    // Empty registry: Ctrl+K must NOT open an empty pane (collapsible).
+    try std.testing.expect(!app.tasks_visible);
     _ = app.handleKey(.ctrl_k);
     try std.testing.expect(!app.tasks_visible);
+    try std.testing.expect(!app.tasks_focused);
+    // With a live entry, Ctrl+K opens+focuses, second Ctrl+K hides.
+    var reg = coding.subagent.Registry.init(gpa);
+    defer reg.deinit();
+    const idx = reg.allocSlot();
+    try reg.setIdentity(idx, "demo");
+    reg.get(idx).status = .completed;
+    app.subagent_registry = &reg;
+    _ = app.handleKey(.ctrl_k);
+    try std.testing.expect(app.tasks_visible);
+    try std.testing.expect(app.tasks_focused);
+    _ = app.handleKey(.ctrl_k);
+    try std.testing.expect(!app.tasks_visible);
+    try std.testing.expect(!app.tasks_focused);
+}
+
+test "tui-input: Enter still sends while tasks pane is visible unfocused" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var reg = coding.subagent.Registry.init(gpa);
+    defer reg.deinit();
+    const idx = reg.allocSlot();
+    try reg.setIdentity(idx, "demo");
+    reg.get(idx).status = .running;
+    app.subagent_registry = &reg;
+    app.tasks_visible = true;
+    app.tasks_focused = false; // auto-open state
+    _ = app.editor.insert("hello");
+    // Enter must NOT be swallowed by the tasks pane.
+    const action = app.handleKey(.enter);
+    _ = action;
+    // After send the editor is cleared (dispatch path) or at least Enter
+    // was not treated as expand — expanded stays false.
+    try std.testing.expect(!app.tasks_expanded);
 }
 
 test "tui-theme: switching builtins never frees static memory" {

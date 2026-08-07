@@ -71,6 +71,8 @@ pub const TasksPaneOpts = struct {
     expanded: bool = false,
     /// Monotonic ms used for spinner + elapsed (0 = unknown).
     tick_ms: u64 = 0,
+    /// Header shows a focus marker when the pane owns j/k/Space.
+    focused: bool = false,
 };
 
 pub fn stateName(s: UiState) []const u8 {
@@ -825,7 +827,11 @@ fn drawTasksOverlay(
         }
     }
 
-    if (store.format(" tasks {d} · running {d} ", .{ live, running })) |hdr| {
+    if (store.format(" tasks {d} · running {d}{s} ", .{
+        live,
+        running,
+        if (opts.focused) " · FOCUSED" else "",
+    })) |hdr| {
         _ = root.printSegment(.{ .text = hdr, .style = palette.style(.status_fg) }, .{
             .col_offset = region.x + 2,
             .row_offset = region.y,
@@ -834,7 +840,8 @@ fn drawTasksOverlay(
     }
 
     if (n == 0) {
-        printLineStyled(box, 0, "(no subagents yet — Ctrl+K hides)", muted);
+        // Should not normally paint: layout hides the region when empty.
+        printLineStyled(box, 0, "(no subagents)", muted);
         return;
     }
 
