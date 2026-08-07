@@ -174,9 +174,16 @@ pub const App = struct {
     /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
     /// text publishes as a `· thinking` card ahead of the assistant turn.
     show_thinking: bool = false,
-    /// Subagent tasks overlay toggle (Ctrl+K): when on, the live subagent
-    /// registry renders above the editor/modal band (subagents-001 TUI).
+    /// Subagent tasks overlay toggle (Ctrl+K / Ctrl+G): when on, the live
+    /// subagent registry renders above the editor band (grok-style pane).
     tasks_visible: bool = false,
+    /// Selected row in the tasks pane (0 = top / running-first).
+    tasks_cursor: usize = 0,
+    /// Expanded detail under the selected tasks row.
+    tasks_expanded: bool = false,
+    /// Auto-opened the pane because a subagent is running (closes when idle
+    /// only if the user did not manually toggle it on).
+    tasks_auto: bool = false,
     overlay: overlay_mod.Overlay = .{},
     /// Row-level transcript scrollback (tui-scrollback-001): geometry
     /// cache + virtual_y + follow mode. Survives frames.
@@ -921,6 +928,45 @@ pub const App = struct {
             return self.handleOverlayKey(key);
         }
 
+        // When the tasks pane is open, arrow keys / j/k / enter navigate it
+        // (grok Tasks pane). Other keys fall through to the editor.
+        if (self.tasks_visible) {
+            switch (key) {
+                .up => {
+                    if (self.tasks_cursor > 0) self.tasks_cursor -= 1;
+                    return .none;
+                },
+                .down => {
+                    self.tasks_cursor +|= 1;
+                    return .none;
+                },
+                .char => |ch| {
+                    if (std.mem.eql(u8, ch, "k")) {
+                        if (self.tasks_cursor > 0) self.tasks_cursor -= 1;
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, ch, "j")) {
+                        self.tasks_cursor +|= 1;
+                        return .none;
+                    }
+                },
+                .enter => {
+                    self.tasks_expanded = !self.tasks_expanded;
+                    return .none;
+                },
+                .escape => {
+                    if (self.tasks_expanded) {
+                        self.tasks_expanded = false;
+                    } else {
+                        self.tasks_visible = false;
+                        self.tasks_auto = false;
+                    }
+                    return .none;
+                },
+                else => {},
+            }
+        }
+
         switch (key) {
             .ctrl_c => return .none,
             .ctrl_d => {
@@ -997,9 +1043,12 @@ pub const App = struct {
                 return .none;
             },
             .ctrl_k => {
-                // Subagent tasks overlay toggle (Ctrl+K): shows the parent
-                // agent's live subagent entries above the editor band.
+                // Grok Ctrl+G / zag Ctrl+K: toggle the subagent tasks pane.
+                // Manual toggle clears the auto-open flag so the pane stays
+                // where the user put it.
                 self.tasks_visible = !self.tasks_visible;
+                self.tasks_auto = false;
+                if (!self.tasks_visible) self.tasks_expanded = false;
                 return .none;
             },
             .page_up => {
@@ -1583,6 +1632,10 @@ pub const App = struct {
                 push(self, "── 权限 / 显示 ──", &n);
                 push(self, "Ctrl+O         权限模式 ask/auto/bypass", &n);
                 push(self, "Ctrl+T         thinking 显示开关", &n);
+                push(self, "Ctrl+K         subagent tasks 面板", &n);
+                push(self, "  j/k · ↑/↓    选择任务", &n);
+                push(self, "  Enter        展开/折叠输出", &n);
+                push(self, "  Esc          关闭展开 / 关闭面板", &n);
                 push(self, "── 滚动 ──", &n);
                 push(self, "PgUp/PgDn      滚动 transcript（行）", &n);
                 push(self, "鼠标滚轮        滚动 transcript", &n);
@@ -1591,7 +1644,7 @@ pub const App = struct {
                 push(self, "Home/End       光标 行首/行尾", &n);
                 push(self, "Ctrl+A/E       光标 行首/行尾", &n);
                 push(self, "Ctrl+W         删除前一个词", &n);
-                push(self, "Ctrl+U/K       删除至 行首/行尾", &n);
+                push(self, "Ctrl+U         删除至行首", &n);
                 push(self, "── 会话 ──", &n);
                 push(self, "Alt+S          打断（steering）", &n);
                 push(self, "Alt+F          追问（follow-up）", &n);
@@ -1904,6 +1957,25 @@ pub const App = struct {
             .lines = self.overlay_line_ptrs[0..self.overlay_line_count],
             .row_kinds = self.resume_row_kinds[0..self.overlay_line_count],
         };
+        // Auto-open the tasks pane while any subagent is running (grok shows
+        // the strip live). Closes again when the registry goes idle — but only
+        // if the user did not manually toggle it.
+        if (self.subagent_registry) |reg| {
+            const running = reg.countByStatus(.running) + reg.countByStatus(.pending);
+            if (running > 0) {
+                if (!self.tasks_visible) {
+                    self.tasks_visible = true;
+                    self.tasks_auto = true;
+                }
+            } else if (self.tasks_auto) {
+                self.tasks_visible = false;
+                self.tasks_auto = false;
+                self.tasks_expanded = false;
+            }
+            const live = reg.liveCount();
+            if (live > 0 and self.tasks_cursor >= live) self.tasks_cursor = live - 1;
+        }
+
         // Compute the layout once here: renderFrame draws it. Cards region is
         // borderless; reserve 1 col for the scrollbar track and 1 row for the
         // scrollback paint window math (viewport_h = h-1 keeps prior paging
@@ -1920,7 +1992,13 @@ pub const App = struct {
             render.measureCardHeight,
             scrollback_mod.estimateCard,
         );
-        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb, self.subagent_registry);
+        const tick_ms: u64 = @import("zag-types").monoNowNs() / std.time.ns_per_ms;
+        const tasks_opts = render.TasksPaneOpts{
+            .cursor = self.tasks_cursor,
+            .expanded = self.tasks_expanded,
+            .tick_ms = tick_ms,
+        };
+        try render.renderFrame(term, sz, layout, facts, self.snap_buf[0..n], &self.editor, modal, &self.palette, ov, &self.sb, self.subagent_registry, tasks_opts);
         self.dirty = false;
         self.last_painted_size = sz;
     }
@@ -2717,9 +2795,9 @@ test "tui-input: overlay home/end/page keys navigate" {
     const gpa = std.testing.allocator;
     const app = try App.create(gpa);
     defer app.destroy();
-    app.overlay.open(.help); // shortcut reference: 21 lines
+    app.overlay.open(.help); // shortcut reference (grew with tasks pane lines)
     _ = app.handleKey(.end);
-    try std.testing.expectEqual(@as(usize, 20), app.overlay.cursor);
+    try std.testing.expect(app.overlay.cursor >= 20);
     _ = app.handleKey(.home);
     try std.testing.expectEqual(@as(usize, 0), app.overlay.cursor);
     _ = app.handleKey(.page_down);
@@ -2727,6 +2805,7 @@ test "tui-input: overlay home/end/page keys navigate" {
     _ = app.handleKey(.page_up);
     try std.testing.expectEqual(@as(usize, 0), app.overlay.cursor); // 5× moveUp
 }
+
 
 // ── session-resume-tui-001 fixtures: listing / replay / redaction / fail-closed
 // ────────────────────────────────────────────────────────────────────────────

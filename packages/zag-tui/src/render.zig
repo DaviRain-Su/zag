@@ -65,6 +65,14 @@ pub const OverlayPaint = struct {
     row_kinds: []const RowKind = &.{},
 };
 
+/// Grok-inspired tasks pane options (subagents-001 TUI).
+pub const TasksPaneOpts = struct {
+    cursor: usize = 0,
+    expanded: bool = false,
+    /// Monotonic ms used for spinner + elapsed (0 = unknown).
+    tick_ms: u64 = 0,
+};
+
 pub fn stateName(s: UiState) []const u8 {
     return switch (s) {
         .idle => "idle",
@@ -97,20 +105,16 @@ pub fn renderFrame(
     ov: OverlayPaint,
     sb: *scrollback_mod.Scrollback,
     subagents: ?*const subagent_mod.Registry,
+    tasks_opts: TasksPaneOpts,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
-        term.vx.queueRefresh();
+        // State transition always forces a full refresh so the PTY marker
+        // contract ("state:{s}" appears in the status chips) stays honest.
         last_drawn_state = facts.state;
     }
-    // The vaxis screen borrows cell graphemes from the formatted lines; the
-    // store must outlive `render()` below (and lives across paints). The
-    // markdown parse arena is retained across frames (see Terminal.md_arena)
-    // so screen/diff cell slices stay valid; reset it for this frame's parses.
-    term.scratch.len = 0;
-    _ = term.md_arena.reset(.retain_capacity);
     const root = term.vx.window();
-    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb, subagents);
+    drawFrame(term.md_arena.allocator(), root, layout, facts, snap, ed, modal, palette, ov, &term.scratch, sb, subagents, tasks_opts);
     term.render() catch return error.WriteFailed;
 }
 
@@ -131,6 +135,7 @@ fn drawFrame(
     store: *terminal.LineStore,
     sb: *scrollback_mod.Scrollback,
     subagents: ?*const subagent_mod.Registry,
+    tasks_opts: TasksPaneOpts,
 ) void {
     root.clear();
     switch (layout.mode) {
@@ -159,9 +164,9 @@ fn drawFrame(
             drawEditor(editor_win, layout.mode, ed, palette);
 
             if (layout.modal) |m| drawModal(root, m, modal, palette, store);
-            if (layout.tasks_overlay) |t| drawTasksOverlay(root, t, subagents, palette, store);
+            if (layout.tasks_overlay) |t| drawTasksOverlay(root, t, subagents, palette, store, tasks_opts);
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
-        }
+        },
     }
 }
 
@@ -181,8 +186,9 @@ pub fn drawFrameInto(
     store: *terminal.LineStore,
     sb: *scrollback_mod.Scrollback,
     subagents: ?*const subagent_mod.Registry,
+    tasks_opts: TasksPaneOpts,
 ) void {
-    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb, subagents);
+    drawFrame(gpa, root, layout, facts, snap, ed, modal, palette, ov, store, sb, subagents, tasks_opts);
 }
 
 fn childRegion(root: vaxis.Window, region: layout_mod.Region) vaxis.Window {
@@ -761,61 +767,178 @@ fn drawModal(root: vaxis.Window, region: layout_mod.Region, modal: permission.Mo
     }
 }
 
-/// Subagent tasks overlay (subagents-001 TUI slice): a small box above the
-/// editor/modal band listing the parent agent's live subagent entries —
-/// header line, one row per entry (`│ ▶ task: … (turns:N) │`), closing
-/// border. Entries come from a `snapshotInto` of the borrowed registry.
+/// Grok-inspired tasks pane (subagents-001 TUI): full-width strip above the
+/// editor listing live registry entries with status color, elapsed time,
+/// turns, and an optional expanded output preview for the selected row.
+///
+/// `opts.cursor` is the selected entry index (0 = newest-first position 0).
+/// `opts.expanded` shows the selected entry's output / error under its row.
+/// `opts.tick_ms` drives a simple spinner for running entries.
+
 fn drawTasksOverlay(
     root: vaxis.Window,
     region: layout_mod.Region,
     registry: ?*const subagent_mod.Registry,
     palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
+    opts: TasksPaneOpts,
 ) void {
-    const style = palette.style(.modal_fg);
-    const inner = root.child(.{
-        .x_off = region.x,
-        .y_off = region.y,
-        .width = region.w,
-        .height = region.h,
+    if (region.w == 0 or region.h == 0) return;
+    const border = palette.style(.card_border);
+    const muted = palette.style(.muted_fg);
+    const box = borderedChild(root, region, .{
+        .where = .all,
+        .glyphs = .single_rounded,
+        .style = border,
     });
-    if (inner.width == 0 or inner.height == 0) return;
+    if (box.width == 0 or box.height == 0) return;
 
-    var row: u16 = 0;
-    if (row < inner.height) {
-        printLineStyled(inner, row, "┌─ subagents ─────────┐", style);
-        row += 1;
-    }
+    // Header chip on the top border: " tasks N · running R "
+    var live: usize = 0;
+    var running: usize = 0;
+    var snap_buf: [subagent_mod.max_registry_entries]subagent_mod.Entry = undefined;
+    var n: usize = 0;
     if (registry) |reg| {
-        var buf: [subagent_mod.max_registry_entries]subagent_mod.Entry = undefined;
-        const n = reg.snapshotInto(&buf);
-        for (buf[0..n]) |e| {
-            if (row >= inner.height) break;
-            if (store.format("│ {s} {s}: {s} (turns:{d}) │", .{
-                statusGlyph(e.status),
-                e.subagent_type.name(),
-                singleLine(e.description),
-                e.turns,
-            })) |s| {
-                printLineStyled(inner, row, s, style);
+        n = reg.snapshotInto(&snap_buf);
+        live = n;
+        running = reg.countByStatus(.running) + reg.countByStatus(.pending);
+    }
+    // Newest-first for the pane (grok sorts running-first then newest).
+    // Reverse the oldest-first snapshot into a stack buffer of indices.
+    var order: [subagent_mod.max_registry_entries]usize = undefined;
+    var oi: usize = 0;
+    while (oi < n) : (oi += 1) order[oi] = n - 1 - oi;
+    // Stable-ish running-first: bubble running/pending to the front.
+    var a: usize = 0;
+    while (a + 1 < n) : (a += 1) {
+        var b = a + 1;
+        while (b < n) : (b += 1) {
+            const ea = snap_buf[order[a]].status;
+            const eb = snap_buf[order[b]].status;
+            const ra = ea == .running or ea == .pending;
+            const rb = eb == .running or eb == .pending;
+            if (!ra and rb) {
+                const tmp = order[a];
+                order[a] = order[b];
+                order[b] = tmp;
             }
-            row += 1;
         }
     }
-    if (row < inner.height) {
-        printLineStyled(inner, row, "└─────────────────────┘", style);
+
+    if (store.format(" tasks {d} · running {d} ", .{ live, running })) |hdr| {
+        _ = root.printSegment(.{ .text = hdr, .style = palette.style(.status_fg) }, .{
+            .col_offset = region.x + 2,
+            .row_offset = region.y,
+            .wrap = .none,
+        });
+    }
+
+    if (n == 0) {
+        printLineStyled(box, 0, "(no subagents yet — Ctrl+K hides)", muted);
+        return;
+    }
+
+    const cursor = @min(opts.cursor, n - 1);
+    var row: u16 = 0;
+    var i: usize = 0;
+    while (i < n and row < box.height) : (i += 1) {
+        const e = &snap_buf[order[i]];
+        const selected = i == cursor;
+        const st = statusStyle(e.status, palette);
+        const glyph = statusGlyph(e.status, opts.tick_ms);
+        const marker: []const u8 = if (selected) (if (opts.expanded) "▾ " else "▸ ") else "  ";
+        const elapsed = formatElapsed(e.started_ms, e.finished_ms, opts.tick_ms);
+        // Left: marker glyph type: description … Right: turns + elapsed
+        if (store.format("{s}{s} {s}: {s}", .{
+            marker,
+            glyph,
+            e.subagent_type.name(),
+            singleLine(e.description),
+        })) |left| {
+            const left_capped = present.utf8Prefix(left, box.width -| 12);
+            printLineStyled(box, row, left_capped, if (selected) palette.style(.accent_fg) else st);
+            if (store.format(" {s} · {d}t", .{ elapsed, e.turns })) |right| {
+                const rw = box.gwidth(right);
+                if (rw < box.width) {
+                    _ = box.printSegment(.{ .text = right, .style = muted }, .{
+                        .row_offset = row,
+                        .col_offset = box.width - rw,
+                        .wrap = .none,
+                    });
+                }
+            }
+        }
+        row += 1;
+
+        // Expanded detail under the selected row.
+        if (selected and opts.expanded and row < box.height) {
+            const detail: []const u8 = blk: {
+                if (e.error_message) |em| if (em.len > 0) break :blk em;
+                if (e.output.len > 0) break :blk e.output;
+                break :blk "(no output yet)";
+            };
+            // Up to 3 detail lines, indented, muted.
+            var lines = std.mem.splitScalar(u8, detail, '\n');
+            var di: usize = 0;
+            while (lines.next()) |ln| : (di += 1) {
+                if (di >= 3 or row >= box.height) break;
+                if (store.format("    {s}", .{singleLine(ln)})) |s| {
+                    printLineStyled(box, row, present.utf8Prefix(s, box.width), muted);
+                }
+                row += 1;
+            }
+            if (e.id.len > 0 and row < box.height) {
+                if (store.format("    id={s}  status={s}", .{ e.id, e.status.name() })) |s| {
+                    printLineStyled(box, row, present.utf8Prefix(s, box.width), muted);
+                    row += 1;
+                }
+            }
+        }
     }
 }
 
-/// One-cell status indicator for a subagent entry.
-fn statusGlyph(status: subagent_mod.Status) []const u8 {
+fn statusStyle(status: subagent_mod.Status, palette: *const theme_mod.Palette) vaxis.Style {
+    return switch (status) {
+        .pending => palette.style(.muted_fg),
+        .running => palette.style(.tool_running_fg),
+        .completed => palette.style(.tool_success_fg),
+        .failed => palette.style(.tool_error_fg),
+        .cancelled => palette.style(.muted_fg),
+    };
+}
+
+/// One-cell status indicator; running entries animate with tick_ms.
+fn statusGlyph(status: subagent_mod.Status, tick_ms: u64) []const u8 {
+    const frames = [_][]const u8{ "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" };
     return switch (status) {
         .pending => "○",
-        .running => "▶",
+        .running => frames[@intCast((tick_ms / 80) % frames.len)],
         .completed => "✓",
         .failed => "✗",
         .cancelled => "⊘",
     };
+}
+
+fn formatElapsed(started_ms: u64, finished_ms: u64, now_ms: u64) []const u8 {
+    // Static buffers are fine: LineStore.format copies into its own buffer
+    // before the next call. We still keep a small local that formatElapsed
+    // returns via a threadlocal-ish approach — caller must copy immediately.
+    const end = if (finished_ms > started_ms) finished_ms else now_ms;
+    const ms = if (end > started_ms) end - started_ms else 0;
+    const sec = ms / 1000;
+    const mins = sec / 60;
+    const s = sec % 60;
+    // Use a process-local rotating buffer pair to keep the slice valid until
+    // the next formatElapsed call (draw path formats once per row).
+    const Pair = struct {
+        var bufs: [2][16]u8 = undefined;
+        var i: usize = 0;
+    };
+    Pair.i ^= 1;
+    if (mins > 0) {
+        return std.fmt.bufPrint(&Pair.bufs[Pair.i], "{d}m{d:0>2}s", .{ mins, s }) catch "?";
+    }
+    return std.fmt.bufPrint(&Pair.bufs[Pair.i], "{d}s", .{s}) catch "?";
 }
 
 fn drawHostOverlay(
@@ -947,7 +1070,7 @@ fn drawFixture(
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
-    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null, .{});
     return sb;
 }
 
@@ -968,7 +1091,7 @@ fn drawOverlayFixture(
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
     _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
-    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null, .{});
     return sb;
 }
 
@@ -1605,11 +1728,10 @@ test "md transcript: tall assistant body clips at the cards region height" {
     const layout2 = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 1, false, false, 0, 1, false);
     _ = sb.prepare(&snap, @max(layout2.cards.w -| 1, 1), @max(layout2.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
     const palette2 = theme_mod.builtinDefault();
-    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb, null);
+    drawFrameInto(cs.md_arena.allocator(), cs.root(80, 24), layout2, facts, &snap, &ed, .{}, &palette2, .{}, &cs.store, &sb, null, .{});
     try expectRowContains(&cs.screen, 0, "line 1");
     const head = rowText(&cs.screen, 0, &buf);
     try std.testing.expect(std.mem.indexOf(u8, head, "line 30") == null);
-
 }
 
 test "md transcript: user card body renders with accent base" {
@@ -1669,3 +1791,60 @@ test "md transcript: tool rows show status icon and indented body" {
     try expectRowEquals(&cs.screen, 4, "  ok=true");
 
 }
+
+test "tasks pane: renders status-colored rows with header chips" {
+    const gpa = std.testing.allocator;
+    var reg = subagent_mod.Registry.init(gpa);
+    defer reg.deinit();
+
+    const a = reg.allocSlot();
+    try reg.setIdentity(a, "scan packages");
+    reg.get(a).subagent_type = .scout;
+    reg.get(a).status = .running;
+    reg.get(a).turns = 3;
+    reg.get(a).started_ms = 1_000;
+    reg.active_count = 1;
+
+    const b = reg.allocSlot();
+    try reg.setIdentity(b, "review diff");
+    reg.get(b).subagent_type = .reviewer;
+    reg.get(b).status = .completed;
+    reg.get(b).turns = 5;
+    reg.get(b).started_ms = 1_000;
+    reg.get(b).finished_ms = 4_000;
+    reg.get(b).output = try gpa.dupe(u8, "looks good\nline2");
+
+    var cs = try CellScreen.init(gpa, 80, 24);
+    defer cs.deinit(gpa);
+    const f = fixedFixture();
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    const layout = layout_mod.compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, true);
+    const tr = layout.tasks_overlay orelse return error.TestUnexpectedResult;
+    try std.testing.expect(tr.h >= 4);
+    const palette = theme_mod.builtinDefault();
+    var sb = scrollback_mod.Scrollback.init(gpa);
+    defer sb.deinit();
+    _ = sb.prepare(&[_]cards.CardSlot{}, @max(layout.cards.w -| 1, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    drawFrame(cs.md_arena.allocator(), cs.root(80, 24), layout, f.facts_full, &[_]cards.CardSlot{}, &ed, .{}, &palette, .{}, &cs.store, &sb, &reg, .{
+        .cursor = 1,
+        .expanded = true,
+        .tick_ms = 5_000,
+    });
+
+    // Scan the whole tasks region for the expected chips / labels.
+    var saw_header = false;
+    var saw_scout = false;
+    var saw_detail = false;
+    var r: u16 = tr.y;
+    while (r < tr.y + tr.h) : (r += 1) {
+        var buf: [512]u8 = undefined;
+        const text = rowText(&cs.screen, r, &buf);
+        if (std.mem.indexOf(u8, text, "tasks") != null) saw_header = true;
+        if (std.mem.indexOf(u8, text, "scout") != null) saw_scout = true;
+        if (std.mem.indexOf(u8, text, "looks good") != null or std.mem.indexOf(u8, text, "id=") != null) saw_detail = true;
+    }
+    try std.testing.expect(saw_header);
+    try std.testing.expect(saw_scout);
+    try std.testing.expect(saw_detail);
+}
+

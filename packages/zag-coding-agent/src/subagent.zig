@@ -253,8 +253,10 @@ pub const max_registry_entries: usize = 64;
 
 /// One tracked subagent entry.
 pub const Entry = struct {
-    id: []const u8 = "",
-    description: []const u8 = "",
+    /// Owned id (gpa); empty means the slot is free.
+    id: []u8 = &[_]u8{},
+    /// Owned short description (gpa).
+    description: []u8 = &[_]u8{},
     subagent_type: SubagentType = .task,
     status: Status = .pending,
     /// Owned output text (gpa-allocated on completion).
@@ -265,6 +267,25 @@ pub const Entry = struct {
     started_ms: u64 = 0,
     /// Monotonic timestamp (ms) when the subagent reached a terminal state.
     finished_ms: u64 = 0,
+
+    pub fn freeOwned(self: *Entry, gpa: std.mem.Allocator) void {
+        if (self.id.len > 0) {
+            gpa.free(self.id);
+            self.id = &[_]u8{};
+        }
+        if (self.description.len > 0) {
+            gpa.free(self.description);
+            self.description = &[_]u8{};
+        }
+        if (self.output.len > 0) {
+            gpa.free(self.output);
+            self.output = &[_]u8{};
+        }
+        if (self.error_message) |em| {
+            gpa.free(em);
+            self.error_message = null;
+        }
+    }
 };
 
 /// Process-in-memory registry of subagents spawned by one parent Agent.
@@ -287,10 +308,7 @@ pub const Registry = struct {
     }
 
     pub fn deinit(self: *Registry) void {
-        for (&self.entries) |*e| {
-            if (e.output.len > 0) self.gpa.free(e.output);
-            if (e.error_message) |em| self.gpa.free(em);
-        }
+        for (&self.entries) |*e| e.freeOwned(self.gpa);
         self.* = undefined;
     }
 
@@ -298,20 +316,34 @@ pub const Registry = struct {
     /// Returns the index. Does NOT set status (caller sets pending→running).
     pub fn allocSlot(self: *Registry) usize {
         const idx = self.head;
-        // Free any previous entry at this slot.
         const slot = &self.entries[idx];
-        if (slot.output.len > 0) {
-            self.gpa.free(slot.output);
-            slot.output = &[_]u8{};
-        }
-        if (slot.error_message) |em| {
-            self.gpa.free(em);
-            slot.error_message = null;
-        }
+        slot.freeOwned(self.gpa);
         slot.* = .{};
         self.head = (self.head + 1) % max_registry_entries;
         self.total_spawned +|= 1;
         return idx;
+    }
+
+    /// Assign a unique owned id (`task-N`) and owned description to a slot.
+    /// Does not touch status/timestamps/output.
+    pub fn setIdentity(self: *Registry, idx: usize, description: []const u8) error{OutOfMemory}!void {
+        const e = self.get(idx);
+        if (e.id.len > 0) {
+            self.gpa.free(e.id);
+            e.id = &[_]u8{};
+        }
+        if (e.description.len > 0) {
+            self.gpa.free(e.description);
+            e.description = &[_]u8{};
+        }
+        var id_buf: [32]u8 = undefined;
+        const id_txt = std.fmt.bufPrint(&id_buf, "task-{d}", .{self.total_spawned}) catch "task";
+        e.id = try self.gpa.dupe(u8, id_txt);
+        errdefer {
+            self.gpa.free(e.id);
+            e.id = &[_]u8{};
+        }
+        e.description = try self.gpa.dupe(u8, description);
     }
 
     /// Get a mutable entry by index.
@@ -753,59 +785,55 @@ test "depthAllowed respects max_depth=1" {
     try std.testing.expect(!depthAllowed(2));
 }
 
-test "Registry allocSlot and ring buffer" {
+test "registry allocSlot and status tracking" {
     const gpa = std.testing.allocator;
     var reg = Registry.init(gpa);
     defer reg.deinit();
 
     const idx0 = reg.allocSlot();
-    reg.entries[idx0].id = "call_0";
+    try reg.setIdentity(idx0, "first");
     reg.entries[idx0].status = .running;
+    reg.active_count += 1;
 
     const idx1 = reg.allocSlot();
-    reg.entries[idx1].id = "call_1";
+    try reg.setIdentity(idx1, "second");
     reg.entries[idx1].status = .completed;
 
-    try std.testing.expectEqual(@as(u64, 2), reg.total_spawned);
-    try std.testing.expectEqual(@as(usize, 2), reg.liveCount());
     try std.testing.expectEqual(@as(usize, 1), reg.countByStatus(.running));
     try std.testing.expectEqual(@as(usize, 1), reg.countByStatus(.completed));
+    try std.testing.expectEqual(@as(usize, 2), reg.liveCount());
+    try std.testing.expectEqual(@as(u64, 2), reg.total_spawned);
 }
 
-test "Registry ring wraps around" {
+test "registry ring wraps and frees" {
     const gpa = std.testing.allocator;
     var reg = Registry.init(gpa);
     defer reg.deinit();
 
-    // Fill the ring.
-    var i: u32 = 0;
-    while (i < max_registry_entries + 5) : (i += 1) {
+    var i: usize = 0;
+    while (i < max_registry_entries + 2) : (i += 1) {
         const idx = reg.allocSlot();
-        reg.entries[idx].id = "x";
+        try reg.setIdentity(idx, "x");
+        reg.entries[idx].status = .completed;
     }
-    // total_spawned counts all; liveCount ≤ max_registry_entries.
-    try std.testing.expectEqual(@as(u64, max_registry_entries + 5), reg.total_spawned);
-    try std.testing.expect(reg.liveCount() <= max_registry_entries);
+    try std.testing.expectEqual(@as(usize, max_registry_entries), reg.liveCount());
 }
 
-test "Registry snapshotInto returns live entries in order" {
+test "registry snapshotInto oldest-first" {
     const gpa = std.testing.allocator;
     var reg = Registry.init(gpa);
     defer reg.deinit();
 
     const idx0 = reg.allocSlot();
-    reg.entries[idx0].id = "first";
-    reg.entries[idx0].status = .completed;
-
+    try reg.setIdentity(idx0, "first");
     const idx1 = reg.allocSlot();
-    reg.entries[idx1].id = "second";
-    reg.entries[idx1].status = .running;
+    try reg.setIdentity(idx1, "second");
 
-    var snap: [10]Entry = undefined;
-    const n = reg.snapshotInto(&snap);
+    var buf: [8]Entry = undefined;
+    const n = reg.snapshotInto(&buf);
     try std.testing.expectEqual(@as(usize, 2), n);
-    try std.testing.expectEqualStrings("first", snap[0].id);
-    try std.testing.expectEqualStrings("second", snap[1].id);
+    try std.testing.expectEqualStrings("task-1", buf[0].id);
+    try std.testing.expectEqualStrings("task-2", buf[1].id);
 }
 
 test "finalizeChildOutput: max_turns with empty text yields diagnostic + failed" {

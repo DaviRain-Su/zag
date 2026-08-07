@@ -105,13 +105,15 @@ pub fn handleTask(
         return softError(ctx.allocator, "depth_exceeded", "max subagent nesting depth (1) exceeded; a subagent cannot spawn further subagents");
     }
 
-    // Record in registry (if available).
+    // Record in registry (if available). Own id + description so the TUI can
+    // still display them after this handler returns (args are freed below).
     var reg_idx: ?usize = null;
     if (state.registry) |reg| {
         reg_idx = reg.allocSlot();
         const entry = reg.get(reg_idx.?);
-        entry.id = "task_call"; // simplified; real tool call id not available here
-        entry.description = description;
+        reg.setIdentity(reg_idx.?, description) catch {
+            // Fall back to empty identity; slot stays free-looking if id empty.
+        };
         entry.subagent_type = subagent_type;
         entry.status = .running;
         entry.started_ms = nowMs();
@@ -119,9 +121,18 @@ pub fn handleTask(
         reg.active_count += 1;
     }
 
-    // Spawn the subagent.
+    // Spawn the subagent. Prefer the registry-owned id when available.
+    const spawn_id: []const u8 = blk: {
+        if (reg_idx) |idx| {
+            if (state.registry) |reg| {
+                const id = reg.get(idx).id;
+                if (id.len > 0) break :blk id;
+            }
+        }
+        break :blk "task_call";
+    };
     const request: subagent_mod.SubagentRequest = .{
-        .id = "task_call",
+        .id = spawn_id,
         .prompt = prompt,
         .description = description,
         .subagent_type = subagent_type,

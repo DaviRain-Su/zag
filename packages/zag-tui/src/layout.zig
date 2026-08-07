@@ -113,7 +113,9 @@ pub fn compute(
         .h = modal_h,
     };
 
-    const tasks_h: u16 = if (tasks_visible) @min(8, gap -| modal_h) else 0;
+    // Grok-style tasks pane: up to 12 rows above the editor (header +
+    // entries + optional expanded detail). Shrinks if the gap is smaller.
+    const tasks_h: u16 = if (tasks_visible) @min(12, gap -| modal_h) else 0;
     const tasks_region: ?Region = if (tasks_h == 0) null else .{
         .x = 0,
         .y = editor_y -| modal_h -| tasks_h,
