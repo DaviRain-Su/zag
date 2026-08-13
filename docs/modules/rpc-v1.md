@@ -12,8 +12,9 @@
 > resume/continue hook — over a **Zag-native** NDJSON wire in the headless-v1
 > envelope family.
 >
-> **Status:** contract **draft** (not ready for impl Goal until dual review
-> PASS). Zig 0.16 (`std.Io` era) APIs assumed throughout.
+> **Status:** implementation **landed** @ `0eeef5d` ([rpc-v1-001](../plan/tasks/rpc-v1-001.md)
+> `implemented`). Dual review / Gate closeout still **pending** — this is not
+> an unstarted contract. Zig 0.16 (`std.Io` era) APIs assumed throughout.
 
 ## 1. Principles
 

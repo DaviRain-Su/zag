@@ -958,8 +958,8 @@ Summary only — do not fork Gate numbers elsewhere.
 | PTY (macOS product path) | geometry; idle Ctrl+C; busy first/second SIGINT; Ctrl+D/termios restore |
 | Pollution fix | run-unique exclusive owned workspace for gate21 @ `f8f7f55` |
 | Schemas / defaults | Core · session-v1 · Trace-v1 · headless-v1 unchanged; ask + jail + shell protect; `-Dtui` default false |
-| Not claimed by TUI closeout | Remote dual-backend Gate for tip `f8f7f55`/docs tips (branch presence ≠ validation); maturity raise; Theme implementation/RPC/ACP/Pi parity; remote `-Dtui` |
-| Theme follow-on | [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) — contract **PASS** @ `9e1b9f9`; `status: ready`; no implementation; **orthogonal** to post-TUI remote Gate |
+| Not claimed by TUI closeout | Remote dual-backend Gate for tip `f8f7f55`/docs tips; maturity raise; remote `-Dtui` |
+| Theme follow-on | [theme.md](./theme.md) / [theme-001](../plan/tasks/theme-001.md) — **done** (canvas); contract PASS @ `9e1b9f9` was the freeze; **orthogonal** to post-TUI remote Gate |
 | `origin/main` | Local reflog: external/other push of `f8f7f55`; TUI docs closeout tips local-only at closeout time through historical `b151307` (OLD_TARGET), later ancestors of observed TARGET `f352b60` (historical Class C lineage only; not Phase B live evidence); this closeout did not push |
 | Post-TUI remote Gate | [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) — **in-progress** Phase A; TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; default non-TUI matrix only |
 
@@ -967,7 +967,7 @@ Summary only — do not fork Gate numbers elsewhere.
 
 - [task tui-minimal-001](../plan/tasks/tui-minimal-001.md)
 - [post-tui-remote-dual-backend-gate-001](../plan/tasks/post-tui-remote-dual-backend-gate-001.md) (Phase A in-progress; no remote TUI claim)
-- [theme.md](./theme.md) · [theme-001](../plan/tasks/theme-001.md) (contract PASS @ `9e1b9f9`; ready; no implementation)
+- [theme.md](./theme.md) · [theme-001](../plan/tasks/theme-001.md) (**done**; contract PASS @ `9e1b9f9` was the freeze)
 - [C9 product shell](../phases/C9-product-shell.md)
 - [harness-events](./harness-events.md) · [harness-steering](./harness-steering.md)
 - [cli-interaction](./cli-interaction.md) · [headless-contract](./headless-contract.md)

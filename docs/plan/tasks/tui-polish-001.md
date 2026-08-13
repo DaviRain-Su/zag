@@ -1,7 +1,7 @@
 ---
 id: tui-polish-001
 scope: tui/visual-polish
-status: contract-draft
+status: implemented
 priority: P1
 depends-on:
   - tui-vaxis-001
@@ -31,8 +31,8 @@ assistant/tool/user blocks, theme ramp — per
 
 | Track | Status |
 |-------|--------|
-| Contract | **draft** — pending independent review |
-| Implementation | not started |
+| Contract | **implemented as written** |
+| Implementation | **done** @ `aa60bd4` — closed frames, unified theme, compact transcript, editing keys |
 | Maturity | **unchanged** — no row add/raise |
 | PTY marker contract | `state:{s}` contiguous, ISIG, 1049h/l, geometry exit — unchanged |
 | Session v1 / Trace v1 / headless-v1 / Core | unchanged |

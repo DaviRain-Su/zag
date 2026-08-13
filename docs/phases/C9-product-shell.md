@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Prerequisite | Headless/Process L2 ✅; minimal TUI additionally needs stable lifecycle events/control |
-| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55`; Theme contract **PASS** @ `9e1b9f9` (`theme-001` **ready**; no implementation) |
+| Near-term slice | M2 `tui-minimal-001` **done** @ `f8f7f55`; Theme **done** (canvas; contract PASS @ `9e1b9f9`); `rpc-v1` **implemented** @ `0eeef5d`; ACP **implemented** @ `8d2ba64` |
 | Failure mode | plain CLI is too weak for daily use, or UI duplicates Kernel business logic |
 | Reference | Current Pi + historical `pi-mono-zig` terminal behavior (design only) |
 | Feature map | [Pi feature correspondence](../plan/analysis/2026-07-26-pi-feature-correspondence.md) |
@@ -17,7 +17,8 @@ These are different contracts, not aliases:
 | Zig SDK | same-process source composition; L2 closed |
 | plain CLI | human one-shot / REPL |
 | `headless-v1` | output-only `--json` / `--json-stream`; L2 closed |
-| future `rpc-v1` | long-lived bidirectional correlated commands/responses/events; separate Gate |
+| `rpc-v1` | long-lived bidirectional NDJSON @ `0eeef5d` (`--rpc`); closeout pending; does not modify `headless-v1` |
+| ACP | editor JSON-RPC adapter @ `8d2ba64` (`--acp`); closeout pending |
 | TUI | host interactive shell over public events/control |
 
 `rpc-v1` does not modify or inflate the closed `headless-v1` contract and does not promise Pi command/schema parity.

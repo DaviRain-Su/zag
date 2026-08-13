@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 edit slices (`apply_hunk` + `apply_transaction` **done**) + minimal TUI(+streaming/layout/vaxis/canvas). **Host-shell track:** polish + post-TUI remote Gate Phase A. **D-012 coding track:** edit-transaction **done** @ `e086df8`; process-supervisor **draft**; `rpc-v1` / LSP / ACP / subagents / MCP remain roadmap-only until their own contracts |
+| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 + TUI canvas. **Next work:** [2026-08-13 delivery plan](./plan/analysis/2026-08-13-next-delivery-plan.md) (HEAD `6869549`). **Host-shell:** polish landed; post-TUI remote Gate Phase A (TARGET stale vs HEAD). **D-012:** edit-transaction **done**; process-supervisor **draft** (Wave 1); `rpc-v1` / LSP / ACP / in-process subagents **implemented, closeout pending** (Wave 2); MCP / E2 **absent** (Wave 3) |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -36,7 +36,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
 | SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合，idle-only durable fork 已在 `0a3087f` 闭合（[session-fork](./modules/session-fork.md)）；E1 Skills 已在 `caafef5` 闭合；E1 Prompt Templates 已在 `61326ae` 闭合；current fixture **24/24**（`61326ae` 时为 **23/23**），不升成熟度 |
 | JSON | ✅ `headless-v1` L2 |
-| RPC | 正式后置 `rpc-v1`，独立于 `headless-v1`，不追 Pi command/schema parity |
+| RPC | `rpc-v1` **implemented** @ `0eeef5d` (`--rpc`，独立于 `headless-v1`；closeout pending；不追 Pi command/schema parity) |
 | TUI/UI | minimal host TUI；E2/E3 host-rendered intents，stateful view/action 另过 Gate |
 
 详细证据：[Pi feature correspondence](./plan/analysis/2026-07-26-pi-feature-correspondence.md)。
@@ -63,29 +63,23 @@ M2 — selected daily UX ✅
   skills → prompt-templates → edit-sharpness → tui-minimal
   (+ M3 session/context @ 31523b6; tui-streaming @ 2d57e84; tui-layout @ 189de9e)
         │
-        ├────────────────────────────┬────────────────────────────┐
-        ▼                            ▼                            ▼
-  Host-shell polish            Evidence / Gate              D-012 coding route
-  tui-vaxis / theme /            post-tui-remote-             edit-transaction-001
-   canvas (landed / polish)       dual-backend-gate-001       **done** @ `e086df8`
-        │                        (Phase A in-progress)            │
-        │                            │                            ▼
-        │                        (orthogonal)               process-supervisor-001
-        │                                                     **draft** (contract)
-        │                                                         ├─ rpc-v1
-        │                                                         ├─ LSP / workspace
-        │                                                         ├─ ACP
-        │                                                         ├─ typed subagents
-        │                                                         └─ MCP / E2
-                                                         (+ session tree / model data /
-                                                            memory / E3 — own Gates)
+        ├────────────────────────────┬──────────────────────────────┐
+        ▼                            ▼                              ▼
+  Host-shell polish            Evidence / Gate                D-012 coding route
+  tui-vaxis / theme /            post-tui-remote-               edit-transaction **done**
+   canvas / grok chrome          dual-backend-gate-001          process-supervisor **draft**
+   (landed; closeout)            (Phase A; TARGET stale)        rpc-v1 / LSP / ACP /
+                                                                in-process subagent
+                                                                **implemented, closeout pending**
+                                                                MCP / E2 **absent**
 ```
 
-Two **parallel** delivery lanes after M2 (do not serialize them):
+Current delivery: [2026-08-13 plan](./plan/analysis/2026-08-13-next-delivery-plan.md).
+Two **parallel** lanes (do not serialize them):
 
-1. **Host shell** — Theme/slash/transcript polish; post-TUI remote Gate Phase B when granted.
-2. **D-012 coding agent** — edit transaction **done** → process supervisor (draft → dual review) → long-lived clients
-   / intelligence / extensions. Does **not** wait on Theme or remote `-Dtui`.
+1. **Host shell** — remaining visual bugs as new tasks; post-TUI remote Gate Phase B when granted.
+2. **D-012 coding agent** — Wave 1 supervisor, Wave 2 closeout, Wave 3 MCP/slots.
+   Does **not** wait on Theme or remote `-Dtui`.
 
 ## D-012 capability route
 
@@ -94,24 +88,27 @@ Pi/OMP/Hyper parity). Dependency order from
 [analysis](./plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md):
 
 ```text
-edit-transaction-001 **done** @ `e086df8` (binding edit-transaction.md)
-  └─► process-supervisor-001 **draft** (binding process-supervisor.md)
-        ├─► rpc-v1
-        ├─► LSP / workspace service
-        ├─► ACP adapter
-        ├─► typed subagents / optional worktrees
-        └─► MCP + E2 process extensions
-session tree / runtime model data / default-off memory — own schema Gates
-E3 WASM — only after E2 semantics + capability Gates
+edit-transaction-001 **done** @ `e086df8`
+  ├─► rpc-v1 / LSP / ACP / in-process subagent  **implemented, closeout pending**
+  │     (shipped without waiting on supervisor; documented exceptions)
+  └─► process-supervisor-001 **draft** (Wave 1)
+        └─► MCP + E2 + long-lived supervised slots (Wave 3)
+session tree (TUI browser) **implemented**; schema v1 unchanged
+runtime model data / default-off memory / E3 WASM — own Gates
 ```
 
 | Node | Status |
 |------|--------|
 | [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **done** @ `e086df8` — `apply_transaction` + §10 fixtures; Tools · write/edit L2 |
-| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — module + task; dual review not started |
-| `rpc-v1` / LSP / ACP / subagents / MCP / session-tree / model-data / E2–E3 | **roadmap only** — each needs its own contract + Gate after supervisor |
+| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — dual review not started; Wave 1 in the [08-13 plan](./plan/analysis/2026-08-13-next-delivery-plan.md) |
+| [rpc-v1-001](./plan/tasks/rpc-v1-001.md) | **implemented** @ `0eeef5d` — closeout pending; no maturity row |
+| [lsp-001](./plan/tasks/lsp-001.md) | **implemented** @ `75f213b` — closeout pending; owns its child until supervisor long-lived slots |
+| [acp-001](./plan/tasks/acp-001.md) | **implemented** @ `8d2ba64` — closeout pending; 32/33 fixture gates (gate15 follow-up) |
+| In-process subagent (`task`/`scout`/`reviewer`) | **implemented** @ `1dabd25` — Oracle/Graph/process-backed still L0 |
+| [session-tree-001](./plan/tasks/session-tree-001.md) | **implemented** @ `298f207` — TUI `/resume` browser; Session schema v1 unchanged |
+| MCP / E2 / Memory / E3 | **absent** — Wave 3+ / deferred |
 
-Next coding Goal eligible after dual review moves supervisor to **`ready`**.
+Next coding Goal: supervisor dual review → `ready` → impl (Wave 1). Do not treat rpc/LSP/ACP as unstarted.
 
 ### M0 — Interaction reliability
 
@@ -194,7 +191,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest + review ([tools-edit](./modules/tools-edit.md)) | no multi-file txn (that is `edit-transaction-001`); Tools write/edit stays L2 |
 | [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **done** @ `e086df8` — `apply_transaction` + §10; binding [edit-transaction.md](./modules/edit-transaction.md); D-012 item 1 | Tools · write/edit stays L2; orthogonal to TUI/Theme |
-| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — binding [process-supervisor.md](./modules/process-supervisor.md) | dual review next; unblocks LSP/MCP/subagent/rpc |
+| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — binding [process-supervisor.md](./modules/process-supervisor.md) | dual review next; Wave 1. rpc/LSP/ACP/in-process subagent already landed as documented exceptions |
 | [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55`; streaming @ `2d57e84`; layout @ `189de9e` | host shell only; no maturity raise |
 | tui-vaxis-001 | **done** @ `76360ab` | quarantined backend only; no vxfw wholesale |
 | [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** Phase A; TARGET `f352b60…`; Gate green **No** | docs evidence; **no** remote `-Dtui`; no Phase B grant |
@@ -245,10 +242,10 @@ E3 is a formal direction, not current implementation. The first WASM host is com
 |--------|-----------------|----------|
 | C4 Edit | `edit-sharpness-001` in M2 — **done** @ `7be5151` ([task](./plan/tasks/edit-sharpness-001.md), [C4](./phases/C4-edit-sharpness.md)); first slice shipped; Tools write/edit **L2** | D-012 selects multi-file transactions and stale-anchor recovery as a future task family; AST/DAP separately justified |
 | C5 Context | idle-only durable session fork and M3 context sharpness closed at `31523b6` | full tree/journal and repo map are D-012 targets; LLM summary is implemented with heuristic fallback; Memory remains default-off |
-| C6 Control/Orchestration | steering/follow-up in M1 | D-012 selects typed executable subagents after supervisor; Graph remains optional |
-| C7 Process/Sandbox | none | D-012 selects process supervisor as a prerequisite; OS enforcement remains a later autonomy/untrusted-execution gate |
-| C8 Extensions | E0 static SDK already; E1 Skills + Prompt Templates in M2 | D-012 selects MCP/E2 after supervisor; E3 WASM and bundle/model/UI worlds remain separately gated |
-| C9 Product shell | minimal TUI ✅ `f8f7f55`; streaming ✅ `2d57e84`; layout/presenter ✅ `189de9e`; post-TUI remote Gate in progress; Theme contract only on `main` | `rpc-v1`, Theme integration after Vaxis, extension UI host and ACP; dashboard/images remain outside D-012 core target |
+| C6 Control/Orchestration | steering/follow-up in M1; in-process `task` subagent @ `1dabd25` | Oracle/Graph/process-backed subagents still deferred; no L0-row raise |
+| C7 Process/Sandbox | none (supervisor contract **draft**) | OS enforcement remains a later autonomy/untrusted-execution gate |
+| C8 Extensions | E0 static SDK already; E1 Skills + Prompt Templates in M2 | MCP/E2 after supervisor long-lived slots; E3 WASM and bundle/model/UI worlds remain separately gated |
+| C9 Product shell | minimal TUI ✅; streaming/layout/vaxis/theme/canvas/grok chrome landed; `rpc-v1` @ `0eeef5d`; ACP @ `8d2ba64` | closeout + extension UI host; dashboard/images remain outside D-012 core target |
 
 The detailed phase docs describe domain constraints. A deferred item is not an implied future commitment.
 

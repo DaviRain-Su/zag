@@ -6,7 +6,8 @@
 > [D-012](../decisions/active/D-012-complete-local-coding-agent-target.md) and
 > [2026-08-06 analysis](../plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md).
 >
-> **Status:** contract **draft** (not ready for impl Goal until dual review PASS).
+> **Status:** implementation **landed** (Wave 1b) — dual review still **open**;
+> task remains `draft` until reviews PASS. Not a maturity raise.
 > Semantic references: Hyper `Computer`/workspace process lifecycle, OMP bash-pty
 > ownership — **not** API/source parity (D-009).
 
@@ -100,7 +101,7 @@ Pre-spawn failures never leave zombie PIDs. Post-spawn failures still reap.
 | Session v1 / Trace v1 / headless-v1 | **unchanged** in v1 (no PID fields in durable session) |
 | Core / D-011 | **no** process ports in Core |
 | Maturity | Shell / Workspace rows stay **L2** unless a separate Gate raises them; no OS-sandbox claim |
-| D-012 successors | LSP, MCP, subagents, rpc-v1 **depend on** this supervisor existing |
+| D-012 successors | LSP, ACP, rpc-v1, and in-process subagents **already landed** as documented exceptions (they do not wait on this draft). MCP/E2 and long-lived stdio slots **do** depend on supervisor existing. This contract still owns `run_shell` migration. |
 
 ## 6. Fixtures (implementation track — when ready)
 
@@ -128,12 +129,18 @@ Pre-spawn failures never leave zombie PIDs. Post-spawn failures still reap.
 - Desktop Computer Hub / browser / computer-use
 - Power-loss durable process journal
 
-## 8. Open questions for dual review
+## 8. Open questions — proposed v1 freeze (pending dual review)
 
-1. New Zig file vs package under `zag-coding-agent` only (recommend: `runtime/process_supervisor.zig` first; no new package until second consumer).
-2. Whether `run_shell` migration is atomic in one PR or behind a test-only backend flag for one tip.
-3. Linux process-group (`setpgid`) vs portable direct-child-only for v1.
-4. Exact first-line atom table freeze (must match shell-v1 where overlapping).
+These are the Wave 1a recommended freezes from
+[2026-08-13 next delivery plan](../plan/analysis/2026-08-13-next-delivery-plan.md).
+They do **not** move this task to `ready` until two independent reviews PASS.
+
+| # | Question | Proposed v1 freeze |
+|---|----------|-------------------|
+| 1 | New Zig file vs package | `packages/zag-coding-agent/src/runtime/process_supervisor.zig`. No new package until a second consumer. |
+| 2 | Atomic `run_shell` migration vs flag | **Atomic** in one impl PR. shell-v1 goldens are the regression Gate. No long-lived dual backend flag. |
+| 3 | Linux `setpgid` vs portable direct-child | Portable **direct-child PID** only. Process-group / full tree reaper = later Gate. |
+| 4 | First-line atom table | Reuse overlapping shell-v1 strings. Supervisor-specific terminals may add `spawn_failed` and `timed_out` only if not already present. |
 
 ## Related
 

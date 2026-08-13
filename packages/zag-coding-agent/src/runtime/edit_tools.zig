@@ -20,6 +20,7 @@ const core = @import("zag-agent-core");
 const tool = core.tool;
 const trace = @import("../trace.zig");
 const workspace = @import("../workspace.zig");
+const supervisor = @import("process_supervisor.zig");
 
 pub const search_replace_def: tool.Definition = .{
     .name = "search_replace",
@@ -2352,19 +2353,19 @@ pub fn runShell(ctx: tool.Context, instance: ?*anyopaque, arguments_json: []cons
     const argv = [_][]const u8{ config.shell_path, "-c", command };
 
     // Convert the one 30,000 ms `.awake` duration to one absolute capture
-    // deadline before entering `std.process.run`. Passing a duration here would
-    // let each MultiReader fill convert it afresh and reset the capture budget.
+    // deadline before entering the supervisor pump. Passing a duration here
+    // would let each MultiReader fill convert it afresh and reset the budget.
     const capture_duration: Io.Timeout = .{ .duration = .{
         .raw = .fromMilliseconds(@intCast(config.timeout_ms)),
         .clock = .awake,
     } };
     const capture_deadline = capture_duration.toDeadline(ctx.io);
 
-    const result = std.process.run(ctx.allocator, ctx.io, .{
+    const result = supervisor.runForeground(ctx.allocator, ctx.io, .{
         .argv = &argv,
         .cwd = .{ .dir = ctx.cwd },
-        .stdout_limit = .limited(config.stdout_limit),
-        .stderr_limit = .limited(config.stderr_limit),
+        .stdout_limit = config.stdout_limit,
+        .stderr_limit = config.stderr_limit,
         .timeout = capture_deadline,
     }) catch |err| return shellRunError(ctx.allocator, config, err);
     defer ctx.allocator.free(result.stdout);

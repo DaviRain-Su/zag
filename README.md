@@ -13,7 +13,7 @@
 | Zig SDK-ready | ✅ **closed at `ebdd7ab`** |
 | Headless/process gate | ✅ **closed at `a1a1e0f`** |
 | Thin Core responsibility migration | D-011 spec done；`core-seams-001` ready（L2 behavior unchanged） |
-| Capability C4–C9 | 未开始 |
+| Capability C4–C9 | **partial** — C4 edit slices done; C9 TUI + `rpc-v1`/ACP landed; C7 supervisor draft; C5 Memory / C8 MCP-E2 absent. See [next delivery plan](docs/plan/analysis/2026-08-13-next-delivery-plan.md) |
 
 > Phase 3 教程演示了 jail / policy / trace，**不等于**生产就绪。权威矩阵：[docs/maturity.md](./docs/maturity.md)。
 
@@ -45,7 +45,7 @@ Teaching 1  write/shell + ask|yolo      ✅ tutorial
 Teaching 2  会话 / AGENTS.md / context  ✅ tutorial
 Teaching 3  jail / shell policy / trace ✅ tutorial（≠ 生产完成）
 Phase H     硬化到 maturity L2          ✅ L2 closeout（single-user trusted-host）
-C4–C9       锐度 / 编排 / 沙箱 / 扩展…   依赖 H
+C4–C9       锐度 / 编排 / 沙箱 / 扩展…   **partial**（见 next delivery plan）
 ```
 
 ## 快速开始

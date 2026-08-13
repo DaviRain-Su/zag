@@ -1,7 +1,7 @@
 ---
 id: tui-scrollback-001
 scope: tui/row-scrollback
-status: contract-draft
+status: implemented
 priority: P1
 depends-on:
   - tui-vaxis-001
@@ -31,8 +31,8 @@ hyper-grok-build `scrollback/state/layout.rs` (compute_paint_window
 
 | Track | Status |
 |-------|--------|
-| Contract | **draft** — pending independent review |
-| Implementation | not started |
+| Contract | **implemented as written** |
+| Implementation | **done** @ `c631752` — row-level virtualized transcript scrollback |
 | Maturity | **unchanged** — no row add/raise |
 | PTY marker contract | `state:{s}` contiguous, ISIG, 1049h/l, geometry exit — unchanged |
 | Session v1 / Trace v1 / headless-v1 / Core | unchanged |

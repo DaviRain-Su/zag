@@ -25,11 +25,11 @@ task moves to `ready`.
 
 | Track | Status |
 |-------|--------|
-| Contract | **draft** — module + this task authored; dual review **not** started |
-| Implementation | **not started** |
+| Contract | **draft** — §8 proposed v1 freeze written (Wave 1a); dual review **not** started; not `ready` |
+| Implementation | **landed** (Wave 1b) — `runtime/process_supervisor.zig`; `run_shell` uses `runForeground`; dual review still required before `ready` |
 | Maturity | **unchanged** — Shell/Workspace stay L2; no sandbox claim |
 | Depends-on | edit-transaction **done**; shell L2 exists |
-| Unblocks | LSP, rpc-v1 clients that spawn helpers, typed subagents, MCP/E2, mid-flight shell preemption honesty |
+| Unblocks | `run_shell` ownership; MCP/E2; long-lived stdio slots; mid-flight shell preemption honesty. rpc/LSP/ACP/in-process subagent already landed as exceptions. |
 
 # context
 

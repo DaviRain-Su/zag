@@ -626,12 +626,12 @@ remote claim unless a separate evidence node explicitly freezes one.
 |-------|--------|
 | Contract | **PASS** @ reviewed tip `9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` (dual re-reviews, zero blockers) |
 | PASS-record tip | **this commit** — records prior-tip PASS only; **not** self-reviewed as a new contract freeze |
-| Task status | **`ready`** (contract frozen; may be selected by a fresh implementation Goal) |
-| Implementation | **not started** / **not authorized** by contract PASS alone |
-| Product Theme code | **absent** (seams above) |
+| Task status | **`done`** (canvas implementation after contract freeze) |
+| Implementation | **landed** in `packages/zag-tui/src/theme.zig` (contract PASS did not by itself authorize the later canvas Goal) |
+| Product Theme code | **present** (built-in themes + role→Style) |
 | Maturity | **unchanged** |
-| Post-TUI remote Gate | **independent** in-progress Phase A (TARGET `f352b60…`; no Phase B grant/run/green); no Theme coupling |
-| RPC / ACP / extension-UI | remain **pending**/blocked; not packaged |
+| Post-TUI remote Gate | **independent** in-progress Phase A (TARGET `f352b60…` stale vs HEAD; no Phase B grant/run/green); no Theme coupling |
+| RPC / ACP | **implemented**, closeout pending; not packaged with Theme |
 
 ## Related
 

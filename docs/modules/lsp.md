@@ -8,8 +8,9 @@
 > diagnostics surfaced as tool results), zls protocol model — **not** API or
 > source parity (D-009).
 >
-> **Status:** contract **draft** (not ready for impl Goal until dual review
-> PASS). Zig 0.16 (`std.Io` era) APIs assumed throughout.
+> **Status:** implementation **landed** @ `75f213b` ([lsp-001](../plan/tasks/lsp-001.md)
+> `implemented`). Dual review / Gate closeout still **pending**. Zig 0.16
+> (`std.Io` era) APIs assumed throughout.
 >
 > **Update (2026-08-07):** implemented per this binding by lsp-001
 > (status: implemented) — see the task's implementation log. The

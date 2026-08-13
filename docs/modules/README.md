@@ -14,7 +14,10 @@
 | [tools-edit.md](./tools-edit.md) | H2 **L2** → C4 first-slice **done** @ `7be5151` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md); Tools write/edit L2) | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent；无 Core edit ports |
 | [edit-transaction.md](./edit-transaction.md) | C4 second slice **done** @ `e086df8` ([edit-transaction-001](../plan/tasks/edit-transaction-001.md); D-012 item 1) | `zag-coding-agent` `runtime/edit_tools.zig` | 多文件 all-or-nothing；不碰 Core/TUI；Tools · write/edit stays L2 |
 | [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | coding-agent `runtime/edit_tools.zig` + `shell_policy.zig` | future process supervisor: [process-supervisor.md](./process-supervisor.md) |
-| [process-supervisor.md](./process-supervisor.md) | D-012 item 3 **draft** ([process-supervisor-001](../plan/tasks/process-supervisor-001.md)) | future `zag-coding-agent` runtime only | process ownership before LSP/MCP/subagent; no Core ports |
+| [process-supervisor.md](./process-supervisor.md) | D-012 item 3 **landed** (Wave 1b; dual review open; [process-supervisor-001](../plan/tasks/process-supervisor-001.md) still `draft`) | `zag-coding-agent` `runtime/process_supervisor.zig`; `run_shell` via `runForeground` | no Core ports; no OS sandbox; no maturity raise |
+| [rpc-v1.md](./rpc-v1.md) | D-012 item 4 **implemented** @ `0eeef5d` ([rpc-v1-001](../plan/tasks/rpc-v1-001.md); closeout pending) | `zag-cli` `--rpc` + `rpc/` | no Core/coding-agent ports; does not extend `headless-v1` |
+| [acp.md](./acp.md) | D-012 item 4b **implemented** @ `8d2ba64` ([acp-001](../plan/tasks/acp-001.md); closeout pending) | `zag-cli` `--acp` | editor JSON-RPC; sibling of rpc-v1; no Core changes |
+| [lsp.md](./lsp.md) | D-012 item 2 **implemented** @ `75f213b` ([lsp-001](../plan/tasks/lsp-001.md); closeout pending) | `zag-coding-agent` `runtime/code_intel_tool.zig` + `runtime/lsp/` | owns spawn until supervisor long-lived slots; no Core LSP types |
 | [permissions.md](./permissions.md) | H3 **L2** | `zag-coding-agent/src/permissions.zig` | concrete product policy stays in coding-agent; required Core seam |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | Core `protocol_history.zig`/`context_view.zig` + coding-agent `context.zig` | ownership split complete; future repo-map work separate |
 | [session-item.md](./session-item.md) | M3 ✅ `31523b6` | Core `session_item.zig` + additive message fields | reasoning/synthetic/prompt-index and view-only repair/token trim; no maturity raise |
@@ -34,11 +37,11 @@
 | [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | Provider stream → Loop/Façade events → progressive TUI card | default streaming transport; headless/session/Trace wire unchanged |
 | [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | `zag-tui` layout + presenter | pure geometry and dirty-flag paint; no cell diff/virtualization |
 | [tui-vaxis.md](./tui-vaxis.md) | C9 backend ✅ `76360ab` | quarantined vaxis in `zag-tui` | no vxfw wholesale |
-| [theme.md](./theme.md) | M2 / C9 Theme ✅ canvas | `theme.zig` + role→Style | owner `zag-tui` only; fail-closed built-in |
+| [theme.md](./theme.md) | M2 / C9 Theme ✅ canvas @ `f5e1356` ([theme-001](../plan/tasks/theme-001.md) **done**) | `theme.zig` + role→Style | owner `zag-tui` only; fail-closed built-in; contract PASS @ `9e1b9f9` was the freeze, not “no code” |
 | [tui-slash-host.md](./tui-slash-host.md) | C9 canvas ✅ | overlay + slash palette | reuse skill/template expand; no Core slash |
 | [tui-transcript.md](./tui-transcript.md) | C9 canvas ✅ | scroll transcript region | keep streaming deltas; PTY markers |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
-| [subagents-oracle.md](./subagents-oracle.md) | C6 | — | agent 内 |
+| [subagents-oracle.md](./subagents-oracle.md) | C6 in-process slice @ `1dabd25`; Oracle/Graph still L0 | `zag-coding-agent/src/subagent.zig` + `task` tool | process-backed / Oracle / Graph remain deferred |
 | [extensions.md](./extensions.md) | C8 / D-010 | E0 static SDK exists; E1 Skills @ `caafef5`; E1 Prompt Templates @ `61326ae`; E2/E3 unimplemented; Runtime Extensions L0 | feature surface is orthogonal to carriers; no new Zig build package until ownership exists; WASM engine quarantined from Kernel |
 
 ### 包边界速查
@@ -95,9 +98,12 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55`; post-TUI remote Gate Phase A **in-progress** | Minimal host TUI + `zag-tui`; no maturity raise; no remote `-Dtui` claim |
 | [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | progressive assistant streaming; default transport |
 | [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | pure layout + dirty-flag presenter |
-| [theme.md](./theme.md) | M2 / C9 Theme **contract PASS** @ `9e1b9f9` (`theme-001` ready) | Host-shell passive Theme binding; dual re-reviews PASS; no implementation; no maturity raise; independent of post-TUI remote Gate |
+| [theme.md](./theme.md) | M2 / C9 Theme **done** (canvas; contract PASS @ `9e1b9f9`) | Host-shell Theme; implementation in `zag-tui`; no maturity raise |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
-| [subagents-oracle.md](./subagents-oracle.md) | C6 stub | 子代理 / Oracle |
+| [rpc-v1.md](./rpc-v1.md) | C9 **implemented** @ `0eeef5d` (closeout pending) | `--rpc` NDJSON; does not modify `headless-v1` |
+| [acp.md](./acp.md) | C9 **implemented** @ `8d2ba64` (closeout pending) | `--acp` editor JSON-RPC adapter |
+| [lsp.md](./lsp.md) | C4/C5 **implemented** @ `75f213b` (closeout pending) | `code_intel` tool + hand-rolled LSP client |
+| [subagents-oracle.md](./subagents-oracle.md) | C6 in-process slice landed; Oracle/Graph stub | `task`/`scout`/`reviewer`; no process isolation; row stays L0 |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |
 
 总览：[../maturity.md](../maturity.md) · [../phases/H-harden.md](../phases/H-harden.md) · [../phases/C5-context.md](../phases/C5-context.md)  

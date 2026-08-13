@@ -4,13 +4,14 @@
 |----|------|
 | 前置 | Phase H lifecycle/session + SDK/headless event contracts ✅；executable agents 另依赖 process supervisor |
 | 近期路线位置 | M1 `harness-events-001` ✅ at `aecf402` → `harness-steering-001` ✅ at `a5ff2b7`; `session-fork-001` ✅ at `0a3087f` |
-| 状态边界 | bounded steering/follow-up 已闭合；复杂编排仍不得反客为主或暗示 Graph/subagents 已实现 |
-| 模块 | [harness-steering](../modules/harness-steering.md)、[loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md)（deferred） |
+| 状态边界 | bounded steering/follow-up 已闭合；in-process `task` subagent 已落地 @ `1dabd25`；Oracle / Graph / process-backed 仍不得当作已实现 |
+| 模块 | [harness-steering](../modules/harness-steering.md)、[loop-turn](../modules/loop-turn.md)、[subagents-oracle](../modules/subagents-oracle.md) |
 
 ## 目标
 
 Pi Harness 的最小 interactive-control 语义——有界 steering 与 follow-up——已由 `harness-steering-001`
-在 `a5ff2b7` 闭合。Oracle、subagents、Graph 不是当前产品承诺。
+在 `a5ff2b7` 闭合。进程内 `task`/`scout`/`reviewer` 已在 `1dabd25` 落地，**不**升 Subagents/Oracle 行。
+Oracle、Graph、进程隔离子代理仍不是当前产品承诺。
 
 ## 近期范围
 
@@ -23,7 +24,7 @@ Pi Harness 的最小 interactive-control 语义——有界 steering 与 follow-
 ## Deferred
 
 - read-only Oracle；
-- executable explore/plan/general subagents；
+- process-backed / worktree-isolated subagents（in-process slice already landed）；
 - typed schema handoff；
 - plan-mode product UX；
 - Graph/DAG/handoff/join；

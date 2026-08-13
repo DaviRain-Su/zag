@@ -2,6 +2,12 @@
 
 XPlan-style delivery track: analysis → task → committed develop output → independent review → ff-only merge → merged-main Gate → closeout.
 
+**What to do next:** [2026-08-13 next delivery plan](./analysis/2026-08-13-next-delivery-plan.md)
+(frozen from HEAD `6869549`). That file supersedes the “rpc/LSP/ACP still
+roadmap-only / supervisor-before-everything” DAG below when they disagree.
+First Goals: Wave 0 docs truth → process-supervisor dual review → supervisor
+impl. Maturity claims stay in [maturity.md](../maturity.md).
+
 ```text
 docs/plan/
 ├─ README.md
@@ -32,7 +38,7 @@ docs/plan/
 | M3 session/context sharpness | **implementation-complete** at `31523b6` — [session-item-001](./tasks/session-item-001.md), [chat-state-prune-001](./tasks/chat-state-prune-001.md), [compaction-llm-001](./tasks/compaction-llm-001.md); additive reasoning/synthetic/prompt-index fields, view-only repair/dedup/token trimming, and opt-in LLM summaries with heuristic fallback; no Session v1/Trace v1/headless-v1 or maturity change |
 | Edit sharpness (C4 first slice) | **done** at `7be5151` — [edit-sharpness-001](./tasks/edit-sharpness-001.md) + binding [tools-edit.md](../modules/tools-edit.md) § C4 + [C4-edit-sharpness](../phases/C4-edit-sharpness.md); contract PASS @ `07b8dab`/`f13b0f8` → impl `cfdc81b` → fix `241374a` → docs truth/closeout `7be5151`; candidate + merged-main local macOS std **40/40 · 655/655**, curl **42/42 · 654/654**; coding **375**, CLI **36**, SDK **24/24**; OpenAPI **287**; catalog **40**; docs **92/74**; **no push** / no fresh remote Linux for this tip; Tools · write/edit stays **L2** |
 | Edit transaction (C4 second / D-012 item 1) | **done** at `e086df8` — [edit-transaction-001](./tasks/edit-transaction-001.md) + binding [edit-transaction.md](../modules/edit-transaction.md); dual contract reviews PASS → impl `apply_transaction` + §10 fixtures; local coding-agent **417/417**; **no L3 / no remote monorepo Gate claim**; Tools · write/edit stays **L2** |
-| Process supervisor (D-012 item 3) | **draft** — [process-supervisor-001](./tasks/process-supervisor-001.md) + [process-supervisor.md](../modules/process-supervisor.md); dual review not started; unblocks LSP/MCP/subagent/rpc |
+| Process supervisor (D-012 item 3) | **draft** — [process-supervisor-001](./tasks/process-supervisor-001.md) + [process-supervisor.md](../modules/process-supervisor.md); dual review not started; Wave 1. rpc/LSP/ACP/in-process subagent already landed |
 | Minimal TUI (M2 / C9 first slice) | **done** at `f8f7f55` — [tui-minimal-001](./tasks/tui-minimal-001.md) + binding [tui-minimal.md](../modules/tui-minimal.md); contract PASS @ `c7a8f3a` → impl final `f8f7f55` (dual final reviews PASS, zero blockers; PTY + gate21 exclusive workspace); local ff-only merge; task + merged-main local macOS default std **42/42 · 656/656**, curl **44/44 · 655/655**, TUI std **47/47 · 711/711**, TUI curl **49/49 · 710/710**; OpenAPI **287**; catalog **40**; docs **92/74** (55 files); local reflog shows external/other push of `f8f7f55` to `origin/main` (not by this closeout); TUI docs tips local-only at closeout, later ancestors of TARGET `f352b60` (Class C lineage only; not Phase B live evidence; closeout did not push); **no** maturity raise; post-TUI remote Gate **not** claimed here — see [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) (**in-progress** Phase A; TARGET `f352b60`; rebind PASS @ `7f9cfa4`; no grant/run/Gate green) |
 | TUI streaming | **implementation-complete** at `2d57e84` — [tui-streaming-001](./tasks/tui-streaming-001.md) / [tui-streaming.md](../modules/tui-streaming.md); default transport, progressive assistant cards, usage parity; no Session/Trace/headless wire or maturity change |
 | TUI layout/presenter | **implementation-complete** at `189de9e` — [tui-layout-001](./tasks/tui-layout-001.md) / [tui-layout.md](../modules/tui-layout.md); pure geometry plus dirty-flag paint; no maturity change |
@@ -221,7 +227,7 @@ at exact tip `8a93ec6` / run `30273762011`** — not a universal future guarante
 **42/42 · 632/632**; **no push** and no fresh remote/Linux evidence claimed for this tip.
 Task priorities express safety impact; the dependency chain, not priority labels, fixes delivery order.
 
-The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Theme contract is **PASS** @ `9e1b9f9` ([theme-001](./tasks/theme-001.md) / [theme.md](../modules/theme.md); `status: ready`; dual re-reviews zero blockers; **no** implementation). Zag-native `rpc-v1`, runtime model data, and extension UI remain distinct planned capabilities, not ready tasks or implementation claims.
+The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.md) maps all 11 documented Pi dimensions to Zig-native outcomes. D-010 records a formal post-foundation extension track: common semantics → C7.1 / E2 process binding → E3 WIT → runtime → capabilities → package, with later Provider/UI worlds separately gated. Theme is **implemented** on the canvas track ([theme-001](./tasks/theme-001.md) **done**; contract PASS @ `9e1b9f9` was the freeze). Zag-native `rpc-v1` is **implemented** @ `0eeef5d` (closeout pending). Runtime model data and extension UI remain distinct planned capabilities.
 
 ## Task index
 
@@ -229,12 +235,13 @@ The [Pi feature correspondence](./analysis/2026-07-26-pi-feature-correspondence.
 
 | Planned node | Status | Scope |
 |--------------|--------|-------|
+| [2026-08-13 next delivery plan](./analysis/2026-08-13-next-delivery-plan.md) | **active** (from HEAD `6869549`) | Current delivery truth: Wave 0 docs → Wave 1 supervisor → Wave 2 closeout landed rpc/ACP/LSP/subagent → Wave 3 MCP/long-lived slots |
 | [post-tui-remote-dual-backend-gate-001](./tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** (rebind PASS @ `7f9cfa4`) | Docs-first post-TUI **default-path** remote dual-OS dual-backend Gate; TARGET `f352b60…` (OLD_TARGET `b151307` abandoned); no run id; no push; no Phase B grant; Gate green No; **no** remote `-Dtui`; **no** maturity raise |
-| [theme-001](./tasks/theme-001.md) | **ready** (contract PASS @ `9e1b9f9`; dual re-reviews zero blockers) | Host-shell Theme binding [theme.md](../modules/theme.md); docs only; depends-on `tui-minimal-001`; eligible for **fresh** implementation Goal; **no** product code yet; **orthogonal** to post-TUI remote Gate; **no** maturity raise |
+| [theme-001](./tasks/theme-001.md) | **done** (canvas; contract PASS @ `9e1b9f9`) | Host-shell Theme in `zag-tui`; **implementation landed**; orthogonal to post-TUI remote Gate; **no** maturity raise |
 | [edit-transaction-001](./tasks/edit-transaction-001.md) | **done** @ `e086df8` | C4 second slice / D-012 item 1: multi-file `apply_transaction`; binding [edit-transaction.md](../modules/edit-transaction.md); §10 fixtures; coding-agent **417/417**; **orthogonal** to TUI; Tools · write/edit stays L2 |
-| [process-supervisor-001](./tasks/process-supervisor-001.md) | **draft** | D-012 item 3: process ownership; binding [process-supervisor.md](../modules/process-supervisor.md); dual review not started |
-| RPC / ACP / extension-UI | **pending** (not ready) | **fresh Goal** still required; Theme contract does **not** auto-select or package them |
-| D-012 local coding-agent route | **partial** | edit-transaction-001 (**done**) → process-supervisor-001 (**draft**) → `rpc-v1` / LSP / ACP / typed subagents / MCP-E2; each later node requires its own contract and Gate |
+| [process-supervisor-001](./tasks/process-supervisor-001.md) | **draft** | D-012 item 3: process ownership; binding [process-supervisor.md](../modules/process-supervisor.md); dual review not started; **Wave 1** in the [08-13 plan](./analysis/2026-08-13-next-delivery-plan.md) |
+| rpc-v1 / ACP / LSP / in-process subagents | **implemented, closeout pending** | [rpc-v1-001](./tasks/rpc-v1-001.md) · [acp-001](./tasks/acp-001.md) · [lsp-001](./tasks/lsp-001.md) · [subagents-001](./tasks/subagents-001.md); MCP/E2 still absent |
+| D-012 local coding-agent route | **partial** | See [08-13 plan](./analysis/2026-08-13-next-delivery-plan.md): edit-transaction **done**; supervisor **draft**; rpc/ACP/LSP/subagent **landed**; MCP **absent** |
 
 ### Completed foundation
 

@@ -46,6 +46,7 @@ pub const doctor = @import("doctor.zig");
 pub const wire_provider = @import("wire_provider.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");
+pub const process_supervisor = @import("runtime/process_supervisor.zig");
 pub const subagent = @import("subagent.zig");
 pub const task_tool = @import("runtime/task_tool.zig");
 pub const code_intel_tool = @import("runtime/code_intel_tool.zig");

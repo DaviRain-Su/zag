@@ -15,8 +15,10 @@
 > capability gates, and wire shapes are quoted from that surface; nothing is
 > ported.
 >
-> **Status:** contract **draft** (not ready for impl Goal until dual review
-> PASS). Zig 0.16 (`std.Io` era) APIs assumed throughout.
+> **Status:** implementation **landed** @ `8d2ba64` ([acp-001](../plan/tasks/acp-001.md)
+> `implemented`; 32/33 process-fixture gates, gate15 follow-up). Dual review /
+> Gate closeout still **pending** — this is not an unstarted contract.
+> Zig 0.16 (`std.Io` era) APIs assumed throughout.
 
 ## 1. Principles
 

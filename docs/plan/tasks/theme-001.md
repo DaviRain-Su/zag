@@ -53,12 +53,12 @@ later **fresh Goal** may select an independent implementation node. It does
 |-------|--------|
 | Contract freeze | **PASS** @ `9e1b9f9be94fd0763ee194602c2d20a6eb9bf8ed` — dual re-reviews **PASS**, **zero blockers** |
 | PASS-record tip | **this commit** — records prior-tip PASS only; **not** self-reviewed |
-| Task frontmatter | **`ready`** — contract frozen; eligible for a separate implementation Goal |
-| Implementation | **not started**; contract PASS alone does **not** authorize product code |
+| Task frontmatter | **`done`** — canvas implementation landed after contract freeze |
+| Implementation | **done** — `packages/zag-tui/src/theme.zig` + render role styles @ `f5e1356` |
 | Maturity | **unchanged** — no row add/raise |
-| Session v1 / Trace v1 / headless-v1 / Core | **unchanged** (by contract law; no code touch) |
-| Post-TUI remote dual-backend Gate | **orthogonal** — [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) Phase A **in-progress**; TARGET `f352b60d08e81c19d70ba46198fb06b71ddc85a1`; Class C rebind review PASS @ `7f9cfa4`; **no** Phase B grant; **no** run id; **no** Gate green; **no** push; **no** remote `-Dtui`. Theme does **not** claim or depend on that path. |
-| RPC / ACP / extension-UI | remain **pending**/blocked; **not** packaged with Theme |
+| Session v1 / Trace v1 / headless-v1 / Core | **unchanged** |
+| Post-TUI remote dual-backend Gate | **orthogonal** — [post-tui-remote-dual-backend-gate-001](./post-tui-remote-dual-backend-gate-001.md) Phase A **in-progress**; TARGET `f352b60` stale vs HEAD; **no** Phase B grant; **no** Gate green. Theme does **not** claim or depend on that path. |
+| RPC / ACP | **implemented** (closeout pending); **not** packaged with Theme |
 
 ## Contract vs implementation (discipline)
 
