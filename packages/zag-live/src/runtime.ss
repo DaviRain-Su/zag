@@ -1,20 +1,27 @@
-;; runtime.ss — zag-live image: frame loop + kernel primitives.
+;; runtime.ss — zag-live image, Gambit binding (D-015).
 ;;
 ;; Frame protocol on stdin/stdout (binary):
 ;;   4-byte little-endian u32 length, then that many bytes of UTF-8 payload.
 ;;   Payload is exactly one s-expression, single line. String literals use
-;;   canonical Chez `write` escaping both directions; decode is strict.
-;;   Frames larger than max-frame-bytes are rejected on BOTH sides
-;;   (inbound: discarded and answered with an err frame; the image does
-;;   not die).
+;;   canonical Gambit `write` escaping (lowercase \xhh;) both directions;
+;;   the host decodes case-insensitively, strictly.
+;;   Frames larger than max-frame-bytes are rejected on BOTH sides.
+;;
+;; Frame-stream purity (contract §3 R2): the image writes ONLY protocol
+;; frames to stdout. gxi prints uncaught exceptions to STDOUT by default, so
+;; the top-level catcher below routes diagnostics to stderr (bounded,
+;; <= 4 KiB) and exits 70. Gambit ports do not reliably report stdin EOF —
+;; polite stop is the explicit (kernel.quit) frame, never EOF.
 ;;
 ;; Host -> image requests:
+;;   (kernel.self-id)            -> (ok (zag-live 1 gambit))  (boot handshake)
 ;;   (kernel.eval  "<source>")   eval one form -> (ok <datum>) / (err "<msg>")
 ;;   (kernel.apply "<source>")   eval 1+ top-level forms -> (ok applied)
 ;;   (kernel.echo  "<payload>")  -> (ok "<payload>")      (test/liveness)
 ;;   (kernel.ping)               -> (ok pong)             (watchdog probe)
+;;   (kernel.quit)               -> (ok bye) then exit 0  (polite stop)
 ;;   (kernel.ack <name>)         ack for a pending kernel request (no reply)
-;;   (kernel.nack <name> "<reason-atom>")  negative ack; primitive raises
+;;   (kernel.nack <name> "<atom>")  negative ack; the primitive raises
 ;;   (kernel.err "<atom>")       negative ack for kernel.commit
 ;;   (port.nack provider|tool "<atom>")    port absent / port failed
 ;;   (provider.reply "<response>")         answer to provider.call
@@ -30,43 +37,43 @@
 ;;   (provider.call   "<request-sexp>")     host ProviderPort
 ;;   (tool.invoke     <name> "<args-sexp>") host ToolPort
 
-(import (chezscheme))
-
-(define in-port (standard-input-port))
-(define out-port (standard-output-port))
+(define in-port (current-input-port))
+(define out-port (current-output-port))
+(define err-port (current-error-port))
 
 (define max-frame-bytes (* 4 1024 1024))
+(define max-stderr-diagnostics 4096)
 
 ;; ---------- framing ----------
 
 (define (read-exact n)
-  (let ((bv (make-bytevector n)))
+  (let ((bv (make-u8vector n)))
     (let loop ((off 0))
-      (if (fx=? off n)
+      (if (= off n)
           bv
-          (let ((got (get-bytevector-n! in-port bv off (fx- n off))))
-            (when (eof-object? got)
+          (let ((got (read-subu8vector bv off n in-port)))
+            (when (or (eof-object? got) (= got 0))
               (error 'frame-read "unexpected EOF inside frame payload"))
-            (loop (fx+ off got)))))))
+            (loop (+ off got)))))))
 
 (define (discard-exact n)
-  (let ((chunk (make-bytevector 65536)))
+  (let ((chunk (make-u8vector 65536)))
     (let loop ((left n))
-      (unless (fx=? left 0)
-        (let ((got (get-bytevector-n! in-port chunk 0 (fxmin left 65536))))
-          (when (eof-object? got)
+      (unless (= left 0)
+        (let ((got (read-subu8vector chunk 0 (min left 65536) in-port)))
+          (when (or (eof-object? got) (= got 0))
             (error 'frame-read "unexpected EOF inside oversize frame"))
-          (loop (fx- left got)))))))
+          (loop (- left got)))))))
 
 (define (frame-read)
   ;; Returns the payload string, the eof-object on clean EOF, or the symbol
   ;; 'oversize (payload already discarded, stream still aligned).
-  (let ((b0 (get-u8 in-port)))
+  (let ((b0 (read-u8 in-port)))
     (if (eof-object? b0)
         b0
-        (let* ((b1 (get-u8 in-port))
-               (b2 (get-u8 in-port))
-               (b3 (get-u8 in-port))
+        (let* ((b1 (read-u8 in-port))
+               (b2 (read-u8 in-port))
+               (b3 (read-u8 in-port))
                (len (+ b0 (* b1 256) (* b2 65536) (* b3 16777216))))
           (if (> len max-frame-bytes)
               (begin (discard-exact len) 'oversize)
@@ -74,67 +81,66 @@
 
 (define (frame-write payload)
   (let* ((bv (string->utf8 payload))
-         (n (bytevector-length bv)))
-    (put-u8 out-port (bitwise-and n #xff))
-    (put-u8 out-port (bitwise-and (ash n -8) #xff))
-    (put-u8 out-port (bitwise-and (ash n -16) #xff))
-    (put-u8 out-port (bitwise-and (ash n -24) #xff))
-    (put-bytevector out-port bv)
-    (flush-output-port out-port)))
+         (n (u8vector-length bv)))
+    (write-u8 (bitwise-and n #xff) out-port)
+    (write-u8 (bitwise-and (arithmetic-shift n -8) #xff) out-port)
+    (write-u8 (bitwise-and (arithmetic-shift n -16) #xff) out-port)
+    (write-u8 (bitwise-and (arithmetic-shift n -24) #xff) out-port)
+    (write-subu8vector bv 0 n out-port)
+    (force-output out-port)))
 
 (define (frame-write-sexp sexp)
   (frame-write (with-output-to-string (lambda () (write sexp)))))
 
 ;; ---------- eval ----------
 
-(define (condition->string e)
+(define (exception->string e)
   (with-output-to-string
-    (lambda ()
-      (if (message-condition? e)
-          (display (condition-message e))
-          (display 'condition))
-      (when (irritants-condition? e)
-        (display " irritants=")
-        (write (condition-irritants e))))))
+    (lambda () (display-exception e (current-output-port)))))
 
-(define (err-frame e)
-  (with-output-to-string (lambda () (write `(err ,(condition->string e))))))
+(define (with-err-frame thunk)
+  (with-exception-catcher
+    (lambda (e)
+      (with-output-to-string (lambda () (write `(err ,(exception->string e))))))
+    thunk))
 
 (define (safe-eval source)
-  (call/cc
-    (lambda (k)
-      (guard (e (#t (k (err-frame e))))
-        (let ((v (eval (read (open-string-input-port source))
-                       (interaction-environment))))
-          (with-output-to-string (lambda () (write `(ok ,v)))))))))
+  (with-err-frame
+    (lambda ()
+      (let ((v (eval (read (open-input-string source))
+                     (interaction-environment))))
+        (with-output-to-string (lambda () (write `(ok ,v))))))))
 
 (define (kernel-apply source)
   ;; Eval every top-level form in SOURCE in order.
-  (call/cc
-    (lambda (k)
-      (guard (e (#t (k (err-frame e))))
-        (let ((p (open-string-input-port source)))
-          (let read-all ((forms '()))
-            (let ((f (read p)))
-              (if (eof-object? f)
-                  (let ((forms (reverse forms)))
-                    (for-each
-                      (lambda (form) (eval form (interaction-environment)))
-                      forms)
-                    "(ok applied)")
-                  (read-all (cons f forms))))))))))
+  (with-err-frame
+    (lambda ()
+      (let ((p (open-input-string source)))
+        (let read-all ((forms '()))
+          (let ((f (read p)))
+            (if (eof-object? f)
+                (begin
+                  (for-each
+                    (lambda (form) (eval form (interaction-environment)))
+                    (reverse forms))
+                  "(ok applied)")
+                (read-all (cons f forms)))))))))
 
 ;; ---------- dispatch ----------
+
+(define image-identity '(zag-live 1 gambit))
 
 (define (dispatch f)
   (cond
     ((not (pair? f)) (frame-write "(err \"bad frame\")"))
     (else
       (case (car f)
+        ((kernel.self-id) (frame-write-sexp `(ok ,image-identity)))
         ((kernel.eval)  (frame-write (safe-eval (cadr f))))
         ((kernel.apply) (frame-write (kernel-apply (cadr f))))
         ((kernel.echo)  (frame-write-sexp `(ok ,(cadr f))))
         ((kernel.ping)  (frame-write "(ok pong)"))
+        ((kernel.quit)  (frame-write "(ok bye)") (exit 0))
         (else           (frame-write "(err \"unknown request\")"))))))
 
 ;; Read frames until one satisfies accept?, dispatching any host requests
@@ -147,7 +153,7 @@
         (error 'kernel-wait "supervisor closed the pipe"))
       (if (eq? raw 'oversize)
           (begin (frame-write "(err \"frame-too-large\")") (loop))
-          (let ((f (read (open-string-input-port raw))))
+          (let ((f (read (open-input-string raw))))
             (if (accept? f)
                 f
                 (begin (dispatch f) (loop))))))))
@@ -222,14 +228,34 @@
 (define (kernel.hang)
   (let loop () (loop)))
 
-;; ---------- main loop ----------
+;; Gambit getenv RAISES on missing vars ("Unbound OS environment variable")
+;; where Chez returns #f; shadow it so evaled probes see portable semantics.
+(define (getenv name)
+  (with-exception-catcher (lambda (e) #f) (lambda () (##getenv name))))
 
-(let loop ()
-  (let ((raw (frame-read)))
-    (unless (eof-object? raw)
-      (if (eq? raw 'oversize)
-          (frame-write "(err \"frame-too-large\")")
-          (dispatch (read (open-string-input-port raw))))
-      (loop))))
+;; ---------- main loop + frame-stream purity ----------
 
+(define (main-loop)
+  (let loop ()
+    (let ((raw (frame-read)))
+      (unless (eof-object? raw)
+        (if (eq? raw 'oversize)
+            (frame-write "(err \"frame-too-large\")")
+            (dispatch (read (open-input-string raw))))
+        (loop)))))
+
+;; Uncaught failure: bounded diagnostics to stderr, nonzero exit, never a
+;; non-frame byte on stdout (contract §3).
+(define (runtime-main)
+  (with-exception-catcher
+    (lambda (e)
+      (let* ((full (exception->string e))
+             (bounded (if (> (string-length full) max-stderr-diagnostics)
+                          (substring full 0 max-stderr-diagnostics)
+                          full)))
+        (display bounded err-port)
+        (exit 70)))
+    (lambda () (main-loop))))
+
+(runtime-main)
 (exit 0)

@@ -227,3 +227,34 @@ Architecture that survived contact:
 - Interactive mode now drives agent turns with bare text — the hands-on
   demo of live policy surgery (`(kernel.redefine 'system-prompt ...)`
   mid-conversation, then `:kill`, then keep talking).
+
+## Spike findings, round 5 (2026-08-14, spike-004 — runtime comparison)
+
+Probe: [live-runtime-spike-004](../tasks/live-runtime-spike-004.md);
+independent review `docs/plan/reviews/live-runtime-spike-004-01.md` —
+**pass**, zero blocking.
+
+**Gerbil/Gambit carries the live-image role.** The full 10-probe matrix
+passed under three runtime configurations; Chez regression untouched.
+
+| Probe | Chez 10.4.1 | Gerbil gxi | Gambit `gsc -exe` |
+|-------|------------|-----------------|------------------|
+| boot median (verified) | 52–54 ms | 57–61 ms | **4–6 ms** |
+| echo 10k | 1872 msg/s | 1801 msg/s | ~1200–1400 msg/s |
+| fuzz / redefine / discard / commit / watchdog / env / inspect / agent | PASS | PASS | PASS |
+
+Key facts for D-015:
+
+- **The viable compiled route is raw Gambit (`gsc -exe`), not Gerbil's
+  `gxc`** — Gerbil's module system namespaces top-level defines, so eval at
+  the interaction environment can't see the image's own kernel primitives
+  (verified independently). `gsc -exe` is upstream-supported (Gambit
+  manual). Consequence: "switch to Gerbil" effectively means "the image is
+  Gambit-flavored Scheme"; Gerbil's module ecosystem argument weakens.
+- Compiled image = single binary: no runtime discovery, no
+  `ChezUnavailable` class, ~10× boot makes kill/respawn nearly invisible.
+- Codec profiles: Chez writes `\xHH;` uppercase, Gambit lowercase; readers
+  case-insensitive, encoders canonical per runtime; fuzz byte-identical
+  under both (independently re-fuzzed).
+- Gambit stdin-EOF spin was observed pre-port but **not reproduced** in the
+  shipped configuration; kill paths are SIGKILL regardless.

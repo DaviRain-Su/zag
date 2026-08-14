@@ -339,6 +339,102 @@ policy redefine, `:kill`, history rebuilt (4 entries) — all as expected.
   exhausted]")` without advancing — fine for demos; a real loop would
   need a policy decision here.
 
+## Round 5: Gerbil Scheme as image runtime (spike-004, D-015 data)
+
+`runtime-gerbil.ss` ports the image side to Gerbil v0.18.1 (Gambit
+4.9.5). `live-probe` selects the runtime via
+`LIVE_PROBE_RUNTIME=chez|gerbil|gerbil-bin` (default chez; no flag
+changes). The compiled variant is built by `live-probe build-gerbil-bin`
+with **gsc -exe** (raw Gambit compile) — gxc was tried first and rejected,
+see gaps below. Same probes, all three runtime configurations.
+
+### Comparison table (same host, same harness; quiet-host runs)
+
+| Probe | Chez 10.4.1 | Gerbil gxi 0.18.1 | Gerbil gsc -exe |
+|-------|-------------|-------------------|-----------------|
+| boot median (N=10) | 54.15 ms | 56.47 ms | **4.13 ms** |
+| boot min/max | 45.62 / 68.32 | 54.02 / 65.89 | 4.00 / 11.47 |
+| raw exec (script, no frames) | ~40 ms | ~50–90 ms | — |
+| echo 10k | 1872 msgs/sec | 1801 msgs/sec | 1384 msgs/sec |
+| fuzz 1500 byte-identical | PASS | PASS | PASS |
+| redefine -> SIGKILL -> replay | PASS | PASS | PASS |
+| discard + unknown nack | PASS | PASS | PASS |
+| commit (suspect quarantine incl. F9 apply-error) | PASS | PASS | PASS |
+| watchdog kill/reload | PASS | PASS | PASS |
+| env-check | PASS | PASS (getenv shadow) | PASS (getenv shadow) |
+| kernel.inspect | PASS | PASS | PASS |
+| agent (scripted loop incl. mid-turn kill) | PASS | PASS | PASS |
+| interactive (incl. :kill, :quit) | PASS | PASS | PASS |
+
+Earlier suite runs under load also passed end-to-end (gxi: all 10 probes;
+bin: all 10 probes). Interactive smoke verified under all three.
+
+### Semantic gaps found (Gerbil/Gambit vs Chez)
+
+- **`gxc -exe` is unusable for a live image**: Gerbil's module system
+  namespaces top-level definitions (`runtime-gerbil#kernel.redefine`), so
+  `(eval ... (interaction-environment))` cannot see the image's own kernel
+  primitives — redefine/discard/commit/inspect all fail in a gxc binary.
+  Raw **gsc -exe** (Gambit compiler, no module namespacing) preserves eval
+  visibility. This is THE load-bearing gap: a live image without eval
+  access to its own primitives is dead on arrival.
+- **PATH's `gsc` is Ghostscript** on this host; Gambit's gsc lives next to
+  gxi in the Cellar. `build-gerbil-bin` asks gxi itself:
+  `gxi -e '(display (path-expand "~~bin/gsc"))'`.
+- **stdin EOF is unreliable in Gambit ports** (observed in pre-port
+  configurations: gxi with an exported `main`, empty-from-start stdin; gsc
+  exe on EOF after frames): `read-u8` on a closed pipe could spin (100%
+  CPU) instead of returning the eof object. **Not reproduced in the shipped
+  configuration** (independent review: empty stdin, EOF-after-N frames all
+  exit cleanly). Insurance: both images accept an explicit `(kernel.quit)`
+  frame; the kill path is SIGKILL regardless. Note: as of this round the
+  supervisor's `Scheme.shutdown` closes stdin **without** sending the quit
+  frame — the frame is image-supported but currently unused on the wire.
+- **`write` hex-escape case**: Gambit writes `\x1f;` lowercase, Chez
+  `\x1F;` uppercase. Same escape set otherwise; strict readers both
+  sides. Supervisor encodes with the selected runtime's canonical case,
+  decodes case-insensitively; fuzz-verified byte-identical under both.
+- **`getenv` raises on missing vars** ("Unbound OS environment
+  variable") where Chez returns #f. The image shadows `getenv` with Chez
+  semantics (`with-exception-catcher` + `##getenv`).
+- **gxi prints uncaught exceptions to STDOUT** (frame-stream corruption
+  hazard); the image wraps its main loop in a top-level catcher ->
+  stderr + exit 70.
+- **Port IO API differs**: Gambit `read-u8vector` fills a preallocated
+  vector (2-arg); ranged reads need `read-subu8vector`; writes via
+  `write-subu8vector` + `force-output`. Binary-clean on
+  current-input/output-port with no port settings (NUL/0x0A verified).
+- **Errors render with full backtraces** into err frames — large but
+  harmless (supervisor substring-checks atoms).
+- gxc's baked-in Homebrew link path references a removed openssl@3/3.2.1
+  (`-ld-options "-L/opt/homebrew/opt/openssl@3/lib"` fixes it — moot
+  since we use gsc, which links clean).
+
+### Engineering read
+
+Gerbil carries the live-image role — the full probe matrix passes under
+both interpreted (gxi) and compiled (gsc -exe) images, including the
+hardest ones (commit quarantine, watchdog reload, mid-turn kill
+recovery, agent loop). Two caveats are real but bounded: (1) the EOF
+quirk forced an explicit quit frame — a small protocol addition that is
+arguably better hygiene anyway; (2) the gxc module-namespacing issue
+means the compiled path must be gsc, not gxc — anyone productizing
+should verify that's a stable, supported build route.
+
+On performance: the compiled Gambit image's boot is the standout —
+**4.1 ms median vs Chez 54 ms** (13x), which would let a product treat
+image respawn as nearly free (recovery after kill becomes invisible to
+users). Echo throughput is modestly lower (1384 vs 1872 msgs/sec, ~26%)
+but irrelevant at model-latency scales. The eval-visibility semantics
+that the live-image role depends on are identical once module
+namespacing is bypassed.
+
+Recommendation input for D-015: Gerbil is viable, and gsc-compiled is
+the most attractive variant operationally (fast boot, single static-ish
+binary, no runtime discovery). The price is a second image file to
+maintain and two documented Gambit quirks (EOF, getenv) already absorbed
+by the image.
+
 ## Findings / surprises
 
 - **Zig 0.16 API friction** (all worked around, none blocking):

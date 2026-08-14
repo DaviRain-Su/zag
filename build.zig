@@ -17,6 +17,12 @@ pub fn build(b: *std.Build) void {
         "Enable TUI product shell (default false; lazy zag-tui)",
     ) orelse false;
 
+    const live = b.option(
+        bool,
+        "live",
+        "Enable the live policy layer (default false; lazy zag-live)",
+    ) orelse false;
+
     const openai_dep = b.dependency("openai_zig", .{
         .target = target,
         .optimize = optimize,
@@ -53,8 +59,23 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .http_backend = http_backend,
+        .live = live,
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
+
+    // Lazy: only resolve/build zag-live when -Dlive=true.
+    var live_mod: ?*std.Build.Module = null;
+    var live_opts: ?*std.Build.Step.Options = null;
+    if (live) {
+        const live_dep = b.lazyDependency("zag_live", .{
+            .target = target,
+            .optimize = optimize,
+        }) orelse return;
+        live_mod = live_dep.module("zag-live");
+        const lo = b.addOptions();
+        lo.addOption(bool, "live_enabled", true);
+        live_opts = lo;
+    }
 
     // Lazy: only resolve/build zag-tui when -Dtui=true.
     var tui_mod: ?*std.Build.Module = null;
@@ -89,6 +110,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .http_backend = http_backend,
         .tui = tui,
+        .live = live,
     });
     const cli_mod = cli_dep.module("zag-cli");
 
@@ -145,15 +167,19 @@ pub fn build(b: *std.Build) void {
             .{ .name = "zag-types", .module = types_mod },
         },
     });
-    _ = b.addModule("zag-coding-agent", .{
-        .root_source_file = b.path("packages/zag-coding-agent/src/root.zig"),
-        .target = target,
-        .imports = &.{
-            .{ .name = "zag-agent-core", .module = core_mod },
-            .{ .name = "zag-types", .module = types_mod },
-            .{ .name = "zag-ai", .module = ai_mod },
-        },
-    });
+    {
+        const coding_named = b.addModule("zag-coding-agent", .{
+            .root_source_file = b.path("packages/zag-coding-agent/src/root.zig"),
+            .target = target,
+            .imports = &.{
+                .{ .name = "zag-agent-core", .module = core_mod },
+                .{ .name = "zag-types", .module = types_mod },
+                .{ .name = "zag-ai", .module = ai_mod },
+            },
+        });
+        if (live_mod) |lm| coding_named.addImport("zag-live", lm);
+        if (live_opts) |lo| coding_named.addOptions("build_options", lo);
+    }
     const cli_named = b.addModule("zag-cli", .{
         .root_source_file = b.path("packages/zag-cli/src/root.zig"),
         .target = target,
@@ -167,6 +193,7 @@ pub fn build(b: *std.Build) void {
     {
         const named_opts = b.addOptions();
         named_opts.addOption(bool, "tui_enabled", tui);
+        named_opts.addOption(bool, "live_enabled", live);
         cli_named.addOptions("build_options", named_opts);
         if (tui_mod) |tm| cli_named.addImport("zag-tui", tm);
     }
@@ -288,6 +315,8 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
+    if (live_mod) |lm| coding_tests.root_module.addImport("zag-live", lm);
+    if (live_opts) |lo| coding_tests.root_module.addOptions("build_options", lo);
     const run_coding_tests = b.addRunArtifact(coding_tests);
 
     const fixture_tests = b.addTest(.{

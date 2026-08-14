@@ -191,6 +191,7 @@
         ((kernel.evalc) (frame-write (safe-eval-capture (cadr f))))
         ((kernel.apply) (frame-write (kernel-apply (cadr f))))
         ((kernel.echo)  (frame-write-sexp `(ok ,(cadr f))))
+        ((kernel.quit)  (frame-write "(ok bye)") (exit 0))
         (else           (frame-write "(err \"unknown request\")"))))))
 
 ;; Read frames until one satisfies accept?, dispatching any kernel.*

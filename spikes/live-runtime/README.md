@@ -139,6 +139,31 @@ Interactive mode: **bare text** (not `(` or `:`) runs an agent turn and
 prints the reply; the default provider script has two canned `say`s (then
 `[provider script exhausted]`).
 
+## Runtime selection (spike-004: Chez vs Gerbil)
+
+The supervisor picks the image runtime via env var `LIVE_PROBE_RUNTIME`:
+
+| value | spawn | image script |
+|-------|-------|--------------|
+| `chez` (default) | `chez --script runtime.ss` | `runtime.ss` |
+| `gerbil` | `gxi runtime-gerbil.ss` | `runtime-gerbil.ss` |
+| `gerbil-bin` | `./runtime-gerbil-bin` | compiled by `live-probe build-gerbil-bin` (gsc -exe, Gambit native — gxc's module namespacing breaks eval visibility; see RESULTS round 5) |
+
+Every probe runs unchanged under all three. The wire protocol is identical;
+the only codec difference is the hex-escape CASE in string literals: Chez
+`write` emits `\x1F;` (uppercase), Gambit `write` emits `\x1f;`
+(lowercase). The supervisor encodes with the selected runtime's canonical
+case and decodes case-insensitively, so payloads round-trip byte-identically
+under both (fuzz-verified on both runtimes).
+
+Known Gambit semantic gap handled in the image: `(getenv "MISSING")` RAISES
+("Unbound OS environment variable") where Chez returns `#f`;
+runtime-gerbil.ss shadows `getenv` with Chez semantics. Also: gxi prints
+uncaught exceptions to STDOUT (would corrupt the frame stream) — the image
+wraps its main loop in a top-level catcher reporting to stderr (exit 70);
+and Gambit ports do not reliably report stdin EOF, so polite shutdown is an
+explicit `(kernel.quit)` frame (both images), not pipe EOF.
+
 ## Framing
 
 One framing, both directions, on the child's stdin/stdout:
@@ -177,6 +202,7 @@ it, kills + respawns the image with a clear message, and keeps working.
 | `(kernel.evalc "<source>")` | `(ok "<datum>" "<captured-output>")` / `(err "<msg>")` — same, but the form's printed output is captured into the reply (interactive mode uses this so `display` cannot corrupt the frame stream) |
 | `(kernel.apply "<source>")` | `(ok applied)` / `(err "<msg>")` — eval 1+ top-level forms, record `define` sources in the image's registry |
 | `(kernel.echo "<payload>")` | `(ok "<payload>")` |
+| `(kernel.quit)` | `(ok bye)` then the image exits (polite shutdown; Gambit ports don't reliably report stdin EOF) |
 | `(kernel.ack <name>)` | — (ack for a pending kernel request) |
 | `(kernel.nack <name> "<reason>")` | — (negative ack; the primitive raises a readable condition instead of hanging) |
 | `(kernel.err "<msg>")` | — (negative ack for `kernel.commit`) |

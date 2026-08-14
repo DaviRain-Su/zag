@@ -12,6 +12,7 @@ const sigint = @import("sigint.zig");
 const cli_stream = @import("cli_stream.zig");
 const build_options = @import("build_options");
 const tui_enabled: bool = build_options.tui_enabled;
+const live_enabled: bool = build_options.live_enabled;
 const tui_entry = if (tui_enabled) @import("tui_entry.zig") else struct {};
 
 const default_system =
@@ -150,6 +151,12 @@ pub fn run(init: std.process.Init) !void {
     const arena = init.arena.allocator();
 
     const args = try init.minimal.args.toSlice(arena);
+    // `zag live <sub>` subcommand (live-policy-layer.md §6): host-driven
+    // policy redefinition on <workspace>/.zag/live/.
+    if (args.len > 1 and std.mem.eql(u8, args[1], "live")) {
+        try runLiveCommand(gpa, io, args[2..]);
+        return;
+    }
     var prompt_parts: std.ArrayList([]const u8) = .empty;
     var verbose = false;
     var show_help = false;
@@ -173,6 +180,7 @@ pub fn run(init: std.process.Init) !void {
     var want_tui = false;
     var want_rpc = false;
     var want_acp = false;
+    var want_live = false;
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -231,6 +239,8 @@ pub fn run(init: std.process.Init) !void {
             no_project = true;
         } else if (std.mem.eql(u8, a, "--no-skills")) {
             no_skills = true;
+        } else if (std.mem.eql(u8, a, "--live")) {
+            want_live = true;
         } else if (std.mem.eql(u8, a, "--trust-project-skills")) {
             trust_project_skills = true;
         } else if (std.mem.eql(u8, a, "--no-prompt-templates")) {
@@ -555,7 +565,13 @@ pub fn run(init: std.process.Init) !void {
     else
         null;
 
+    if (want_live and !live_enabled) {
+        std.log.err("--live: LiveUnavailable (this binary was built without -Dlive)", .{});
+        std.process.exit(2);
+    }
+
     const host_opts: HostResourceOptions = .{
+        .live = want_live,
         .skills_enabled = skills_enabled,
         .project_skills_trust = project_skills_trust,
         .user_skills_root = user_skills_root,
@@ -564,8 +580,19 @@ pub fn run(init: std.process.Init) !void {
         .user_templates_root = user_templates_root,
     };
 
+    // live-policy-layer: CLI opens <workspace>/.zag/live cwd-relative (§3).
+    var live_dir: ?Io.Dir = null;
+    if (comptime live_enabled) {
+        if (host_opts.live) {
+            try Io.Dir.cwd().createDirPath(io, ".zag/live");
+            live_dir = try Io.Dir.cwd().openDir(io, ".zag/live", .{});
+        }
+    }
+
     // Shared base options (TUI path overrides permission/lifecycle/observer).
     var agent_opts: coding.agent.Options = .{
+        .live = host_opts.live,
+        .live_state_dir = live_dir,
         .verbose = verbose,
         .permission_mode = permission_mode,
         .session_kind = session_kind,
@@ -832,6 +859,8 @@ pub fn run(init: std.process.Init) !void {
 }
 
 const HostResourceOptions = struct {
+    /// live-policy-layer: argv --live hop (contract §3).
+    live: bool = false,
     skills_enabled: bool = true,
     project_skills_trust: coding.ProjectSkillsTrust = .untrusted,
     user_skills_root: ?[]const u8 = null,

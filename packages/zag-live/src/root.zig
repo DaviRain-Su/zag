@@ -1,4 +1,4 @@
-//! zag-live — supervised live Chez Scheme image (policy layer).
+//! zag-live — supervised live Scheme image (policy layer; Gambit binding).
 //! Binding contract: docs/modules/zag-live.md (zag-live-001, D-014 Route A).
 
 pub const Live = @import("live.zig").Live;

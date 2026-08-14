@@ -10,7 +10,28 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
+/// Image runtime selection (spike-004): env var LIVE_PROBE_RUNTIME =
+/// chez (default) | gerbil | gerbil-bin (gsc-compiled image, built by
+/// `live-probe build-gerbil-bin`; gsc NOT gxc — see RESULTS round 5).
 const runtime_path = "runtime.ss";
+const Runtime = enum { chez, gerbil, gerbil_bin };
+const runtime_gerbil_path = "runtime-gerbil.ss";
+const runtime_gerbil_bin_path = "./runtime-gerbil-bin";
+
+fn runtimeFromEnv(p: *const Probe) Runtime {
+    const v = p.environ.get("LIVE_PROBE_RUNTIME") orelse return .chez;
+    if (std.mem.eql(u8, v, "gerbil")) return .gerbil;
+    if (std.mem.eql(u8, v, "gerbil-bin")) return .gerbil_bin;
+    return .chez;
+}
+
+fn runtimeName(r: Runtime) []const u8 {
+    return switch (r) {
+        .chez => "chez",
+        .gerbil => "gerbil-gxi",
+        .gerbil_bin => "gerbil-gsc",
+    };
+}
 const journal_path = ".work/journal.sexp";
 const current_path = ".work/current";
 const current_tmp_path = ".work/current.tmp";
@@ -29,6 +50,7 @@ pub fn main(init: std.process.Init) !void {
         .io = init.io,
         .environ = init.environ_map,
     };
+    p.runtime = runtimeFromEnv(&p);
     const cmd = args[1];
     if (std.mem.eql(u8, cmd, "boot")) {
         try cmdBoot(&p);
@@ -53,6 +75,8 @@ pub fn main(init: std.process.Init) !void {
         try cmdAgent(&p);
     } else if (std.mem.eql(u8, cmd, "interactive") or std.mem.eql(u8, cmd, "demo")) {
         try cmdInteractive(&p);
+    } else if (std.mem.eql(u8, cmd, "build-gerbil-bin")) {
+        try cmdBuildGerbilBin(&p);
     } else if (std.mem.eql(u8, cmd, "reset")) {
         try cmdReset(&p);
     } else {
@@ -61,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn usage(io: Io) !void {
-    std.Io.File.stderr().writeStreamingAll(io, "usage: live-probe <boot|echo [n]|redefine-cycle|discard|commit|watchdog|env-check|fuzz|inspect|agent|interactive|demo|reset>\n") catch {};
+    std.Io.File.stderr().writeStreamingAll(io, "usage: live-probe <boot|echo [n]|redefine-cycle|discard|commit|watchdog|env-check|fuzz|inspect|agent|interactive|demo|build-gerbil-bin|reset> (env LIVE_PROBE_RUNTIME=chez|gerbil|gerbil-bin)\n") catch {};
     return error.Usage;
 }
 
@@ -71,6 +95,7 @@ const Probe = struct {
     gpa: Allocator,
     io: Io,
     environ: *const std.process.Environ.Map,
+    runtime: Runtime = .chez,
 };
 
 fn say(p: *const Probe, comptime fmt: []const u8, args: anytype) void {
@@ -152,8 +177,12 @@ fn readFrameTimeout(gpa: Allocator, io: Io, file: Io.File, timeout_ms: i32) !?[]
 // mangled. This makes arbitrary control bytes (incl. NUL), quotes,
 // backslashes, literal `\x..;` text, and UTF-8 round-trip byte-identically.
 
-fn escapeSchemeString(gpa: Allocator, s: []const u8) ![]u8 {
-    const hexdig = "0123456789ABCDEF";
+/// Runtime codec profile for the hex-escape CASE only: Chez `write` emits
+/// \x1F; (uppercase), Gambit `write` emits \x1f; (lowercase). Decoding is
+/// case-insensitive both ways; encoding follows the selected image runtime
+/// so the wire form is canonical for that runtime (spike-004).
+fn escapeSchemeStringProfile(gpa: Allocator, s: []const u8, lower_hex: bool) ![]u8 {
+    const hexdig = if (lower_hex) "0123456789abcdef" else "0123456789ABCDEF";
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(gpa);
     for (s) |c| {
@@ -180,6 +209,11 @@ fn escapeSchemeString(gpa: Allocator, s: []const u8) ![]u8 {
         }
     }
     return list.toOwnedSlice(gpa);
+}
+
+/// Escape with the probe's selected runtime profile.
+fn escStr(p: *Probe, s: []const u8) ![]u8 {
+    return escapeSchemeStringProfile(p.gpa, s, p.runtime != .chez);
 }
 
 const ParsedString = struct { value: []u8, end: usize };
@@ -363,8 +397,13 @@ const Scheme = struct {
         for ([_][]const u8{ "PATH", "HOME", "TERM" }) |k| {
             if (p.environ.get(k)) |v| try env.put(k, v);
         }
+        const argv: []const []const u8 = switch (p.runtime) {
+            .chez => &.{ "chez", "--script", runtime_path },
+            .gerbil => &.{ "gxi", runtime_gerbil_path },
+            .gerbil_bin => &.{runtime_gerbil_bin_path},
+        };
         const child = try std.process.spawn(p.io, .{
-            .argv = &.{ "chez", "--script", runtime_path },
+            .argv = argv,
             .stdin = .pipe,
             .stdout = .pipe,
             .stderr = .inherit,
@@ -390,7 +429,7 @@ const Scheme = struct {
 /// Send (kernel.eval "<source>") and return the raw reply, servicing any
 /// nested kernel.* requests the image raises while evaluating.
 fn requestEvalReply(p: *Probe, sc: *Scheme, source: []const u8) !Reply {
-    const esc = try escapeSchemeString(p.gpa, source);
+    const esc = try escStr(p, source);
     defer p.gpa.free(esc);
     const frame = try std.fmt.allocPrint(p.gpa, "(kernel.eval \"{s}\")", .{esc});
     defer p.gpa.free(frame);
@@ -413,7 +452,7 @@ fn requestEval(p: *Probe, sc: *Scheme, source: []const u8) ![]u8 {
 
 /// Send (kernel.apply "<source>") and require (ok applied).
 fn requestApply(p: *Probe, sc: *Scheme, source: []const u8) !void {
-    const esc = try escapeSchemeString(p.gpa, source);
+    const esc = try escStr(p, source);
     defer p.gpa.free(esc);
     const frame = try std.fmt.allocPrint(p.gpa, "(kernel.apply \"{s}\")", .{esc});
     defer p.gpa.free(frame);
@@ -467,7 +506,7 @@ const EvalCResult = union(enum) { ok: EvalC, err: []u8 };
 /// Send (kernel.evalc "<source>"): like requestEvalReply but the ok reply is
 /// (ok "<datum-as-written>" "<captured-output>") — both string literals.
 fn requestEvalC(p: *Probe, sc: *Scheme, source: []const u8) !EvalCResult {
-    const esc = try escapeSchemeString(p.gpa, source);
+    const esc = try escStr(p, source);
     defer p.gpa.free(esc);
     const frame = try std.fmt.allocPrint(p.gpa, "(kernel.evalc \"{s}\")", .{esc});
     defer p.gpa.free(frame);
@@ -597,7 +636,7 @@ fn journalSeq(p: *Probe) !usize {
 }
 
 fn journalRedefine(p: *Probe, name: []const u8, source: []const u8) !void {
-    const esc = try escapeSchemeString(p.gpa, source);
+    const esc = try escStr(p, source);
     defer p.gpa.free(esc);
     const entry = try std.fmt.allocPrint(p.gpa, "(redefine {s} {d} \"{s}\" {d})", .{ name, try journalSeq(p), esc, nowReal(p) });
     defer p.gpa.free(entry);
@@ -809,7 +848,7 @@ fn convLastKind(p: *Probe) !ConvKind {
 /// User entries are appended by the SUPERVISOR, fsynced before any
 /// provider work.
 fn convAppendUser(p: *Probe, text: []const u8) !void {
-    const esc = try escapeSchemeString(p.gpa, text);
+    const esc = try escStr(p, text);
     defer p.gpa.free(esc);
     const entry = try std.fmt.allocPrint(p.gpa, "(user {d} \"{s}\" {d})", .{ try convCount(p), esc, nowReal(p) });
     defer p.gpa.free(entry);
@@ -826,9 +865,9 @@ fn convHandleAppend(p: *Probe, kind: []const u8, rest: []const u8) !void {
         defer p.gpa.free(text.value);
         const echo = try parseSchemeString(p.gpa, rest, skipSpaces(rest, text.end));
         defer p.gpa.free(echo.value);
-        const e1 = try escapeSchemeString(p.gpa, text.value);
+        const e1 = try escStr(p, text.value);
         defer p.gpa.free(e1);
-        const e2 = try escapeSchemeString(p.gpa, echo.value);
+        const e2 = try escStr(p, echo.value);
         defer p.gpa.free(e2);
         entry = try std.fmt.allocPrint(p.gpa, "(assistant {d} \"{s}\" \"{s}\" {d})", .{ seq, e1, e2, nowReal(p) });
     } else if (std.mem.eql(u8, kind, "tool-call")) {
@@ -837,16 +876,16 @@ fn convHandleAppend(p: *Probe, kind: []const u8, rest: []const u8) !void {
         defer p.gpa.free(path.value);
         const echo = try parseSchemeString(p.gpa, rest, skipSpaces(rest, path.end));
         defer p.gpa.free(echo.value);
-        const e1 = try escapeSchemeString(p.gpa, path.value);
+        const e1 = try escStr(p, path.value);
         defer p.gpa.free(e1);
-        const e2 = try escapeSchemeString(p.gpa, echo.value);
+        const e2 = try escStr(p, echo.value);
         defer p.gpa.free(e2);
         entry = try std.fmt.allocPrint(p.gpa, "(tool-call {d} {s} \"{s}\" \"{s}\" {d})", .{ seq, t.tok, e1, e2, nowReal(p) });
     } else if (std.mem.eql(u8, kind, "tool-result")) {
         const t = readToken(rest, 0);
         const result = try parseSchemeString(p.gpa, rest, skipSpaces(rest, t.end));
         defer p.gpa.free(result.value);
-        const e1 = try escapeSchemeString(p.gpa, result.value);
+        const e1 = try escStr(p, result.value);
         defer p.gpa.free(e1);
         entry = try std.fmt.allocPrint(p.gpa, "(tool-result {d} {s} \"{s}\" {d})", .{ seq, t.tok, e1, nowReal(p) });
     } else {
@@ -907,9 +946,9 @@ fn providerReply(p: *Probe, sp: []const u8) ![]u8 {
 }
 
 fn providerSay(p: *Probe, text: []const u8, sp: []const u8) ![]u8 {
-    const e1 = try escapeSchemeString(p.gpa, text);
+    const e1 = try escStr(p, text);
     defer p.gpa.free(e1);
-    const e2 = try escapeSchemeString(p.gpa, sp);
+    const e2 = try escStr(p, sp);
     defer p.gpa.free(e2);
     return std.fmt.allocPrint(p.gpa, "(provider.reply (say \"{s}\" \"{s}\"))", .{ e1, e2 });
 }
@@ -929,9 +968,9 @@ fn providerRender(p: *Probe, line: []const u8, sp: []const u8) ![]u8 {
         i = skipSpaces(line, i + 1);
         const s = try parseSchemeString(p.gpa, line, i);
         defer p.gpa.free(s.value);
-        const e1 = try escapeSchemeString(p.gpa, s.value);
+        const e1 = try escStr(p, s.value);
         defer p.gpa.free(e1);
-        const e2 = try escapeSchemeString(p.gpa, sp);
+        const e2 = try escStr(p, sp);
         defer p.gpa.free(e2);
         return std.fmt.allocPrint(p.gpa, "(provider.reply (call {s} \"{s}\" \"{s}\"))", .{ t.tok, e1, e2 });
     }
@@ -942,19 +981,19 @@ fn providerRender(p: *Probe, line: []const u8, sp: []const u8) ![]u8 {
 
 fn toolInvoke(p: *Probe, tool: []const u8, path: []const u8) ![]u8 {
     if (!std.mem.eql(u8, tool, "fs.read")) {
-        const e = try escapeSchemeString(p.gpa, "unknown-tool");
+        const e = try escStr(p, "unknown-tool");
         defer p.gpa.free(e);
         return std.fmt.allocPrint(p.gpa, "(tool.error \"{s}\")", .{e});
     }
     const content = jailedRead(p, path) catch |e| {
         const msg = try std.fmt.allocPrint(p.gpa, "fs.read rejected: {s}", .{@errorName(e)});
         defer p.gpa.free(msg);
-        const esc = try escapeSchemeString(p.gpa, msg);
+        const esc = try escStr(p, msg);
         defer p.gpa.free(esc);
         return std.fmt.allocPrint(p.gpa, "(tool.error \"{s}\")", .{esc});
     };
     defer p.gpa.free(content);
-    const esc = try escapeSchemeString(p.gpa, content);
+    const esc = try escStr(p, content);
     defer p.gpa.free(esc);
     return std.fmt.allocPrint(p.gpa, "(tool.result \"{s}\")", .{esc});
 }
@@ -1284,7 +1323,7 @@ fn composeInspect(p: *Probe, name: []const u8) ![]u8 {
     errdefer out.deinit(p.gpa);
     try out.appendSlice(p.gpa, "(kernel.inspect.result (source ");
     if (source) |s| {
-        const esc = try escapeSchemeString(p.gpa, s);
+        const esc = try escStr(p, s);
         defer p.gpa.free(esc);
         try out.appendSlice(p.gpa, "\"");
         try out.appendSlice(p.gpa, esc);
@@ -1416,6 +1455,53 @@ fn doCommit(p: *Probe, check: []const u8, expected: []const u8) !void {
 
 // ---------- subcommands ----------
 
+fn cmdBuildGerbilBin(p: *Probe) !void {
+    // Compile the Gerbil image into a standalone executable. Uses gsc
+    // (Gambit native compiler), NOT gxc: gxc's module namespacing hides the
+    // image's own kernel primitives from interaction-environment eval,
+    // which is fatal for a live image (spike-004 finding). gsc is resolved
+    // as the sibling of the real gxi binary because PATH's `gsc` may be
+    // Ghostscript (it is on this host).
+    const gsc = try findGambitGsc(p);
+    defer p.gpa.free(gsc);
+    const result = try std.process.run(p.gpa, p.io, .{
+        .argv = &.{ gsc, "-exe", "-o", "runtime-gerbil-bin", runtime_gerbil_path },
+        .stdout_limit = .limited(16 * 1024),
+        .stderr_limit = .limited(16 * 1024),
+    });
+    defer p.gpa.free(result.stdout);
+    defer p.gpa.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| {
+            if (code != 0) {
+                say(p, "gsc failed ({d}): {s}", .{ code, result.stderr });
+                return error.GscFailed;
+            }
+        },
+        else => return error.GscFailed,
+    }
+    say(p, "built ./runtime-gerbil-bin (gsc -exe, Gambit native)", .{});
+}
+
+fn findGambitGsc(p: *Probe) ![]u8 {
+    // Ask gxi for Gambit's gsc: `~~` is the gerbil home, where the real
+    // gsc lives (PATH's `gsc` may be Ghostscript — it is on this host).
+    const result = try std.process.run(p.gpa, p.io, .{
+        .argv = &.{ "gxi", "-e", "(display (path-expand \"~~bin/gsc\"))" },
+        .stdout_limit = .limited(4096),
+        .stderr_limit = .limited(4096),
+    });
+    defer p.gpa.free(result.stdout);
+    defer p.gpa.free(result.stderr);
+    switch (result.term) {
+        .exited => |code| if (code != 0) return error.GscNotFound,
+        else => return error.GscNotFound,
+    }
+    const gsc = std.mem.trim(u8, result.stdout, " \n");
+    std.Io.Dir.cwd().access(p.io, gsc, .{}) catch return error.GscNotFound;
+    return try p.gpa.dupe(u8, gsc);
+}
+
 fn cmdReset(p: *Probe) !void {
     std.Io.Dir.cwd().deleteTree(p.io, ".work") catch {};
     say(p, "reset: .work removed", .{});
@@ -1432,12 +1518,12 @@ fn cmdBoot(p: *Probe) !void {
         const t1 = nowAwake(p);
         sc.kill(p);
         times[i] = t1 - t0;
-        say(p, "boot[{d}]: {d:.2} ms (spawn -> first eval reply)", .{ i, ms(t1 - t0) });
+        say(p, "boot[{s}][{d}]: {d:.2} ms (spawn -> first eval reply)", .{ runtimeName(p.runtime), i, ms(t1 - t0) });
     }
     var sorted = times;
     std.mem.sort(i96, &sorted, {}, std.sort.asc(i96));
     const med = sorted[n / 2];
-    say(p, "boot: min={d:.2} ms median={d:.2} ms max={d:.2} ms", .{ ms(sorted[0]), ms(med), ms(sorted[n - 1]) });
+    say(p, "boot[{s}]: min={d:.2} ms median={d:.2} ms max={d:.2} ms", .{ runtimeName(p.runtime), ms(sorted[0]), ms(med), ms(sorted[n - 1]) });
     if (med < 100 * std.time.ns_per_ms) {
         say(p, "PASS: median boot < 100 ms", .{});
     } else {
@@ -1473,7 +1559,7 @@ fn cmdEcho(p: *Probe, n: u32) !void {
     }
     const dt = nowAwake(p) - t0;
     const per_sec = @as(f64, @floatFromInt(n)) / (@as(f64, @floatFromInt(dt)) / 1.0e9);
-    say(p, "echo: {d} round-trips in {d:.2} ms -> {d:.0} msgs/sec", .{ n, ms(dt), per_sec });
+    say(p, "echo[{s}]: {d} round-trips in {d:.2} ms -> {d:.0} msgs/sec", .{ runtimeName(p.runtime), n, ms(dt), per_sec });
     say(p, "PASS: all echoes matched, no framing errors", .{});
 }
 
@@ -1485,7 +1571,7 @@ fn cmdRedefineCycle(p: *Probe) !void {
 
     // Exploratory redefine: Scheme asks the supervisor; supervisor journals +
     // fsyncs, then applies inside the image.
-    const esc = try escapeSchemeString(p.gpa, new_src);
+    const esc = try escStr(p, new_src);
     defer p.gpa.free(esc);
     const call = try std.fmt.allocPrint(p.gpa, "(kernel.redefine 'greeting \"{s}\")", .{esc});
     defer p.gpa.free(call);
@@ -1530,7 +1616,7 @@ fn cmdDiscard(p: *Probe) !void {
     say(p, "committed state: (greeting) => {s}", .{v0});
 
     const new_src = "(define (greeting) \"hacked\")";
-    const esc = try escapeSchemeString(p.gpa, new_src);
+    const esc = try escStr(p, new_src);
     defer p.gpa.free(esc);
     const call = try std.fmt.allocPrint(p.gpa, "(kernel.redefine 'greeting \"{s}\")", .{esc});
     defer p.gpa.free(call);
@@ -1583,7 +1669,7 @@ fn cmdCommit(p: *Probe) !void {
     try replayCurrent(p, &sc);
 
     const new_src = "(define (greeting) \"hacked\")";
-    const esc = try escapeSchemeString(p.gpa, new_src);
+    const esc = try escStr(p, new_src);
     defer p.gpa.free(esc);
     const call = try std.fmt.allocPrint(p.gpa, "(kernel.redefine 'greeting \"{s}\")", .{esc});
     defer p.gpa.free(call);
@@ -1609,7 +1695,7 @@ fn cmdCommit(p: *Probe) !void {
     // Failure path: a commit whose replay check fails must keep the old
     // pointer and mark the exploratory change suspect.
     const bad_src = "(define (greeting) \"broken\")";
-    const esc2 = try escapeSchemeString(p.gpa, bad_src);
+    const esc2 = try escStr(p, bad_src);
     defer p.gpa.free(esc2);
     const call2 = try std.fmt.allocPrint(p.gpa, "(kernel.redefine 'greeting \"{s}\")", .{esc2});
     defer p.gpa.free(call2);
@@ -1679,13 +1765,13 @@ fn cmdWatchdog(p: *Probe) !void {
     say(p, "committed state: (greeting) => {s}; journal lines = {d}", .{ committed, journal_lines });
 
     // Hang the image, then probe liveness with a 2s deadline.
-    const hang_esc = try escapeSchemeString(p.gpa, "(kernel.hang)");
+    const hang_esc = try escStr(p, "(kernel.hang)");
     defer p.gpa.free(hang_esc);
     const hang_frame = try std.fmt.allocPrint(p.gpa, "(kernel.eval \"{s}\")", .{hang_esc});
     defer p.gpa.free(hang_frame);
     try sendFrame(p, &sc, hang_frame);
     say(p, "image hung via (kernel.hang); starting liveness probe (2 s deadline)", .{});
-    const probe_esc = try escapeSchemeString(p.gpa, "(+ 1 1)");
+    const probe_esc = try escStr(p, "(+ 1 1)");
     defer p.gpa.free(probe_esc);
     const probe_frame = try std.fmt.allocPrint(p.gpa, "(kernel.eval \"{s}\")", .{probe_esc});
     defer p.gpa.free(probe_frame);
@@ -2050,7 +2136,7 @@ fn cmdFuzz(p: *Probe) !void {
     for (0..n) |i| {
         const s = try genAdversarial(p, rand, i);
         defer p.gpa.free(s);
-        const esc = try escapeSchemeString(p.gpa, s);
+        const esc = try escStr(p, s);
         defer p.gpa.free(esc);
         const frame = try std.fmt.allocPrint(p.gpa, "(kernel.echo \"{s}\")", .{esc});
         defer p.gpa.free(frame);
@@ -2079,7 +2165,7 @@ fn cmdFuzz(p: *Probe) !void {
         say(p, "fuzz: {d}/{d} strings FAILED round-trip", .{ failures, n });
         return error.FuzzFailures;
     }
-    say(p, "fuzz: {d} adversarial strings round-tripped byte-identically (seed 0x5eed0002)", .{n});
+    say(p, "fuzz[{s}]: {d} adversarial strings round-tripped byte-identically (seed 0x5eed0002)", .{ runtimeName(p.runtime), n });
 
     // Part 2: supervisor -> image oversize frame. The image must discard
     // the payload, reply (err "frame-too-large"), and stay alive.
@@ -2136,7 +2222,7 @@ fn cmdInspect(p: *Probe) !void {
 
     // pending name whose source mentions greeting => greeting gains a dependent
     const src = "(define (shout) (string-upcase (greeting)))";
-    const esc = try escapeSchemeString(p.gpa, src);
+    const esc = try escStr(p, src);
     defer p.gpa.free(esc);
     const call = try std.fmt.allocPrint(p.gpa, "(kernel.redefine 'shout \"{s}\")", .{esc});
     defer p.gpa.free(call);
@@ -2274,7 +2360,7 @@ fn cmdAgent(p: *Probe) !void {
 
     // --- 4. policy redefine mid-conversation (pending, uncommitted)
     const v2src = "(define (system-prompt) \"POLICY-V2: answer tersely.\")";
-    const v2esc = try escapeSchemeString(p.gpa, v2src);
+    const v2esc = try escStr(p, v2src);
     defer p.gpa.free(v2esc);
     const v2call = try std.fmt.allocPrint(p.gpa, "(kernel.redefine 'system-prompt \"{s}\")", .{v2esc});
     defer p.gpa.free(v2call);

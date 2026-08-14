@@ -54,6 +54,10 @@
             .path = "packages/zag-tui",
             .lazy = true,
         },
+        .zag_live = .{
+            .path = "packages/zag-live",
+            .lazy = true,
+        },
         .vaxis = .{
             .path = "packages/third_party/vaxis",
             .lazy = true,

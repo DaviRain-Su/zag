@@ -2,11 +2,13 @@
 //!
 //! Wire format: 4-byte little-endian u32 length + UTF-8 payload; the payload
 //! is exactly one s-expression, single line. String literals use ONE escaping
-//! discipline both directions — canonical Chez `write` escapes:
+//! discipline both directions — canonical Gambit `write` escapes:
 //!
 //!   \" \\ \n \r \t \a \b \v \f      named escapes
-//!   \xHH;                           any other byte < 0x20 or 0x7F, uppercase
+//!   \xhh;                           any other byte < 0x20 or 0x7F, lowercase
 //!                                   minimal hex, semicolon-terminated
+//!                                   (Gambit canonical; decode is
+//!                                   case-insensitive on hex digits)
 //!   bytes >= 0x80                   raw (payloads must be valid UTF-8)
 //!
 //! Decoding is strict: an unknown escape or malformed \x..; is a hard error,
@@ -96,14 +98,14 @@ pub fn readFrameDeadline(
     return try readFrame(gpa, io, file);
 }
 
-// ---------- canonical Chez string escaping ----------
+// ---------- canonical Gambit string escaping ----------
 
 pub const EscapeError = Allocator.Error;
 
-/// Escape an arbitrary byte string into Chez `write` canonical literal form
+/// Escape an arbitrary byte string into Gambit `write` canonical literal form
 /// (without the surrounding quotes).
 pub fn escape(gpa: Allocator, s: []const u8) EscapeError![]u8 {
-    const hexdig = "0123456789ABCDEF";
+    const hexdig = "0123456789abcdef";
     var list: std.ArrayList(u8) = .empty;
     errdefer list.deinit(gpa);
     for (s) |c| {
@@ -134,7 +136,7 @@ pub fn escape(gpa: Allocator, s: []const u8) EscapeError![]u8 {
 
 pub const ParsedString = struct { value: []u8, end: usize };
 
-/// Parse a `"..."` Chez string literal starting at s[start]; returns the
+/// Parse a `"..."` Scheme string literal starting at s[start]; returns the
 /// unescaped value and the index just past the closing quote. Strict:
 /// unknown escapes and malformed \x..; are errors.
 pub fn parseString(gpa: Allocator, s: []const u8, start: usize) !ParsedString {

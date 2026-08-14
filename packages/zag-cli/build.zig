@@ -15,6 +15,11 @@ pub fn build(b: *std.Build) void {
         "tui",
         "Enable zag-tui product shell (default false; lazy)",
     ) orelse false;
+    const live = b.option(
+        bool,
+        "live",
+        "Enable the live policy layer (default false; forwarded to zag-coding-agent)",
+    ) orelse false;
 
     const core_dep = b.dependency("zag_agent_core", .{
         .target = target,
@@ -26,6 +31,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .http_backend = http_backend,
+        .live = live,
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
 
@@ -38,6 +44,7 @@ pub fn build(b: *std.Build) void {
 
     const cli_opts = b.addOptions();
     cli_opts.addOption(bool, "tui_enabled", tui);
+    cli_opts.addOption(bool, "live_enabled", live);
 
     const mod = b.addModule("zag-cli", .{
         .root_source_file = b.path("src/root.zig"),

@@ -72,8 +72,10 @@ not as a wholesale loop replacement.
   Chez (`chez`) with a version floor and a boot probe; absence disables the
   live surface (fail-closed to static defaults), it never breaks the base
   product.
-- Later tasks: provider bridge via zag-ai (`zag-live-002`), coding-agent
-  prompt surface (`zag-live-003`). Deeper surfaces (tool registry, memory
+- Later tasks: **reordered 2026-08-14** — `zag-live-002` is now the
+  coding-agent prompt surface (needs no image-originated provider calls);
+  `zag-live-003` is the provider bridge via zag-ai (needed only when image
+  policy itself calls the model). Deeper surfaces (tool registry, memory
   policy, input vault, multi-image) each need their own task.
 - **Process-ownership overlap (from contract review A3):** zag-live owns its
   image child process directly — a documented exception to

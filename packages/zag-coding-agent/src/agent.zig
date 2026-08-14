@@ -46,6 +46,7 @@ const tool_policy_mod = core.tool_policy;
 const jail_mod = core.jail;
 const shell_policy_mod = core.shell_policy;
 const context_view_mod = core.context_view;
+const live_policy = @import("live_policy.zig");
 const loop_event_mod = core.loop_event;
 
 pub const Options = struct {
@@ -102,6 +103,12 @@ pub const Options = struct {
     /// Optional source redactor to **clone** into Agent-owned policy.
     /// When set, `secrets` / `pattern_redaction` are ignored for construction.
     redactor: ?*const redact_mod.Redactor = null,
+    /// live-policy-layer (zag-live-002): delegate system-prompt construction
+    /// to the supervised live image at view time. Default off; requires the
+    /// -Dlive build feature (LiveUnavailable at the CLI otherwise).
+    live: bool = false,
+    /// `<workspace>/.zag/live/`, opened cwd-relative by the CLI (contract §3).
+    live_state_dir: ?Io.Dir = null,
 };
 
 pub const OpenMode = enum {
@@ -938,7 +945,15 @@ fn bridgeContextView(
     const bridge: *RunBridge = @ptrCast(@alignCast(ptr.?));
     const a = bridge.agent;
     const session = bridge.session;
-    const layers = session.layers();
+    var layers = session.layers();
+    // live-policy-layer (S3): per-view delegation, no caching; any failure
+    // falls back to the static base_system (live_policy.systemPrompt null).
+    if (a.live) |*h| {
+        if (live_policy.systemPrompt(h, a.io, scratch, layers.system,
+                if (layers.project.len > 0) layers.project else null)) |live_sys| {
+            layers.system = live_sys;
+        }
+    }
     const v = context_mod.viewForModel(
         a.io,
         scratch,
@@ -1274,6 +1289,9 @@ pub const Agent = struct {
     owned_redactor: redact_mod.Redactor,
     /// Optional model switcher (CLI binds WireProvider after Agent.init).
     model_control: ModelControl = .{},
+    /// Live policy layer handle (zag-live-002); null unless options.live and
+    /// bring-up succeeded (any failure degrades to null + one notice, §4).
+    live: ?live_policy.Handle = null,
     /// Test-only toolset override for InvalidToolset fixtures (production always null).
     test_tools: if (builtin.is_test) ?[]const tool.Tool else void =
         if (builtin.is_test) null else {},
@@ -1365,6 +1383,10 @@ pub const Agent = struct {
         };
         self.permission_gate = self.resolveGate();
 
+        if (options.live) {
+            self.live = live_policy.agentInit(gpa, io, options.live_state_dir);
+        }
+
         if (options.trace_path) |tp| {
             self.trace = trace_mod.Trace.init(gpa, io, tp, Io.Dir.cwd());
         }
@@ -1373,6 +1395,7 @@ pub const Agent = struct {
 
     /// Release resources only. Never invents a successful `run_end` for an open trace.
     pub fn deinit(self: *Agent) void {
+        if (self.live) |*h| h.deinit(self.io);
         self.remember_store.deinit();
         if (self.trace) |*tr| {
             tr.setRedactor(null);

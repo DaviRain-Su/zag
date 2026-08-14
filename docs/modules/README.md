@@ -113,6 +113,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [zag-live-provider.md](./zag-live-provider.md) | Track L **draft** | host `ProviderPort` via zag-ai; zag-live stays types-only |
 | [zag-live-prompt.md](./zag-live-prompt.md) | Track L **draft** | coding-agent live prompt surface; default-off |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |
-| [zag-live.md](./zag-live.md) | D-014 Route A **implemented** @ zag-live-001 **done** (2026-08-14; 23/23; review pass) | `packages/zag-live/`; supervised live Scheme image; L2 domain service, `zag-types` only, host ports; no maturity claim |
+| [zag-live.md](./zag-live.md) | D-014 Route A **implemented** (Chez binding, zag-live-001); **D-015 revision draft** ([zag-live-004](../plan/tasks/zag-live-004.md) `draft`) | `packages/zag-live/`; supervised live Scheme image (Chez now, Gambit per D-015); L2 domain service, `zag-types` only, host ports; no maturity claim |
+| [live-policy-layer.md](./live-policy-layer.md) | D-014 Route A **contract draft** ([zag-live-002](../plan/tasks/zag-live-002.md) `draft`; dual review open) | coding-agent `Session.layers()` hook + `Agent`-owned `Live` + `--live`/`-Dlive`; no maturity claim |
 
 总览：[../maturity.md](../maturity.md) · [../phases/H-harden.md](../phases/H-harden.md) · [../phases/C5-context.md](../phases/C5-context.md)  

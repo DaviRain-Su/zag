@@ -43,6 +43,7 @@ pub const project = @import("project.zig");
 pub const skills = @import("skills.zig");
 pub const prompt_templates = @import("prompt_templates.zig");
 pub const doctor = @import("doctor.zig");
+pub const live_policy = @import("live_policy.zig");
 pub const wire_provider = @import("wire_provider.zig");
 pub const fs_tools = @import("runtime/fs_tools.zig");
 pub const edit_tools = @import("runtime/edit_tools.zig");

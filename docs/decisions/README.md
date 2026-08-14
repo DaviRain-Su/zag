@@ -34,3 +34,4 @@ Index (keep in sync when adding notes):
 | [D-012](./active/D-012-complete-local-coding-agent-target.md) | active | Target a complete local coding-agent workflow without product or protocol parity |
 | [D-013](./active/D-013-live-runtime-prototype-track.md) | active | Live self-modification runtime explored as fixed Zig kernel + supervised Scheme prototype track |
 | [D-014](./active/D-014-live-runtime-productization-route-a.md) | active | Productize the live runtime as an opt-in live policy layer (Route A), new zag-live package |
+| [D-015](./active/D-015-live-runtime-gerbil-gambit.md) | active | Live-image runtime switches from Chez to Gerbil/Gambit (compiled gsc image for production) |

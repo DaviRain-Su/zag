@@ -1,4 +1,5 @@
-//! Live — the supervised Chez Scheme image. See docs/modules/zag-live.md.
+//! Live — the supervised live Scheme image (Gambit binding, D-015).
+//! See docs/modules/zag-live.md.
 //!
 //! Trust-critical pieces live here in Zig: frame protocol, journal (fsync
 //! before apply), generations (staged, probe-gated, atomic flip), kernel
@@ -28,7 +29,7 @@ pub const Error = error{
     /// Allocator escape hatch; not a domain error (the §8 vocabulary is the
     /// domain subset below).
     OutOfMemory,
-    ChezUnavailable,
+    ImageUnavailable,
     BootProbeFailed,
     ImageDied,
     ImageRestarted,
@@ -50,20 +51,40 @@ pub const WatchdogConfig = struct {
     deadline_ms: u32 = 2000,
 };
 
+/// The image source ships embedded in the package; the host picks the
+/// spawn form (D-015). gxc is NOT used: its module namespacing hides the
+/// image's own kernel primitives from interaction-eval.
+pub const ImageSource = union(enum) {
+    /// Host-supplied path to a gsc -exe binary built from the embedded
+    /// source (see buildImage). Verified by self-id handshake at start().
+    compiled: []const u8,
+    /// Embedded source via gxi (PATH or explicit). Version floor:
+    /// Gerbil >= 0.18, checked at start().
+    interpreted: Interpreted,
+};
+
+pub const Interpreted = struct {
+    gxi_path: ?[]const u8 = null,
+};
+
 pub const Config = struct {
     /// Journal + generations root. The package never writes outside it.
     state_dir: Io.Dir,
-    /// null = discover "chez" on PATH. Version floor >= 10.0, boot-probed.
-    chez_path: ?[]const u8 = null,
+    image: ImageSource = .{ .interpreted = .{} },
     provider_port: ?ProviderPort = null,
     tool_port: ?ToolPort = null,
     /// Host-controlled additions to the fixed allowlist env ONLY.
     extra_env: []const EnvPair = &.{},
     watchdog: WatchdogConfig = .{},
-    /// Genesis base definitions for generation 0 (written once, when the
-    /// state dir is first initialized).
-    base_source: []const u8 = "(define (greeting) \"hello, live image\")\n",
+    /// Genesis base definitions for generation 0; null = embedded genesis.
+    /// (live-policy-layer rides this field.)
+    base_source: ?[]const u8 = null,
 };
+
+/// Written once into generation 0 when the state dir is first initialized.
+pub const embedded_genesis: []const u8 = "(define (greeting) \"hello, live image\")\n";
+/// Protocol/source identity answered by the self-id handshake.
+pub const image_identity: []const u8 = "(ok (zag-live 1 gambit))";
 
 const image_script = @embedFile("runtime.ss");
 const image_path_in_state = "image.ss";
@@ -89,6 +110,13 @@ pub const Live = struct {
     /// non-empty pending set. Read via needsRecovery().
     needs_recovery: bool = false,
 
+    /// Test seam (classes 13/14): override the image source written for the
+    /// interpreted spawn form.
+    test_image_source: ?[]const u8 = null,
+    /// Test seam (class 14): capture image stderr on a pipe instead of
+    /// inheriting it, for frame-purity/diagnostics assertions.
+    capture_image_stderr: bool = false,
+
     /// Last image-side error text (err reply), for diagnostics. Freed on
     /// the next error or deinit. Read with lastImageError().
     last_image_error: ?[]u8 = null,
@@ -97,10 +125,19 @@ pub const Live = struct {
         return self.last_image_error;
     }
 
-    pub fn init(gpa: Allocator, io: Io, cfg: Config) !Live {
+    /// Cheap validation only (paths exist, spawn form well-formed); the
+    /// boot probe runs at start().
+    pub fn init(gpa: Allocator, io: Io, cfg: Config) Error!Live {
+        if (cfg.image == .compiled) {
+            // Host-supplied path may be absolute or cwd-relative; validate
+            // against cwd (openat semantics ignore dirfd for absolute paths).
+            std.Io.Dir.cwd().access(io, cfg.image.compiled, .{}) catch
+                return error.ImageUnavailable;
+        }
         var abs_buf: [Io.Dir.max_path_bytes]u8 = undefined;
-        const n = try cfg.state_dir.realPath(io, &abs_buf);
-        const image_abs = try std.fmt.allocPrint(gpa, "{s}/" ++ image_path_in_state, .{abs_buf[0..n]});
+        const n = cfg.state_dir.realPath(io, &abs_buf) catch return error.ImageUnavailable;
+        const image_abs = std.fmt.allocPrint(gpa, "{s}/" ++ image_path_in_state, .{abs_buf[0..n]}) catch
+            return error.OutOfMemory;
         return .{ .gpa = gpa, .io = io, .cfg = cfg, .image_abs = image_abs };
     }
 
@@ -123,14 +160,19 @@ pub const Live = struct {
         if (self.started) return;
         try self.ensureStateLocked();
         try gens.cleanupStaleStaging(self.gpa, self.io, self.cfg.state_dir);
-        try self.writeImageLocked();
-        self.spawnLocked() catch |e| switch (e) {
-            error.FileNotFound => return error.ChezUnavailable,
-            else => return error.ChezUnavailable,
-        };
-        self.bootProbeLocked() catch {
+        switch (self.cfg.image) {
+            .interpreted => {
+                try self.writeImageLocked();
+                try self.checkInterpretedFloor(); // Gerbil >= 0.18
+            },
+            .compiled => {},
+        }
+        self.spawnLocked() catch return error.ImageUnavailable;
+        self.bootProbeLocked() catch |e| {
+            // Propagate ImageUnavailable from the self-id handshake
+            // (stale/foreign binary); anything else is a boot failure.
             self.killChildLocked();
-            return error.BootProbeFailed;
+            return e;
         };
         self.replayLocked() catch |e| switch (e) {
             error.JournalCorrupt => {
@@ -184,10 +226,12 @@ pub const Live = struct {
         defer journal.freeRedefs(self.gpa, pend);
         self.quarantine(pend);
         self.killChildLocked();
-        self.spawnLocked() catch return error.ChezUnavailable;
-        self.bootProbeLocked() catch {
+        self.spawnLocked() catch return error.ImageUnavailable;
+        self.bootProbeLocked() catch |e| {
+            // Propagate ImageUnavailable from the self-id handshake
+            // (stale/foreign binary); anything else is a boot failure.
             self.killChildLocked();
-            return error.BootProbeFailed;
+            return e;
         };
         self.replayLocked() catch {
             self.killChildLocked();
@@ -202,8 +246,9 @@ pub const Live = struct {
         return .{ .quarantined = pend.len };
     }
 
-    /// Graceful stop: close stdin; the image's main loop exits on EOF.
-    /// Hard kill after the watchdog deadline as budget. Idempotent.
+    /// Stop discipline (R1): send (kernel.quit), close stdin, wait up to
+    /// deadline_ms, then SIGKILL. Gambit's EOF unreliability must never
+    /// hang deinit(). Idempotent.
     pub fn stop(self: *Live) !void {
         self.watchdog_stop.request();
         if (self.watchdog_thread) |t| {
@@ -215,14 +260,84 @@ pub const Live = struct {
         self.started = false;
         if (self.child) |*c| {
             if (c.stdin) |f| {
+                frame.writeFrame(self.io, f, "(kernel.quit)") catch {};
                 f.close(self.io);
                 c.stdin = null;
             }
-            _ = c.wait(self.io) catch {
-                c.kill(self.io);
-            };
+            if (c.id) |pid| {
+                var status: c_int = 0;
+                var waited_ms: u32 = 0;
+                var reaped = false;
+                while (waited_ms < self.cfg.watchdog.deadline_ms) : (waited_ms += 25) {
+                    const r = std.c.waitpid(pid, &status, 1); // 1 = WNOHANG
+                    if (r != 0) {
+                        reaped = true;
+                        break;
+                    }
+                    Io.sleep(self.io, Io.Duration.fromMilliseconds(25), .awake) catch {};
+                }
+                if (!reaped) {
+                    std.posix.kill(pid, .KILL) catch {};
+                    _ = std.c.waitpid(pid, &status, 0);
+                }
+                c.id = null;
+            }
             self.child = null;
         }
+    }
+
+    /// Build the embedded image source into state_dir/image-bin via gsc
+    /// (discovered by asking gxi, never PATH — PATH's gsc may be
+    /// Ghostscript). gxc is deliberately not used (module namespacing
+    /// breaks interaction-eval; D-015).
+    pub fn buildImage(self: *Live) Error!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        self.buildImageLocked() catch |e| return mapInternal(e);
+    }
+
+    fn buildImageLocked(self: *Live) !void {
+        const dir = self.cfg.state_dir;
+        const gxi_path = switch (self.cfg.image) {
+            .interpreted => |interp| interp.gxi_path orelse "gxi",
+            .compiled => "gxi",
+        };
+        const gsc = try self.findGambitGsc(gxi_path);
+        defer self.gpa.free(gsc);
+        const src_tmp = "image-build.tmp.ss";
+        try gens.writeSmall(self.io, dir, src_tmp, image_script);
+        defer dir.deleteFile(self.io, src_tmp) catch {};
+        const result = std.process.run(self.gpa, self.io, .{
+            .argv = &.{ gsc, "-exe", "-o", "image-bin", src_tmp },
+            .cwd = .{ .dir = dir },
+            .stdout_limit = .limited(16 * 1024),
+            .stderr_limit = .limited(16 * 1024),
+        }) catch return error.ImageUnavailable;
+        defer self.gpa.free(result.stdout);
+        defer self.gpa.free(result.stderr);
+        switch (result.term) {
+            .exited => |code| if (code != 0) return error.ImageUnavailable,
+            else => return error.ImageUnavailable,
+        }
+    }
+
+    /// Discover Gambit's gsc by asking gxi: ~~ is the gerbil home, where
+    /// the real gsc lives. Never PATH.
+    fn findGambitGsc(self: *Live, gxi_path: []const u8) ![]u8 {
+        const result = std.process.run(self.gpa, self.io, .{
+            .argv = &.{ gxi_path, "-e", "(display (path-expand \"~~bin/gsc\"))" },
+            .stdout_limit = .limited(4096),
+            .stderr_limit = .limited(4096),
+        }) catch return error.ImageUnavailable;
+        defer self.gpa.free(result.stdout);
+        defer self.gpa.free(result.stderr);
+        switch (result.term) {
+            .exited => |code| if (code != 0) return error.ImageUnavailable,
+            else => return error.ImageUnavailable,
+        }
+        const gsc = std.mem.trim(u8, result.stdout, " \n");
+        std.Io.Dir.cwd().access(self.io, gsc, .{}) catch return error.ImageUnavailable;
+        return try self.gpa.dupe(u8, gsc);
     }
 
     /// Host-driven eval: bounded result (frame cap) + host deadline
@@ -282,7 +397,7 @@ pub const Live = struct {
     /// OutOfMemory flows through as the standard allocator escape hatch.
     fn mapInternal(e: anyerror) Error {
         return switch (e) {
-            error.ChezUnavailable => error.ChezUnavailable,
+            error.ImageUnavailable => error.ImageUnavailable,
             error.BootProbeFailed => error.BootProbeFailed,
             error.ImageDied => error.ImageDied,
             error.ImageRestarted => error.ImageRestarted,
@@ -321,29 +436,46 @@ pub const Live = struct {
         return env;
     }
 
+    /// Spawn argv for the configured form, built into a caller-frame buffer
+    /// (spawn copies it synchronously). The clean commit probe uses the same
+    /// spawn form as the live image (contract §5).
+    fn spawnArgvLocked(self: *Live, buf: *[2][]const u8) []const []const u8 {
+        return switch (self.cfg.image) {
+            .compiled => |path| blk: {
+                buf[0] = path;
+                break :blk buf[0..1];
+            },
+            .interpreted => |interp| blk: {
+                buf[0] = interp.gxi_path orelse "gxi";
+                buf[1] = self.image_abs;
+                break :blk buf[0..2];
+            },
+        };
+    }
+
+    fn spawnOpts(self: *Live, argv: []const []const u8, env: *const std.process.Environ.Map) std.process.SpawnOptions {
+        return .{
+            .argv = argv,
+            .stdin = .pipe,
+            .stdout = .pipe,
+            .stderr = if (self.capture_image_stderr) .pipe else .inherit,
+            .environ_map = env,
+        };
+    }
+
     fn spawnLocked(self: *Live) !void {
         var env = try self.buildEnvLocked();
         defer env.deinit();
-        self.child = try std.process.spawn(self.io, .{
-            .argv = &.{ self.cfg.chez_path orelse "chez", "--script", self.image_abs },
-            .stdin = .pipe,
-            .stdout = .pipe,
-            .stderr = .inherit,
-            .environ_map = &env,
-        });
+        var argv_buf: [2][]const u8 = undefined;
+        self.child = try std.process.spawn(self.io, self.spawnOpts(self.spawnArgvLocked(&argv_buf), &env));
     }
 
     fn spawnCleanLocked(self: *Live) !std.process.Child {
         if (self.fail_clean_spawn) |e| return e; // test seam
         var env = try self.buildEnvLocked();
         defer env.deinit();
-        return std.process.spawn(self.io, .{
-            .argv = &.{ self.cfg.chez_path orelse "chez", "--script", self.image_abs },
-            .stdin = .pipe,
-            .stdout = .pipe,
-            .stderr = .inherit,
-            .environ_map = &env,
-        });
+        var argv_buf: [2][]const u8 = undefined;
+        return std.process.spawn(self.io, self.spawnOpts(self.spawnArgvLocked(&argv_buf), &env));
     }
 
     fn killChildLocked(self: *Live) void {
@@ -353,23 +485,50 @@ pub const Live = struct {
         }
     }
 
+    /// Boot probe = self-identification handshake (R3): the image answers
+    /// with its protocol/source version; a stale or foreign binary answers
+    /// wrong (or not at all) -> ImageUnavailable.
     fn bootProbeLocked(self: *Live) !void {
-        const v = try self.requestEvalLocked(self.child.?, "(scheme-version)");
-        defer self.gpa.free(v);
-        try checkVersionFloor(v);
+        const child = &self.child.?;
+        frame.writeFrame(self.io, child.stdin.?, "(kernel.self-id)") catch
+            return error.ImageUnavailable;
+        const raw = frame.readFrameDeadline(self.gpa, self.io, child.stdout.?, self.cfg.watchdog.deadline_ms) catch
+            return error.ImageUnavailable;
+        const reply = raw orelse return error.ImageUnavailable;
+        defer self.gpa.free(reply);
+        if (!std.mem.eql(u8, reply, image_identity)) return error.ImageUnavailable;
     }
 
-    /// Chez reports a banner like "Chez Scheme Version 10.4.1"; floor:
-    /// first numeric component >= 10 (contract A9).
-    fn checkVersionFloor(datum: []const u8) Error!void {
-        var i: usize = 0;
-        while (i < datum.len and !std.ascii.isDigit(datum[i])) i += 1;
-        var end = i;
-        while (end < datum.len and std.ascii.isDigit(datum[end])) end += 1;
-        if (i == end) return error.BootProbeFailed;
-        const major = std.fmt.parseInt(u32, datum[i..end], 10) catch
+    /// Interpreted form only: `gxi --version` must report Gerbil >= 0.18.
+    fn checkInterpretedFloor(self: *Live) !void {
+        const interp = self.cfg.image.interpreted;
+        const result = std.process.run(self.gpa, self.io, .{
+            .argv = &.{ interp.gxi_path orelse "gxi", "--version" },
+            .stdout_limit = .limited(4096),
+            .stderr_limit = .limited(4096),
+        }) catch return error.ImageUnavailable;
+        defer self.gpa.free(result.stdout);
+        defer self.gpa.free(result.stderr);
+        switch (result.term) {
+            .exited => |code| if (code != 0) return error.ImageUnavailable,
+            else => return error.ImageUnavailable,
+        }
+        try parseGerbilVersionFloor(result.stdout);
+    }
+
+    /// "Gerbil v0.18.1-..." — floor: Gerbil >= 0.18.
+    fn parseGerbilVersionFloor(text: []const u8) Error!void {
+        const marker = "Gerbil v";
+        const idx = std.mem.indexOf(u8, text, marker) orelse
             return error.BootProbeFailed;
-        if (major < 10) return error.BootProbeFailed;
+        const rest = text[idx + marker.len ..];
+        const dot = std.mem.indexOfScalar(u8, rest, '.') orelse return error.BootProbeFailed;
+        const major = std.fmt.parseInt(u32, rest[0..dot], 10) catch return error.BootProbeFailed;
+        var minor_end = dot + 1;
+        while (minor_end < rest.len and std.ascii.isDigit(rest[minor_end])) minor_end += 1;
+        if (minor_end == dot + 1) return error.BootProbeFailed;
+        const minor = std.fmt.parseInt(u32, rest[dot + 1 .. minor_end], 10) catch return error.BootProbeFailed;
+        if (major == 0 and minor < 18) return error.BootProbeFailed;
     }
 
     // ---------- state init + replay ----------
@@ -380,7 +539,7 @@ pub const Live = struct {
         const base = try gens.genPath(self.gpa, 0, "base.ss");
         defer self.gpa.free(base);
         if (!gens.fileExists(self.io, dir, base))
-            try gens.writeSmall(self.io, dir, base, self.cfg.base_source);
+            try gens.writeSmall(self.io, dir, base, self.cfg.base_source orelse embedded_genesis);
         const replay = try gens.genPath(self.gpa, 0, "replay.ss");
         defer self.gpa.free(replay);
         if (!gens.fileExists(self.io, dir, replay))
@@ -396,7 +555,8 @@ pub const Live = struct {
     }
 
     fn writeImageLocked(self: *Live) !void {
-        try gens.writeSmall(self.io, self.cfg.state_dir, image_path_in_state, image_script);
+        try gens.writeSmall(self.io, self.cfg.state_dir, image_path_in_state,
+            self.test_image_source orelse image_script);
     }
 
     /// Replay authoritative state: base + current generation's replay.ss +
@@ -1088,6 +1248,13 @@ fn containsSymbol(text: []const u8, name: []const u8) bool {
     return false;
 }
 
+test "gerbil version floor: >= 0.18 enforced" {
+    try Live.parseGerbilVersionFloor("Gerbil v0.18.1-78-gc5546da0 on Gambit v4.9.5\n");
+    try Live.parseGerbilVersionFloor("Gerbil v1.0\n");
+    try std.testing.expectError(error.BootProbeFailed, Live.parseGerbilVersionFloor("Gerbil v0.17.0\n"));
+    try std.testing.expectError(error.BootProbeFailed, Live.parseGerbilVersionFloor("garbage"));
+}
+
 test "scanDefines + containsSymbol" {
     const gpa = std.testing.allocator;
     const defs = try scanDefines(gpa,
@@ -1104,9 +1271,4 @@ test "scanDefines + containsSymbol" {
     try std.testing.expect(!containsSymbol(defs[1].text, "greeting"));
 }
 
-test "version floor: >= 10.0 enforced" {
-    try Live.checkVersionFloor("10.4.1");
-    try Live.checkVersionFloor("Chez Scheme Version 10.4.1");
-    try std.testing.expectError(error.BootProbeFailed, Live.checkVersionFloor("Chez Scheme Version 9.5.4"));
-    try std.testing.expectError(error.BootProbeFailed, Live.checkVersionFloor("not-a-version"));
-}
+
