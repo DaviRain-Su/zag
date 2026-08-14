@@ -8,8 +8,10 @@
 > diagnostics surfaced as tool results), zls protocol model — **not** API or
 > source parity (D-009).
 >
-> **Status:** implementation **landed** @ `75f213b` ([lsp-001](../plan/tasks/lsp-001.md)
-> `implemented`). Dual review / Gate closeout still **pending**. Zig 0.16
+> **Status:** **implemented** @ `75f213b` ([lsp-001](../plan/tasks/lsp-001.md)).
+> Wave 2 closeout 2026-08-14: [architecture](../plan/reviews/lsp-001-01-architecture.md)
+> PASS · [safety](../plan/reviews/lsp-001-02-safety.md) PASS. Owns spawn
+> until [long-lived slots](./process-supervisor-long-lived.md). Zig 0.16
 > (`std.Io` era) APIs assumed throughout.
 >
 > **Update (2026-08-07):** implemented per this binding by lsp-001

@@ -92,6 +92,12 @@ pub fn validateSpec(spec: Spec) error{SpawnFailed}!void {
     }
 }
 
+/// Supervisor-side ShellPolicy seam (fixture 7). Core still applies
+/// ShellPolicy before the handler; this rejects deny without spawn.
+pub fn rejectDeniedShell(mode: shell_policy.Mode, command: []const u8) error{SpawnFailed}!void {
+    if (shell_policy.check(mode, command) == .deny) return error.SpawnFailed;
+}
+
 pub fn spawn(gpa: std.mem.Allocator, io: Io, spec: Spec) SpawnError!Handle {
     try validateSpec(spec);
     const child = std.process.spawn(io, .{
@@ -123,9 +129,17 @@ pub fn cancel(handle: *Handle, mode: CancelMode) void {
     handle.terminal = .{ .code = .cancelled };
 }
 
-/// Block until the child exits. After `cancel`, returns the stored terminal.
+/// Block until the child exits. After `cancel`, reaps if still live, then
+/// returns the stored terminal (F1: no zombie until deinit).
 pub fn wait(handle: *Handle) Terminal {
-    if (handle.terminal) |t| return t;
+    if (handle.terminal) |t| {
+        if (handle.child.id != null) {
+            const term = handle.child.wait(handle.io) catch return t;
+            handle.terminal = .{ .code = t.code, .term = term };
+            return handle.terminal.?;
+        }
+        return t;
+    }
     const term = handle.child.wait(handle.io) catch {
         handle.terminal = .{ .code = .failed };
         return handle.terminal.?;
@@ -280,7 +294,8 @@ test "fixture 6: output over cap is truncated and finite" {
 }
 
 test "fixture 7: ShellPolicy deny means no spawn" {
-    try std.testing.expectEqual(shell_policy.Decision.deny, shell_policy.check(.protect, "rm -rf /"));
+    try std.testing.expectError(error.SpawnFailed, rejectDeniedShell(.protect, "rm -rf /"));
+    try rejectDeniedShell(.protect, "echo ok");
 }
 
 test "fixture 8: jail cwd escape fail-closed pre-spawn" {

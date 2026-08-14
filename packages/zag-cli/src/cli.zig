@@ -617,21 +617,18 @@ pub fn run(init: std.process.Init) !void {
                 app.destroy();
                 std.process.exit(1);
             };
-            // Bind model switcher so TUI /model can change the active wire model.
+            // Bind model switcher so TUI /model can change provider + model.
+            var model_host = tui_entry.TuiModelHost{
+                .gpa = gpa,
+                .io = io,
+                .env = init.environ_map,
+                .wp = &wire_prov,
+            };
+            model_host.setSpec(resolved.spec_id);
             agent.setModelControl(.{
-                .ptr = &wire_prov,
-                .setModelFn = struct {
-                    fn f(ptr: *anyopaque, model: []const u8) anyerror!void {
-                        const wp: *coding.WireProvider = @ptrCast(@alignCast(ptr));
-                        try wp.setModel(model);
-                    }
-                }.f,
-                .getModelFn = struct {
-                    fn f(ptr: *anyopaque) []const u8 {
-                        const wp: *coding.WireProvider = @ptrCast(@alignCast(ptr));
-                        return wp.getModel();
-                    }
-                }.f,
+                .ptr = &model_host,
+                .setModelFn = tui_entry.TuiModelHost.setModelFn,
+                .getModelFn = tui_entry.TuiModelHost.getModelFn,
             });
 
             var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
@@ -640,6 +637,7 @@ pub fn run(init: std.process.Init) !void {
                 app.destroy();
                 std.process.exit(1);
             };
+            const picker = tui_entry.collectTuiModelPicker(arena, init.environ_map, resolved.spec_id, resolved.config.model, &wire_prov);
             const tui_host_opts: tui_entry.HostResourceOptions = .{
                 .skills_enabled = host_opts.skills_enabled,
                 .project_skills_trust = host_opts.project_skills_trust,
@@ -651,41 +649,9 @@ pub fn run(init: std.process.Init) !void {
                     .themes_root = resolveUserThemesRoot(arena, init.environ_map) catch null,
                     .selected_id = null,
                 },
-                .model_label = resolved.config.model,
-                .model_ids = blk: {
-                    // Prefer live GET /models from the current provider.
-                    // Fall back to catalog ids for the resolved provider when
-                    // the wire does not support listing (or the call fails).
-                    var list_arena_impl: std.heap.ArenaAllocator = .init(arena);
-                    defer list_arena_impl.deinit();
-                    const list_arena = list_arena_impl.allocator();
-                    if (wire.listModels(list_arena)) |live| {
-                        if (live.len > 0) {
-                            const cap = @min(live.len, 48);
-                            const ids = arena.alloc([]const u8, cap) catch break :blk &.{};
-                            var mi: usize = 0;
-                            while (mi < cap) : (mi += 1) {
-                                ids[mi] = arena.dupe(u8, live[mi]) catch break :blk &.{};
-                            }
-                            break :blk ids;
-                        }
-                    } else |_| {}
-                    // Catalog fallback: only models for this provider.
-                    var tmp: std.ArrayList(ai.ModelInfo) = .empty;
-                    defer tmp.deinit(arena);
-                    ai.catalog.listForProvider(resolved.spec_id, &tmp, arena) catch break :blk &.{};
-                    if (tmp.items.len == 0) {
-                        // Last resort: current model only.
-                        const ids = arena.alloc([]const u8, 1) catch break :blk &.{};
-                        ids[0] = resolved.config.model;
-                        break :blk ids;
-                    }
-                    const cap = @min(tmp.items.len, 48);
-                    const ids = arena.alloc([]const u8, cap) catch break :blk &.{};
-                    var mi: usize = 0;
-                    while (mi < cap) : (mi += 1) ids[mi] = tmp.items[mi].id;
-                    break :blk ids;
-                },
+                .model_label = picker.label,
+                .model_ids = picker.ids,
+                .model_keys = picker.keys,
             };
             const result = tui_entry.runTui(.{
                 .gpa = gpa,

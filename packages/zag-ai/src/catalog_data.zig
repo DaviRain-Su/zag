@@ -26,7 +26,7 @@ pub const ModelInfo = struct {
     cost: ?CostRates = null,
 };
 
-/// 40 models — frozen at compile time.
+/// 43 models — frozen at compile time.
 pub const models: []const ModelInfo = &[_]ModelInfo{
     .{ .id = "claude-haiku-4-5-20251001", .name = "Claude Haiku 4.5", .provider = "anthropic", .context_window = 200000, .max_output_tokens = 64000, .reasoning = false, .vision = true, .cost = .{ .input = 1.0, .output = 5.0, .cache_read = 0.1, .cache_write = 1.25 } },
     .{ .id = "claude-opus-4-20250514", .name = "Claude Opus 4", .provider = "anthropic", .context_window = 200000, .max_output_tokens = 32000, .reasoning = true, .vision = true, .cost = .{ .input = 15.0, .output = 75.0, .cache_read = 1.5, .cache_write = 18.75 } },
@@ -50,12 +50,15 @@ pub const models: []const ModelInfo = &[_]ModelInfo{
     .{ .id = "kimi-k2.5", .name = "Kimi K2.5 (CN)", .provider = "moonshotai-cn", .context_window = 256000, .max_output_tokens = 16384, .reasoning = true, .vision = false, .cost = null },
     .{ .id = "deepseek-ai/deepseek-v3.1", .name = "DeepSeek V3.1 (NVIDIA)", .provider = "nvidia", .context_window = 128000, .max_output_tokens = 8192, .reasoning = false, .vision = false, .cost = null },
     .{ .id = "meta/llama-3.3-70b-instruct", .name = "Llama 3.3 70B (NVIDIA)", .provider = "nvidia", .context_window = 128000, .max_output_tokens = 16384, .reasoning = false, .vision = false, .cost = null },
+    .{ .id = "deepseek-v4-flash:0731", .name = "DeepSeek V4 Flash (Ollama Cloud)", .provider = "ollama-cloud", .context_window = 128000, .max_output_tokens = 8192, .reasoning = false, .vision = false, .cost = null },
     .{ .id = "gpt-4.1", .name = "GPT-4.1", .provider = "openai", .context_window = 1047576, .max_output_tokens = 32768, .reasoning = false, .vision = true, .cost = .{ .input = 2.0, .output = 8.0, .cache_read = 0.5, .cache_write = 2.0 } },
     .{ .id = "gpt-4.1-mini", .name = "GPT-4.1 mini", .provider = "openai", .context_window = 1047576, .max_output_tokens = 32768, .reasoning = false, .vision = true, .cost = .{ .input = 0.4, .output = 1.6, .cache_read = 0.1, .cache_write = 0.4 } },
     .{ .id = "gpt-4o", .name = "GPT-4o", .provider = "openai", .context_window = 128000, .max_output_tokens = 16384, .reasoning = false, .vision = true, .cost = .{ .input = 2.5, .output = 10.0, .cache_read = 1.25, .cache_write = 2.5 } },
     .{ .id = "gpt-4o-mini", .name = "GPT-4o mini", .provider = "openai", .context_window = 128000, .max_output_tokens = 16384, .reasoning = false, .vision = true, .cost = .{ .input = 0.15, .output = 0.6, .cache_read = 0.075, .cache_write = 0.15 } },
     .{ .id = "o3", .name = "o3", .provider = "openai", .context_window = 200000, .max_output_tokens = 100000, .reasoning = true, .vision = false, .cost = .{ .input = 10.0, .output = 40.0, .cache_read = 2.5, .cache_write = 10.0 } },
     .{ .id = "o4-mini", .name = "o4-mini", .provider = "openai", .context_window = 200000, .max_output_tokens = 100000, .reasoning = true, .vision = false, .cost = .{ .input = 1.1, .output = 4.4, .cache_read = 0.275, .cache_write = 1.1 } },
+    .{ .id = "deepseek-v4-flash", .name = "DeepSeek V4 Flash (OpenCode Go)", .provider = "opencode-go", .context_window = 128000, .max_output_tokens = 8192, .reasoning = false, .vision = false, .cost = null },
+    .{ .id = "claude-sonnet-4-5", .name = "Claude Sonnet 4.5 (OpenCode Zen)", .provider = "opencode-zen", .context_window = 200000, .max_output_tokens = 64000, .reasoning = true, .vision = true, .cost = null },
     .{ .id = "anthropic/claude-sonnet-4", .name = "Claude Sonnet 4 (OpenRouter)", .provider = "openrouter", .context_window = 200000, .max_output_tokens = 64000, .reasoning = true, .vision = true, .cost = .{ .input = 3.0, .output = 15.0, .cache_read = 0.3, .cache_write = 3.75 } },
     .{ .id = "deepseek/deepseek-v4-flash", .name = "DeepSeek V4 Flash (OpenRouter)", .provider = "openrouter", .context_window = 1000000, .max_output_tokens = 384000, .reasoning = false, .vision = false, .cost = .{ .input = 0.14, .output = 0.28, .cache_read = 0.014, .cache_write = 0.28 } },
     .{ .id = "openai/gpt-4o-mini", .name = "GPT-4o mini (OpenRouter)", .provider = "openrouter", .context_window = 128000, .max_output_tokens = 16384, .reasoning = false, .vision = true, .cost = .{ .input = 0.15, .output = 0.6, .cache_read = 0.075, .cache_write = 0.15 } },

@@ -57,12 +57,18 @@ pub const LineStore = struct {
     len: usize = 0,
 
     /// Append one formatted line; returns a slice valid until the next
-    /// `len = 0` reset. Null when the store is full (line skipped).
+    /// `reset`. Null when the store is full (line skipped).
     pub fn format(self: *LineStore, comptime fmt: []const u8, args: anytype) ?[]const u8 {
         if (self.len >= self.buf.len) return null;
         const s = std.fmt.bufPrint(self.buf[self.len..], fmt, args) catch return null;
         self.len += s.len;
         return s;
+    }
+
+    /// Per-frame rewind. vaxis `screen_last` copies graphemes during
+    /// `render()`, so resetting here (next frame, before draw) is safe.
+    pub fn reset(self: *LineStore) void {
+        self.len = 0;
     }
 };
 
@@ -94,6 +100,9 @@ pub const Terminal = struct {
     md_arena: std.heap.ArenaAllocator,
     /// restore() is one-shot teardown.
     closed: bool = false,
+    /// Foreground pgroup we displaced in `open()` so Ctrl+C hits only zag
+    /// (not `zig build run`). Null = we did not claim (PTY / background).
+    orig_pgrp: ?posix.pid_t = null,
 
     /// Tty.init → vaxis.init → ISIG shim. NO alt screen / queries / bridge
     /// yet: app.zig checks `size()` (and exits on below-minimum) before
@@ -120,18 +129,7 @@ pub const Terminal = struct {
 
         // ISIG shim: makeRaw cleared ISIG; the Guard Ctrl+C path requires it
         // ON. Everything else stays raw (ICANON/ECHO/IXON off etc.).
-        // Product Tty: `fd: std.Io.File` → `.handle`. TestTty: bare `posix.fd_t`.
-        const T = @TypeOf(tty.*);
-        if (@hasField(T, "fd")) {
-            const FdT = @TypeOf(tty.fd);
-            const fd: posix.fd_t = if (comptime FdT == posix.fd_t)
-                tty.fd
-            else if (comptime @hasField(FdT, "handle"))
-                tty.fd.handle
-            else
-                @compileError("unexpected Tty.fd type");
-            reenableIsig(fd) catch {};
-        }
+        if (ttyFd(tty)) |fd| reenableIsig(fd) catch {};
 
         var env_map = try gpa.create(std.process.Environ.Map);
         errdefer {
@@ -144,6 +142,10 @@ pub const Terminal = struct {
         errdefer gpa.destroy(vx);
         vx.* = try vaxis.init(io, gpa, env_map, .{});
 
+        // Claim after every fallible init so a failed open never leaves the
+        // TTY in our pgroup. PTY fixtures / background jobs skip this.
+        const orig_pgrp = if (ttyFd(tty)) |fd| claimForeground(fd) else null;
+
         return .{
             .gpa = gpa,
             .tty = tty,
@@ -155,6 +157,7 @@ pub const Terminal = struct {
             .ring = vaxis.Queue(Event, ring_capacity).init(io),
             .wake_w = wake_w,
             .md_arena = std.heap.ArenaAllocator.init(gpa),
+            .orig_pgrp = orig_pgrp,
         };
     }
 
@@ -177,23 +180,32 @@ pub const Terminal = struct {
         self.loop.start() catch return error.WriteFailed;
         // Best-effort capability queries; failures degrade to defaults.
         self.vx.queryTerminal(self.tty.writer(), .fromMilliseconds(250)) catch {};
+        // tui-vaxis-001: no kitty-keyboard in v1. queryTerminal enables CSI u
+        // when the terminal answers the query; that protocol's
+        // report_all_as_ctl_seqs path swallows IME composition (CJK) on
+        // Kitty / Ghostty / WezTerm / iTerm2. Pop immediately if it engaged.
+        popKittyKeyboard(self.vx, self.tty.writer());
         const ws = self.tty.getWinsize() catch @as(vaxis.Winsize, .{ .rows = 24, .cols = 80, .x_pixel = 0, .y_pixel = 0 });
         self.vx.resize(self.gpa, self.tty.writer(), ws) catch {};
         self.bridge = std.Thread.spawn(.{}, bridgeMain, .{self}) catch return error.WriteFailed;
     }
 
     /// One-shot teardown: stop the bridge → leave the alt screen + restore
-    /// the exact original termios. vaxis's own input thread is deliberately
-    /// left running: its blocking read can only be interrupted by terminal
-    /// data (`loop.stop()` writes a DSR and waits for the answer — the PTY
-    /// process fixture has no emulator to answer, so that await would hang
-    /// the child forever). The process exits right after restore, so the
-    /// thread and the Threaded pool are reclaimed by the OS. tty/vx/threaded
-    /// stay heap-live (not freed) so the blocked input thread never touches
-    /// freed memory.
+    /// the exact original termios → hand the TTY FG pgroup back. vaxis's
+    /// own input thread is deliberately left running: its blocking read can
+    /// only be interrupted by terminal data (`loop.stop()` writes a DSR and
+    /// waits for the answer — the PTY process fixture has no emulator to
+    /// answer, so that await would hang the child forever). The process
+    /// exits right after restore, so the thread and the Threaded pool are
+    /// reclaimed by the OS. tty/vx/threaded stay heap-live (not freed) so
+    /// the blocked input thread never touches freed memory.
     pub fn restore(self: *Terminal) error{WriteFailed}!void {
         if (self.closed) return;
         self.closed = true;
+
+        // If we never isolated the FG pgroup, a parent (zig build) may
+        // already be dying from the same Ctrl+C — restore cooked now.
+        if (self.orig_pgrp == null) restoreTermiosNow(self.tty);
 
         if (self.bridge) |*th| {
             self.quit.store(true, .release);
@@ -208,8 +220,13 @@ pub const Terminal = struct {
         }
         // resetState: leaves the alt screen (rmcup), shows the cursor.
         self.vx.deinit(self.gpa, self.tty.writer());
-        // Restores the exact original termios (ISIG included).
+        // Restores the exact original termios (ISIG included) while we are
+        // still the FG pgroup when claimForeground succeeded.
         self.tty.deinit();
+        if (self.orig_pgrp) |orig| {
+            if (ttyFd(self.tty)) |fd| releaseForeground(fd, orig);
+            self.orig_pgrp = null;
+        }
         self.env_map.deinit();
         // The markdown parse arena (grapheme source for the screen cells).
         self.md_arena.deinit();
@@ -266,12 +283,126 @@ fn bridgeMain(self: *Terminal) void {
     }
 }
 
+/// Leave kitty keyboard mode if queryTerminal just entered it. The pop
+/// sequence is the same CSI u pop vaxis resetState sends on teardown.
+fn popKittyKeyboard(vx: *vaxis.Vaxis, writer: *std.Io.Writer) void {
+    if (!vx.state.kitty_keyboard) {
+        vx.caps.kitty_keyboard = false;
+        return;
+    }
+    writer.writeAll("\x1b[<u") catch {};
+    writer.flush() catch {};
+    vx.state.kitty_keyboard = false;
+    vx.caps.kitty_keyboard = false;
+}
+
 /// Re-enable ISIG on a tty fd (vaxis makeRaw clears it; Guard Ctrl+C needs
 /// SIGINT delivery). Preserves every other raw-mode setting.
 fn reenableIsig(fd: posix.fd_t) posix.TermiosSetError!void {
     var t = try posix.tcgetattr(fd);
     t.lflag.ISIG = true;
     try posix.tcsetattr(fd, .FLUSH, t);
+}
+
+/// Product Tty: `fd: std.Io.File` → `.handle`. TestTty: bare `posix.fd_t`
+/// (linux) or no fd field (elsewhere).
+fn ttyFd(tty: anytype) ?posix.fd_t {
+    const T = @TypeOf(tty.*);
+    if (!@hasField(T, "fd")) return null;
+    const FdT = @TypeOf(tty.fd);
+    if (comptime FdT == posix.fd_t) return tty.fd;
+    if (comptime @hasField(FdT, "handle")) return tty.fd.handle;
+    return null;
+}
+
+fn restoreTermiosNow(tty: anytype) void {
+    if (!@hasField(@TypeOf(tty.*), "termios")) return;
+    const fd = ttyFd(tty) orelse return;
+    posix.tcsetattr(fd, .NOW, tty.termios) catch {};
+}
+
+/// Take our own FG pgroup so Ctrl+C does not also signal `zig build run`.
+/// Only when we are already the FG job — never steal a background TTY.
+fn claimForeground(fd: posix.fd_t) ?posix.pid_t {
+    if (builtin.os.tag == .windows) return null;
+    const ours = processGroup() orelse return null;
+    const fg = ttyGetPgrp(fd) orelse return null;
+    if (fg != ours) return null;
+    if (!setProcessGroup(0, 0)) return null;
+    const neu = processGroup() orelse {
+        _ = setProcessGroup(0, fg);
+        return null;
+    };
+    if (!tcsetpgrpQuiet(fd, neu)) {
+        _ = setProcessGroup(0, fg);
+        return null;
+    }
+    return fg;
+}
+
+fn releaseForeground(fd: posix.fd_t, orig: posix.pid_t) void {
+    _ = tcsetpgrpQuiet(fd, orig);
+}
+
+fn tcsetpgrpQuiet(fd: posix.fd_t, pgrp: posix.pid_t) bool {
+    if (builtin.os.tag == .windows) return false;
+    var old: posix.Sigaction = undefined;
+    var ign = posix.Sigaction{
+        .handler = .{ .handler = posix.SIG.IGN },
+        .mask = switch (builtin.os.tag) {
+            .macos => 0,
+            else => posix.sigemptyset(),
+        },
+        .flags = 0,
+    };
+    posix.sigaction(posix.SIG.TTOU, &ign, &old);
+    defer posix.sigaction(posix.SIG.TTOU, &old, null);
+    return ttySetPgrp(fd, pgrp);
+}
+
+fn processGroup() ?posix.pid_t {
+    if (builtin.os.tag == .linux and !builtin.link_libc) {
+        const rc = std.os.linux.getpgid(0);
+        return if (std.os.linux.errno(rc) == .SUCCESS) @intCast(rc) else null;
+    }
+    const libc_pg = struct {
+        extern "c" fn getpgid(pid: posix.pid_t) posix.pid_t;
+    };
+    const pgid = libc_pg.getpgid(0);
+    return if (pgid < 0) null else pgid;
+}
+
+fn setProcessGroup(pid: posix.pid_t, pgid: posix.pid_t) bool {
+    if (builtin.os.tag == .linux and !builtin.link_libc) {
+        const rc = std.os.linux.setpgid(pid, pgid);
+        return std.os.linux.errno(rc) == .SUCCESS;
+    }
+    return std.c.setpgid(pid, pgid) == 0;
+}
+
+fn ttyGetPgrp(fd: posix.fd_t) ?posix.pid_t {
+    if (builtin.os.tag == .linux and !builtin.link_libc) {
+        var pgrp: posix.pid_t = 0;
+        const rc = std.os.linux.tcgetpgrp(fd, &pgrp);
+        return if (std.os.linux.errno(rc) == .SUCCESS) pgrp else null;
+    }
+    const libc_tty = struct {
+        extern "c" fn tcgetpgrp(fildes: c_int) posix.pid_t;
+    };
+    const pg = libc_tty.tcgetpgrp(fd);
+    return if (pg < 0) null else pg;
+}
+
+fn ttySetPgrp(fd: posix.fd_t, pgrp: posix.pid_t) bool {
+    if (builtin.os.tag == .linux and !builtin.link_libc) {
+        var pg = pgrp;
+        const rc = std.os.linux.tcsetpgrp(fd, &pg);
+        return std.os.linux.errno(rc) == .SUCCESS;
+    }
+    const libc_tty = struct {
+        extern "c" fn tcsetpgrp(fildes: c_int, pgid: posix.pid_t) c_int;
+    };
+    return libc_tty.tcsetpgrp(fd, pgrp) == 0;
 }
 
 /// Test-only offscreen backend (RecTerm rework): a real Terminal shell whose
@@ -595,4 +726,42 @@ test "ISIG re-enabled after vaxis raw (skip without tty)" {
     // Raw settings preserved by the shim.
     try std.testing.expect(!after_shim.lflag.ICANON);
     try std.testing.expect(!after_shim.lflag.ECHO);
+}
+
+test "claimForeground skips non-tty fds" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const fds = try makeWakePipe();
+    defer {
+        _ = std.c.close(fds[0]);
+        _ = std.c.close(fds[1]);
+    }
+    try std.testing.expectEqual(@as(?posix.pid_t, null), claimForeground(fds[0]));
+}
+
+test "popKittyKeyboard emits CSI u pop and clears the flag" {
+    const gpa = std.testing.allocator;
+    var env_map = std.process.Environ.Map.init(gpa);
+    defer env_map.deinit();
+    var vx = try vaxis.init(std.testing.io, gpa, &env_map, .{});
+    var deinit_writer: std.Io.Writer.Allocating = .init(gpa);
+    defer deinit_writer.deinit();
+    defer vx.deinit(gpa, &deinit_writer.writer);
+
+    vx.state.kitty_keyboard = true;
+    vx.caps.kitty_keyboard = true;
+    var pop_writer: std.Io.Writer.Allocating = .init(gpa);
+    defer pop_writer.deinit();
+    popKittyKeyboard(&vx, &pop_writer.writer);
+    try std.testing.expect(!vx.state.kitty_keyboard);
+    try std.testing.expect(!vx.caps.kitty_keyboard);
+    try std.testing.expectEqualStrings("\x1b[<u", pop_writer.written());
+}
+
+test "LineStore format returns null when full and works after reset" {
+    var store = LineStore{};
+    while (store.format("x", .{})) |_| {}
+    try std.testing.expect(store.format("y", .{}) == null);
+    store.reset();
+    const s = store.format("perm:ask", .{}) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualStrings("perm:ask", s);
 }

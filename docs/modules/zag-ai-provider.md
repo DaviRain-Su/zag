@@ -56,7 +56,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | 传输 | `openai-zig` / zag-ai `http` | 同一 `-Dhttp_backend=std\|curl`（[D-005](../decisions/complete/D-005-outbound-http-std-not-httpz.md) 已收口；默认 std） |
 | 共享 `wire.Error` | ✅；`mapSdkError` 仅 OpenAI 适配器 |
 | `WireAdapter.embed` | ✅ OpenAI 实现；Anthropic → `NotSupported` |
-| presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning） |
+| presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning）；TUI `/model` lists every env-keyed provider and rebinds the wire on select |
 | Agent `if` 厂商 | 禁止（保持） |
 
 ### Wire 边界（故意收窄）

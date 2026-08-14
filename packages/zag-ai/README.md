@@ -104,11 +104,14 @@ Same key for regional twins → **global first** (set `ZAG_PROVIDER` for CN).
 | `nvidia` | `NVIDIA_API_KEY` | `meta/llama-3.3-70b-instruct` |
 | `fireworks` | `FIREWORKS_API_KEY` | Fireworks Llama 3.3 70B |
 | `huggingface` | `HF_TOKEN` | Llama 3.1 8B |
+| `opencode-go` | `OPENCODE_API_KEY` / `OPENCODE_GO_API_KEY` | `deepseek-v4-flash` |
+| `opencode-zen` | `OPENCODE_API_KEY` / `OPENCODE_ZEN_API_KEY` | `claude-sonnet-4-5` |
 | `moonshotai` | `MOONSHOT_API_KEY` | `kimi-k2.5` |
 | `moonshotai-cn` | `MOONSHOT_API_KEY` | `kimi-k2.5` (CN base URL) |
 | `zai` | `ZAI_API_KEY` | `glm-4.7` |
 | `zai-coding-cn` | `ZAI_CODING_CN_API_KEY` | `glm-4.7` |
 | `xiaomi` | `XIAOMI_API_KEY` | `mimo-v2-flash` |
+| `ollama-cloud` | `OLLAMA_API_KEY` | `deepseek-v4-flash:0731` |
 
 ### anthropic_messages
 

@@ -13,6 +13,10 @@ pub const card_slots: usize = ordinary_card_slots + terminal_reserve_slots + hos
 
 pub const card_title_max_bytes: usize = 128;
 pub const card_body_max_bytes: usize = 4096;
+/// Tool-card body lines actually painted (title + this many + optional
+/// "… +N lines" footer). Estimate/measure/render must share this cap or
+/// a 4 KB glob/grep dump is reserved as ~100 blank rows.
+pub const tool_body_max_lines: u16 = 6;
 pub const permission_tool_name_max_bytes: usize = 64;
 
 /// Exact 14-byte ASCII truncation marker (not U+2026).

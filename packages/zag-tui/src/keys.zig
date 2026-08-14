@@ -2,16 +2,18 @@
 //!
 //! Hand-rolled byte decoding is gone: vaxis's parser produces `vaxis.Key`
 //! events (codepoint + modifiers + UTF-8 text). This module maps those into
-//! the app's key vocabulary. Printable codepoints are UTF-8-encoded into the
-//! caller-provided `out` buffer (4 bytes max) so multi-byte input like "你"
-//! inserts as one codepoint instead of byte-by-byte.
+//! the app's key vocabulary. Printable input prefers `key.text` (IME commit
+//! and multi-codepoint graphemes) and otherwise UTF-8-encodes the codepoint
+//! into the caller-provided `out` buffer (4 bytes max) so "你" inserts as
+//! one codepoint instead of byte-by-byte.
 
 const std = @import("std");
 const vaxis = @import("vaxis");
 
 pub const AppKey = union(enum) {
-    /// UTF-8 encoding of a printable codepoint; slice borrows `out` from
-    /// `mapKey` and is valid until the next `mapKey` call.
+    /// Printable UTF-8. Borrows `key.text` when the parser supplied it
+    /// (IME / grapheme), otherwise a slice of `out` from `mapKey`. Valid
+    /// until the next `mapKey` call.
     char: []const u8,
     enter,
     alt_enter,
@@ -91,6 +93,15 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
         else => {},
     }
 
+    // IME commit and multi-codepoint graphemes arrive as `key.text` (vaxis
+    // TextInput's path). Chords already returned above; do not insert the
+    // text field of an unhandled Ctrl/Alt/Super combo.
+    if (!mods.ctrl and !mods.alt and !mods.super) {
+        if (key.text) |text| {
+            if (isInsertableText(text)) return .{ .char = text };
+        }
+    }
+
     // Printable: encode the codepoint (multi-byte UTF-8 in one insert).
     // vaxis encodes special keys (arrows etc.) in the private-use area
     // starting at Key.insert; those are handled above and must not map here.
@@ -99,6 +110,15 @@ pub fn mapKey(key: vaxis.Key, out: *[4]u8) AppKey {
         return .{ .char = out[0..n] };
     }
     return .unknown;
+}
+
+fn isInsertableText(text: []const u8) bool {
+    if (text.len == 0) return false;
+    if (!std.unicode.utf8ValidateSlice(text)) return false;
+    for (text) |b| {
+        if (b < 0x20 or b == 0x7F) return false;
+    }
+    return true;
 }
 
 // ── fixtures (tui-vaxis-001) ────────────────────────────────────────────────
@@ -180,4 +200,33 @@ test "mapKey: unknown inputs" {
     try std.testing.expect(mapKey(k(vaxis.Key.f1), &out) == .f1); // help
     try std.testing.expect(mapKey(k(0x00), &out) == .unknown);
     try std.testing.expect(mapKey(.{ .codepoint = vaxis.Key.multicodepoint }, &out) == .unknown);
+}
+
+test "mapKey: IME text field inserts (你好)" {
+    var out: [4]u8 = undefined;
+    const key = mapKey(.{
+        .codepoint = vaxis.Key.multicodepoint,
+        .text = "你好",
+    }, &out);
+    try std.testing.expect(key == .char);
+    try std.testing.expectEqualStrings("你好", key.char);
+}
+
+test "mapKey: key.text wins over codepoint for a single CJK char" {
+    var out: [4]u8 = undefined;
+    const key = mapKey(.{
+        .codepoint = 0x4F60,
+        .text = "你",
+    }, &out);
+    try std.testing.expect(key == .char);
+    try std.testing.expectEqualStrings("你", key.char);
+}
+
+test "mapKey: ctrl chord does not insert key.text" {
+    var out: [4]u8 = undefined;
+    try std.testing.expect(mapKey(.{
+        .codepoint = 'c',
+        .mods = .{ .ctrl = true },
+        .text = "c",
+    }, &out) == .ctrl_c);
 }

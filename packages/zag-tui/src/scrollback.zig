@@ -204,11 +204,23 @@ pub const Scrollback = struct {
                 }
             }
             old_geo.deinit(self.gpa);
+            // vy must match the new geo before settle's binary search;
+            // otherwise a burst of new cards (explore / tool flood) is
+            // searched against a stale shorter vy and the bottom estimates
+            // are painted as hundred-row blanks for a frame.
+            self.rebuildVy();
             self.geometry_dirty = false;
         }
         if (width != self.last_width) {
             self.last_width = width;
             self.invalidateAll();
+        }
+
+        // Follow targets the (estimated) bottom so this frame's settle
+        // measures the cards the user will actually see. Final re-pin
+        // after settle still matches review #7 (settle → re-pin → paint).
+        if (self.follow_mode) {
+            self.scroll_offset = self.maxOffset(viewport_h);
         }
 
         // Settle: measure the visible window ± margin exactly, repeat until
@@ -367,27 +379,37 @@ pub const Scrollback = struct {
 /// Estimate-only height: char-ceil over source lines using byte length
 /// with a conservative width/2 (UTF-8 CJK ≈ 3 bytes / 2 cells) — no
 /// markdown render. Assistant cards render their body flush-left
-/// (no title row); user cards add a title row; tool/host_error/drop
-/// are single-title rows. The estimate never underestimates the real
-/// wrapped row count (every rendered row holds at least width/2 bytes),
-/// so lazy-measurement windows never skip a top-straddling card.
+/// (no title row); user cards add a title row. Tool cards match the
+/// truncated painter (title + ≤ `tool_body_max_lines` + footer), and
+/// thinking cards match the collapsed header (1 row). The estimate
+/// never underestimates the real painted row count, so lazy-measurement
+/// windows never skip a top-straddling card.
 pub fn estimateCard(slot: *const cards.CardSlot, content_width: u16, assistant: bool) u16 {
+    const title = slot.titleSlice();
     if (assistant) {
         const half: usize = @max(@max(content_width, 1) / 2, 1);
         const rows = estBody(slot.bodySlice(), half);
         return @intCast(@min(@max(rows, 1), 65535));
     }
-    const half: usize = @max(@max(content_width, 1) / 2, 1);
-    var rows: u64 = 0;
-    const has_body = slot.kind == .user or std.mem.startsWith(u8, slot.titleSlice(), "tool ") or std.mem.startsWith(u8, slot.titleSlice(), "thinking");
-    if (has_body) {
-        rows = 1; // title row
-        rows += estBody(slot.bodySlice(), half);
-    } else {
-        // Single title row (no body rendering).
-        rows = 1;
+    if (std.mem.startsWith(u8, title, "thinking progressive")) {
+        // Live thinking paints the streaming body (header + wrap).
+        const half: usize = @max(@max(content_width, 1) / 2, 1);
+        return @intCast(@min(1 + estBody(slot.bodySlice(), half), 65535));
     }
-    return @intCast(@min(rows, 65535));
+    if (std.mem.startsWith(u8, title, "thinking")) {
+        // Finalized thought: collapsed header unless Ctrl+E expands.
+        return 1;
+    }
+    if (std.mem.startsWith(u8, title, "tool ")) {
+        // Render/measure paint a truncated line body, not the raw wrap.
+        // A 4 KB glob dump at width/2 was ~100 reserved blank rows.
+        return @intCast(@min(1 + estToolBody(slot.bodySlice()), 65535));
+    }
+    if (slot.kind == .user) {
+        const half: usize = @max(@max(content_width, 1) / 2, 1);
+        return @intCast(@min(1 + estBody(slot.bodySlice(), half), 65535));
+    }
+    return 1;
 }
 
 fn estBody(body: []const u8, half: usize) u64 {
@@ -398,6 +420,23 @@ fn estBody(body: []const u8, half: usize) u64 {
         rows += @max(1, (line.len + half - 1) / half);
     }
     return rows;
+}
+
+/// Cheap line count capped the same way as `measureToolBodyLines`. Raw
+/// newlines are an upper bound (the scanner drops envelope / leading
+/// blanks), so this never underestimates the painted tool body.
+fn estToolBody(body: []const u8) u16 {
+    if (body.len == 0) return 0;
+    var lines: u16 = 0;
+    var it = std.mem.splitScalar(u8, body, '\n');
+    while (it.next()) |_| {
+        lines +|= 1;
+    }
+    if (body[body.len - 1] == '\n' and lines > 0) lines -= 1;
+    if (lines == 0) return 0;
+    const max = c.tool_body_max_lines;
+    if (lines > max) return max + 1; // painted lines + "… +N lines"
+    return lines;
 }
 
 // ── fixtures ──────────────────────────────────────────────────────────────
@@ -480,7 +519,22 @@ test "scrollback: paintWindow scroll 0 shows the head" {
     defer sb.deinit();
     var snap = fakeSnap(2, 10, .ordinary, 100); // 1 row each + gap = 4 total
     _ = sb.prepare(&snap, 80, 20, fakeMeasure, fakeEstimate);
+    sb.follow_mode = false; // top-align when not following
     sb.scroll_offset = 0;
+    const pw = sb.paintWindow(20);
+    try testing.expectEqual(@as(usize, 0), pw.start);
+    try testing.expectEqual(@as(usize, 2), pw.end);
+    try testing.expectEqual(@as(i64, 0), pw.content_y0);
+}
+
+test "scrollback: follow keeps a short transcript at the top" {
+    const gpa = testing.allocator;
+    var sb = Scrollback.init(gpa);
+    defer sb.deinit();
+    var snap = fakeSnap(2, 10, .ordinary, 100); // total = 4
+    _ = sb.prepare(&snap, 80, 20, fakeMeasure, fakeEstimate);
+    try testing.expect(sb.follow_mode);
+    try testing.expectEqual(@as(usize, 0), sb.scroll_offset);
     const pw = sb.paintWindow(20);
     try testing.expectEqual(@as(usize, 0), pw.start);
     try testing.expectEqual(@as(usize, 2), pw.end);
@@ -546,10 +600,13 @@ test "scrollback: lazy measurement measures only the window ± margin" {
     const gpa = testing.allocator;
     var sb = Scrollback.init(gpa);
     defer sb.deinit();
-    // 125 cards × 3 rows = 500 total; viewport 10 → the bottom window
-    // measures; far-from-bottom cards stay estimates until scrolled into
-    // range. (Window starts at 0, ends at vp_bottom + margin.)
+    // 125 cards × 3 rows = 500 total; viewport 10 at the TOP (follow off)
+    // measures only the window + margin. Follow would pin to the bottom
+    // and, because settle walks from 0, measure every card — that's the
+    // explore-burst path, covered separately.
     var snap = fakeSnap(125, 30, .ordinary, 100);
+    sb.follow_mode = false;
+    sb.scroll_offset = 0;
     _ = sb.prepare(&snap, 80, 10, fakeMeasure, fakeEstimate);
     var measured: usize = 0;
     for (sb.geo.items) |g| {
@@ -700,4 +757,70 @@ test "scrollback: pageRows clamps to 1" {
     try testing.expectEqual(@as(usize, 1), Scrollback.pageRows(1));
     try testing.expectEqual(@as(usize, 0), Scrollback.pageRows(0));
     try testing.expectEqual(@as(usize, 19), Scrollback.pageRows(20));
+}
+
+fn toolSlot(body_len: u16) cards.CardSlot {
+    var slot: cards.CardSlot = .{
+        .kind = .ordinary,
+        .occupied = true,
+        .title_len = 9,
+        .body_len = body_len,
+        .ui_seq = 1,
+    };
+    @memcpy(slot.title[0..9], "tool glob");
+    @memset(slot.body[0..body_len], 'x');
+    // Newline every 40 bytes so a width/2 wrap estimate would explode.
+    var i: usize = 39;
+    while (i < body_len) : (i += 40) slot.body[i] = '\n';
+    return slot;
+}
+
+test "estimateCard: large tool body stays at the truncated cap" {
+    var slot = toolSlot(4000);
+    const h = estimateCard(&slot, 80, false);
+    // title + 6 lines + footer — never the raw ~100-row wrap.
+    try testing.expectEqual(@as(u16, 1 + c.tool_body_max_lines + 1), h);
+}
+
+test "estimateCard: thinking is header-only" {
+    var slot: cards.CardSlot = .{
+        .kind = .ordinary,
+        .occupied = true,
+        .title_len = 8,
+        .body_len = 800,
+        .ui_seq = 1,
+    };
+    @memcpy(slot.title[0..8], "thinking");
+    @memset(slot.body[0..800], 'x');
+    try testing.expectEqual(@as(u16, 1), estimateCard(&slot, 80, false));
+}
+
+fn tallEstimate(slot: *const cards.CardSlot, content_width: u16, assistant: bool) u16 {
+    _ = slot;
+    _ = content_width;
+    _ = assistant;
+    return 150;
+}
+
+fn shortMeasure(gpa: std.mem.Allocator, slot: *const cards.CardSlot, content_width: u16) u16 {
+    _ = gpa;
+    _ = slot;
+    _ = content_width;
+    return 8;
+}
+
+test "scrollback: follow settle measures a burst of tall estimates same frame" {
+    // Explore-style burst: 20 new cards estimated at 150 rows, measured 8.
+    // Same-frame follow must not paint the estimated bottom (20×150 blanks).
+    const gpa = testing.allocator;
+    var sb = Scrollback.init(gpa);
+    defer sb.deinit();
+    var snap = fakeSnap(20, 30, .ordinary, 100);
+    _ = sb.prepare(&snap, 80, 10, shortMeasure, tallEstimate);
+    for (sb.geo.items) |g| {
+        try testing.expect(g.measured);
+        try testing.expectEqual(@as(u16, 8), g.h);
+    }
+    // 20 cards × (8 + 1 gap) = 180.
+    try testing.expectEqual(@as(usize, 180), sb.total_height);
 }

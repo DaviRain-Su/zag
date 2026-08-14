@@ -279,6 +279,15 @@
       "vision": false
     },
     {
+      "id": "deepseek-v4-flash:0731",
+      "name": "DeepSeek V4 Flash (Ollama Cloud)",
+      "provider": "ollama-cloud",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false
+    },
+    {
       "id": "gpt-4.1",
       "name": "GPT-4.1",
       "provider": "openai",
@@ -367,6 +376,24 @@
         "cache_read": 0.275,
         "cache_write": 1.1
       }
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash (OpenCode Go)",
+      "provider": "opencode-go",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5 (OpenCode Zen)",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true
     },
     {
       "id": "anthropic/claude-sonnet-4",

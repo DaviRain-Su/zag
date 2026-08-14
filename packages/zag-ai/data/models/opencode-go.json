@@ -1,0 +1,13 @@
+{
+  "provider": "opencode-go",
+  "models": [
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash (OpenCode Go)",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false
+    }
+  ]
+}

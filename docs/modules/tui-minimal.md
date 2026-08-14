@@ -503,7 +503,7 @@ TuiApp
 | `closing` | host close/fatal/EOF-busy; waiting join | locked | frozen + visible wait |
 | `error` | host render fault or failed terminal displayed | enabled after join | error + last terminal |
 | `closed` | process exiting TUI | disabled | frozen |
-| empty | no cards | enabled | exact `(no events yet)` |
+| empty | no cards | enabled | welcome canvas: title `zag`, optional model/cwd, hint `Ask anything, or type / for commands` |
 | loading | after dispatch before first lifecycle event | locked | status `(starting…)` only — not success |
 
 ## 5. Session identity, open mode, resume truth

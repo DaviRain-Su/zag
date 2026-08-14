@@ -1,0 +1,13 @@
+{
+  "provider": "opencode-zen",
+  "models": [
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5 (OpenCode Zen)",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true
+    }
+  ]
+}

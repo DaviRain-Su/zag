@@ -93,6 +93,24 @@ pub const Builtin = enum {
             .@"resume" => .@"resume",
         };
     }
+
+    pub fn hint(self: Builtin) []const u8 {
+        return switch (self) {
+            .help => "shortcuts",
+            .settings => "session labels",
+            .model => "switch model",
+            .theme => "color theme",
+            .@"resume" => "past sessions",
+        };
+    }
+
+    /// Palette rows are `/name   hint`; accept the bare name too.
+    pub fn fromPaletteLine(line: []const u8) ?Builtin {
+        var s = std.mem.trim(u8, line, " \t");
+        if (s.len > 0 and s[0] == '/') s = s[1..];
+        const name = if (std.mem.indexOfScalar(u8, s, ' ')) |i| s[0..i] else s;
+        return fromName(name);
+    }
 };
 
 pub const builtin_names = [_][]const u8{ "help", "settings", "model", "theme", "resume" };
@@ -126,6 +144,8 @@ test "builtin fromName" {
     try std.testing.expect(Builtin.fromName("help").? == .help);
     try std.testing.expect(Builtin.fromName("resume").? == .@"resume");
     try std.testing.expect(Builtin.fromName("nope") == null);
+    try std.testing.expect(Builtin.fromPaletteLine("/resume   past sessions").? == .@"resume");
+    try std.testing.expect(Builtin.fromPaletteLine("model").? == .model);
 }
 
 test "matchBuiltins prefix" {

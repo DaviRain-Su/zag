@@ -174,6 +174,8 @@ pub const App = struct {
     /// Thinking visibility toggle (Ctrl+T): when on, the model's reasoning
     /// text publishes as a `· thinking` card ahead of the assistant turn.
     show_thinking: bool = false,
+    /// True while a thinking_delta has arrived this turn (turn-status).
+    thinking_active: bool = false,
     /// Grok-style thinking body fold (Ctrl+E when editor empty).
     thinking_expanded: bool = false,
     /// Subagent tasks pane (Ctrl+K). Collapsed/hidden when the registry is
@@ -233,6 +235,10 @@ pub const App = struct {
     model_sel_len: usize = 0,
     /// Borrowed live/catalog model ids from host (CLI arena / static). Cap used at paint.
     model_ids: []const []const u8 = &.{},
+    /// Parallel to `model_ids`: wire keys (`spec\x1fmodel`). Empty = use the display id.
+    model_keys: []const []const u8 = &.{},
+    /// Monotonic ms when the current busy turn started (0 = not busy).
+    busy_started_ms: u64 = 0,
     /// Scratch lines for overlay paint (rebuilt each paint).
     overlay_line_bufs: [24][96]u8 = undefined,
     overlay_line_lens: [24]usize = [_]usize{0} ** 24,
@@ -363,6 +369,7 @@ pub const App = struct {
         theme_opts: theme_mod.ThemeHostOptions,
         model_label: []const u8,
         model_ids: []const []const u8,
+        model_keys: []const []const u8,
     ) void {
         self.host_io = io;
         self.themes_root = theme_opts.themes_root;
@@ -374,6 +381,7 @@ pub const App = struct {
         self.model_sel_len = n;
         self.model_label = self.model_sel_buf[0..n];
         self.model_ids = model_ids;
+        self.model_keys = model_keys;
         self.dirty = true;
     }
 
@@ -548,6 +556,7 @@ pub const App = struct {
                 // deltas start clean.
                 self.delta_len = 0;
                 self.thinking_len = 0;
+                self.thinking_active = false;
                 // Thinking final-replace rule (tui-thinking-streaming-001):
                 // - progressive thinking card exists → replace + retitle to
                 //   "thinking" (its partial text becomes this turn's reasoning);
@@ -621,6 +630,7 @@ pub const App = struct {
             // the observer is unchanged — headless/CLI stdout byte-identity),
             // so the progressive thinking card is painted here.
             .thinking_delta => |delta| {
+                self.thinking_active = true;
                 if (self.show_thinking) {
                     // Replace the newest "thinking progressive" card only — a
                     // finalized "thinking" card from a prior turn is never
@@ -644,6 +654,7 @@ pub const App = struct {
                 // itself failed); reset here so the next reply starts clean.
                 self.delta_len = 0;
                 self.thinking_len = 0;
+                self.thinking_active = false;
                 // Token chip source: only truthful successful runs advance it.
                 if (term.ok) self.last_total_tokens = term.usage.total_tokens;
                 var body_buf: [128]u8 = undefined;
@@ -705,6 +716,7 @@ pub const App = struct {
                 // Progressive prefixes only (never blanks finalized cards).
                 self.delta_len = 0;
                 self.thinking_len = 0;
+                self.thinking_active = false;
                 self.card_ring.replaceNewestOrdinaryTitlePrefix(
                     self.gpa,
                     self.redactor,
@@ -1338,7 +1350,7 @@ pub const App = struct {
                 self.overlay.close();
             },
             .slash_palette => {
-                if (overlay_mod.Builtin.fromName(line)) |b| {
+                if (overlay_mod.Builtin.fromPaletteLine(line)) |b| {
                     self.overlay.open(b.overlayKind());
                     _ = self.rebuildOverlayLines();
                     return;
@@ -1362,16 +1374,23 @@ pub const App = struct {
                 self.overlay.close();
             },
             .model => {
-                // Copy selected id into App-owned storage (overlay lines are
-                // scratch buffers rewritten every paint).
-                const n = @min(line.len, self.theme_sel_buf.len);
-                // Reuse a dedicated model buffer so theme_sel is not clobbered.
-                // model_label is borrowed; store in overlay-stable buffer.
+                if (self.state == .busy or self.state == .closing) {
+                    self.setNote("model_switch_busy");
+                    self.overlay.close();
+                    return;
+                }
+                // Copy selected display into App-owned storage (overlay lines
+                // are scratch buffers rewritten every paint).
+                const n = @min(line.len, self.model_sel_buf.len);
                 @memcpy(self.model_sel_buf[0..n], line[0..n]);
                 self.model_sel_len = n;
                 self.model_label = self.model_sel_buf[0..n];
+                const key = if (self.overlay.cursor < self.model_keys.len)
+                    self.model_keys[self.overlay.cursor]
+                else
+                    line;
                 if (self.agent) |agent| {
-                    agent.setModel(self.model_label) catch {
+                    agent.setModel(key) catch {
                         self.setNote("model_switch_failed");
                         self.overlay.close();
                         return;
@@ -1680,6 +1699,7 @@ pub const App = struct {
         self.editor.clear();
         self.delta_len = 0;
         self.thinking_len = 0;
+        self.thinking_active = false;
         self.overlay.close();
         self.sb.gotoBottom(self.last_viewport_h);
         self.dirty = true;
@@ -1775,7 +1795,15 @@ pub const App = struct {
                 var matches: [overlay_mod.builtin_names.len][]const u8 = undefined;
                 const m = overlay_mod.matchBuiltins(filter, &matches);
                 var i: usize = 0;
-                while (i < m) : (i += 1) push(self, matches[i], &n);
+                while (i < m) : (i += 1) {
+                    if (overlay_mod.Builtin.fromName(matches[i])) |b| {
+                        var line_buf: [64]u8 = undefined;
+                        const text = std.fmt.bufPrint(&line_buf, "/{s}   {s}", .{ matches[i], b.hint() }) catch matches[i];
+                        push(self, text, &n);
+                    } else {
+                        push(self, matches[i], &n);
+                    }
+                }
                 if (n == 0) push(self, "(no builtin match — Enter submits)", &n);
             },
             .settings => {
@@ -1986,6 +2014,7 @@ pub const App = struct {
                 // semantics); prepare re-pins the offset next paint.
                 self.sb.gotoBottom(self.last_viewport_h);
                 self.state = .busy;
+                self.busy_started_ms = @import("zag-types").monoNowNs() / std.time.ns_per_ms;
                 self.setNote("(starting…)");
                 // New turn: clear sticky host_error from a previous failure so
                 // the transcript does not keep a red card while retrying.
@@ -2088,9 +2117,11 @@ pub const App = struct {
             .model = self.model_label,
             .theme_id = self.palette.id,
             .show_thinking = self.show_thinking,
+            .thinking_live = self.thinking_active or self.thinking_len > 0,
             .scroll = self.sb.scroll_offset,
             .running_tasks = running_tasks,
             .tick_ms = tick_ms,
+            .busy_started_ms = self.busy_started_ms,
             .cwd_tail = self.cwd_tail_buf[0..self.cwd_tail_len],
             .git_branch = self.git_branch_buf[0..self.git_branch_len],
             .last_tokens = self.last_total_tokens,
@@ -2134,19 +2165,18 @@ pub const App = struct {
         }
 
         // Compute the layout once here: renderFrame draws it. Cards region is
-        // borderless; reserve 1 col for the scrollbar track and 1 row for the
-        // scrollback paint window math (viewport_h = h-1 keeps prior paging
-        // contracts).
+        // borderless; reserve 1 col for the scrollbar track. Viewport height
+        // matches the painted cards window (drawCards uses content_win.height).
         const turn_vis = self.state == .busy or self.state == .closing or self.state == .@"error";
         const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible, turn_vis, self.queue_visible);
-        const viewport_h: usize = @max(layout.cards.h -| 1, 1);
+        const viewport_h: usize = @max(layout.cards.h, 1);
         const content_w: u16 = @max(layout.cards.w -| 1, 1);
         self.last_viewport_h = viewport_h;
         // Settle geometry + re-pin follow before painting (review #7 order).
         // Card fold/truncate opts must be set BEFORE measure (prepare) and draw.
         render.setCardPaintOpts(.{
             .thinking_expanded = self.thinking_expanded,
-            .tool_body_max_lines = 6,
+            .tool_body_max_lines = c.tool_body_max_lines,
         });
         render.setCardPaintSnap(self.snap_buf[0..n]);
         // Verb-group collapse changes sibling heights without touching their
@@ -2422,9 +2452,11 @@ test "tui-thinking-streaming: thinking_delta builds progressive card gated by to
     defer app.destroy();
 
     // Toggle off (default): thinking deltas are ignored — no card at all.
+    // Turn-status still learns the model is thinking.
     App.onLifecycle(app, .{ .thinking_delta = "hidden" });
     try std.testing.expect(newestThinkingCard(app) == null);
     try std.testing.expectEqual(@as(usize, 0), app.thinking_len);
+    try std.testing.expect(app.thinking_active);
 
     // Toggle on: deltas accumulate into a "thinking progressive" card.
     _ = app.handleKey(.ctrl_t);
@@ -2664,9 +2696,18 @@ test "tui-layout: first paint always happens" {
     try app.paint(&rec.pt.term);
     try std.testing.expect(!app.dirty);
     try std.testing.expect(app.last_painted_size != null);
-    // Cell proof: borderless transcript + rounded editor box at the bottom.
+    // Cell proof: welcome canvas + rounded editor box at the bottom.
     // 80×40 idle: shortcuts=1, editor_y=36 (h=3).
-    try expectCellText(&rec, 0, 0, "("); // "(no events yet)"
+    var found_zag = false;
+    var row: u16 = 0;
+    while (row < 36) : (row += 1) {
+        var buf: [128]u8 = undefined;
+        if (std.mem.indexOf(u8, readRow(&rec, row, &buf), "zag") != null) {
+            found_zag = true;
+            break;
+        }
+    }
+    try std.testing.expect(found_zag);
     try expectCellText(&rec, 0, 36, "╭");
     try expectCellText(&rec, 1, 37, "❯");
     try expectCellText(&rec, 0, 38, "╰");
@@ -2898,8 +2939,8 @@ test "tui-input: page keys scroll rows and re-engage follow" {
     }
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40 → cards 37, viewport 36
-    try std.testing.expectEqual(@as(usize, 35), app.last_viewport_h);
+    try app.paint(&rec.pt.term); // 80×40 idle: cards h=36, viewport = cards.h
+    try std.testing.expectEqual(@as(usize, 36), app.last_viewport_h);
     try std.testing.expect(app.sb.total_height > 29); // overflows
     try std.testing.expect(app.sb.follow_mode); // fresh paint follows
     const bottom = app.sb.scroll_offset;
@@ -2985,8 +3026,8 @@ test "tui-input: alt+enter multiline grows the editor region" {
     try std.testing.expectEqual(@as(usize, 3), app.editor.lineCount());
     var rec = try RecTerm.init(gpa);
     defer rec.deinit(gpa);
-    try app.paint(&rec.pt.term); // 80×40: shortcuts=1, editor 2+3=5 → cards 34, viewport 33
-    try std.testing.expectEqual(@as(usize, 33), app.last_viewport_h);
+    try app.paint(&rec.pt.term); // 80×40: shortcuts=1, editor 2+3=5 → cards 34
+    try std.testing.expectEqual(@as(usize, 34), app.last_viewport_h);
     // Prompt glyph is visible in the editor box.
     var buf: [512]u8 = undefined;
     var found_prompt = false;
@@ -3006,8 +3047,8 @@ test "tui-input: paint records the cards viewport height for paging" {
     defer rec.deinit(gpa);
     try app.paint(&rec.pt.term); // 80×40
     try std.testing.expect(app.last_viewport_h > 0);
-    // 80×40 idle: shortcuts=1, editor h=3 → cards h=36 → viewport = 35.
-    try std.testing.expectEqual(@as(usize, 35), app.last_viewport_h);
+    // 80×40 idle: shortcuts=1, editor h=3 → cards h=36 → viewport = cards.h.
+    try std.testing.expectEqual(@as(usize, 36), app.last_viewport_h);
 }
 
 test "tui-input: overlay home/end/page keys navigate" {

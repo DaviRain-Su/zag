@@ -11,7 +11,7 @@
 | Zig SDK-ready | ✅ **L2** | Gate closed at `ebdd7ab`; current external consumer fixture **24/24** (was **23/23** at `61326ae`) |
 | Headless/Process | ✅ **L2** | `headless-v1` + exit matrix + process fixture 4/4 |
 | Thin Core responsibility migration | ✅ done | D-011 DAG through the product lifecycle adapter closed at `aecf402`; no L2 behavior change |
-| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 + TUI canvas. **Next work:** [2026-08-13 delivery plan](./plan/analysis/2026-08-13-next-delivery-plan.md) (HEAD `6869549`). **Host-shell:** polish landed; post-TUI remote Gate Phase A (TARGET stale vs HEAD). **D-012:** edit-transaction **done**; process-supervisor **draft** (Wave 1); `rpc-v1` / LSP / ACP / in-process subagents **implemented, closeout pending** (Wave 2); MCP / E2 **absent** (Wave 3) |
+| Local coding-agent workflow | **partial / two parallel tracks** | Foundation through M3 + C4 + TUI canvas. **Next work:** [2026-08-14 delivery plan](./plan/analysis/2026-08-14-next-delivery-plan.md) (HEAD `fe075f1`). **Host-shell:** polish landed; post-TUI remote Gate Phase A (TARGET stale vs HEAD). **D-012:** edit-transaction **done**; process-supervisor **implemented** (Wave 1); `rpc-v1` / LSP / ACP / in-process subagents **closeout recorded** (Wave 2); MCP / E2 **contract only** (Wave 3); zag-live-001 **done**; 002/003 **draft** (Track L) |
 
 OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth、Graph/Memory/MCP 均不因上述 Gate 自动获得。
 
@@ -36,7 +36,7 @@ OS sandbox、mid-flight Tool/shell preemption、semver/C ABI、provider breadth�
 | Custom Provider | E0 已有；E2/E3 runtime registration 后置 |
 | SDK | ✅ L2；lifecycle events 已在 `aecf402` 闭合，bounded steering/control 已在 `a5ff2b7` 闭合，idle-only durable fork 已在 `0a3087f` 闭合（[session-fork](./modules/session-fork.md)）；E1 Skills 已在 `caafef5` 闭合；E1 Prompt Templates 已在 `61326ae` 闭合；current fixture **24/24**（`61326ae` 时为 **23/23**），不升成熟度 |
 | JSON | ✅ `headless-v1` L2 |
-| RPC | `rpc-v1` **implemented** @ `0eeef5d` (`--rpc`，独立于 `headless-v1`；closeout pending；不追 Pi command/schema parity) |
+| RPC | `rpc-v1` **implemented** @ `0eeef5d` (`--rpc`，独立于 `headless-v1`；Wave 2 closeout；不追 Pi command/schema parity) |
 | TUI/UI | minimal host TUI；E2/E3 host-rendered intents，stateful view/action 另过 Gate |
 
 详细证据：[Pi feature correspondence](./plan/analysis/2026-07-26-pi-feature-correspondence.md)。
@@ -67,14 +67,14 @@ M2 — selected daily UX ✅
         ▼                            ▼                              ▼
   Host-shell polish            Evidence / Gate                D-012 coding route
   tui-vaxis / theme /            post-tui-remote-               edit-transaction **done**
-   canvas / grok chrome          dual-backend-gate-001          process-supervisor **draft**
+   canvas / grok chrome          dual-backend-gate-001          process-supervisor **implemented**
    (landed; closeout)            (Phase A; TARGET stale)        rpc-v1 / LSP / ACP /
                                                                 in-process subagent
-                                                                **implemented, closeout pending**
-                                                                MCP / E2 **absent**
+                                                                **implemented** (Wave 2 closeout)
+                                                                MCP / E2 **contract only**
 ```
 
-Current delivery: [2026-08-13 plan](./plan/analysis/2026-08-13-next-delivery-plan.md).
+Current delivery: [2026-08-14 plan](./plan/analysis/2026-08-14-next-delivery-plan.md).
 Two **parallel** lanes (do not serialize them):
 
 1. **Host shell** — remaining visual bugs as new tasks; post-TUI remote Gate Phase B when granted.
@@ -89,9 +89,9 @@ Pi/OMP/Hyper parity). Dependency order from
 
 ```text
 edit-transaction-001 **done** @ `e086df8`
-  ├─► rpc-v1 / LSP / ACP / in-process subagent  **implemented, closeout pending**
+  ├─► rpc-v1 / LSP / ACP / in-process subagent  **implemented** (Wave 2 closeout)
   │     (shipped without waiting on supervisor; documented exceptions)
-  └─► process-supervisor-001 **draft** (Wave 1)
+  └─► process-supervisor-001 **implemented** (Wave 1 closeout)
         └─► MCP + E2 + long-lived supervised slots (Wave 3)
 session tree (TUI browser) **implemented**; schema v1 unchanged
 runtime model data / default-off memory / E3 WASM — own Gates
@@ -100,15 +100,17 @@ runtime model data / default-off memory / E3 WASM — own Gates
 | Node | Status |
 |------|--------|
 | [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **done** @ `e086df8` — `apply_transaction` + §10 fixtures; Tools · write/edit L2 |
-| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — dual review not started; Wave 1 in the [08-13 plan](./plan/analysis/2026-08-13-next-delivery-plan.md) |
-| [rpc-v1-001](./plan/tasks/rpc-v1-001.md) | **implemented** @ `0eeef5d` — closeout pending; no maturity row |
-| [lsp-001](./plan/tasks/lsp-001.md) | **implemented** @ `75f213b` — closeout pending; owns its child until supervisor long-lived slots |
-| [acp-001](./plan/tasks/acp-001.md) | **implemented** @ `8d2ba64` — closeout pending; 32/33 fixture gates (gate15 follow-up) |
-| In-process subagent (`task`/`scout`/`reviewer`) | **implemented** @ `1dabd25` — Oracle/Graph/process-backed still L0 |
+| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **implemented** — Wave 1 closeout in the [08-14 plan](./plan/analysis/2026-08-14-next-delivery-plan.md) |
+| [rpc-v1-001](./plan/tasks/rpc-v1-001.md) | **implemented** @ `0eeef5d` — Wave 2 closeout; 26/26; no maturity row |
+| [lsp-001](./plan/tasks/lsp-001.md) | **implemented** @ `75f213b` — Wave 2 closeout; owns spawn until long-lived slots |
+| [acp-001](./plan/tasks/acp-001.md) | **implemented** @ `8d2ba64` — Wave 2 closeout; 32/33; gate15 → [acp-gate15-001](./plan/tasks/acp-gate15-001.md) |
+| In-process subagent (`task`/`scout`/`reviewer`) | **implemented** @ `1dabd25` — Wave 2 closeout; Oracle/Graph/process-backed still L0 |
+| [zag-live-002](./plan/tasks/zag-live-002.md) / [zag-live-003](./plan/tasks/zag-live-003.md) | **draft** — Track L contracts |
+| [process-supervisor-long-lived-001](./plan/tasks/process-supervisor-long-lived-001.md) / [mcp-001](./plan/tasks/mcp-001.md) | **draft** — Wave 3 contracts; MCP impl waits on a named server |
 | [session-tree-001](./plan/tasks/session-tree-001.md) | **implemented** @ `298f207` — TUI `/resume` browser; Session schema v1 unchanged |
 | MCP / E2 / Memory / E3 | **absent** — Wave 3+ / deferred |
 
-Next coding Goal: supervisor dual review → `ready` → impl (Wave 1). Do not treat rpc/LSP/ACP as unstarted.
+Next coding Goal: zag-live-002 dual review, or long-lived-slot dual review, or [acp-gate15-001](./plan/tasks/acp-gate15-001.md). Do not start MCP impl without a named server.
 
 ### M0 — Interaction reliability
 
@@ -191,7 +193,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | [prompt-templates-001](./plan/tasks/prompt-templates-001.md) | reusable slash-expanded prompts; **done @ `61326ae`** ([prompt-templates.md](./modules/prompt-templates.md)) | explicit one-pass `$ARGUMENTS`/`$$` substitution; project overrides user; no script runtime; maturity stays L0 |
 | [edit-sharpness-001](./plan/tasks/edit-sharpness-001.md) | **done** @ `7be5151`: `apply_hunk` + digest + review ([tools-edit](./modules/tools-edit.md)) | no multi-file txn (that is `edit-transaction-001`); Tools write/edit stays L2 |
 | [edit-transaction-001](./plan/tasks/edit-transaction-001.md) | **done** @ `e086df8` — `apply_transaction` + §10; binding [edit-transaction.md](./modules/edit-transaction.md); D-012 item 1 | Tools · write/edit stays L2; orthogonal to TUI/Theme |
-| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **draft** — binding [process-supervisor.md](./modules/process-supervisor.md) | dual review next; Wave 1. rpc/LSP/ACP/in-process subagent already landed as documented exceptions |
+| [process-supervisor-001](./plan/tasks/process-supervisor-001.md) | **implemented** — binding [process-supervisor.md](./modules/process-supervisor.md) | Wave 1 closeout in the [08-14 plan](./plan/analysis/2026-08-14-next-delivery-plan.md). rpc/LSP/ACP/in-process subagent already landed as documented exceptions |
 | [tui-minimal-001](./plan/tasks/tui-minimal-001.md) | **done** @ `f8f7f55`; streaming @ `2d57e84`; layout @ `189de9e` | host shell only; no maturity raise |
 | tui-vaxis-001 | **done** @ `76360ab` | quarantined backend only; no vxfw wholesale |
 | [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) | **in-progress** Phase A; TARGET `f352b60…`; Gate green **No** | docs evidence; **no** remote `-Dtui`; no Phase B grant |

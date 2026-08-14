@@ -115,8 +115,13 @@ pub const PosixTty = struct {
 
     /// release resources associated with the Tty return it to its original state
     pub fn deinit(self: PosixTty) void {
-        posix.tcsetattr(self.fd.handle, .FLUSH, self.termios) catch |err| {
-            std.log.err("couldn't restore terminal: {}", .{err});
+        // Zag deviation: `error.ProcessOrphaned` is EIO from tcsetattr when
+        // this process is no longer the TTY foreground pgroup (Ctrl+C under
+        // `zig build run` races the parent off the job). Retry TCSANOW; if
+        // still orphaned, stay silent — the caller already restored or cannot.
+        posix.tcsetattr(self.fd.handle, .FLUSH, self.termios) catch |err| switch (err) {
+            error.ProcessOrphaned => posix.tcsetattr(self.fd.handle, .NOW, self.termios) catch {},
+            else => std.log.err("couldn't restore terminal: {}", .{err}),
         };
         // Zag deviation (tui-vaxis-001): never close a borrowed stdin fd;
         // only close fds this Tty opened itself (/dev/tty fallback). Closing

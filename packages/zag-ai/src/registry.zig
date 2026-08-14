@@ -70,35 +70,9 @@ pub fn resolveFromGet(getter: anytype) Error!Resolved {
     // Explicit provider id
     if (zag_provider) |pid| {
         if (pid.len > 0) {
-            const spec = presets.find(pid) orelse return error.UnknownProvider;
-            // Keyless presets (e.g. local Ollama) use an empty key when no
-            // env key is configured. The transport sends no Authorization
-            // header when the key is empty.
-            const key_src: auth_env.KeySource = auth_env.resolveApiKeySource(getter, spec.env_keys) orelse
-                if (zag_key) |k|
-                    if (k.len > 0)
-                        auth_env.KeySource{ .key = k, .source = "ZAG_API_KEY" }
-                    else if (spec.env_keys.len == 0)
-                        auth_env.KeySource{ .key = "", .source = "keyless" }
-                    else
-                        return error.MissingApiKey
-                else if (spec.env_keys.len == 0)
-                    auth_env.KeySource{ .key = "", .source = "keyless" }
-                else
-                    return error.MissingApiKey;
-            const style = try styleFromGetter(getter, spec.api_style);
-            return .{
-                .spec_id = spec.id,
-                .display_name = spec.name,
-                .api_key_source = key_src.source,
-                .api_style = style,
-                .config = .{
-                    .api_key = key_src.key,
-                    .base_url = zag_base orelse spec.base_url,
-                    .model = zag_model orelse spec.default_model,
-                    .api_style = style,
-                },
-            };
+            var resolved = try resolvePreset(getter, pid, zag_model);
+            if (zag_base) |b| resolved.config.base_url = b;
+            return resolved;
         }
     }
 
@@ -142,6 +116,59 @@ pub fn resolveFromGet(getter: anytype) Error!Resolved {
     }
 
     return error.MissingApiKey;
+}
+
+fn keySourceForSpec(getter: anytype, spec: presets.ProviderSpec) Error!auth_env.KeySource {
+    const zag_key = getter.get("ZAG_API_KEY");
+    if (auth_env.resolveApiKeySource(getter, spec.env_keys)) |src| return src;
+    if (zag_key) |k| {
+        if (k.len > 0) return .{ .key = k, .source = "ZAG_API_KEY" };
+    }
+    if (spec.env_keys.len == 0) return .{ .key = "", .source = "keyless" };
+    return error.MissingApiKey;
+}
+
+/// Resolve one builtin preset without applying `ZAG_PROVIDER` / `ZAG_MODEL` /
+/// `ZAG_BASE_URL` process overrides. Used by TUI `/model` to switch hosts
+/// in-session (each row carries its own spec + model).
+pub fn resolvePreset(getter: anytype, spec_id: []const u8, model_override: ?[]const u8) Error!Resolved {
+    const spec = presets.find(spec_id) orelse return error.UnknownProvider;
+    const key_src = try keySourceForSpec(getter, spec);
+    const style = try styleFromGetter(getter, spec.api_style);
+    return .{
+        .spec_id = spec.id,
+        .display_name = spec.name,
+        .api_key_source = key_src.source,
+        .api_style = style,
+        .config = .{
+            .api_key = key_src.key,
+            .base_url = spec.base_url,
+            .model = model_override orelse spec.default_model,
+            .api_style = style,
+        },
+    };
+}
+
+/// Presets whose env key is set (keyless local Ollama is omitted).
+/// Order matches `presets.builtin` so the picker stays stable.
+pub fn listConfigured(getter: anytype, out: *std.ArrayList(presets.ProviderSpec), gpa: std.mem.Allocator) !void {
+    for (presets.builtin) |spec| {
+        if (spec.env_keys.len == 0) continue;
+        if (auth_env.resolveApiKeySource(getter, spec.env_keys) != null) {
+            try out.append(gpa, spec);
+        }
+    }
+}
+
+/// TUI `/model` row key: `spec_id` + unit separator + `model_id`.
+/// A bare model id (no separator) means "keep the current provider".
+pub const picker_sep: u8 = 0x1f;
+
+pub fn parsePickerKey(encoded: []const u8) struct { spec_id: []const u8, model_id: []const u8 } {
+    if (std.mem.indexOfScalar(u8, encoded, picker_sep)) |i| {
+        return .{ .spec_id = encoded[0..i], .model_id = encoded[i + 1 ..] };
+    }
+    return .{ .spec_id = "", .model_id = encoded };
 }
 
 // --- tests ---
@@ -295,4 +322,44 @@ test "opencode-go missing key fails" {
     try std.testing.expectError(error.MissingApiKey, resolveFromGet(TestEnv{ .pairs = &.{
         .{ "ZAG_PROVIDER", "opencode-go" },
     } }));
+}
+
+test "listConfigured returns every keyed preset" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(presets.ProviderSpec) = .empty;
+    defer out.deinit(gpa);
+    try listConfigured(TestEnv{ .pairs = &.{
+        .{ "DEEPSEEK_API_KEY", "sk-d" },
+        .{ "OLLAMA_API_KEY", "sk-o" },
+        .{ "KIMI_API_KEY", "sk-k" },
+        .{ "OPENCODE_API_KEY", "sk-oc" },
+    } }, &out, gpa);
+    try std.testing.expectEqual(@as(usize, 5), out.items.len);
+    try std.testing.expectEqualStrings("deepseek", out.items[0].id);
+    try std.testing.expectEqualStrings("opencode-go", out.items[1].id);
+    try std.testing.expectEqualStrings("opencode-zen", out.items[2].id);
+    try std.testing.expectEqualStrings("ollama-cloud", out.items[3].id);
+    try std.testing.expectEqualStrings("kimi-coding", out.items[4].id);
+}
+
+test "resolvePreset switches host without ZAG_PROVIDER" {
+    const r = try resolvePreset(TestEnv{ .pairs = &.{
+        .{ "DEEPSEEK_API_KEY", "sk-d" },
+        .{ "KIMI_API_KEY", "sk-k" },
+        .{ "ZAG_PROVIDER", "deepseek" },
+        .{ "ZAG_MODEL", "deepseek-v4-pro" },
+    } }, "kimi-coding", "kimi-for-coding");
+    try std.testing.expectEqualStrings("kimi-coding", r.spec_id);
+    try std.testing.expectEqualStrings("kimi-for-coding", r.config.model);
+    try std.testing.expectEqualStrings("https://api.kimi.com/coding", r.config.base_url);
+    try std.testing.expect(r.api_style == .anthropic_messages);
+}
+
+test "parsePickerKey splits spec and model" {
+    const p = parsePickerKey("kimi-coding\x1fkimi-for-coding");
+    try std.testing.expectEqualStrings("kimi-coding", p.spec_id);
+    try std.testing.expectEqualStrings("kimi-for-coding", p.model_id);
+    const bare = parsePickerKey("deepseek-v4-flash");
+    try std.testing.expectEqualStrings("", bare.spec_id);
+    try std.testing.expectEqualStrings("deepseek-v4-flash", bare.model_id);
 }

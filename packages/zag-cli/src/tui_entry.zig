@@ -12,6 +12,7 @@
 const std = @import("std");
 const Io = std.Io;
 const posix = std.posix;
+const ai = @import("zag-ai");
 const coding = @import("zag-coding-agent");
 const zag_tui = @import("zag-tui");
 const sigint = @import("sigint.zig");
@@ -71,7 +72,147 @@ pub const HostResourceOptions = struct {
     theme: zag_tui.ThemeHostOptions = .{},
     model_label: []const u8 = "—",
     model_ids: []const []const u8 = &.{},
+    /// Parallel to `model_ids`: `spec_id\\x1fmodel_id` wire keys. Empty = display id.
+    model_keys: []const []const u8 = &.{},
 };
+
+const tui_picker_cap: usize = 24;
+
+/// In-session `/model` switch: same provider → `setModel`; other host → new wire.
+pub const TuiModelHost = struct {
+    gpa: std.mem.Allocator,
+    io: Io,
+    env: *const std.process.Environ.Map,
+    wp: *coding.WireProvider,
+    spec_buf: [64]u8 = undefined,
+    spec_len: usize = 0,
+
+    pub fn specId(self: *const TuiModelHost) []const u8 {
+        return self.spec_buf[0..self.spec_len];
+    }
+
+    pub fn setSpec(self: *TuiModelHost, id: []const u8) void {
+        const n = @min(id.len, self.spec_buf.len);
+        @memcpy(self.spec_buf[0..n], id[0..n]);
+        self.spec_len = n;
+    }
+
+    pub fn setModelFn(ptr: *anyopaque, encoded: []const u8) anyerror!void {
+        const self: *TuiModelHost = @ptrCast(@alignCast(ptr));
+        const parsed = ai.registry.parsePickerKey(encoded);
+        const model = parsed.model_id;
+        if (model.len == 0) return error.BadRequest;
+        const spec_id = if (parsed.spec_id.len > 0) parsed.spec_id else self.specId();
+        if (spec_id.len == 0 or std.mem.eql(u8, spec_id, self.specId())) {
+            try self.wp.setModel(model);
+            return;
+        }
+        const EnvGet = struct {
+            env: *const std.process.Environ.Map,
+            pub fn get(this: @This(), key: []const u8) ?[]const u8 {
+                return this.env.get(key);
+            }
+        };
+        const resolved = try ai.registry.resolvePreset(EnvGet{ .env = self.env }, spec_id, model);
+        const new_wire = try resolved.createWire(self.gpa, self.io);
+        self.wp.replaceWire(new_wire);
+        self.setSpec(spec_id);
+    }
+
+    pub fn getModelFn(ptr: *anyopaque) []const u8 {
+        const self: *TuiModelHost = @ptrCast(@alignCast(ptr));
+        return self.wp.getModel();
+    }
+};
+
+pub const TuiPicker = struct {
+    ids: []const []const u8,
+    keys: []const []const u8,
+    label: []const u8,
+};
+
+/// Catalog rows for every env-keyed provider, plus live `/models` for the
+/// current host. Display is `Name  ·  model`; key is `spec\\x1fmodel`.
+pub fn collectTuiModelPicker(
+    arena: std.mem.Allocator,
+    env: *const std.process.Environ.Map,
+    current_spec: []const u8,
+    current_model: []const u8,
+    wp: *coding.WireProvider,
+) TuiPicker {
+    const EnvGet = struct {
+        env: *const std.process.Environ.Map,
+        pub fn get(this: @This(), key: []const u8) ?[]const u8 {
+            return this.env.get(key);
+        }
+    };
+    const getter = EnvGet{ .env = env };
+
+    var id_buf: [tui_picker_cap][]const u8 = undefined;
+    var key_buf: [tui_picker_cap][]const u8 = undefined;
+    var n: usize = 0;
+
+    const add = struct {
+        fn go(
+            arena_a: std.mem.Allocator,
+            ids: *[tui_picker_cap][]const u8,
+            keys: *[tui_picker_cap][]const u8,
+            count: *usize,
+            spec_id: []const u8,
+            spec_name: []const u8,
+            model_id: []const u8,
+        ) void {
+            if (count.* >= tui_picker_cap) return;
+            const key = std.fmt.allocPrint(arena_a, "{s}\x1f{s}", .{ spec_id, model_id }) catch return;
+            for (keys.*[0..count.*]) |existing| {
+                if (std.mem.eql(u8, existing, key)) return;
+            }
+            const display = std.fmt.allocPrint(arena_a, "{s}  ·  {s}", .{ spec_name, model_id }) catch model_id;
+            ids.*[count.*] = display;
+            keys.*[count.*] = key;
+            count.* += 1;
+        }
+    }.go;
+
+    var specs: std.ArrayList(ai.ProviderSpec) = .empty;
+    defer specs.deinit(arena);
+    ai.registry.listConfigured(getter, &specs, arena) catch {};
+
+    var found_current = false;
+    for (specs.items) |spec| {
+        if (std.mem.eql(u8, spec.id, current_spec)) found_current = true;
+        var models: std.ArrayList(ai.ModelInfo) = .empty;
+        defer models.deinit(arena);
+        ai.catalog.listForProvider(spec.id, &models, arena) catch {};
+        if (models.items.len == 0) {
+            add(arena, &id_buf, &key_buf, &n, spec.id, spec.name, spec.default_model);
+            continue;
+        }
+        for (models.items) |m| {
+            add(arena, &id_buf, &key_buf, &n, spec.id, spec.name, m.id);
+        }
+    }
+
+    const current_name = if (ai.presets.find(current_spec)) |s| s.name else current_spec;
+    if (!found_current and current_spec.len > 0) {
+        add(arena, &id_buf, &key_buf, &n, current_spec, current_name, current_model);
+    }
+
+    var live_arena_impl: std.heap.ArenaAllocator = .init(arena);
+    defer live_arena_impl.deinit();
+    if (wp.listModels(live_arena_impl.allocator())) |live| {
+        for (live) |id| {
+            add(arena, &id_buf, &key_buf, &n, current_spec, current_name, id);
+        }
+    } else |_| {}
+
+    add(arena, &id_buf, &key_buf, &n, current_spec, current_name, current_model);
+
+    const ids = arena.dupe([]const u8, id_buf[0..n]) catch &.{};
+    const keys = arena.dupe([]const u8, key_buf[0..n]) catch &.{};
+    const label = std.fmt.allocPrint(arena, "{s}  ·  {s}", .{ current_name, current_model }) catch current_model;
+    return .{ .ids = ids, .keys = keys, .label = label };
+}
 
 pub const RunArgs = struct {
     gpa: std.mem.Allocator,
@@ -164,7 +305,7 @@ pub fn runTui(args: RunArgs) RunResult {
     const id = args.session_path orelse "ephemeral";
     // Path chrome: full redact pipeline with Session-owned redactor.
     app.setIdentity(gpa, redactor, id, open_disp, args.permission_label, args.shell_label);
-    app.applyHostPresentation(io, args.host_opts.theme, args.host_opts.model_label, args.host_opts.model_ids);
+    app.applyHostPresentation(io, args.host_opts.theme, args.host_opts.model_label, args.host_opts.model_ids, args.host_opts.model_keys);
 
     app.bind(args.agent, session, redactor, host, .{
         .base_system = args.base_system,

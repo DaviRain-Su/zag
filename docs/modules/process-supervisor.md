@@ -6,8 +6,10 @@
 > [D-012](../decisions/active/D-012-complete-local-coding-agent-target.md) and
 > [2026-08-06 analysis](../plan/analysis/2026-08-06-pi-omp-hyper-local-agent-analysis.md).
 >
-> **Status:** implementation **landed** (Wave 1b) — dual review still **open**;
-> task remains `draft` until reviews PASS. Not a maturity raise.
+> **Status:** **implemented** (Wave 1 closeout 2026-08-14) — dual review
+> [architecture](../plan/reviews/process-supervisor-001-01-architecture.md)
+> PASS · [safety](../plan/reviews/process-supervisor-001-02-safety.md) PASS
+> (F1 reap-after-cancel). Not a maturity raise.
 > Semantic references: Hyper `Computer`/workspace process lifecycle, OMP bash-pty
 > ownership — **not** API/source parity (D-009).
 
@@ -129,11 +131,11 @@ Pre-spawn failures never leave zombie PIDs. Post-spawn failures still reap.
 - Desktop Computer Hub / browser / computer-use
 - Power-loss durable process journal
 
-## 8. Open questions — proposed v1 freeze (pending dual review)
+## 8. Open questions — v1 freeze (reviews PASS)
 
-These are the Wave 1a recommended freezes from
-[2026-08-13 next delivery plan](../plan/analysis/2026-08-13-next-delivery-plan.md).
-They do **not** move this task to `ready` until two independent reviews PASS.
+These are the Wave 1a freezes from
+[2026-08-14 next delivery plan](../plan/analysis/2026-08-14-next-delivery-plan.md).
+Dual review PASS 2026-08-14; they are **binding** for v1.
 
 | # | Question | Proposed v1 freeze |
 |---|----------|-------------------|

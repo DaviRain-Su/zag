@@ -28,9 +28,9 @@ overlay key handling when pending.
 | Kind | Opens via | Content (v1) |
 |------|-----------|--------------|
 | `help` | `/help` or palette | Builtin + skill/template hints |
-| `slash_palette` | composer text starts with `/` | Filtered builtins (+ note skill/template forms) |
+| `slash_palette` | composer text starts with `/` | Filtered builtins as `/name   hint` (+ note skill/template forms) |
 | `settings` | `/settings` | Read-mostly: perm/shell/theme/model labels |
-| `model` | `/model` | Catalog id list from host options; select updates host label |
+| `model` | `/model` | Configured-provider catalog (+ live `/models` for the current host); select switches provider+model |
 | `theme` | `/theme` | Built-in + user theme ids; select reloads palette fail-closed |
 
 ## Slash routing (submit)

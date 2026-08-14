@@ -4,6 +4,8 @@ Deferrals and non-blocking review findings. Blocking P0/P1 items stay in [tasks/
 
 | Date | Source | Priority | Note |
 |------|--------|----------|------|
+| 2026-08-14 | process-supervisor-001 N1–N3 | P3 | `collect` does not pump spawn-path pipes; cooperative cancel sleeps on the caller thread; `runForeground` uses `error.Timeout`/`StreamTooLong` not `Code.timed_out`. Long-lived slots must not inherit these. |
+| 2026-08-14 | acp-001 gate15 | P1 | Named follow-up [acp-gate15-001](./tasks/acp-gate15-001.md): second tool-bearing turn in one Session returns provider `-32000` before the tool runs. |
 | 2026-07-24 | H1 | P2 | Parallel read-only tool batches; serial execution remains acceptable for L2. |
 | 2026-07-24 | H2 | P2 | Additional stale-anchor recovery golden after correctness gates. |
 | 2026-07-24 | H3 | P2 | Full Plan UX/hotkeys after the permission contract; current stub is not an L2 SDK claim. |

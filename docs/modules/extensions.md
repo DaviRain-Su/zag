@@ -38,7 +38,7 @@ A feature may use several carriers. A Package is a bundle above E1/E2/E3, not an
 | Custom Provider | trusted Zig Provider plus later process/WASM runtime registration | E0 SDK L2; E2/E3 L0 |
 | SDK | same-process Zig composition | L2 closed |
 | JSON | `headless-v1` one-shot result/event output | L2 closed at `a1a1e0f` |
-| RPC | long-lived bidirectional Zag-native process control | **implemented** @ `0eeef5d` (`--rpc`); closeout pending; independent of `headless-v1` |
+| RPC | long-lived bidirectional Zag-native process control | **implemented** @ `0eeef5d` (`--rpc`); Wave 2 closeout; independent of `headless-v1` |
 | TUI/UI | host TUI plus host-rendered runtime extension UI | minimal TUI **done** @ `f8f7f55` ([tui-minimal.md](./tui-minimal.md)); runtime extension UI L0 |
 
 This is functional correspondence, not Pi API/schema/CLI/package-manager parity.

@@ -13,11 +13,15 @@
 | [tool-runtime.md](./tool-runtime.md) | H/P0 **L2** → SDK | `zag-types` ToolDefinition + ToolCapabilities；Core `tool.zig` | keep generic registry/validation in Core |
 | [tools-edit.md](./tools-edit.md) | H2 **L2** → C4 first-slice **done** @ `7be5151` ([edit-sharpness-001](../plan/tasks/edit-sharpness-001.md); Tools write/edit L2) | `zag-coding-agent/src/runtime/*`、`toolset.zig` | 保持在 coding-agent；无 Core edit ports |
 | [edit-transaction.md](./edit-transaction.md) | C4 second slice **done** @ `e086df8` ([edit-transaction-001](../plan/tasks/edit-transaction-001.md); D-012 item 1) | `zag-coding-agent` `runtime/edit_tools.zig` | 多文件 all-or-nothing；不碰 Core/TUI；Tools · write/edit stays L2 |
-| [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | coding-agent `runtime/edit_tools.zig` + `shell_policy.zig` | future process supervisor: [process-supervisor.md](./process-supervisor.md) |
-| [process-supervisor.md](./process-supervisor.md) | D-012 item 3 **landed** (Wave 1b; dual review open; [process-supervisor-001](../plan/tasks/process-supervisor-001.md) still `draft`) | `zag-coding-agent` `runtime/process_supervisor.zig`; `run_shell` via `runForeground` | no Core ports; no OS sandbox; no maturity raise |
-| [rpc-v1.md](./rpc-v1.md) | D-012 item 4 **implemented** @ `0eeef5d` ([rpc-v1-001](../plan/tasks/rpc-v1-001.md); closeout pending) | `zag-cli` `--rpc` + `rpc/` | no Core/coding-agent ports; does not extend `headless-v1` |
-| [acp.md](./acp.md) | D-012 item 4b **implemented** @ `8d2ba64` ([acp-001](../plan/tasks/acp-001.md); closeout pending) | `zag-cli` `--acp` | editor JSON-RPC; sibling of rpc-v1; no Core changes |
-| [lsp.md](./lsp.md) | D-012 item 2 **implemented** @ `75f213b` ([lsp-001](../plan/tasks/lsp-001.md); closeout pending) | `zag-coding-agent` `runtime/code_intel_tool.zig` + `runtime/lsp/` | owns spawn until supervisor long-lived slots; no Core LSP types |
+| [tools-shell.md](./tools-shell.md) | H2/H5 → L3 | coding-agent `runtime/edit_tools.zig` + `shell_policy.zig` + [process-supervisor.md](./process-supervisor.md) | supervisor v1 owns `run_shell`; long-lived slots later |
+| [process-supervisor.md](./process-supervisor.md) | D-012 item 3 **implemented** (Wave 1 closeout 2026-08-14; [process-supervisor-001](../plan/tasks/process-supervisor-001.md)) | `zag-coding-agent` `runtime/process_supervisor.zig`; `run_shell` via `runForeground` | no Core ports; no OS sandbox; no maturity raise |
+| [rpc-v1.md](./rpc-v1.md) | D-012 item 4 **implemented** @ `0eeef5d` (Wave 2 closeout 2026-08-14; 26/26) | `zag-cli` `--rpc` + `rpc/` | no Core/coding-agent ports; does not extend `headless-v1` |
+| [acp.md](./acp.md) | D-012 item 4b **implemented** @ `8d2ba64` (Wave 2 closeout; 32/33; [acp-gate15-001](../plan/tasks/acp-gate15-001.md)) | `zag-cli` `--acp` | editor JSON-RPC; sibling of rpc-v1; no Core changes |
+| [lsp.md](./lsp.md) | D-012 item 2 **implemented** @ `75f213b` (Wave 2 closeout) | `zag-coding-agent` `runtime/code_intel_tool.zig` + `runtime/lsp/` | owns spawn until [long-lived slots](./process-supervisor-long-lived.md); no Core LSP types |
+| [process-supervisor-long-lived.md](./process-supervisor-long-lived.md) | Wave 3 **draft** | not implemented | persistent stdio slots; env allow-list |
+| [mcp.md](./mcp.md) | Wave 3 **draft** | not implemented | contract only; named server before impl |
+| [zag-live-provider.md](./zag-live-provider.md) | Track L **draft** | not implemented | host ProviderPort; zag-live stays types-only |
+| [zag-live-prompt.md](./zag-live-prompt.md) | Track L **draft** | not implemented | default-off prompt surface |
 | [permissions.md](./permissions.md) | H3 **L2** | `zag-coding-agent/src/permissions.zig` | concrete product policy stays in coding-agent; required Core seam |
 | [context-compaction.md](./context-compaction.md) | H4 → C5 | Core `protocol_history.zig`/`context_view.zig` + coding-agent `context.zig` | ownership split complete; future repo-map work separate |
 | [session-item.md](./session-item.md) | M3 ✅ `31523b6` | Core `session_item.zig` + additive message fields | reasoning/synthetic/prompt-index and view-only repair/token trim; no maturity raise |
@@ -100,10 +104,14 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | pure layout + dirty-flag presenter |
 | [theme.md](./theme.md) | M2 / C9 Theme **done** (canvas; contract PASS @ `9e1b9f9`) | Host-shell Theme; implementation in `zag-tui`; no maturity raise |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
-| [rpc-v1.md](./rpc-v1.md) | C9 **implemented** @ `0eeef5d` (closeout pending) | `--rpc` NDJSON; does not modify `headless-v1` |
-| [acp.md](./acp.md) | C9 **implemented** @ `8d2ba64` (closeout pending) | `--acp` editor JSON-RPC adapter |
-| [lsp.md](./lsp.md) | C4/C5 **implemented** @ `75f213b` (closeout pending) | `code_intel` tool + hand-rolled LSP client |
-| [subagents-oracle.md](./subagents-oracle.md) | C6 in-process slice landed; Oracle/Graph stub | `task`/`scout`/`reviewer`; no process isolation; row stays L0 |
+| [rpc-v1.md](./rpc-v1.md) | C9 **implemented** @ `0eeef5d` (Wave 2 closeout) | `--rpc` NDJSON; does not modify `headless-v1` |
+| [acp.md](./acp.md) | C9 **implemented** @ `8d2ba64` (Wave 2 closeout; gate15 residual) | `--acp` editor JSON-RPC adapter |
+| [lsp.md](./lsp.md) | C4/C5 **implemented** @ `75f213b` (Wave 2 closeout) | `code_intel` tool + hand-rolled LSP client |
+| [subagents-oracle.md](./subagents-oracle.md) | C6 in-process slice landed (Wave 2 closeout); Oracle/Graph stub | `task`/`scout`/`reviewer`; no process isolation; row stays L0 |
+| [process-supervisor-long-lived.md](./process-supervisor-long-lived.md) | Wave 3 **draft** | persistent stdio slots; not v1 foreground |
+| [mcp.md](./mcp.md) | Wave 3 **draft** (contract only) | local stdio MCP; impl waits on slots + named server |
+| [zag-live-provider.md](./zag-live-provider.md) | Track L **draft** | host `ProviderPort` via zag-ai; zag-live stays types-only |
+| [zag-live-prompt.md](./zag-live-prompt.md) | Track L **draft** | coding-agent live prompt surface; default-off |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |
 | [zag-live.md](./zag-live.md) | D-014 Route A **implemented** @ zag-live-001 **done** (2026-08-14; 23/23; review pass) | `packages/zag-live/`; supervised live Scheme image; L2 domain service, `zag-types` only, host ports; no maturity claim |
 

@@ -11,16 +11,26 @@
 
 `L1+` 只是规划中的中间标记，表示功能明显超过教程但仍被一个或多个 L2 合同反例阻断；它不是可对外宣传的等级。
 
-**Current sync (2026-08-13):** Delivery truth for *what to do next* is
-[2026-08-13 next delivery plan](./plan/analysis/2026-08-13-next-delivery-plan.md)
+**Current sync (2026-08-14):** Delivery truth for *what to do next* is
+[2026-08-14 next delivery plan](./plan/analysis/2026-08-14-next-delivery-plan.md)
+(HEAD `fe075f1`). **No maturity row add/raise.** Relative to the 08-13
+note: process supervisor **implemented** (Wave 1 closeout 2026-08-14;
+`runtime/process_supervisor.zig`; `run_shell` → `runForeground`);
+`zag-live-001` **done** (experimental, default-off); zag-live-002/003 and
+MCP remain absent as product surfaces. `rpc-v1` / ACP / LSP / in-process
+`task` / session `/resume` tree / Theme canvas stay “code landed, no row”.
+Session v1, Trace v1, headless-v1, and all L2 rows are unchanged.
+
+**Current sync (2026-08-13, historical):** Delivery truth for *what to do next*
+was [2026-08-13 next delivery plan](./plan/analysis/2026-08-13-next-delivery-plan.md)
 (HEAD `6869549`). Code landed **without** a maturity row add/raise:
 `rpc-v1` @ `0eeef5d`, ACP @ `8d2ba64`, `code_intel`/LSP @ `75f213b`,
 in-process `task` subagent @ `1dabd25`, session `/resume` tree browser @
-`298f207`, Theme canvas @ `f5e1356`. Process supervisor remains **draft**
-(not implemented). MCP / Memory / E2–E3 / OS sandbox remain absent. Theme
-is no longer “contract-only”. D-012 remaining Gates: supervisor v1, then
-MCP/long-lived slots; closeout of the landed slices is Wave 2, not a row
-raise. Session v1, Trace v1, headless-v1, and all L2 rows are unchanged.
+`298f207`, Theme canvas @ `f5e1356`. Process supervisor was still **draft**
+on that tip. MCP / Memory / E2–E3 / OS sandbox remain absent. Theme
+is no longer “contract-only”. D-012 remaining Gates: supervisor v1 closeout,
+then MCP/long-lived slots; closeout of the landed slices is Wave 2, not a row
+raise.
 
 **Current sync (2026-08-06, historical):** M3 session/context sharpness landed at
 `31523b6`; TUI streaming at `2d57e84`; pure TUI layout/presenter at
@@ -50,7 +60,7 @@ raise. Session v1, Trace v1, headless-v1, and all L2 rows are unchanged.
 | Provider / zag-ai | **L2** | final audit confirmed two wire styles、canonical retry/error/usage/cost、strict terminal/tool atomicity、curl active deadline/cancel、std ordinary success + controlled lifecycle fail-closed `unsupported_control`、redacted diagnostics；backend capability truth is explicit | backend-capability deadline/cancel ✅；strict completion/tool bundle ✅；redacted diagnostics + deterministic contract matrix ✅ | fallback/multi-key/third protocol on demand |
 | Trace / Observability | **L2** | h-trace-001 lifecycle + h-redact-001 redaction before serialize；schema；facade 单 terminal；Guard symlink jail；atomic；fail-closed；h-shell-001 replay evidence；`a5ff2b7` preserves Trace v1 twelve kinds while resulting turns and ordinary `tool_result(code=steered)` remain durable | versioned schema ✅；truthful terminal ✅；symlink/atomic persistence ✅；redact ✅；shell/control projection ✅ | dashboard/correlation |
 | Zig source composition | **L2** | SDK-ready Gate remains closed at `ebdd7ab`：stateful Tool、high-level injection、ownership/lifetime/error/event/per-run cancel/session contracts、external consumer CI；coding-agent lifecycle closed at `aecf402`, Session control/Core `ControlInput` at `a5ff2b7`, idle-only `Session.fork` at `0a3087f`, E1 Skills public options/activation at `caafef5`, and E1 Prompt Templates public options/parse/expand at `61326ae` as enrichment without a new maturity row；current fixture **24/24** after edit-sharpness closeout `7be5151` (was **23/23** at Prompt Templates closeout `61326ae`) | supported import surface + contract docs + `tests/sdk-consumer-fixture/` pass merged-main Gate | published packages after second consumer |
-| Headless / Process SDK | **L2** | `headless-001` done at `a1a1e0f`：output-only `headless-v1` + `--json`/`--json-stream` + headless-only exit matrix；process fixture 4/4（real binary + mock provider, both backends）；stdout purity；stream terminal uniqueness incl. halt-then-success；default mode 0/1/2 unchanged；`-Dtui` optional + Kernel no-TUI scan。`tui-minimal-001` **done** @ `f8f7f55` (lazy `-Dtui` host shell) does **not** raise this row。`rpc-v1` (`0eeef5d`) and ACP (`8d2ba64`) are **landed product-shell modes** with closeout pending — they do **not** raise this row or add a new one。Post-TUI remote Gate [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) is **in-progress** Phase A (TARGET `f352b60` stale vs HEAD `6869549`; **no** run id; **no** Gate green; **no** remote `-Dtui`; **no** row raise). Theme canvas implementation does **not** add a maturity row. | clean JSON/streaming output + stable errors/exit codes ✅ | separate Zag-native `rpc-v1` / ACP/editor **closeout Gates** (code already exists) |
+| Headless / Process SDK | **L2** | `headless-001` done at `a1a1e0f`：output-only `headless-v1` + `--json`/`--json-stream` + headless-only exit matrix；process fixture 4/4（real binary + mock provider, both backends）；stdout purity；stream terminal uniqueness incl. halt-then-success；default mode 0/1/2 unchanged；`-Dtui` optional + Kernel no-TUI scan。`tui-minimal-001` **done** @ `f8f7f55` (lazy `-Dtui` host shell) does **not** raise this row。`rpc-v1` (`0eeef5d`) and ACP (`8d2ba64`) are **landed product-shell modes** (Wave 2 closeout 2026-08-14; ACP gate15 residual) — they do **not** raise this row or add a new one。Post-TUI remote Gate [post-tui-remote-dual-backend-gate-001](./plan/tasks/post-tui-remote-dual-backend-gate-001.md) is **in-progress** Phase A (TARGET `f352b60` stale vs HEAD `6869549`; **no** run id; **no** Gate green; **no** remote `-Dtui`; **no** row raise). Theme canvas implementation does **not** add a maturity row. | clean JSON/streaming output + stable errors/exit codes ✅ | separate Zag-native `rpc-v1` / ACP/editor **closeout Gates** (code already exists) |
 | Memory Repo | L0 | 仅规格 | H 不做；C5 默认关闭 | optional retrieval backend |
 | Subagents / Oracle | L0 | 规格 + **in-process** `task`/`scout`/`reviewer` @ `1dabd25`（ephemeral child Session；非进程隔离）。Oracle / Graph / process-backed **仍未实现**。不升行。 | H 不做；L2/L3 仍依赖 process ownership + Oracle/Graph contracts | typed agents/Graph |
 | Runtime Extensions | L0 | D-010 + feature correspondence；trusted static Zig composition is SDK L2；E1 Skills **slice done** at `caafef5`；E1 Prompt Templates **slice done** at `61326ae`；Theme **implemented** in `zag-tui` (canvas; contract PASS @ `9e1b9f9` was the freeze)；E2 process / E3 WASM host / MCP / runtime bundle/UI do not exist；**row stays L0** | separate E1 maturity Gate only if explicitly scheduled；E2 requires C7.1；E3 requires WIT/runtime/capability/package Gates；untrusted native requires C7.2 | local bundle + host-rendered stateful UI + separately gated WASM Provider/hook worlds |

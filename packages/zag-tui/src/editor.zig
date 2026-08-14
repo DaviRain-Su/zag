@@ -57,28 +57,23 @@ pub const Editor = struct {
 
     pub fn backspace(self: *Editor) void {
         if (self.cursor == 0) return;
-        const after = self.len - self.cursor;
-        if (after > 0) {
-            std.mem.copyForwards(u8, self.buf[self.cursor - 1 ..][0..after], self.buf[self.cursor..][0..after]);
-        }
-        self.cursor -= 1;
-        self.len -= 1;
+        const n = utf8PrevLen(self.buf[0..self.cursor]);
+        self.deleteRange(self.cursor - n, self.cursor);
     }
 
     pub fn deleteForward(self: *Editor) void {
         if (self.cursor >= self.len) return;
-        const after = self.len - self.cursor - 1;
-        if (after > 0) {
-            std.mem.copyForwards(u8, self.buf[self.cursor..][0..after], self.buf[self.cursor + 1 ..][0..after]);
-        }
-        self.len -= 1;
+        const n = utf8NextLen(self.buf[self.cursor..self.len]);
+        self.deleteRange(self.cursor, self.cursor + n);
     }
 
     pub fn moveLeft(self: *Editor) void {
-        if (self.cursor > 0) self.cursor -= 1;
+        if (self.cursor == 0) return;
+        self.cursor -= utf8PrevLen(self.buf[0..self.cursor]);
     }
     pub fn moveRight(self: *Editor) void {
-        if (self.cursor < self.len) self.cursor += 1;
+        if (self.cursor >= self.len) return;
+        self.cursor += utf8NextLen(self.buf[self.cursor..self.len]);
     }
 
     /// Home: first byte of the current line (after the previous `\n`).
@@ -131,6 +126,26 @@ pub const Editor = struct {
 
 fn isWordSeparator(b: u8) bool {
     return b == ' ' or b == '\t' or b == '\n';
+}
+
+/// Bytes in the last UTF-8 codepoint of `prefix`. Invalid tails step 1 byte
+/// so a corrupt buffer can still be edited.
+fn utf8PrevLen(prefix: []const u8) usize {
+    if (prefix.len == 0) return 0;
+    var i = prefix.len - 1;
+    while (i > 0 and (prefix[i] & 0xC0) == 0x80) i -= 1;
+    const n = prefix.len - i;
+    if (std.unicode.utf8ByteSequenceLength(prefix[i]) catch 0 != n) return 1;
+    return n;
+}
+
+/// Bytes in the first UTF-8 codepoint of `rest`. Invalid heads step 1 byte.
+fn utf8NextLen(rest: []const u8) usize {
+    if (rest.len == 0) return 0;
+    const n = std.unicode.utf8ByteSequenceLength(rest[0]) catch return 1;
+    if (n > rest.len) return 1;
+    _ = std.unicode.utf8Decode(rest[0..n]) catch return 1;
+    return n;
 }
 
 pub const History = struct {
@@ -216,6 +231,21 @@ test "editor line cap" {
     }
     // Now at max lines; another newline must reject entirely.
     try std.testing.expect(!ed.insert("\n"));
+}
+
+test "editor CJK insert is one codepoint for backspace/arrows" {
+    var storage: [c.editor_max_bytes]u8 = undefined;
+    var ed = Editor.init(&storage);
+    try std.testing.expect(ed.insert("你好"));
+    try std.testing.expectEqual(@as(usize, 6), ed.len);
+    try std.testing.expectEqual(@as(usize, 6), ed.cursor);
+    ed.moveLeft();
+    try std.testing.expectEqual(@as(usize, 3), ed.cursor);
+    ed.backspace();
+    try std.testing.expectEqualStrings("好", ed.slice());
+    try std.testing.expectEqual(@as(usize, 0), ed.cursor);
+    ed.deleteForward();
+    try std.testing.expectEqualStrings("", ed.slice());
 }
 
 test "editor moveHome/moveEnd are line-aware" {

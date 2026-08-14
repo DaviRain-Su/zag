@@ -25,11 +25,17 @@
 
 `packages/third_party/vaxis/` = MIT-licensed vendored copy (source:
 pi-mono-zig `zig/vendor/vaxis`; provenance note with the source checkout
-recorded) **with ONE documented vendored patch**: a fd-based `Tty` init
-path (`makeRaw` on the provided in_fd, writer over out_fd). vaxis
-hard-codes `/dev/tty` (tty.zig:57-59), which breaks zag's PTY fixture
-spawn (fork+dup2 slave→0/1/2, deliberately no controlling tty, macOS
-NOTTY). The patch stays quarantined in `packages/third_party/vaxis`.
+recorded) **with documented vendored patches**, quarantined in
+`packages/third_party/vaxis`:
+
+1. stdin-tty init + `owned_fd` (do not close borrowed stdin; `/dev/tty`
+   fallback only). vaxis hard-codes `/dev/tty`, which breaks zag's PTY
+   fixture spawn (fork+dup2 slave→0/1/2, deliberately no controlling
+   tty, macOS NOTTY).
+2. `PosixTty.deinit`: `error.ProcessOrphaned` on `tcsetattr` is retried
+   with `TCSANOW` and not logged (Ctrl+C under `zig build run` can race
+   the parent off the FG pgroup; EIO is not a leftover-raw failure).
+
 `zigimg` + `uucode` resolve from the local zig cache (already present —
 offline resolution).
 
@@ -50,9 +56,11 @@ over the **patched fd-based Tty** (STDIN/STDOUT, as today):
   pulling vaxis);
 - `restore()` pinned protocol: quit flag → `loop.postEvent(sentinel)` (wake
   the blocked `nextEvent`; sentinel never maps to a key) → join bridge
-  thread → `loop.stop()` → `vx.deinit` → `tty.deinit` (original termios
-  restored; fixture asserts ISIG restored equal) — completes before
-  `App.destroy`;
+  thread → `vx.deinit` → `tty.deinit` (original termios restored; fixture
+  asserts ISIG restored equal) → hand the TTY FG pgroup back — completes
+  before `App.destroy`. `loop.stop()` is still not called (PTY hang).
+  `open()` claims a private FG pgroup when already the FG job so Ctrl+C
+  does not also signal `zig build run`; PTY / background jobs skip;
 - wake-pipe family unchanged; `windowSize` kept for tui_entry.zig.
 
 ## 4. Input (packages/zag-tui/src/keys.zig → mapKey)
@@ -63,8 +71,14 @@ Hand-rolled decode is deleted; `mapKey(vaxis.Key) -> AppKey`:
 - alt+enter (multiline newline), alt+s, alt+f (mods);
 - ctrl+j; ctrl_c/ctrl_d from codepoint (defensive — ISIG normally routes
   ctrl_c to SIGINT);
-- printable codepoints → UTF-8-encode before `editor.insert` (fixes
-  today's byte-by-byte insert of multibyte input).
+- printable input prefers `key.text` (IME commit / multi-codepoint
+  graphemes) and otherwise UTF-8-encodes the codepoint before
+  `editor.insert` (one codepoint, not byte-by-byte);
+- editor backspace / delete / left / right step by UTF-8 codepoint so
+  CJK stays valid;
+- kitty-keyboard is **not** left enabled after `queryTerminal` (CSI u
+  `report_all_as_ctl_seqs` swallows IME composition on Kitty / Ghostty /
+  WezTerm / iTerm2).
 
 ## 5. Rendering (packages/zag-tui/src/render.zig)
 

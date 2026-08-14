@@ -17,8 +17,8 @@ These are different contracts, not aliases:
 | Zig SDK | same-process source composition; L2 closed |
 | plain CLI | human one-shot / REPL |
 | `headless-v1` | output-only `--json` / `--json-stream`; L2 closed |
-| `rpc-v1` | long-lived bidirectional NDJSON @ `0eeef5d` (`--rpc`); closeout pending; does not modify `headless-v1` |
-| ACP | editor JSON-RPC adapter @ `8d2ba64` (`--acp`); closeout pending |
+| `rpc-v1` | long-lived bidirectional NDJSON @ `0eeef5d` (`--rpc`); Wave 2 closeout; does not modify `headless-v1` |
+| ACP | editor JSON-RPC adapter @ `8d2ba64` (`--acp`); Wave 2 closeout; gate15 residual |
 | TUI | host interactive shell over public events/control |
 
 `rpc-v1` does not modify or inflate the closed `headless-v1` contract and does not promise Pi command/schema parity.

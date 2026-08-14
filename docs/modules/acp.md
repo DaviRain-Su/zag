@@ -15,10 +15,12 @@
 > capability gates, and wire shapes are quoted from that surface; nothing is
 > ported.
 >
-> **Status:** implementation **landed** @ `8d2ba64` ([acp-001](../plan/tasks/acp-001.md)
-> `implemented`; 32/33 process-fixture gates, gate15 follow-up). Dual review /
-> Gate closeout still **pending** — this is not an unstarted contract.
-> Zig 0.16 (`std.Io` era) APIs assumed throughout.
+> **Status:** **implemented** @ `8d2ba64` ([acp-001](../plan/tasks/acp-001.md);
+> 32/33 process-fixture gates). Wave 2 closeout 2026-08-14:
+> [architecture](../plan/reviews/acp-001-01-architecture.md) PASS ·
+> [safety](../plan/reviews/acp-001-02-safety.md) PASS. gate15 residual:
+> [acp-gate15-001](../plan/tasks/acp-gate15-001.md). Zig 0.16 (`std.Io` era)
+> APIs assumed throughout.
 
 ## 1. Principles
 

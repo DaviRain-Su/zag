@@ -46,12 +46,16 @@ pub const StatusFacts = struct {
     theme_id: []const u8 = theme_mod.builtin_id,
     /// Thinking visibility toggle state (Ctrl+T).
     show_thinking: bool = false,
+    /// Model is currently streaming reasoning (turn-status "Thinking…").
+    thinking_live: bool = false,
     /// Transcript scroll offset (0 = newest window); shown as feedback.
     scroll: usize = 0,
     /// Live subagent count for status chips (0 = omit).
     running_tasks: u32 = 0,
     /// Monotonic ms for busy spinner animation.
     tick_ms: u64 = 0,
+    /// When the current busy turn started (0 = omit elapsed).
+    busy_started_ms: u64 = 0,
     /// Basename of the working directory (grok-style ambient chip), e.g.
     /// "zag". Empty = omit the chip.
     cwd_tail: []const u8 = "",
@@ -107,8 +111,9 @@ pub const QueuePaneOpts = struct {
 pub const CardPaintOpts = struct {
     /// Thinking cards: false = header only (default, grok collapsed/truncated).
     thinking_expanded: bool = false,
-    /// Max body lines for tool cards (0 = unlimited). Grok truncated ≈ 6.
-    tool_body_max_lines: u16 = 6,
+    /// Max body lines for tool cards (0 = unlimited). Must match
+    /// `constants.tool_body_max_lines` so estimate/measure/render agree.
+    tool_body_max_lines: u16 = c.tool_body_max_lines,
     /// Collapse consecutive completed tool cards sharing a verb into
     /// header-only rows, keeping only the newest card's body (grok verb
     /// folding). Running `tool start` cards never join a group.
@@ -173,6 +178,11 @@ pub fn renderFrame(
     queue_opts: QueuePaneOpts,
 ) error{WriteFailed}!void {
     term.ensureSize(size);
+    // Per-frame rewind. Skipping this filled the 16 KB LineStore mid-session
+    // and every later `store.format` returned null — status chips, tool
+    // titles, and thinking headers vanished at once.
+    term.scratch.reset();
+    _ = term.md_arena.reset(.retain_capacity);
     if (last_drawn_state == null or last_drawn_state.? != facts.state) {
         // State transition always forces a full refresh so the PTY marker
         // contract ("state:{s}" appears in the status chips) stays honest.
@@ -203,12 +213,13 @@ fn drawFrame(
     tasks_opts: TasksPaneOpts,
     queue_opts: QueuePaneOpts,
 ) void {
+    store.reset();
     root.clear();
     switch (layout.mode) {
         .constrained => {
             drawHeader(childRegion(root, layout.header), layout.mode, facts, palette, store);
             drawStatus(childRegion(root, layout.status), layout.mode, facts, ed, palette, store);
-            drawCards(gpa, childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, palette, store, sb);
+            drawCards(gpa, childRegion(root, layout.cards), layout.cards_window, layout.mode, snap, facts, palette, store, sb);
             drawEditor(childRegion(root, layout.editor), layout.mode, ed, palette);
         },
         .full => {
@@ -222,16 +233,25 @@ fn drawFrame(
                 .style = border_style,
             });
 
-            drawCards(gpa, cards_win, layout.cards_window, layout.mode, snap, palette, store, sb);
-            drawEditorStatusBorder(root, layout.editor, facts, palette, store);
+            // Reserve chips in the line store before cards consume it, then
+            // paint them last so the editor border / cards cannot hide them.
+            const chip_max_w = layout.editor.w -| 4;
+            var chip_scratch: [512]u8 = undefined;
+            const chips_line = buildStatusChips(&chip_scratch, facts, chip_max_w);
+            const chips_stored = store.format("{s}", .{chips_line});
+
+            drawCards(gpa, cards_win, layout.cards_window, layout.mode, snap, facts, palette, store, sb);
             drawEditor(editor_win, layout.mode, ed, palette);
             drawTurnStatus(childRegion(root, layout.turn_status), facts, palette, store);
-            drawShortcutsBar(childRegion(root, layout.shortcuts), facts, modal.pending, tasks_opts.focused, palette, store);
+            drawShortcutsBar(childRegion(root, layout.shortcuts), facts, modal.pending, tasks_opts.focused, palette);
 
             if (layout.modal) |m| drawModal(root, m, modal, palette, store);
             if (layout.tasks_overlay) |tr| drawTasksOverlay(root, tr, subagents, palette, store, tasks_opts);
             if (layout.queue_overlay) |qr| drawQueueOverlay(root, qr, palette, store, queue_opts);
             if (ov.kind != .none and !modal.pending) drawHostOverlay(root, layout, ov, palette, store);
+            if (chips_stored) |text| {
+                paintEditorStatusChips(root, layout.editor, text, facts, palette, store);
+            }
         },
     }
     // The paint snap is only valid during one measure+draw pass (its backing
@@ -302,6 +322,17 @@ fn printLineStyled(win: vaxis.Window, row: u16, text: []const u8, style: vaxis.S
     _ = win.printSegment(.{ .text = capped, .style = style }, .{ .row_offset = row, .wrap = .none });
 }
 
+fn printLineStyledAt(win: vaxis.Window, row: u16, col: u16, text: []const u8, style: vaxis.Style) void {
+    if (col >= win.width) return;
+    const capped = present.utf8Prefix(text, win.width - col);
+    if (capped.len == 0) return;
+    _ = win.printSegment(.{ .text = capped, .style = style }, .{
+        .row_offset = row,
+        .col_offset = col,
+        .wrap = .none,
+    });
+}
+
 fn drawHeader(win: vaxis.Window, mode: layout_mod.Mode, facts: StatusFacts, palette: *const theme_mod.Palette, store: *terminal.LineStore) void {
     const header_style = mergedFgBg(palette, .status_fg, .status_bg);
     var row: u16 = 0;
@@ -369,6 +400,7 @@ fn drawCards(
     window: layout_mod.CardsWindow,
     mode: layout_mod.Mode,
     snap: []const cards.CardSlot,
+    facts: StatusFacts,
     palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
     sb: *scrollback_mod.Scrollback,
@@ -419,10 +451,7 @@ fn drawCards(
     // into the remaining width.
     const content_win = if (win.width > 1) win.child(.{ .width = win.width - 1 }) else win;
     if (sb.vis.items.len == 0) {
-        if (content_win.height > 0) {
-            printLineStyled(content_win, 0, "(no events yet)", palette.style(.card_fg));
-        }
-        drawScrollbar(win, sb, palette);
+        drawEmptyTranscript(content_win, facts, palette, store);
         return;
     }
     const pw = sb.paintWindow(content_win.height);
@@ -439,17 +468,62 @@ fn drawCards(
         const slot = &snap[sb.slotAt(i)];
         // Negative y_off clips the card's top rows (vaxis writeCell drops
         // rows above the window); the invariant skip < h ≤ 65535 < |i17
-        // min| keeps the cast safe.
+        // min| keeps the cast safe. Positive overflow is clipped so a
+        // tall card cannot paint over the editor status chips.
         const y_off: i17 = @intCast(@min(@max(y, -@as(i64, scrollback_mod.max_draw_offset)), @as(i64, scrollback_mod.max_draw_offset)));
+        const remain: i64 = if (y >= 0) @as(i64, content_win.height) - y else h;
+        const paint_h: i64 = @min(h, @max(remain, 1));
         const card_win = content_win.child(.{
             .y_off = y_off,
             .width = content_win.width,
-            .height = @intCast(@min(@max(h, 1), 65535)),
+            .height = @intCast(@min(@max(paint_h, 1), 65535)),
         });
         renderCardInto(gpa, card_win, slot, palette, store);
         y += h + 1;
     }
     drawScrollbar(win, sb, palette);
+}
+
+/// Idle first-run canvas. Top-aligned so the first user/assistant card
+/// replaces it in the same origin (transcript grows downward).
+fn drawEmptyTranscript(
+    win: vaxis.Window,
+    facts: StatusFacts,
+    palette: *const theme_mod.Palette,
+    store: *terminal.LineStore,
+) void {
+    if (win.height == 0 or win.width == 0) return;
+    const title_st = palette.style(.accent_fg);
+    const muted = palette.style(.muted_fg);
+    const has_model = facts.model.len > 0 and !std.mem.eql(u8, facts.model, "—");
+    const has_cwd = facts.cwd_tail.len > 0;
+    const sub: []const u8 = blk: {
+        if (has_model and has_cwd) {
+            break :blk store.format("{s}  ·  {s}", .{ facts.model, facts.cwd_tail }) orelse facts.model;
+        }
+        if (has_model) break :blk facts.model;
+        if (has_cwd) break :blk facts.cwd_tail;
+        break :blk "";
+    };
+
+    const identity_h: u16 = 1 + @as(u16, if (sub.len > 0) 1 else 0);
+    const hint_h: u16 = if (win.height >= identity_h + 2) 1 else 0;
+    const gap: u16 = if (hint_h > 0) 1 else 0;
+    const block_h = identity_h + gap + hint_h;
+    var row: u16 = if (win.height > block_h) 1 else 0;
+
+    printLineStyledAt(win, row, 2, "zag", title_st);
+    row += 1;
+    if (sub.len > 0 and row < win.height) {
+        printLineStyledAt(win, row, 2, present.utf8Prefix(sub, win.width -| 2), muted);
+        row += 1;
+    }
+    if (hint_h > 0) {
+        row += gap;
+        if (row < win.height) {
+            printLineStyledAt(win, row, 2, "Ask anything, or type / for commands", muted);
+        }
+    }
 }
 
 /// Render one card into `win` (its full height). Assistant cards render the
@@ -545,23 +619,19 @@ fn renderCardInto(
             printLineStyled(win, 0, s, palette.style(.error_fg));
         }
     } else if (is_thinking) {
-        // grok ThinkingBlock: collapsed header by default; Ctrl+E expands body.
+        // Live thinking always shows its streaming body. Finalized thoughts
+        // stay header-only until Ctrl+E. Headers are string literals so a
+        // full LineStore cannot swallow the row.
         var muted = palette.style(.muted_fg);
         muted.italic = true;
         const progressive = std.mem.startsWith(u8, title_raw, "thinking progressive");
-        const expanded = card_paint_opts.thinking_expanded;
+        const expanded = card_paint_opts.thinking_expanded or progressive;
         if (progressive) {
-            if (expanded) {
-                printLineStyled(win, 0, "Thinking…", muted);
-            } else if (store.format("Thinking…  (ctrl+e to expand)", .{})) |s| {
-                printLineStyled(win, 0, present.utf8Prefix(s, win.width), muted);
-            }
+            printLineStyled(win, 0, "Thinking…", muted);
+        } else if (expanded) {
+            printLineStyled(win, 0, "Thought", muted);
         } else {
-            if (expanded) {
-                printLineStyled(win, 0, "Thought", muted);
-            } else if (store.format("Thought  (ctrl+e to expand)", .{})) |s| {
-                printLineStyled(win, 0, present.utf8Prefix(s, win.width), muted);
-            }
+            printLineStyled(win, 0, "Thought  (ctrl+e to expand)", muted);
         }
     } else {
         if (store.format("· {s}", .{title})) |s| {
@@ -571,8 +641,10 @@ fn renderCardInto(
 
     // Body: thinking collapsed → header only; tools truncated to N lines;
     // grouped non-newest tools → header only (height 1 from measure).
+    const thinking_show_body = is_thinking and (card_paint_opts.thinking_expanded or
+        std.mem.startsWith(u8, title_raw, "thinking progressive"));
     const show_body = has_body and card.body_len > 0 and win.height > 1 and
-        !(is_thinking and !card_paint_opts.thinking_expanded) and
+        !(is_thinking and !thinking_show_body) and
         !grouped_header_only;
     if (show_body) {
         const body_win = win.child(.{
@@ -1328,12 +1400,30 @@ fn drawTurnStatus(
     const text: []const u8 = switch (facts.state) {
         .busy => blk: {
             style = palette.style(.tool_running_fg);
+            if (facts.thinking_live) {
+                break :blk store.format("{s} Thinking…", .{spin}) orelse "Thinking…";
+            }
+            const elapsed_s: u64 = if (facts.busy_started_ms > 0 and facts.tick_ms >= facts.busy_started_ms)
+                (facts.tick_ms - facts.busy_started_ms) / 1000
+            else
+                0;
             if (facts.running_tasks > 0) {
+                if (elapsed_s > 0) {
+                    break :blk store.format("{s} Working · {d} task{s} · {d}s", .{
+                        spin,
+                        facts.running_tasks,
+                        if (facts.running_tasks == 1) "" else "s",
+                        elapsed_s,
+                    }) orelse "Working…";
+                }
                 break :blk store.format("{s} Working · {d} task{s}", .{
                     spin,
                     facts.running_tasks,
                     if (facts.running_tasks == 1) "" else "s",
                 }) orelse "Working…";
+            }
+            if (elapsed_s > 0) {
+                break :blk store.format("{s} Working · {d}s", .{ spin, elapsed_s }) orelse "Working…";
             }
             break :blk store.format("{s} Working…", .{spin}) orelse "Working…";
         },
@@ -1353,34 +1443,104 @@ fn drawTurnStatus(
     });
 }
 
+const ShortcutHint = struct { key: []const u8, label: []const u8 };
+
+const shortcuts_modal = [_]ShortcutHint{
+    .{ .key = "a", .label = "allow" },
+    .{ .key = "d", .label = "deny" },
+    .{ .key = "esc", .label = "cancel" },
+    .{ .key = "ctrl+o", .label = "auto" },
+};
+const shortcuts_tasks = [_]ShortcutHint{
+    .{ .key = "j/k", .label = "nav" },
+    .{ .key = "space", .label = "expand" },
+    .{ .key = "esc", .label = "back" },
+    .{ .key = "ctrl+k", .label = "close" },
+};
+const shortcuts_busy = [_]ShortcutHint{
+    .{ .key = "esc", .label = "note" },
+    .{ .key = "alt+s", .label = "steer" },
+    .{ .key = "alt+f", .label = "follow-up" },
+    .{ .key = "ctrl+e", .label = "think" },
+    .{ .key = "F1", .label = "help" },
+};
+const shortcuts_thinking = [_]ShortcutHint{
+    .{ .key = "enter", .label = "send" },
+    .{ .key = "ctrl+e", .label = "think" },
+    .{ .key = "ctrl+t", .label = "hide" },
+    .{ .key = "ctrl+k", .label = "tasks" },
+    .{ .key = "F1", .label = "help" },
+};
+const shortcuts_idle = [_]ShortcutHint{
+    .{ .key = "enter", .label = "send" },
+    .{ .key = "/", .label = "commands" },
+    .{ .key = "ctrl+k", .label = "tasks" },
+    .{ .key = "ctrl+o", .label = "perm" },
+    .{ .key = "F1", .label = "help" },
+};
+
 /// Grok ShortcutsBar under the prompt: context-sensitive key hints.
+/// Key tokens paint in accent; labels stay muted.
 fn drawShortcutsBar(
     win: vaxis.Window,
     facts: StatusFacts,
     modal_pending: bool,
     tasks_focused: bool,
     palette: *const theme_mod.Palette,
-    store: *terminal.LineStore,
 ) void {
     if (win.height == 0 or win.width == 0) return;
+    const hints: []const ShortcutHint = if (modal_pending)
+        &shortcuts_modal
+    else if (tasks_focused)
+        &shortcuts_tasks
+    else if (facts.state == .busy)
+        &shortcuts_busy
+    else if (facts.show_thinking)
+        &shortcuts_thinking
+    else
+        &shortcuts_idle;
+    paintShortcutHints(win, hints, palette);
+}
+
+fn paintShortcutHints(win: vaxis.Window, hints: []const ShortcutHint, palette: *const theme_mod.Palette) void {
     const muted = palette.style(.muted_fg);
     const key_st = palette.style(.accent_fg);
-    const hints: []const u8 = if (modal_pending)
-        "a allow  ·  d deny  ·  esc cancel  ·  ctrl+o auto"
-    else if (tasks_focused)
-        "j/k nav  ·  space expand  ·  esc back  ·  ctrl+k close"
-    else if (facts.state == .busy)
-        "esc note  ·  alt+s steer  ·  alt+f follow-up  ·  ctrl+e think  ·  F1 help"
-    else if (facts.show_thinking)
-        "enter send  ·  ctrl+e think  ·  ctrl+t hide  ·  ctrl+k tasks  ·  F1 help"
-    else
-        "enter send  ·  / commands  ·  ctrl+k tasks  ·  ctrl+o perm  ·  F1 help";
-
-    // Paint key tokens in accent when simple "word word" pairs — keep whole
-    // line muted for v1 simplicity (readable, low noise).
-    _ = key_st;
-    const line = store.format(" {s}", .{hints}) orelse hints;
-    printLineStyled(win, 0, present.utf8Prefix(line, win.width), muted);
+    var col: u16 = 1;
+    for (hints, 0..) |h, i| {
+        if (i > 0) {
+            const sep = "  ·  ";
+            const sep_w = win.gwidth(sep);
+            if (col + sep_w >= win.width) break;
+            _ = win.printSegment(.{ .text = sep, .style = muted }, .{
+                .row_offset = 0,
+                .col_offset = col,
+                .wrap = .none,
+            });
+            col += sep_w;
+        }
+        const key_w = win.gwidth(h.key);
+        if (col + key_w >= win.width) break;
+        _ = win.printSegment(.{ .text = h.key, .style = key_st }, .{
+            .row_offset = 0,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col += key_w;
+        if (h.label.len == 0) continue;
+        if (col + 1 + win.gwidth(h.label) >= win.width) break;
+        _ = win.printSegment(.{ .text = " ", .style = muted }, .{
+            .row_offset = 0,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col += 1;
+        _ = win.printSegment(.{ .text = h.label, .style = muted }, .{
+            .row_offset = 0,
+            .col_offset = col,
+            .wrap = .none,
+        });
+        col += win.gwidth(h.label);
+    }
 }
 
 fn toolBodyLooksFailed(body: []const u8) bool {
@@ -1421,8 +1581,10 @@ pub fn measureCardHeight(gpa: std.mem.Allocator, card: *const cards.CardSlot, co
     const is_thinking = std.mem.startsWith(u8, title, "thinking");
     const has_body = card.kind == .user or is_tool or is_thinking;
     if (has_body and card.body_len > 0) {
-        // Thinking collapsed (default): header only — matches renderCardInto.
-        if (is_thinking and !card_paint_opts.thinking_expanded) return 1;
+        // Finalized thought collapsed (default): header only. Live
+        // "thinking progressive" always measures the streaming body.
+        const progressive = std.mem.startsWith(u8, title, "thinking progressive");
+        if (is_thinking and !progressive and !card_paint_opts.thinking_expanded) return 1;
         if (is_tool) {
             // Verb-group collapse (grok): older siblings of a same-verb
             // completed-tool run are header-only; the newest keeps its body.
@@ -1578,7 +1740,7 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
                 .wrap = .none,
             });
         } else if (is_first and content.len == 0) {
-            _ = win.printSegment(.{ .text = "Build anything…  / commands · Alt+Enter newline", .style = palette.style(.muted_fg) }, .{
+            _ = win.printSegment(.{ .text = "Ask anything…", .style = palette.style(.muted_fg) }, .{
                 .row_offset = @intCast(r),
                 .col_offset = @intCast(win.gwidth(prefix_text)),
                 .wrap = .none,
@@ -1596,10 +1758,11 @@ fn drawEditor(win: vaxis.Window, mode: layout_mod.Mode, ed: *const editor.Editor
 
 /// Assemble the editor top-border status chips (grok-style ambient chips):
 /// `model · theme · cwd · git · perm · think · tasks? · [tok] · state`.
-/// Optional chips are dropped in priority order (git → cwd → tasks → tokens)
-/// when the line exceeds `max_w` bytes so the mandatory contiguous
-/// `perm:` / `think:` / `state:` markers stay visible; the final fallback
-/// caps the core line with utf8Prefix. Returns a slice into `scratch`.
+/// Optional chips are dropped in priority order (git → cwd → tasks →
+/// tokens → model → theme) when the line exceeds `max_w` bytes so the
+/// mandatory contiguous `perm:` / `think:` / `state:` markers stay
+/// visible; the final fallback caps the core line with utf8Prefix.
+/// Returns a slice into `scratch`.
 fn buildStatusChips(scratch: []u8, facts: StatusFacts, max_w: usize) []const u8 {
     var tok_buf: [24]u8 = undefined;
     var tasks_buf: [24]u8 = undefined;
@@ -1623,9 +1786,11 @@ fn buildStatusChips(scratch: []u8, facts: StatusFacts, max_w: usize) []const u8 
 
     var level: usize = 0;
     while (true) : (level += 1) {
+        // Drop order: git → cwd → tasks → tokens → model → theme.
+        // perm/think/state stay until the final utf8Prefix cap.
         const segs = [_][]const u8{
-            facts.model,
-            facts.theme_id,
+            if (level >= 5) "" else facts.model,
+            if (level >= 6) "" else facts.theme_id,
             if (level >= 2) "" else facts.cwd_tail,
             if (level >= 1) "" else facts.git_branch,
             perm_seg,
@@ -1663,17 +1828,19 @@ fn buildStatusChips(scratch: []u8, facts: StatusFacts, max_w: usize) []const u8 
             overflowed = true;
         }
         const line = scratch[0..n];
-        if (level == 4) return present.utf8Prefix(line, max_w); // final cap
+        if (level == 6) return present.utf8Prefix(line, max_w); // final cap
         if (overflowed) continue; // scratch exhausted — drop more chips
         if (line.len <= max_w) return line;
     }
 }
 
 /// Paint compact status chips into the editor region's top border row
-/// (omp-style: status lives inside `╭─ … ─╮`).
-fn drawEditorStatusBorder(
+/// (omp-style: status lives inside `╭─ … ─╮`). `text` must outlive
+/// `vx.render()` (LineStore slice).
+fn paintEditorStatusChips(
     root: vaxis.Window,
     region: layout_mod.Region,
+    text: []const u8,
     facts: StatusFacts,
     palette: *const theme_mod.Palette,
     store: *terminal.LineStore,
@@ -1681,12 +1848,6 @@ fn drawEditorStatusBorder(
     if (region.h == 0 or region.w < 6) return;
     const style = palette.style(.status_fg);
     const muted = palette.style(.muted_fg);
-    // Leave room for `╭─` and `─╮`.
-    const max_w = region.w -| 4;
-    // grok status chips. Keep contiguous `perm:` / `state:` / `think:` markers.
-    var scratch: [512]u8 = undefined;
-    const chips = buildStatusChips(&scratch, facts, max_w);
-    const text = store.format("{s}", .{chips}) orelse return;
     _ = root.printSegment(.{ .text = text, .style = style }, .{
         .col_offset = region.x + 2,
         .row_offset = region.y,
@@ -2169,7 +2330,7 @@ fn drawHostOverlay(
     const title: []const u8 = switch (ov.kind) {
         .none => return,
         .help => "help",
-        .slash_palette => "slash",
+        .slash_palette => "commands",
         .settings => "settings",
         .model => "model",
         .theme => "theme",
@@ -2269,8 +2430,34 @@ fn drawFixture(
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
+    // Content fixtures assert cards at the top of the region.
+    sb.follow_mode = false;
     setCardPaintSnap(snap);
-    _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    _ = sb.prepare(snap, @max(layout.cards.w -| 1, 1), @max(layout.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
+    drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null, .{}, .{});
+    return sb;
+}
+
+/// Like `drawFixture`, but keeps follow-mode (overflowing transcripts
+/// pin to the newest rows via scroll_offset, not a bottom pad).
+fn drawFollowFixture(
+    cs: *CellScreen,
+    gpa: std.mem.Allocator,
+    cols: u16,
+    rows: u16,
+    facts: StatusFacts,
+    snap: []const cards.CardSlot,
+    ed: *const editor.Editor,
+    modal: permission.ModalSnapshot,
+) !scrollback_mod.Scrollback {
+    cs.* = try CellScreen.init(gpa, cols, rows);
+    const turn_vis = facts.state == .busy or facts.state == .closing or facts.state == .@"error";
+    const layout = layout_mod.compute(.{ .cols = cols, .rows = rows }, snap.len, modal.pending, facts.status_note.len > 0, 0, ed.lineCount(), false, turn_vis, false);
+    const palette = theme_mod.builtinDefault();
+    var sb = scrollback_mod.Scrollback.init(gpa);
+    errdefer sb.deinit();
+    setCardPaintSnap(snap);
+    _ = sb.prepare(snap, @max(layout.cards.w -| 1, 1), @max(layout.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
     drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, modal, &palette, .{}, &cs.store, &sb, null, .{}, .{});
     return sb;
 }
@@ -2292,8 +2479,9 @@ fn drawOverlayFixture(
     const palette = theme_mod.builtinDefault();
     var sb = scrollback_mod.Scrollback.init(gpa);
     errdefer sb.deinit();
+    sb.follow_mode = false;
     setCardPaintSnap(snap);
-    _ = sb.prepare(snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    _ = sb.prepare(snap, @max(layout.cards.w -| 1, 1), @max(layout.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
     drawFrame(cs.md_arena.allocator(), cs.root(cols, rows), layout, facts, snap, ed, .{}, &palette, ov, &cs.store, &sb, null, .{}, .{});
     return sb;
 }
@@ -2607,7 +2795,8 @@ test "render queue overlay paints S and F markers" {
     var sb = scrollback_mod.Scrollback.init(gpa);
     defer sb.deinit();
     setCardPaintSnap(&snap);
-    _ = sb.prepare(&snap, @max(layout.cards.w -| 3, 1), @max(layout.cards.h -| 1, 1), measureCardHeight, scrollback_mod.estimateCard);
+    sb.follow_mode = false;
+    _ = sb.prepare(&snap, @max(layout.cards.w -| 1, 1), @max(layout.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
 
     var kinds = [_]control_queue_mod.Kind{ .steering, .follow_up };
     var texts = [_][]const u8{ "first line of steering", "follow-up text" };
@@ -2754,6 +2943,77 @@ test "status meta: narrow border drops ambient chips before perm/think/state" {
 
 }
 
+test "status meta: chips stay on the editor border after typed input" {
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var ed = editor.Editor.init(&fixture_editor_storage);
+    _ = ed.insert("explore the current project");
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    try expectRowContains(&cs.screen, 20, "perm:ask");
+    try expectRowContains(&cs.screen, 20, "think:off");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+    try expectRowContains(&cs.screen, 21, "explore the current project");
+}
+
+test "status chips survive a full line store from the previous frame" {
+    // Production used to never rewind LineStore. After ~16 KB of
+    // store.format calls the next frame skipped every formatted line,
+    // including the editor-border chips — they vanished mid-session.
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &f.snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    while (cs.store.format("x", .{})) |_| {}
+    try std.testing.expect(cs.store.format("nope", .{}) == null);
+
+    const layout = layout_mod.compute(.{ .cols = 80, .rows = 24 }, f.snap.len, false, false, 0, f.ed.lineCount(), false, true, false);
+    const palette = theme_mod.builtinDefault();
+    setCardPaintSnap(&f.snap);
+    _ = sb.prepare(&f.snap, @max(layout.cards.w -| 1, 1), @max(layout.cards.h, 1), measureCardHeight, scrollback_mod.estimateCard);
+    drawFrame(cs.md_arena.allocator(), cs.root(80, 24), layout, f.facts_full, &f.snap, &f.ed, .{}, &palette, .{}, &cs.store, &sb, null, .{}, .{});
+    try expectRowContains(&cs.screen, 20, "perm:ask");
+    try expectRowContains(&cs.screen, 20, "think:off");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+}
+
+test "status meta: long model drops before perm/think/state" {
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var facts = f.facts_full;
+    facts.model = "anthropic/claude-opus-4-6-thinking-extra-long-name";
+    facts.theme_id = "builtin-default-theme-id";
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &f.snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    try expectRowContains(&cs.screen, 20, "perm:ask");
+    try expectRowContains(&cs.screen, 20, "think:off");
+    try expectRowContains(&cs.screen, 20, "state:busy");
+}
+
+test "render thinking progressive prints header, body, and turn status" {
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var slot = cards.CardSlot{ .occupied = true, .title_len = 20, .body_len = 20 };
+    @memcpy(slot.title[0..20], "thinking progressive");
+    @memcpy(slot.body[0..20], "planning the explore");
+    const snap = [_]cards.CardSlot{slot};
+    var facts = f.facts_full;
+    facts.thinking_live = true;
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    try expectRowContains(&cs.screen, 0, "Thinking");
+    try expectRowContains(&cs.screen, 1, "planning the explore");
+    try expectRowContains(&cs.screen, 19, "Thinking");
+}
+
 test "render body preview truncated to interior width on UTF-8 boundary" {
 
     const gpa = std.testing.allocator;
@@ -2839,9 +3099,36 @@ test "render no-events frame" {
     var sb = try drawFixture(&cs, gpa, 80, 24, f.facts_full, &snap, &f.ed, .{});
     defer cs.deinit(gpa);
     defer sb.deinit();
-    try expectRowContains(&cs.screen, 0, "(no events yet)");
+    try expectRowContains(&cs.screen, 1, "zag");
+    try expectRowContains(&cs.screen, 3, "Ask anything");
     try expectCellEquals(&cs.screen, 0, 20, "╭");
     try expectCellEquals(&cs.screen, 1, 21, "❯");
+    try expectRowContains(&cs.screen, 21, "Ask anything");
+    // Busy shortcuts: first key token is accent (zag-default index 3).
+    try expectRowContains(&cs.screen, 23, "steer");
+    try expectCellEquals(&cs.screen, 1, 23, "e");
+    try expectCellFgIndex(&cs.screen, 1, 23, 3);
+
+}
+
+test "render empty welcome shows model and cwd" {
+    const gpa = std.testing.allocator;
+    const f = fixedFixture();
+    var facts = f.facts_full;
+    facts.model = "grok-4";
+    facts.cwd_tail = "zag";
+    facts.state = .idle;
+    const snap = [_]cards.CardSlot{};
+    var cs: CellScreen = undefined;
+    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &f.ed, .{});
+    defer cs.deinit(gpa);
+    defer sb.deinit();
+    try expectRowContains(&cs.screen, 1, "zag");
+    try expectRowContains(&cs.screen, 2, "grok-4");
+    try expectRowContains(&cs.screen, 2, "zag");
+    try expectRowContains(&cs.screen, 4, "Ask anything");
+    try expectRowContains(&cs.screen, 23, "enter");
+    try expectCellFgIndex(&cs.screen, 1, 23, 3);
 
 }
 
@@ -3027,7 +3314,7 @@ test "md transcript: tall assistant body clips at the cards region height" {
         .state = .idle,
     };
     var cs: CellScreen = undefined;
-    var sb = try drawFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
+    var sb = try drawFollowFixture(&cs, gpa, 80, 24, facts, &snap, &ed, .{});
     defer cs.deinit(gpa);
     defer sb.deinit();
 

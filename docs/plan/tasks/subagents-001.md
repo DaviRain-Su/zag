@@ -15,13 +15,13 @@ not process isolation.
 **Binding:** [subagents-oracle.md](../../modules/subagents-oracle.md)
 
 **Status:** **`implemented`** @ `1dabd25` (async background follow-on @
-`7f058ce`). Wave 2 closeout: dual review still open; maturity row stays **L0**.
+`7f058ce`). Wave 2 closeout recorded; maturity row stays **L0**.
 
 # status truth
 
 | Track | Status |
 |-------|--------|
-| Contract | **implemented as written** in `subagent.zig` header + module split; dual review open |
+| Contract | **implemented** — Wave 2 closeout 2026-08-14: [architecture](../reviews/subagents-001-01-architecture.md) PASS · [safety](../reviews/subagents-001-02-safety.md) PASS |
 | Implementation | **done** @ `1dabd25` — `packages/zag-coding-agent/src/subagent.zig` + `task` tool |
 | TUI | tasks pane @ `38148de` / `7f058ce` |
 | Maturity | **unchanged** — Subagents/Oracle row stays L0 |
@@ -38,5 +38,5 @@ not process isolation.
 
 - [subagents-oracle.md](../../modules/subagents-oracle.md)
 - [process-supervisor-001](./process-supervisor-001.md)
-- [2026-08-13 next delivery plan](../analysis/2026-08-13-next-delivery-plan.md) Wave 2
+- [2026-08-14 next delivery plan](../analysis/2026-08-14-next-delivery-plan.md) Wave 2
 - [D-012](../../decisions/active/D-012-complete-local-coding-agent-target.md)

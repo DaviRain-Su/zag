@@ -30,7 +30,7 @@ C8 delivers the executable/passive extension mechanisms behind a broader product
 |------|-----------|----------|
 | E0 | trusted static Zig composition | SDK L2 closed in its current scope |
 | E1 | passive resources | `skills-001` ✅ `caafef5`, `prompt-templates-001` ✅ `61326ae`; theme data later |
-| E2 | native process binding | after C7.1 + concrete process integration |
+| E2 | native process binding | after long-lived slots ([mcp-001](../plan/tasks/mcp-001.md) contract drafted; impl waits on a named server) |
 | E3 | WASM Component/WIT binding | formal planned target after common semantics |
 
 No dynamic Zig shared-library ABI and no embedded Lua/QuickJS/Bun runtime.

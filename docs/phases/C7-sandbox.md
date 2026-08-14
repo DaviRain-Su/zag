@@ -3,7 +3,7 @@
 | Item | Content |
 |------|---------|
 | Prerequisite | Phase H safety/Tool descriptor/lifecycle contracts ✅ |
-| Near-term status | Deferred until a concrete E2 extension/background/process-cancel consumer |
+| Near-term status | C7.1 supervisor **implemented** (Wave 1 closeout 2026-08-14). C7.2 OS enforcement still deferred |
 | Decisions | [D-008](../decisions/active/D-008-sdk-and-process-boundaries.md) · [D-010](../decisions/active/D-010-extension-tiers-and-process-protocol.md) |
 | Module | [workspace-sandbox](../modules/workspace-sandbox.md) L3 |
 

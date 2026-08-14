@@ -57,6 +57,14 @@ pub const WireProvider = struct {
         return self.wire.setModel(model);
     }
 
+    /// Replace the inner adapter (TUI `/model` provider switch). The new
+    /// adapter is always owned; the previous one is deinited when `owns_wire`.
+    pub fn replaceWire(self: *WireProvider, new_wire: ai.WireAdapter) void {
+        if (self.owns_wire) self.wire.deinit();
+        self.wire = new_wire;
+        self.owns_wire = true;
+    }
+
     /// Current model id (borrowed from wire).
     pub fn getModel(self: *const WireProvider) []const u8 {
         return self.wire.getModel();
