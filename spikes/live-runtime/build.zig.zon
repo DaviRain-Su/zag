@@ -1,0 +1,6 @@
+.{
+    .name = .live_runtime_spike,
+    .fingerprint = 0x2f08e2af_fac5aae1,
+    .version = "0.0.0",
+    .paths = .{""},
+}

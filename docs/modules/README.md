@@ -105,5 +105,6 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [lsp.md](./lsp.md) | C4/C5 **implemented** @ `75f213b` (closeout pending) | `code_intel` tool + hand-rolled LSP client |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 in-process slice landed; Oracle/Graph stub | `task`/`scout`/`reviewer`; no process isolation; row stays L0 |
 | [extensions.md](./extensions.md) | C8 / D-010 | Pi feature surface × E0 static / E1 passive / E2 process / E3 WASM; package/model/Provider/RPC/UI boundaries |
+| [zag-live.md](./zag-live.md) | D-014 Route A **implemented** @ zag-live-001 **done** (2026-08-14; 23/23; review pass) | `packages/zag-live/`; supervised live Scheme image; L2 domain service, `zag-types` only, host ports; no maturity claim |
 
 总览：[../maturity.md](../maturity.md) · [../phases/H-harden.md](../phases/H-harden.md) · [../phases/C5-context.md](../phases/C5-context.md)  
