@@ -178,6 +178,7 @@ pub fn run(init: std.process.Init) !void {
     var want_doctor = false;
     var headless_mode: ?hw.HeadlessMode = null;
     var want_tui = false;
+    var want_repl = false;
     var want_rpc = false;
     var want_acp = false;
     var want_live = false;
@@ -191,6 +192,8 @@ pub fn run(init: std.process.Init) !void {
             verbose = true;
         } else if (std.mem.eql(u8, a, "--tui")) {
             want_tui = true;
+        } else if (std.mem.eql(u8, a, "--repl")) {
+            want_repl = true;
         } else if (std.mem.eql(u8, a, "--rpc")) {
             want_rpc = true;
         } else if (std.mem.eql(u8, a, "--acp")) {
@@ -301,6 +304,10 @@ pub fn run(init: std.process.Init) !void {
     // --tui mode matrix (tui-minimal.md §9.2). Help+tui → 0 no init (except
     // json+help keeps existing headless help path). Mutual exclusions exit 2
     // with empty stdout (no silent REPL fallback).
+    if (want_tui and want_repl) {
+        std.log.err("--tui is mutually exclusive with --repl", .{});
+        std.process.exit(2);
+    }
     if (want_tui) {
         if (headless_mode != null) {
             std.log.err("--tui is mutually exclusive with --json/--json-stream", .{});
@@ -413,14 +420,19 @@ pub fn run(init: std.process.Init) !void {
         return;
     }
 
-    // TUI requires both stdin and stdout TTYs (exit 2, empty stdout).
-    if (want_tui) {
-        const stdin_tty = Io.File.stdin().isTty(io) catch false;
-        const stdout_tty = Io.File.stdout().isTty(io) catch false;
-        if (!stdin_tty or !stdout_tty) {
-            std.log.err("tui requires a tty on stdin and stdout", .{});
-            std.process.exit(2);
-        }
+    // Product default: TUI on an interactive TTY (same as other coding
+    // agents). Pipes, one-shot prompts, and exclusive surfaces keep REPL /
+    // headless. Explicit `--tui` still fail-closes on a non-TTY.
+    const exclusive_surface = headless_mode != null or want_doctor or verbose or
+        want_rpc or want_acp or want_repl or prompt_parts.items.len > 0;
+    const stdin_tty = Io.File.stdin().isTty(io) catch false;
+    const stdout_tty = Io.File.stdout().isTty(io) catch false;
+    if (!want_tui and tui_enabled and !exclusive_surface and stdin_tty and stdout_tty) {
+        want_tui = true;
+    }
+    if (want_tui and (!stdin_tty or !stdout_tty)) {
+        std.log.err("tui requires a tty on stdin and stdout", .{});
+        std.process.exit(2);
     }
 
     // D-006: -s PATH → create_new; -c → resume_existing.
@@ -514,6 +526,8 @@ pub fn run(init: std.process.Init) !void {
         std.process.exit(1);
     };
     var wire_prov = coding.WireProvider.init(wire, use_stream, true);
+    wire_prov.io = io;
+    wire_prov.diag_dir = ".zag/logs";
     wire_prov.chat_options = resolve_result.chat_options;
     // timeout_ms is enforced by std/curl transports (or rejected); no silent store.
     wire_prov.timeout_ms = resolved.config.timeout_ms;
@@ -645,12 +659,13 @@ pub fn run(init: std.process.Init) !void {
                 std.process.exit(1);
             };
             // Bind model switcher so TUI /model can change provider + model.
-            var model_host = tui_entry.TuiModelHost{
-                .gpa = gpa,
-                .io = io,
-                .env = init.environ_map,
-                .wp = &wire_prov,
-            };
+            var model_host = tui_entry.TuiModelHost.init(
+                gpa,
+                io,
+                init.environ_map,
+                &wire_prov,
+                resolveUserModelsPath(arena, init.environ_map) catch null,
+            );
             model_host.setSpec(resolved.spec_id);
             agent.setModelControl(.{
                 .ptr = &model_host,
@@ -660,11 +675,12 @@ pub fn run(init: std.process.Init) !void {
 
             var sigint_guard = sigint.Guard.install(&agent.cancel) catch {
                 std.log.err("sigint guard init failed", .{});
+                model_host.deinit();
                 agent.deinit();
                 app.destroy();
                 std.process.exit(1);
             };
-            const picker = tui_entry.collectTuiModelPicker(arena, init.environ_map, resolved.spec_id, resolved.config.model, &wire_prov);
+            const picker = model_host.rebuildPicker(resolved.spec_id, resolved.config.model);
             const tui_host_opts: tui_entry.HostResourceOptions = .{
                 .skills_enabled = host_opts.skills_enabled,
                 .project_skills_trust = host_opts.project_skills_trust,
@@ -679,6 +695,7 @@ pub fn run(init: std.process.Init) !void {
                 .model_label = picker.label,
                 .model_ids = picker.ids,
                 .model_keys = picker.keys,
+                .model_picker_refresh = model_host.asRefresh(),
             };
             const result = tui_entry.runTui(.{
                 .gpa = gpa,
@@ -699,6 +716,7 @@ pub fn run(init: std.process.Init) !void {
             // session state is session-owned). Explicit Agent then App.
             agent.deinit();
             app.destroy();
+            model_host.deinit();
             std.process.exit(result.exit_code);
         }
     }
@@ -893,6 +911,13 @@ fn resolveUserThemesRoot(arena: std.mem.Allocator, env: *const std.process.Envir
     return try std.fmt.allocPrint(arena, "{s}/.agents/themes", .{home});
 }
 
+/// CLI-only: `$HOME/.zag/models.json` when HOME is set (tui-model-picker-001).
+fn resolveUserModelsPath(arena: std.mem.Allocator, env: *const std.process.Environ.Map) error{OutOfMemory}!?[]const u8 {
+    const home = env.get("HOME") orelse return null;
+    if (home.len == 0) return null;
+    return try std.fmt.allocPrint(arena, "{s}/.zag/models.json", .{home});
+}
+
 /// Pure open-mode decision for CLI flags.
 /// `-c` / `--continue` → resume_existing; otherwise create_new (`-s PATH` create, or ephemeral).
 /// `open_or_create` is never selected by CLI flags (SDK convenience only).
@@ -911,6 +936,17 @@ pub fn doctorOptionsFromFlags(
         .shell_policy = shell_policy,
         .load_project_instructions = !no_project,
     };
+}
+
+fn runLiveCommand(_: std.mem.Allocator, _: Io, rest: []const []const u8) !void {
+    if (comptime !live_enabled) {
+        std.log.err("zag live: LiveUnavailable (this binary was built without -Dlive)", .{});
+        std.process.exit(2);
+    } else {
+        const sub = if (rest.len > 0) rest[0] else "status";
+        std.log.err("zag live {s}: not implemented", .{sub});
+        std.process.exit(2);
+    }
 }
 
 fn runDoctor(gpa: std.mem.Allocator, io: Io, opts: coding.doctor.Options) !void {
@@ -980,6 +1016,22 @@ test "resolveUserTemplatesRoot: HOME path; empty/missing null; alloc OOM hard-fa
 
     var failing = std.testing.FailingAllocator.init(gpa, .{ .fail_index = 0 });
     try std.testing.expectError(error.OutOfMemory, resolveUserTemplatesRoot(failing.allocator(), &env));
+}
+
+test "resolveUserModelsPath: HOME path; empty/missing null" {
+    const gpa = std.testing.allocator;
+    var env = std.process.Environ.Map.init(gpa);
+    defer env.deinit();
+
+    try std.testing.expect((try resolveUserModelsPath(gpa, &env)) == null);
+
+    try env.put("HOME", "");
+    try std.testing.expect((try resolveUserModelsPath(gpa, &env)) == null);
+
+    try env.put("HOME", "/tmp/home-test");
+    const path = (try resolveUserModelsPath(gpa, &env)).?;
+    defer gpa.free(path);
+    try std.testing.expectEqualStrings("/tmp/home-test/.zag/models.json", path);
 }
 
 fn runOneShot(
@@ -1559,8 +1611,9 @@ fn printUsage(io: Io) !void {
         \\zag — Zig coding agent
         \\
         \\Usage:
+        \\  zag [flags]                 interactive TUI (default on a TTY)
+        \\  zag --repl [flags]          line REPL
         \\  zag [flags] <prompt...>     one-shot
-        \\  zag [flags]                 interactive REPL
         \\
         \\Flags:
         \\  -h, --help                 show help
@@ -1575,7 +1628,8 @@ fn printUsage(io: Io) !void {
         \\  --json-stream              headless one-shot: NDJSON event stream
         \\  --rpc                      long-lived server over stdin/stdout pipes (rpc-v1)
         \\  --acp                      ACP v1 server: JSON-RPC 2.0 over stdin/stdout pipes
-        \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
+        \\  --tui                      force TUI (TTY required; default on a TTY)
+        \\  --repl                     line REPL even on a TTY
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
@@ -1597,6 +1651,7 @@ fn printUsage(io: Io) !void {
         \\
         \\Model (packages/zag-ai):
         \\  Env: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, …
+        \\  models.json: $HOME/.zag/models.json + .zag/models.json (TUI /model)
         \\  ZAG_PROVIDER  ZAG_MODEL  ZAG_BASE_URL
         \\  ZAG_API_STYLE=openai_compat|anthropic_messages
         \\  ZAG_TEMPERATURE  ZAG_MAX_TOKENS  ZAG_MAX_RETRIES  ZAG_TIMEOUT_MS  ZAG_CHAT_RETRIES
@@ -1606,7 +1661,7 @@ fn printUsage(io: Io) !void {
         \\
         \\Packages: zag-cli → coding-agent → agent-core → zag-types
         \\                       ↘ zag-ai → openai-zig
-        \\            (+ zag-tui when -Dtui=true)
+        \\            (+ zag-tui; omit with -Dtui=false)
         \\
     ;
     try Io.File.stdout().writeStreamingAll(io, usage);
@@ -1617,8 +1672,9 @@ fn printUsageToStderr(io: Io) !void {
         \\zag — Zig coding agent
         \\
         \\Usage:
+        \\  zag [flags]                 interactive TUI (default on a TTY)
+        \\  zag --repl [flags]          line REPL
         \\  zag [flags] <prompt...>     one-shot
-        \\  zag [flags]                 interactive REPL
         \\
         \\Flags:
         \\  -h, --help                 show help
@@ -1633,7 +1689,8 @@ fn printUsageToStderr(io: Io) !void {
         \\  --json-stream              headless one-shot: NDJSON event stream
         \\  --rpc                      long-lived server over stdin/stdout pipes (rpc-v1)
         \\  --acp                      ACP v1 server: JSON-RPC 2.0 over stdin/stdout pipes
-        \\  --tui                      minimal interactive TUI (requires -Dtui=true build; TTY)
+        \\  --tui                      force TUI (TTY required; default on a TTY)
+        \\  --repl                     line REPL even on a TTY
         \\  -s, --session PATH         create session at PATH (fails if exists; relative only)
         \\  -c, --continue             resume session (default PATH .zag/sessions/default.jsonl)
         \\  --no-project               skip AGENTS.md injection
@@ -1655,6 +1712,7 @@ fn printUsageToStderr(io: Io) !void {
         \\
         \\Model (packages/zag-ai):
         \\  Env: DEEPSEEK_API_KEY, XAI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, …
+        \\  models.json: $HOME/.zag/models.json + .zag/models.json (TUI /model)
         \\  ZAG_PROVIDER  ZAG_MODEL  ZAG_BASE_URL
         \\  ZAG_API_STYLE=openai_compat|anthropic_messages
         \\  ZAG_TEMPERATURE  ZAG_MAX_TOKENS  ZAG_MAX_RETRIES  ZAG_TIMEOUT_MS  ZAG_CHAT_RETRIES
@@ -1664,7 +1722,7 @@ fn printUsageToStderr(io: Io) !void {
         \\
         \\Packages: zag-cli → coding-agent → agent-core → zag-types
         \\                       ↘ zag-ai → openai-zig
-        \\            (+ zag-tui when -Dtui=true)
+        \\            (+ zag-tui; omit with -Dtui=false)
         \\
     ;
     try Io.File.stderr().writeStreamingAll(io, usage);
@@ -1853,4 +1911,8 @@ test "edit-sharp InteractiveHunkReviewer rejects on cancel and EOF seam" {
         interactive.test_line = "y";
         try std.testing.expect(rev.reviewFn(rev.ptr, preview) == .accept);
     }
+}
+
+test {
+    if (tui_enabled) _ = tui_entry;
 }

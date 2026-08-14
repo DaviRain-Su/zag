@@ -2,10 +2,332 @@
   "provider": "vercel-ai-gateway",
   "models": [
     {
-      "id": "anthropic/claude-sonnet-4",
-      "name": "Claude Sonnet 4 (Vercel)",
-      "context_window": 200000,
+      "id": "alibaba/qwen-3-14b",
+      "name": "Qwen3-14B",
+      "context_window": 40960,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.12,
+        "output": 0.24,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-235b",
+      "name": "Qwen3 235B A22B Instruct 2507",
+      "context_window": 262144,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.22,
+        "output": 0.88,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-30b",
+      "name": "Qwen3-30B-A3B",
+      "context_window": 40960,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.12,
+        "output": 0.5,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-32b",
+      "name": "Qwen 3.32B",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.16,
+        "output": 0.64,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3.6-max-preview",
+      "name": "Qwen 3.6 Max Preview",
+      "context_window": 240000,
       "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.3,
+        "output": 7.8,
+        "cache_read": 0.26,
+        "cache_write": 1.625
+      }
+    },
+    {
+      "id": "alibaba/qwen3-235b-a22b-thinking",
+      "name": "Qwen3 235B A22B Thinking 2507",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 4.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder",
+      "name": "Qwen3 Coder 480B A35B Instruct",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.5,
+        "output": 7.5,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder-30b-a3b",
+      "name": "Qwen 3 Coder 30B A3B Instruct",
+      "context_window": 262144,
+      "max_output_tokens": 8192,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder-next",
+      "name": "Qwen3 Coder Next",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.5,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder-plus",
+      "name": "Qwen3 Coder Plus",
+      "context_window": 1000000,
+      "max_output_tokens": 65536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-max",
+      "name": "Qwen3 Max",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-max-preview",
+      "name": "Qwen3 Max Preview",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-max-thinking",
+      "name": "Qwen 3 Max Thinking",
+      "context_window": 256000,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-next-80b-a3b-instruct",
+      "name": "Qwen3 Next 80B A3B Instruct",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-next-80b-a3b-thinking",
+      "name": "Qwen3 Next 80B A3B Thinking",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-vl-instruct",
+      "name": "Qwen3 VL Instruct",
+      "context_window": 131072,
+      "max_output_tokens": 129024,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 1.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-vl-thinking",
+      "name": "Qwen3 VL Thinking",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 4.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3.5-flash",
+      "name": "Qwen 3.5 Flash",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.1,
+        "output": 0.4,
+        "cache_read": 0.001,
+        "cache_write": 0.125
+      }
+    },
+    {
+      "id": "alibaba/qwen3.5-plus",
+      "name": "Qwen 3.5 Plus",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 2.4,
+        "cache_read": 0.04,
+        "cache_write": 0.5
+      }
+    },
+    {
+      "id": "alibaba/qwen3.6-27b",
+      "name": "Qwen 3.6 27B",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3.6-plus",
+      "name": "Qwen 3.6 Plus",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.1,
+        "cache_write": 0.625
+      }
+    },
+    {
+      "id": "alibaba/qwen3.7-flash",
+      "name": "Qwen 3.7 Flash",
+      "context_window": 991000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.03,
+        "output": 0.13,
+        "cache_read": 0.006,
+        "cache_write": 0.038
+      }
+    },
+    {
+      "id": "alibaba/qwen3.7-max",
+      "name": "Qwen 3.7 Max",
+      "context_window": 991000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 2.5,
+        "output": 7.5,
+        "cache_read": 0.5,
+        "cache_write": 3.125
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "context_window": 1000000,
+      "max_output_tokens": 8192,
       "reasoning": true,
       "vision": true,
       "cost": {

@@ -112,6 +112,12 @@ pub const Terminal = struct {
         if (!isFdTty(posix.STDIN_FILENO)) return error.NotATty;
         if (!isFdTty(posix.STDOUT_FILENO)) return error.NotATty;
 
+        // Isolate the FG pgroup before any threads: POSIX leaves setpgid
+        // unspecified after pthread_create, and `zig build run` shares our
+        // job so Ctrl+C would otherwise SIGINT the parent too.
+        const orig_pgrp = claimForeground(posix.STDIN_FILENO);
+        errdefer if (orig_pgrp) |orig| releaseForeground(posix.STDIN_FILENO, orig);
+
         const threaded = try gpa.create(std.Io.Threaded);
         errdefer {
             threaded.deinit();
@@ -141,10 +147,6 @@ pub const Terminal = struct {
         const vx = try gpa.create(vaxis.Vaxis);
         errdefer gpa.destroy(vx);
         vx.* = try vaxis.init(io, gpa, env_map, .{});
-
-        // Claim after every fallible init so a failed open never leaves the
-        // TTY in our pgroup. PTY fixtures / background jobs skip this.
-        const orig_pgrp = if (ttyFd(tty)) |fd| claimForeground(fd) else null;
 
         return .{
             .gpa = gpa,
@@ -203,9 +205,10 @@ pub const Terminal = struct {
         if (self.closed) return;
         self.closed = true;
 
-        // If we never isolated the FG pgroup, a parent (zig build) may
-        // already be dying from the same Ctrl+C — restore cooked now.
-        if (self.orig_pgrp == null) restoreTermiosNow(self.tty);
+        // Cooked termios first, while we can still reclaim FG. Joining the
+        // bridge / vx.deinit can race a dying `zig build` parent off the job.
+        if (ttyFd(self.tty)) |fd| reclaimForeground(fd);
+        restoreTermiosNow(self.tty);
 
         if (self.bridge) |*th| {
             self.quit.store(true, .release);
@@ -318,30 +321,68 @@ fn ttyFd(tty: anytype) ?posix.fd_t {
 fn restoreTermiosNow(tty: anytype) void {
     if (!@hasField(@TypeOf(tty.*), "termios")) return;
     const fd = ttyFd(tty) orelse return;
-    posix.tcsetattr(fd, .NOW, tty.termios) catch {};
+    reclaimForeground(fd);
+    posix.tcsetattr(fd, .NOW, tty.termios) catch {
+        reclaimForeground(fd);
+        posix.tcsetattr(fd, .NOW, tty.termios) catch {};
+    };
 }
 
 /// Take our own FG pgroup so Ctrl+C does not also signal `zig build run`.
-/// Only when we are already the FG job — never steal a background TTY.
+/// Claim when we are the FG job, or when the parent is (supervisor spawn).
+/// Never steal a background TTY (FG is neither us nor our parent).
 fn claimForeground(fd: posix.fd_t) ?posix.pid_t {
     if (builtin.os.tag == .windows) return null;
     const ours = processGroup() orelse return null;
     const fg = ttyGetPgrp(fd) orelse return null;
-    if (fg != ours) return null;
-    if (!setProcessGroup(0, 0)) return null;
-    const neu = processGroup() orelse {
-        _ = setProcessGroup(0, fg);
-        return null;
-    };
-    if (!tcsetpgrpQuiet(fd, neu)) {
-        _ = setProcessGroup(0, fg);
+    if (!canClaimForeground(ours, fg)) return null;
+
+    var isolated = ours;
+    if (fg == ours) {
+        if (!setProcessGroup(0, 0)) return null;
+        isolated = processGroup() orelse {
+            _ = setProcessGroup(0, fg);
+            return null;
+        };
+    }
+    if (!tcsetpgrpQuiet(fd, isolated)) {
+        if (isolated != ours) _ = setProcessGroup(0, fg);
         return null;
     }
     return fg;
 }
 
+fn canClaimForeground(ours: posix.pid_t, fg: posix.pid_t) bool {
+    if (fg == ours) return true;
+    const parent_pg = parentProcessGroup() orelse return false;
+    return fg == parent_pg;
+}
+
+fn reclaimForeground(fd: posix.fd_t) void {
+    const ours = processGroup() orelse return;
+    _ = tcsetpgrpQuiet(fd, ours);
+}
+
 fn releaseForeground(fd: posix.fd_t, orig: posix.pid_t) void {
     _ = tcsetpgrpQuiet(fd, orig);
+}
+
+fn parentProcessGroup() ?posix.pid_t {
+    if (builtin.os.tag == .windows) return null;
+    if (builtin.os.tag == .linux and !builtin.link_libc) {
+        const ppid: posix.pid_t = @intCast(std.os.linux.getppid());
+        if (ppid <= 0) return null;
+        const rc = std.os.linux.getpgid(ppid);
+        return if (std.os.linux.errno(rc) == .SUCCESS) @intCast(rc) else null;
+    }
+    const libc_pg = struct {
+        extern "c" fn getppid() posix.pid_t;
+        extern "c" fn getpgid(pid: posix.pid_t) posix.pid_t;
+    };
+    const ppid = libc_pg.getppid();
+    if (ppid <= 0) return null;
+    const pg = libc_pg.getpgid(ppid);
+    return if (pg < 0) null else pg;
 }
 
 fn tcsetpgrpQuiet(fd: posix.fd_t, pgrp: posix.pid_t) bool {
@@ -736,6 +777,16 @@ test "claimForeground skips non-tty fds" {
         _ = std.c.close(fds[1]);
     }
     try std.testing.expectEqual(@as(?posix.pid_t, null), claimForeground(fds[0]));
+}
+
+test "canClaimForeground allows self and parent pgroups only" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    const ours: posix.pid_t = 42;
+    try std.testing.expect(canClaimForeground(ours, ours));
+    try std.testing.expect(!canClaimForeground(ours, -1));
+    if (parentProcessGroup()) |parent_pg| {
+        try std.testing.expect(canClaimForeground(ours, parent_pg));
+    }
 }
 
 test "popKittyKeyboard emits CSI u pop and clears the flag" {

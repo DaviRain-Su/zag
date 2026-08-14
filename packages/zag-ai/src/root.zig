@@ -20,11 +20,13 @@ pub const catalog = @import("catalog.zig");
 pub const catalog_serde = @import("catalog_serde.zig");
 pub const cost = @import("cost.zig");
 pub const config_file = @import("config_file.zig");
+pub const models_file = @import("models_file.zig");
 pub const wire = @import("wire.zig");
 pub const config = @import("config.zig");
 pub const http = @import("http.zig");
 pub const request_control = @import("request_control.zig");
 pub const factory = @import("factory.zig");
+pub const provider_diag = @import("provider_diag.zig");
 
 pub const Message = types.Message;
 pub const ContentPart = types.ContentPart;

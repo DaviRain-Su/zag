@@ -40,6 +40,12 @@ pub const OpenDisplay = enum {
 
 pub const BindError = error{ MissingRedactor, MissingSignalHost, MissingAgent, MissingSession };
 
+/// Host callback so `/model` re-reads catalog + `models.json` on each open.
+pub const ModelPickerRefresh = struct {
+    ptr: *anyopaque,
+    refreshFn: *const fn (ptr: *anyopaque, app: *App) void,
+};
+
 /// session-swap-001: session start knobs captured at bind time and forwarded
 /// verbatim to every later `Session.start` (the swap's new session must match
 /// the initial one — base_system / redactor / skills flags parity).
@@ -178,19 +184,25 @@ pub const App = struct {
     thinking_active: bool = false,
     /// Grok-style thinking body fold (Ctrl+E when editor empty).
     thinking_expanded: bool = false,
-    /// Subagent tasks pane (Ctrl+K). Collapsed/hidden when the registry is
-    /// empty — only auto-opens while a subagent is running, and never steals
-    /// Enter from the editor unless the pane is focused.
+    /// Subagent tasks pane (Ctrl+K). Hidden when the registry is empty.
+    /// Auto-opens while a child runs (unfocused so Enter still sends).
+    /// Stays after completion so the live log is reviewable; user folds
+    /// with `-` (chip) / hides with another `-` or Ctrl+K.
     tasks_visible: bool = false,
     /// Selected row in the tasks pane (0 = top / running-first).
     tasks_cursor: usize = 0,
     /// Expanded detail under the selected tasks row.
     tasks_expanded: bool = false,
-    /// Keyboard focus is on the tasks pane (j/k/Space). When false the
+    /// Keyboard focus is on the tasks pane (j/k/Space +/-). When false the
     /// editor keeps Enter / arrows / history — fixes "can't send message".
     tasks_focused: bool = false,
-    /// Auto-opened because a subagent is running (auto-closes when idle).
+    /// Auto-opened because a subagent started (does not auto-close).
     tasks_auto: bool = false,
+    /// User hid the pane while entries still exist; do not auto-reopen
+    /// until the registry goes empty again.
+    tasks_user_hidden: bool = false,
+    /// User-chosen tasks pane height (3 chip … 20 tall). +/- when focused.
+    tasks_height: u16 = layout_mod.default_tasks_h,
     /// Grok-style control queue strip (harness-steering-001): visible iff the
     /// session has pending steering/follow-up messages (snapshot each paint).
     /// v1 is auto-visible display only — no focus, no keys.
@@ -237,12 +249,14 @@ pub const App = struct {
     model_ids: []const []const u8 = &.{},
     /// Parallel to `model_ids`: wire keys (`spec\x1fmodel`). Empty = use the display id.
     model_keys: []const []const u8 = &.{},
+    /// Optional host refresh (CLI reloads catalog + models.json).
+    model_picker_refresh: ?ModelPickerRefresh = null,
     /// Monotonic ms when the current busy turn started (0 = not busy).
     busy_started_ms: u64 = 0,
     /// Scratch lines for overlay paint (rebuilt each paint).
-    overlay_line_bufs: [24][96]u8 = undefined,
-    overlay_line_lens: [24]usize = [_]usize{0} ** 24,
-    overlay_line_ptrs: [24][]const u8 = undefined,
+    overlay_line_bufs: [c.overlay_line_cap][96]u8 = undefined,
+    overlay_line_lens: [c.overlay_line_cap]usize = [_]usize{0} ** c.overlay_line_cap,
+    overlay_line_ptrs: [c.overlay_line_cap][]const u8 = undefined,
     overlay_line_count: usize = 0,
     /// Io handle for Theme FS discovery (set by applyHostPresentation).
     host_io: ?Io = null,
@@ -257,12 +271,12 @@ pub const App = struct {
     /// parallel to overlay_line_bufs so a selection maps back to the real
     /// file (`{pinned_root}/{rel}.jsonl`) even though the displayed label
     /// went through the redaction pipeline (filenames can embed secrets).
-    resume_stem_bufs: [24][96]u8 = undefined,
-    resume_stem_lens: [24]usize = [_]usize{0} ** 24,
+    resume_stem_bufs: [c.overlay_line_cap][96]u8 = undefined,
+    resume_stem_lens: [c.overlay_line_cap]usize = [_]usize{0} ** c.overlay_line_cap,
     /// Per-row kind for the resume overlay (parallel to overlay_line_bufs):
     /// `.muted` = group header — renders muted, Enter is a no-op; `.normal`
     /// = selectable session row (or the "(no sessions)" placeholder).
-    resume_row_kinds: [24]render.RowKind = [_]render.RowKind{.normal} ** 24,
+    resume_row_kinds: [c.overlay_line_cap]render.RowKind = [_]render.RowKind{.normal} ** c.overlay_line_cap,
 
     pub fn create(gpa: std.mem.Allocator) error{ OutOfMemory, PipeFailed }!*App {
         const app = try gpa.create(App);
@@ -375,7 +389,15 @@ pub const App = struct {
         self.themes_root = theme_opts.themes_root;
         if (theme_opts.selected_id) |sel| self.theme_selected = sel;
         self.reloadTheme();
-        // Own a stable copy of the model label (caller may pass a temporary).
+        self.applyModelPicker(model_label, model_ids, model_keys);
+    }
+
+    pub fn applyModelPicker(
+        self: *App,
+        model_label: []const u8,
+        model_ids: []const []const u8,
+        model_keys: []const []const u8,
+    ) void {
         const n = @min(model_label.len, self.model_sel_buf.len);
         @memcpy(self.model_sel_buf[0..n], model_label[0..n]);
         self.model_sel_len = n;
@@ -383,6 +405,16 @@ pub const App = struct {
         self.model_ids = model_ids;
         self.model_keys = model_keys;
         self.dirty = true;
+    }
+
+    fn refreshModelPicker(self: *App) void {
+        if (self.model_picker_refresh) |h| h.refreshFn(h.ptr, self);
+    }
+
+    fn openHostOverlay(self: *App, kind: overlay_mod.Kind) void {
+        if (kind == .model) self.refreshModelPicker();
+        self.overlay.open(kind);
+        _ = self.rebuildOverlayLines();
     }
 
     fn reloadTheme(self: *App) void {
@@ -795,6 +827,10 @@ pub const App = struct {
 
         var exit_code: u8 = 0;
         defer {
+            // Ack before restore: Guard hard-exits 130 on a second SIGINT
+            // while pending. Idle Ctrl+C leaves pending set, and a bounce
+            // during restore would skip cooked-mode restore entirely.
+            if (self.host) |h| h.acknowledgeCancel();
             if (self.worker) |*th| {
                 th.join();
                 self.worker = null;
@@ -1056,6 +1092,32 @@ pub const App = struct {
                         self.tasks_expanded = !self.tasks_expanded;
                         return .none;
                     }
+                    if (std.mem.eql(u8, ch, "+") or std.mem.eql(u8, ch, "=")) {
+                        const next = self.tasks_height +| 2;
+                        self.tasks_height = @min(next, layout_mod.max_tasks_h);
+                        if (self.tasks_height > layout_mod.min_tasks_h) self.tasks_expanded = true;
+                        self.setNote("tasks:taller");
+                        return .none;
+                    }
+                    if (std.mem.eql(u8, ch, "-") or std.mem.eql(u8, ch, "_")) {
+                        if (self.tasks_height <= layout_mod.min_tasks_h) {
+                            self.tasks_visible = false;
+                            self.tasks_focused = false;
+                            self.tasks_expanded = false;
+                            self.tasks_auto = false;
+                            self.tasks_user_hidden = true;
+                            self.setNote("tasks:hidden");
+                            return .none;
+                        }
+                        const next = if (self.tasks_height > layout_mod.min_tasks_h + 1)
+                            self.tasks_height - 2
+                        else
+                            layout_mod.min_tasks_h;
+                        self.tasks_height = next;
+                        if (self.tasks_height == layout_mod.min_tasks_h) self.tasks_expanded = false;
+                        self.setNote(if (self.tasks_height == layout_mod.min_tasks_h) "tasks:chip" else "tasks:shorter");
+                        return .none;
+                    }
                 },
                 .escape => {
                     if (self.tasks_expanded) {
@@ -1165,6 +1227,7 @@ pub const App = struct {
                     self.tasks_focused = false;
                     self.tasks_expanded = false;
                     self.tasks_auto = false;
+                    self.tasks_user_hidden = false;
                     self.setNote("no_subagents");
                     return .none;
                 }
@@ -1172,14 +1235,19 @@ pub const App = struct {
                     self.tasks_visible = true;
                     self.tasks_focused = true;
                     self.tasks_auto = false;
+                    self.tasks_user_hidden = false;
+                    if (self.tasks_height < 8) self.tasks_height = layout_mod.default_tasks_h;
+                    self.tasks_expanded = true;
                 } else if (!self.tasks_focused) {
                     self.tasks_focused = true;
                     self.tasks_auto = false;
+                    self.tasks_user_hidden = false;
                 } else {
                     self.tasks_visible = false;
                     self.tasks_focused = false;
                     self.tasks_expanded = false;
                     self.tasks_auto = false;
+                    self.tasks_user_hidden = true;
                 }
                 return .none;
             },
@@ -1351,8 +1419,7 @@ pub const App = struct {
             },
             .slash_palette => {
                 if (overlay_mod.Builtin.fromPaletteLine(line)) |b| {
-                    self.overlay.open(b.overlayKind());
-                    _ = self.rebuildOverlayLines();
+                    self.openHostOverlay(b.overlayKind());
                     return;
                 }
                 if (std.mem.eql(u8, line, "skill:name")) {
@@ -1770,9 +1837,10 @@ pub const App = struct {
                 push(self, "── 权限 / 显示 ──", &n);
                 push(self, "Ctrl+O         权限模式 ask/auto/bypass", &n);
                 push(self, "Ctrl+T         thinking 显示开关", &n);
-                push(self, "Ctrl+K         tasks 面板（可收缩，无任务时隐藏）", &n);
+                push(self, "Ctrl+K         tasks 面板（显示 / 聚焦 / 隐藏）", &n);
                 push(self, "  j/k · ↑/↓    选择任务（聚焦后）", &n);
-                push(self, "  Space        展开/折叠输出", &n);
+                push(self, "  Space        展开/折叠内部步骤", &n);
+                push(self, "  + / -        拉高 / 收成一条（再按隐藏）", &n);
                 push(self, "  Esc          取消聚焦", &n);
                 push(self, "── 滚动 ──", &n);
                 push(self, "PgUp/PgDn      滚动 transcript（行）", &n);
@@ -1857,8 +1925,8 @@ pub const App = struct {
                 // through the SAME redaction pipeline as setIdentity
                 // (filenames can embed secrets); the raw rel path is kept
                 // in parallel scratch so selection maps back to the real
-                // file. Cap 24 rows incl. headers (overlay_line_bufs
-                // capacity).
+                // file. Cap `overlay_line_cap` rows incl. headers
+                // (overlay_line_bufs capacity).
                 @memset(&self.resume_stem_lens, 0);
                 var list: std.ArrayList(coding.session_store.SessionEntry) = .empty;
                 defer {
@@ -1985,8 +2053,7 @@ pub const App = struct {
             .open_overlay => |kind| {
                 self.history.pushAccepted(text);
                 self.editor.clear();
-                self.overlay.open(kind);
-                _ = self.rebuildOverlayLines();
+                self.openHostOverlay(kind);
                 return;
             },
             .note => |n| {
@@ -2134,8 +2201,9 @@ pub const App = struct {
         };
         // Collapsible tasks pane (grok-style):
         //   - empty registry → always hidden (no empty box)
-        //   - running/pending → auto-open (unfocused so Enter still sends)
-        //   - idle after auto-open → auto-close
+        //   - running/pending → auto-open tall + expanded (unfocused)
+        //   - idle after auto-open → stay visible so the log is reviewable
+        //   - user hide (Ctrl+K / chip `-`) → do not auto-reopen this run
         if (self.subagent_registry) |reg| {
             const live = reg.liveCount();
             const running = reg.countByStatus(.running) + reg.countByStatus(.pending);
@@ -2144,16 +2212,16 @@ pub const App = struct {
                 self.tasks_focused = false;
                 self.tasks_expanded = false;
                 self.tasks_auto = false;
+                self.tasks_user_hidden = false;
             } else if (running > 0) {
-                if (!self.tasks_visible) {
+                if (!self.tasks_visible and !self.tasks_user_hidden) {
                     self.tasks_visible = true;
                     self.tasks_auto = true;
                     self.tasks_focused = false; // never steal Enter while running
+                    self.tasks_expanded = true; // live tool log without focusing
+                    if (self.tasks_height < 8) self.tasks_height = layout_mod.default_tasks_h;
                 }
             } else if (self.tasks_auto) {
-                self.tasks_visible = false;
-                self.tasks_focused = false;
-                self.tasks_expanded = false;
                 self.tasks_auto = false;
             }
             if (live > 0 and self.tasks_cursor >= live) self.tasks_cursor = live - 1;
@@ -2162,13 +2230,14 @@ pub const App = struct {
             self.tasks_focused = false;
             self.tasks_expanded = false;
             self.tasks_auto = false;
+            self.tasks_user_hidden = false;
         }
 
         // Compute the layout once here: renderFrame draws it. Cards region is
         // borderless; reserve 1 col for the scrollbar track. Viewport height
         // matches the painted cards window (drawCards uses content_win.height).
         const turn_vis = self.state == .busy or self.state == .closing or self.state == .@"error";
-        const layout = layout_mod.compute(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible, turn_vis, self.queue_visible);
+        const layout = layout_mod.computeWithTasksHeight(sz, n, modal.pending, facts.status_note.len > 0, 0, self.editor.lineCount(), self.tasks_visible, turn_vis, self.queue_visible, self.tasks_height);
         const viewport_h: usize = @max(layout.cards.h, 1);
         const content_w: u16 = @max(layout.cards.w -| 1, 1);
         self.last_viewport_h = viewport_h;
@@ -2857,6 +2926,26 @@ test "tui-input: ctrl-w/u edit the buffer; ctrl-k collapses empty tasks" {
     try std.testing.expect(!app.tasks_focused);
 }
 
+test "tui-input: tasks pane +/- resizes when focused" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    app.tasks_visible = true;
+    app.tasks_focused = true;
+    app.tasks_height = layout_mod.default_tasks_h;
+    _ = app.handleKey(.{ .char = "+" });
+    try std.testing.expectEqual(layout_mod.default_tasks_h + 2, app.tasks_height);
+    _ = app.handleKey(.{ .char = "-" });
+    try std.testing.expectEqual(layout_mod.default_tasks_h, app.tasks_height);
+    app.tasks_height = layout_mod.min_tasks_h + 1;
+    _ = app.handleKey(.{ .char = "-" });
+    try std.testing.expectEqual(layout_mod.min_tasks_h, app.tasks_height);
+    try std.testing.expect(app.tasks_visible);
+    _ = app.handleKey(.{ .char = "-" });
+    try std.testing.expect(!app.tasks_visible);
+    try std.testing.expect(!app.tasks_focused);
+    try std.testing.expect(app.tasks_user_hidden);
+}
 
 test "tui-input: Enter still sends while tasks pane is visible unfocused" {
     const gpa = std.testing.allocator;
@@ -2873,6 +2962,26 @@ test "tui-input: Enter still sends while tasks pane is visible unfocused" {
     try std.testing.expect(app.tasks_visible); // unfocused visible stays
 }
 
+
+test "tui-model-picker: opening model overlay calls refresh" {
+    const gpa = std.testing.allocator;
+    const app = try App.create(gpa);
+    defer app.destroy();
+    var called: u8 = 0;
+    const H = struct {
+        fn go(ptr: *anyopaque, a: *App) void {
+            _ = a;
+            const n: *u8 = @ptrCast(@alignCast(ptr));
+            n.* += 1;
+        }
+    };
+    app.model_picker_refresh = .{ .ptr = &called, .refreshFn = H.go };
+    app.openHostOverlay(.model);
+    try std.testing.expectEqual(@as(u8, 1), called);
+    try std.testing.expect(app.overlay.kind == .model);
+    app.openHostOverlay(.help);
+    try std.testing.expectEqual(@as(u8, 1), called);
+}
 
 test "tui-theme: switching builtins never frees static memory" {
     // Regression: reloadTheme used to register builtin ids (compile-time
@@ -3111,7 +3220,7 @@ test "tui-resume: slash palette routes /resume to the resume overlay" {
     try std.testing.expectEqual(overlay_mod.Kind.@"resume", app.overlay.kind);
 }
 
-test "tui-resume: listing caps at 24 rows; empty dir shows placeholder" {
+test "tui-resume: listing caps at overlay_line_cap rows; empty dir shows placeholder" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
@@ -3123,8 +3232,10 @@ test "tui-resume: listing caps at 24 rows; empty dir shows placeholder" {
     wireResumeFixture(app, &tmp, io);
 
     try tmp.dir.createDirPath(io, "sessions");
+    // tui-model-picker-001: overlay buffer cap rose 24 → 96; create enough
+    // sessions to exceed it so the cap is actually exercised.
     var i: usize = 0;
-    while (i < 26) : (i += 1) {
+    while (i < c.overlay_line_cap + 2) : (i += 1) {
         var name_buf: [64]u8 = undefined;
         const name = try std.fmt.bufPrint(&name_buf, "sessions/s{d}.jsonl", .{i});
         try tmp.dir.writeFile(io, .{ .sub_path = name, .data = "x\n" });
@@ -3132,8 +3243,8 @@ test "tui-resume: listing caps at 24 rows; empty dir shows placeholder" {
 
     app.overlay.open(.@"resume");
     const n = app.rebuildOverlayLines();
-    try std.testing.expectEqual(@as(usize, 24), n); // cap 24 rows
-    try std.testing.expectEqual(@as(usize, 24), app.overlay_line_count);
+    try std.testing.expectEqual(c.overlay_line_cap, n); // cap rows
+    try std.testing.expectEqual(c.overlay_line_cap, app.overlay_line_count);
     // Raw stems backing the rows map to real files (selection works).
     try std.testing.expect(app.resume_stem_lens[0] > 0);
     for (app.overlay_line_ptrs[0..n]) |line| {
@@ -3266,7 +3377,7 @@ test "tui-resume: Enter on a group header is a no-op (overlay stays open)" {
     try std.testing.expectEqual(UiState.idle, app.state);
 }
 
-test "tui-resume: 24-row cap includes group headers (headers consume rows)" {
+test "tui-resume: cap includes group headers (headers consume rows)" {
     const gpa = std.testing.allocator;
     const io = std.testing.io;
     var r = try coding.redact.Redactor.init(gpa, .{ .secrets = &.{}, .patterns = false });
@@ -3291,9 +3402,10 @@ test "tui-resume: 24-row cap includes group headers (headers consume rows)" {
 
     app.overlay.open(.@"resume");
     const n = app.rebuildOverlayLines();
-    try std.testing.expectEqual(@as(usize, 24), n); // 22 flat + header + 1 session
-    // The header consumes a row: exactly ONE group session fits under the
-    // cap (which one is mtime order — equal-mtime ties are unordered).
+    // tui-model-picker-001: cap rose 24 → 96, so all 26 rows fit (22 flat +
+    // 1 header + 3 group sessions).
+    try std.testing.expectEqual(@as(usize, 26), n);
+    // The header sits at row 22 (after the 22 flat files).
     try std.testing.expectEqual(render.RowKind.muted, app.resume_row_kinds[22]);
     var group_rows: usize = 0;
     var group_session_rows: usize = 0;
@@ -3303,7 +3415,7 @@ test "tui-resume: 24-row cap includes group headers (headers consume rows)" {
         if (std.mem.startsWith(u8, app.resume_stem_bufs[scan][0..app.resume_stem_lens[scan]], "proj/")) group_session_rows += 1;
     }
     try std.testing.expectEqual(@as(usize, 1), group_rows);
-    try std.testing.expectEqual(@as(usize, 1), group_session_rows);
+    try std.testing.expectEqual(@as(usize, 3), group_session_rows);
 }
 
 test "tui-resume: secret-bearing group names and stems redact; raw rel paths kept" {

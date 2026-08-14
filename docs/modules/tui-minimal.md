@@ -47,8 +47,9 @@ dual-backend evidence is owned by
 (**in-progress**, Phase A; TARGET `f352b60`; Class C rebind review PASS @
 `7f9cfa4`; **no** run id; **no** push; **no** Phase B grant; Gate green **No**;
 **no** remote `-Dtui` claim — current CI has no TUI step; PTY remains local
-macOS only). Defaults remain ask + workspace jail + shell protect; `-Dtui`
-default **false**/lazy. See [task](../plan/tasks/tui-minimal-001.md).
+macOS only). Defaults remain ask + workspace jail + shell protect. Product
+`-Dtui` default is **true** (TTY auto-TUI; `-Dtui=false` keeps a lean
+graph). See [task](../plan/tasks/tui-minimal-001.md).
 
 Merged C9 follow-ons preserve this contract: [TUI streaming](./tui-streaming.md)
 landed at `2d57e84` (default provider streaming into progressive assistant
@@ -118,9 +119,9 @@ Core or coding-agent.
 | Rule | Binding |
 |------|---------|
 | Package path | **`packages/zag-tui/`** only; Zig module name **`zag-tui`** |
-| `-Dtui` default | **false** |
+| `-Dtui` default | **true** (lean CI/graph: `-Dtui=false`) |
 | Root `build.zig` | declares `-Dtui`; passes the bool into `zag-cli` dependency options |
-| When `-Dtui=false` | **must not** resolve, fetch, or build `zag-tui` or any terminal library; default `zig build` / `zig build test` unchanged |
+| When `-Dtui=false` | **must not** resolve, fetch, or build `zag-tui` or any terminal library |
 | When `-Dtui=true` | root may resolve optional/lazy `zag-tui` + terminal library; `zag-cli` may `@import("zag-tui")` and call its public entry |
 | `zag-cli` role | owns flags/mode/SIGINT/exit; **only** wires TUI entry when built with `-Dtui=true` |
 | Kernel / coding-agent ban | must not `@import("zag-tui")`, `@import("tui")`, or reference `zag_tui` (existing headless Kernel scan remains) |
@@ -762,8 +763,8 @@ frozen caps).
 
 | Item | Binding |
 |------|---------|
-| `-Dtui` | default **false** |
-| default tests | no TUI resolve/build; Kernel scan green |
+| `-Dtui` | default **true** |
+| `-Dtui=false` | no TUI resolve/build; Kernel scan green |
 | `-Dtui=true` | may build `zag-tui` + lazy terminal dep |
 
 ### 9.2 Runtime flag matrix (product TUI v1)
@@ -782,7 +783,9 @@ Product TUI v1 is an **interactive shell only**: **no positional prompt**.
 | `--tui` and **either** stdin or stdout is not a TTY | **2** | **empty** | fixed non-tty diagnostic |
 | `--help` with `--tui` (no json) | **0** | normal help text path as CLI help | help may use stderr per existing help rules; **must not** init TUI / raw mode |
 | `--help` with `--tui` and json flags | **2** | follow existing parse/mutex with headless | — |
-| default without `--tui` | existing | existing | existing |
+| `--tui` + `--repl` | **2** | empty | mutual exclusion |
+| default on TTY (TUI compiled in; no exclusive surface / prompt) | TUI | TUI | TUI |
+| default on pipes / `--repl` | existing REPL | existing | existing |
 
 **Allowed with `--tui`** (still subject to validation):
 

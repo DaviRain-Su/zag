@@ -2,6 +2,34 @@
   "provider": "cerebras",
   "models": [
     {
+      "id": "gemma-4-31b",
+      "name": "Gemma 4 31B IT",
+      "context_window": 131072,
+      "max_output_tokens": 40960,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.99,
+        "output": 1.49,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "context_window": 131072,
+      "max_output_tokens": 40960,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.35,
+        "output": 0.75,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
       "id": "llama-3.3-70b",
       "name": "Llama 3.3 70B (Cerebras)",
       "context_window": 128000,
@@ -26,6 +54,20 @@
         "input": 0.4,
         "output": 0.8,
         "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "zai-glm-4.7",
+      "name": "Z.AI GLM-4.7",
+      "context_window": 131072,
+      "max_output_tokens": 40960,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 2.25,
+        "output": 2.75,
+        "cache_read": 2.25,
         "cache_write": 0.0
       }
     }

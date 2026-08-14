@@ -15,7 +15,13 @@ In-process synchronous delegation (not a Graph, not an Oracle):
 - depth cap `MAX_SUBAGENT_DEPTH = 1`;
 - ephemeral child Session (no durable path); parent blocks until the child returns;
 - filtered toolset by type (scout/reviewer read-only; task inherits parent);
-- TUI tasks pane for registry display.
+- TUI tasks pane for registry display (Grok-style): auto-opens tall while
+  a child runs (unfocused so Enter still sends) and stays after
+  completion so the live log is reviewable. `Ctrl+K` show/focus/hide;
+  `Space` expands the tool/turn log; `+`/`-` resizes (3-row chip …
+  20-row tall; another `-` on the chip hides). Child lifecycle events
+  append progress lines (`→ tool`, `✓ tool`, `· text`) — no raw args.
+  Final `output` still lands on completion.
 
 This slice does **not** raise the Subagents/Oracle maturity row. It does not
 claim process-tree isolation, worktree children, inter-agent messaging, or

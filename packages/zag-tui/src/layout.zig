@@ -59,6 +59,10 @@ pub const Layout = struct {
 /// region grows to show up to `max_editor_rows` content rows (Alt+Enter
 /// multiline input); the transcript shrinks accordingly.
 pub const max_editor_rows: usize = 4;
+/// Grok-style tasks pane height: chip (3) … default (12) … tall (20).
+pub const default_tasks_h: u16 = 12;
+pub const min_tasks_h: u16 = 3;
+pub const max_tasks_h: u16 = 20;
 
 pub fn compute(
     size: terminal.Size,
@@ -75,6 +79,32 @@ pub fn compute(
     /// grok-style control queue strip (pending steering/follow-up). The
     /// renderer draws only the actual entries inside the reserved band.
     queue_visible: bool,
+) Layout {
+    return computeWithTasksHeight(
+        size,
+        card_count,
+        modal_pending,
+        note_present,
+        scroll_from_bottom,
+        editor_lines,
+        tasks_visible,
+        turn_status_visible,
+        queue_visible,
+        default_tasks_h,
+    );
+}
+
+pub fn computeWithTasksHeight(
+    size: terminal.Size,
+    card_count: usize,
+    modal_pending: bool,
+    note_present: bool,
+    scroll_from_bottom: usize,
+    editor_lines: usize,
+    tasks_visible: bool,
+    turn_status_visible: bool,
+    queue_visible: bool,
+    tasks_want_h: u16,
 ) Layout {
     const w: u16 = @max(size.cols, 1);
     const rows = size.rows;
@@ -158,8 +188,9 @@ pub fn compute(
         .h = modal_h,
     };
 
-    // Grok-style tasks pane: up to 12 rows above modal/turn/editor.
-    const tasks_h: u16 = if (tasks_visible) @min(12, gap -| modal_h) else 0;
+    // Grok-style tasks pane: user-sized (3 chip … 20 tall), clamped to gap.
+    const want_h: u16 = if (tasks_want_h < min_tasks_h) min_tasks_h else @min(tasks_want_h, max_tasks_h);
+    const tasks_h: u16 = if (tasks_visible) @min(want_h, gap -| modal_h) else 0;
     const tasks_region: ?Region = if (tasks_h == 0) null else .{
         .x = 0,
         .y = stack_top -| modal_h -| tasks_h,
@@ -197,6 +228,16 @@ pub fn compute(
     };
 }
 // ── geometry fixtures (tui-layout-001) ──────────────────────────────────────
+
+test "layout tasks pane respects user height (chip vs tall)" {
+    const chip = computeWithTasksHeight(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, true, false, false, min_tasks_h);
+    const t0 = chip.tasks_overlay orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(min_tasks_h, t0.h);
+    const tall = computeWithTasksHeight(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, true, false, false, max_tasks_h);
+    const t1 = tall.tasks_overlay orelse return error.TestUnexpectedResult;
+    try std.testing.expect(t1.h > t0.h);
+    try std.testing.expect(t1.h <= max_tasks_h);
+}
 
 test "layout full mode with tasks pane" {
     const l = compute(.{ .cols = 80, .rows = 24 }, 0, false, false, 0, 1, true, false, false);

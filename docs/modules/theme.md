@@ -79,7 +79,7 @@ zag-agent-core     NO Theme types / ports / state / discovery
 | Rule | Binding |
 |------|---------|
 | Package path | Theme code lives **only** under `packages/zag-tui/` |
-| `-Dtui` default | **false** (unchanged) |
+| `-Dtui` default | **true** (omit with `-Dtui=false`) |
 | When `-Dtui=false` | **must not** resolve/build Theme code paths that pull TUI; default `zig build` / `zig build test` graph unchanged; plain/headless/Kernel paths unchanged |
 | When `-Dtui=true` | CLI may parse/forward explicit Theme options and call `zag-tui` public entry; catalog/renderer remain inside `zag-tui` |
 | Kernel / coding-agent ban | must not `@import("zag-tui")` for Theme or otherwise (existing headless Kernel no-TUI scan remains) |

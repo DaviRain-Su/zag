@@ -19,4 +19,4 @@ Process fixture: `packages/zag-cli/src/doctor_process_fixture.zig` (wired into r
 
 ## Logging boundary (h-redact-001)
 
-Verbose (`-v`) and stream diagnostics use fixed/enum/numeric helpers only (no raw model/key/path/chunk bytes). Permission ask prompts log risk + `args_len` only. **Final assistant stdout** (one-shot/REPL) is intentional user-facing output and is outside that diagnostic gate.
+Verbose (`-v`) and stream diagnostics use fixed/enum/numeric helpers only (no raw model/key/path/chunk bytes). Permission ask prompts log risk + `args_len` only. Provider HTTP failures also write a scrubbed snapshot to `.zag/logs/provider-last.json` (append history in `provider.jsonl`) — status, parsed API error fields, request-shape counts; never Authorization or the raw body. **Final assistant stdout** (one-shot/REPL) is intentional user-facing output and is outside that diagnostic gate.

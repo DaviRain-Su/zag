@@ -32,8 +32,9 @@ recorded) **with documented vendored patches**, quarantined in
    fallback only). vaxis hard-codes `/dev/tty`, which breaks zag's PTY
    fixture spawn (fork+dup2 slave→0/1/2, deliberately no controlling
    tty, macOS NOTTY).
-2. `PosixTty.deinit`: `error.ProcessOrphaned` on `tcsetattr` is retried
-   with `TCSANOW` and not logged (Ctrl+C under `zig build run` can race
+2. `PosixTty.deinit`: reclaim the TTY FG pgroup, restore with `TCSANOW`
+   (never `TCSAFLUSH` — the input thread may still be in `read()`), and
+   do not log `ProcessOrphaned` (Ctrl+C under `zig build run` can race
    the parent off the FG pgroup; EIO is not a leftover-raw failure).
 
 `zigimg` + `uucode` resolve from the local zig cache (already present —
@@ -59,8 +60,12 @@ over the **patched fd-based Tty** (STDIN/STDOUT, as today):
   thread → `vx.deinit` → `tty.deinit` (original termios restored; fixture
   asserts ISIG restored equal) → hand the TTY FG pgroup back — completes
   before `App.destroy`. `loop.stop()` is still not called (PTY hang).
-  `open()` claims a private FG pgroup when already the FG job so Ctrl+C
-  does not also signal `zig build run`; PTY / background jobs skip;
+  `open()` claims a private FG pgroup **before** any threads (setpgid
+  after pthread_create is unspecified) when we are the FG job **or**
+  the parent (`zig build run`) is, so Ctrl+C does not also signal the
+  supervisor; PTY / background jobs skip. `App.run` acks the Guard
+  before `restore()` so a bounced second Ctrl+C cannot hard-exit 130
+  mid-restore;
 - wake-pipe family unchanged; `windowSize` kept for tui_entry.zig.
 
 ## 4. Input (packages/zag-tui/src/keys.zig → mapKey)

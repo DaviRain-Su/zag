@@ -116,17 +116,63 @@ pub const PosixTty = struct {
     /// release resources associated with the Tty return it to its original state
     pub fn deinit(self: PosixTty) void {
         // Zag deviation: `error.ProcessOrphaned` is EIO from tcsetattr when
-        // this process is no longer the TTY foreground pgroup (Ctrl+C under
-        // `zig build run` races the parent off the job). Retry TCSANOW; if
-        // still orphaned, stay silent — the caller already restored or cannot.
-        posix.tcsetattr(self.fd.handle, .FLUSH, self.termios) catch |err| switch (err) {
-            error.ProcessOrphaned => posix.tcsetattr(self.fd.handle, .NOW, self.termios) catch {},
+        // this process is not the TTY FG pgroup (Ctrl+C under `zig build run`
+        // races the parent off the job). Reclaim FG, then TCSANOW — never
+        // TCSAFLUSH (another thread may still be in read()). Do not log
+        // ProcessOrphaned: it is not a leftover-raw failure after the retry.
+        const fd = self.fd.handle;
+        reclaimTtyForeground(fd);
+        posix.tcsetattr(fd, .NOW, self.termios) catch |err| switch (err) {
+            error.ProcessOrphaned => {
+                reclaimTtyForeground(fd);
+                posix.tcsetattr(fd, .NOW, self.termios) catch {};
+            },
             else => std.log.err("couldn't restore terminal: {}", .{err}),
         };
         // Zag deviation (tui-vaxis-001): never close a borrowed stdin fd;
         // only close fds this Tty opened itself (/dev/tty fallback). Closing
         // /dev/tty is skipped on macos as it may block indefinitely.
         if (self.owned_fd and builtin.os.tag != .macos) self.fd.close(self.io);
+    }
+
+    /// Ignore SIGTTOU and make our pgroup the TTY foreground. Best-effort:
+    /// PTY fixtures / already-orphaned jobs fail quietly.
+    fn reclaimTtyForeground(fd: posix.fd_t) void {
+        if (builtin.os.tag == .windows) return;
+        var old: posix.Sigaction = undefined;
+        var ign = posix.Sigaction{
+            .handler = .{ .handler = posix.SIG.IGN },
+            .mask = switch (builtin.os.tag) {
+                .macos => 0,
+                else => posix.sigemptyset(),
+            },
+            .flags = 0,
+        };
+        posix.sigaction(posix.SIG.TTOU, &ign, &old);
+        defer posix.sigaction(posix.SIG.TTOU, &old, null);
+
+        const pgid: posix.pid_t = if (builtin.os.tag == .linux and !builtin.link_libc) blk: {
+            const rc = std.os.linux.getpgid(0);
+            if (std.os.linux.errno(rc) != .SUCCESS) return;
+            break :blk @intCast(rc);
+        } else blk: {
+            const libc = struct {
+                extern "c" fn getpgid(pid: posix.pid_t) posix.pid_t;
+            };
+            const pg = libc.getpgid(0);
+            if (pg < 0) return;
+            break :blk pg;
+        };
+
+        if (builtin.os.tag == .linux and !builtin.link_libc) {
+            var pg = pgid;
+            _ = std.os.linux.tcsetpgrp(fd, &pg);
+        } else {
+            const libc_tty = struct {
+                extern "c" fn tcsetpgrp(fildes: c_int, pgid_arg: posix.pid_t) c_int;
+            };
+            _ = libc_tty.tcsetpgrp(fd, pgid);
+        }
     }
 
     /// Resets the signal handler to it's default

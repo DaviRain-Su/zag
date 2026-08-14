@@ -280,8 +280,9 @@ pub const Message = struct {
     content_parts: ?[]const ContentPart = null,
     tool_calls: ?[]const ToolCall = null,
     tool_call_id: ?[]const u8 = null,
-    /// Model thinking carried from the wire into the transcript; never replayed
-    /// to a provider (user-visible audit artifact only).
+    /// Model thinking captured from the wire. OpenAI-compat adapters replay it
+    /// as `reasoning_content` on the next request (DeepSeek-class hosts 400
+    /// without it). Anthropic adapters do not replay (no thinking signature).
     reasoning: ?[]const u8 = null,
     /// Row was runtime-injected (interjection, auto-continue, task-completed,
     /// system-reminder), not typed by the user.

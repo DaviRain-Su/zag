@@ -14,8 +14,8 @@ pub fn build(b: *std.Build) void {
     const tui = b.option(
         bool,
         "tui",
-        "Enable TUI product shell (default false; lazy zag-tui)",
-    ) orelse false;
+        "Enable TUI product shell (default true; pass -Dtui=false for a lean graph)",
+    ) orelse true;
 
     const live = b.option(
         bool,
@@ -63,18 +63,19 @@ pub fn build(b: *std.Build) void {
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
 
-    // Lazy: only resolve/build zag-live when -Dlive=true.
+    // Lazy: only resolve/build zag-live when -Dlive=true. The
+    // `build_options` (carrying `live_enabled`) is ALWAYS attached to the
+    // coding-agent root because `live_policy.zig` imports it unconditionally;
+    // a missing module would break the default `-Dlive=false` test compile.
     var live_mod: ?*std.Build.Module = null;
-    var live_opts: ?*std.Build.Step.Options = null;
+    const live_opts = b.addOptions();
+    live_opts.addOption(bool, "live_enabled", live);
     if (live) {
         const live_dep = b.lazyDependency("zag_live", .{
             .target = target,
             .optimize = optimize,
         }) orelse return;
         live_mod = live_dep.module("zag-live");
-        const lo = b.addOptions();
-        lo.addOption(bool, "live_enabled", true);
-        live_opts = lo;
     }
 
     // Lazy: only resolve/build zag-tui when -Dtui=true.
@@ -86,6 +87,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .http_backend = http_backend,
+            .live = live,
         }) orelse return;
         tui_mod = tui_dep.module("zag-tui");
         // Quarantined backend dep (tui-vaxis-001): vaxis resolves lazily with
@@ -178,7 +180,7 @@ pub fn build(b: *std.Build) void {
             },
         });
         if (live_mod) |lm| coding_named.addImport("zag-live", lm);
-        if (live_opts) |lo| coding_named.addOptions("build_options", lo);
+        coding_named.addOptions("build_options", live_opts);
     }
     const cli_named = b.addModule("zag-cli", .{
         .root_source_file = b.path("packages/zag-cli/src/root.zig"),
@@ -316,7 +318,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     if (live_mod) |lm| coding_tests.root_module.addImport("zag-live", lm);
-    if (live_opts) |lo| coding_tests.root_module.addOptions("build_options", lo);
+    coding_tests.root_module.addOptions("build_options", live_opts);
     const run_coding_tests = b.addRunArtifact(coding_tests);
 
     const fixture_tests = b.addTest(.{
@@ -326,6 +328,7 @@ pub fn build(b: *std.Build) void {
 
     const cli_test_opts = b.addOptions();
     cli_test_opts.addOption(bool, "tui_enabled", tui);
+    cli_test_opts.addOption(bool, "live_enabled", live);
     const cli_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("packages/zag-cli/src/root.zig"),

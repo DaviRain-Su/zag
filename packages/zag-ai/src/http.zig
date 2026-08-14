@@ -7,8 +7,9 @@
 //! Auth is explicit: Bearer vs custom headers (Anthropic `x-api-key`).
 //!
 //! **Logging (h-redact-001):** this transport does not log Authorization headers,
-//! API keys, response bodies, or credential-bearing URLs. Diagnostics stay
-//! status/length class only. Product redaction lives in zag-agent-core.
+//! API keys, raw response bodies, or credential-bearing URLs. On HTTP errors it
+//! records status + parsed `error.type`/`code`/`param`/truncated message into
+//! `provider_diag` (key shapes scrubbed). Product redaction lives in coding-agent.
 
 const std = @import("std");
 const build_options = @import("build_options");

@@ -30,7 +30,7 @@ overlay key handling when pending.
 | `help` | `/help` or palette | Builtin + skill/template hints |
 | `slash_palette` | composer text starts with `/` | Filtered builtins as `/name   hint` (+ note skill/template forms) |
 | `settings` | `/settings` | Read-mostly: perm/shell/theme/model labels |
-| `model` | `/model` | Configured-provider catalog (+ live `/models` for the current host); select switches provider+model |
+| `model` | `/model` | Catalog-driven picker: every configured provider's catalog + user manifest models (auth-gated); **no** live `/models` on launch; select switches provider+model. See [tui-model-picker.md](./tui-model-picker.md) |
 | `theme` | `/theme` | Built-in + user theme ids; select reloads palette fail-closed |
 
 ## Slash routing (submit)

@@ -289,6 +289,10 @@ fn spawnAwait(
         .parent_depth = state.parent_depth,
         .apply_hunk_state = state.apply_hunk_state,
         .request = request,
+        .registry = state.registry,
+        .reg_idx = reg_idx,
+        .wake_fn = state.wake_fn,
+        .wake_ctx = state.wake_ctx,
     };
 
     const result = subagent_mod.spawn(spawn_ctx) catch |err| {
@@ -338,6 +342,10 @@ fn bgWorkerMain(job: *BgJob) void {
         .parent_depth = job.parent_depth,
         .apply_hunk_state = &job.apply_hunk_state,
         .request = request,
+        .registry = job.registry,
+        .reg_idx = job.reg_idx,
+        .wake_fn = job.wake_fn,
+        .wake_ctx = job.wake_ctx,
     };
 
     const result = subagent_mod.spawn(spawn_ctx) catch |err| {

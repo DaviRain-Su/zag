@@ -19,13 +19,14 @@ zig build run -- -v "这个项目有几个源文件？读一下 build.zig 摘要
 
 验收：stderr 出现 `tool_call list_dir` / `read_file`，答案来自 tool 而非臆测。
 
-产品 CLI 也可进入交互模式：
+产品 CLI 在 TTY 上默认进 TUI：
 
 ```bash
 zig build run
+# line REPL：zig build run -- --repl
 ```
 
-REPL 在同一个 `Session` 中接受多轮非空输入，直到空白行或 stdin EOF；这是交互产品壳，不是稳定的 headless/process protocol。
+TUI / REPL 都在同一个 `Session` 中多轮对话；这是交互产品壳，不是稳定的 headless/process protocol。
 
 Ctrl+C（cli-sigint-001）：空闲等待输入时第一次 `SIGINT` 唤醒阻塞读取并以 code `0` 干净退出；活动回复中第一次 `SIGINT` 请求协作取消（std HTTP 仍在 response-head 等阶段可能阻塞，仅在文档边界协作），第二次 `SIGINT` 在取消未落定前以 code `130` 强退（明确可跳过会话/trace 落盘）。handler 只做 async-signal-safe 的原子态 + self-pipe 唤醒；由 `zag-cli` 安装并在作用域结束时恢复上次 disposition，SDK 构造/调用不隐式安装。退出码契约以直接二进制 `./zig-out/bin/zag` 为准；`zig build run` 的父 runner 与 Zag 共享前台进程组，Ctrl+C 可能让父 runner 先退 `130`，但 Zag 子进程不得吐 Zig 运行时 `error`/栈（如 `ReadFailed`）。详见 [cli-interaction](../../docs/modules/cli-interaction.md)。
 

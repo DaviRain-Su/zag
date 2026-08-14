@@ -1174,7 +1174,7 @@ fn bridgeSinkEmit(ptr: ?*anyopaque, event: loop_event_mod.LoopEvent) loop_event_
             if (bridge.trace) |tr| {
                 tr.emitProviderRetry(0, r.err_name) catch |err| return mapTraceToSink(err);
             }
-            std.log.warn("provider failed: {s}", .{r.err_name});
+            std.log.warn("provider failed: {s} (diag=.zag/logs/provider-last.json)", .{r.err_name});
         },
         .context_compaction => |ev| {
             // Session note first, then Trace compaction (h-context-001).

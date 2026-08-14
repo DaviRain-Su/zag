@@ -2,12 +2,102 @@
   "provider": "minimax-cn",
   "models": [
     {
+      "id": "MiniMax-M2",
+      "name": "MiniMax-M2",
+      "context_window": 196608,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMax-M2.1",
+      "name": "MiniMax-M2.1",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.375
+      }
+    },
+    {
       "id": "MiniMax-M2.5",
-      "name": "MiniMax M2.5 (CN)",
-      "context_window": 200000,
-      "max_output_tokens": 16384,
-      "reasoning": false,
-      "vision": false
+      "name": "MiniMax-M2.5",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.5-highspeed",
+      "name": "MiniMax-M2.5-highspeed",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.7",
+      "name": "MiniMax-M2.7",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.7-highspeed",
+      "name": "MiniMax-M2.7-highspeed",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M3",
+      "name": "MiniMax-M3",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
     }
   ]
 }

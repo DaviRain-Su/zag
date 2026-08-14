@@ -62,7 +62,7 @@ Contract freezes (detail in the module — do not fork):
 6. full outward redaction via Session-owned `redactAlloc` before publish.
 
 Host owns all UI state; Kernel/coding-agent must not import TUI. `-Dtui` default
-false. Permission default remains **ask** (fail-closed; missing ask seam is
+**true** (omit with `-Dtui=false`). Permission default remains **ask** (fail-closed; missing ask seam is
 deny, never yolo). Workspace jail + shell protect stay mandatory. Outward UI
 bytes are redacted before render; secrets must not hit stdout. No theme
 platform, extension UI host, package manager, or dashboard.

@@ -113,6 +113,7 @@ test "catalog covers new presets" {
     try std.testing.expect(find("cerebras", "llama-3.3-70b") != null);
     try std.testing.expect(find("kimi-coding", "kimi-for-coding") != null);
     try std.testing.expect(find("minimax", "MiniMax-M2.5") != null);
+    try std.testing.expect(find("ollama", "deepseek-v4-flash:0731") != null);
     try std.testing.expect(find("ollama-cloud", "deepseek-v4-flash:0731") != null);
     try std.testing.expect(find("opencode-go", "deepseek-v4-flash") != null);
     try std.testing.expect(find("opencode-zen", "claude-sonnet-4-5") != null);

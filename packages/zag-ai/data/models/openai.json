@@ -2,31 +2,31 @@
   "provider": "openai",
   "models": [
     {
-      "id": "gpt-4o",
-      "name": "GPT-4o",
-      "context_window": 128000,
-      "max_output_tokens": 16384,
+      "id": "gpt-4",
+      "name": "GPT-4",
+      "context_window": 8192,
+      "max_output_tokens": 8192,
       "reasoning": false,
-      "vision": true,
+      "vision": false,
       "cost": {
-        "input": 2.5,
-        "output": 10.0,
-        "cache_read": 1.25,
-        "cache_write": 2.5
+        "input": 30.0,
+        "output": 60.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
-      "id": "gpt-4o-mini",
-      "name": "GPT-4o mini",
+      "id": "gpt-4-turbo",
+      "name": "GPT-4 Turbo",
       "context_window": 128000,
-      "max_output_tokens": 16384,
+      "max_output_tokens": 4096,
       "reasoning": false,
       "vision": true,
       "cost": {
-        "input": 0.15,
-        "output": 0.6,
-        "cache_read": 0.075,
-        "cache_write": 0.15
+        "input": 10.0,
+        "output": 30.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
@@ -40,7 +40,7 @@
         "input": 2.0,
         "output": 8.0,
         "cache_read": 0.5,
-        "cache_write": 2.0
+        "cache_write": 0.0
       }
     },
     {
@@ -54,21 +54,427 @@
         "input": 0.4,
         "output": 1.6,
         "cache_read": 0.1,
-        "cache_write": 0.4
+        "cache_write": 0.0
       }
     },
     {
-      "id": "o4-mini",
-      "name": "o4-mini",
+      "id": "gpt-4.1-nano",
+      "name": "GPT-4.1 nano",
+      "context_window": 1047576,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.1,
+        "output": 0.4,
+        "cache_read": 0.025,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o",
+      "name": "GPT-4o",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 10.0,
+        "cache_read": 1.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-2024-05-13",
+      "name": "GPT-4o (2024-05-13)",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 15.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-2024-08-06",
+      "name": "GPT-4o (2024-08-06)",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 10.0,
+        "cache_read": 1.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "name": "GPT-4o (2024-11-20)",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 10.0,
+        "cache_read": 1.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-mini",
+      "name": "GPT-4o mini",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.075,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 10.0,
+        "cache_read": 0.125,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-mini",
+      "name": "GPT-5 Mini",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.25,
+        "output": 2.0,
+        "cache_read": 0.025,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-nano",
+      "name": "GPT-5 Nano",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.05,
+        "output": 0.4,
+        "cache_read": 0.005,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-pro",
+      "name": "GPT-5 Pro",
+      "context_window": 400000,
+      "max_output_tokens": 272000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 120.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.1",
+      "name": "GPT-5.1",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 10.0,
+        "cache_read": 0.125,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2",
+      "name": "GPT-5.2",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2-chat-latest",
+      "name": "GPT-5.2 Chat",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2-pro",
+      "name": "GPT-5.2 Pro",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 21.0,
+        "output": 168.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-chat-latest",
+      "name": "GPT-5.3 Chat (latest)",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "name": "GPT-5.3 Codex",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3 Codex Spark",
+      "context_window": 128000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 15.0,
+        "cache_read": 0.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 mini",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.75,
+        "output": 4.5,
+        "cache_read": 0.075,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "name": "GPT-5.4 nano",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.25,
+        "cache_read": 0.02,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-pro",
+      "name": "GPT-5.4 Pro",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "name": "GPT-5.5 Pro",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.6",
+      "name": "GPT-5.6",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      }
+    },
+    {
+      "id": "gpt-realtime-2.1",
+      "name": "GPT-Realtime-2.1",
+      "context_window": 128000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 4.0,
+        "output": 24.0,
+        "cache_read": 0.4,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o1",
+      "name": "o1",
       "context_window": 200000,
       "max_output_tokens": 100000,
       "reasoning": true,
-      "vision": false,
+      "vision": true,
       "cost": {
-        "input": 1.1,
-        "output": 4.4,
-        "cache_read": 0.275,
-        "cache_write": 1.1
+        "input": 15.0,
+        "output": 60.0,
+        "cache_read": 7.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o1-pro",
+      "name": "o1-pro",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 150.0,
+        "output": 600.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
@@ -77,12 +483,54 @@
       "context_window": 200000,
       "max_output_tokens": 100000,
       "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o3-mini",
+      "name": "o3-mini",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
       "vision": false,
       "cost": {
-        "input": 10.0,
-        "output": 40.0,
-        "cache_read": 2.5,
-        "cache_write": 10.0
+        "input": 1.1,
+        "output": 4.4,
+        "cache_read": 0.55,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o3-pro",
+      "name": "o3-pro",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 20.0,
+        "output": 80.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o4-mini",
+      "name": "o4-mini",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.1,
+        "output": 4.4,
+        "cache_read": 0.275,
+        "cache_write": 0.0
       }
     }
   ]

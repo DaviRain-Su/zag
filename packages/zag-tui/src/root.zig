@@ -25,6 +25,7 @@ pub const scrollback = @import("scrollback.zig");
 pub const render = @import("render.zig");
 pub const app = @import("app.zig");
 pub const App = app.App;
+pub const ModelPickerRefresh = app.ModelPickerRefresh;
 pub const OpenDisplay = app.OpenDisplay;
 pub const BindSessionOpts = app.BindSessionOpts;
 pub const TeardownProbe = app.TeardownProbe;

@@ -17,6 +17,7 @@ const libcurl = curl.libcurl;
 const wire = @import("wire.zig");
 const config_mod = @import("config.zig");
 const rc = @import("request_control.zig");
+const provider_diag = @import("provider_diag.zig");
 
 pub const Error = wire.Error;
 pub const Config = config_mod.Config;
@@ -244,6 +245,7 @@ pub const Client = struct {
                     try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 }
+                provider_diag.recordHttp(result.status, result.body);
                 if (result.body.len > 0) self.allocator.free(result.body);
                 // attemptOnce wrote the captured Retry-After (or null) into
                 // the slot on the terminal exchange (retry-after-wire-001).

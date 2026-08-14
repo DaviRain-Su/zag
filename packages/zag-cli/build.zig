@@ -13,8 +13,8 @@ pub fn build(b: *std.Build) void {
     const tui = b.option(
         bool,
         "tui",
-        "Enable zag-tui product shell (default false; lazy)",
-    ) orelse false;
+        "Enable zag-tui product shell (default true; pass -Dtui=false for a lean graph)",
+    ) orelse true;
     const live = b.option(
         bool,
         "live",
@@ -62,6 +62,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .http_backend = http_backend,
+            .live = live,
         }) orelse return;
         mod.addImport("zag-tui", tui_dep.module("zag-tui"));
     }

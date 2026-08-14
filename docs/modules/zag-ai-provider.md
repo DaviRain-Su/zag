@@ -56,7 +56,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | 传输 | `openai-zig` / zag-ai `http` | 同一 `-Dhttp_backend=std\|curl`（[D-005](../decisions/complete/D-005-outbound-http-std-not-httpz.md) 已收口；默认 std） |
 | 共享 `wire.Error` | ✅；`mapSdkError` 仅 OpenAI 适配器 |
 | `WireAdapter.embed` | ✅ OpenAI 实现；Anthropic → `NotSupported` |
-| presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning）；TUI `/model` lists every env-keyed provider and rebinds the wire on select |
+| presets / catalog | ✅ ~20 家表驱动预设；catalog curated（context / vision / reasoning）；TUI `/model` lists every available provider (env-keyed + keyless Ollama) plus `$HOME/.zag/models.json` / `.zag/models.json`, and rebinds the wire on select |
 | Agent `if` 厂商 | 禁止（保持） |
 
 ### Wire 边界（故意收窄）
@@ -65,7 +65,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 |----|----------------|
 | `openai_compat` + `anthropic_messages` | Google / Mistral-native / Bedrock / Vertex |
 | env key 预设（OpenAI/Anthropic 系 + 兼容网关） | OAuth（Codex / Copilot） |
-| JSON 模型表 → comptime `catalog_data.zig` + `cost.Ledger` | 运行时 Custom Model catalog（独立后置 task；不属于当前 L2） |
+| JSON 模型表 → comptime `catalog_data.zig` + `cost.Ledger`；TUI picker also reads user/project `models.json` (list + switch, auth-gated) | OAuth / live `/models` in the picker / per-model cost in the manifest |
 | （规划）OpenAI Responses、图像生成 | 绑死单一云 |
 
 ### Pi Custom Model / Custom Provider 功能对应
@@ -76,7 +76,7 @@ canonical: types.Message / ToolDefinition / ChatOptions
 | Custom Provider | executable transport/stream/auth/discovery behavior | E0 custom Provider/WireAdapter is SDK L2; E2/E3 runtime registration remains L0 |
 | Provider registration lifecycle | runtime register/unregister/restore | later `zag-ext-v1` host contract; never a dynamic Zig ABI |
 
-The current `--from-pi` catalog generator intentionally projects only Zag fields (`id/name/provider/context/output/reasoning/vision/cost`) and does not preserve Pi `compat`, `thinkingLevelMap`, headers, OAuth, or model overrides. No richer runtime catalog is claimed.
+The catalog generator can seed from [models.dev](https://models.dev) (`--from-models-dev`) — the same public feed Pi's `generate-models.ts` uses — or from a local Pi `packages/ai` tree (`--from-pi`). Both paths project only Zag fields (`id/name/provider/context/output/reasoning/vision/cost`) and drop Pi `compat`, `thinkingLevelMap`, headers, OAuth, and model overrides. No richer runtime catalog is claimed.
 
 Credentials are host-owned and separate from model metadata/package content. OAuth browser/device-code flows, keychains, shell-command secret lookup, callback listeners, and ambient cloud credentials belong to the host/E2. A future E3 Provider world may use narrowly mediated network/model/secret-use imports only after separate security Gates; it never receives broad environment, raw sockets, keychain, or unrestricted WASI.
 
@@ -86,13 +86,15 @@ Credentials are host-owned and separate from model metadata/package content. OAu
 2. 错误分类在 adapter 边界映到统一 `Error` + `isRetryableError`。
 3. Usage / finish_reason / tool_calls 在 canonical `AssistantTurn` 上对齐。
 4. 流式：wire 增量 → 统一 `StreamEvent` 或组装后的 turn（流式**取消**测试仍属 H6 收口）。
+5. OpenAI-compat 下一轮必须带回上一轮的 `reasoning_content`（`Message.reasoning`）；缺了 DeepSeek 类主机会在工具回传时 400。Anthropic thinking 仍不回放（无 signature）。
+6. OpenAI-compat 助手/工具消息的 `content` 必须是字符串（无正文时发 `""`）。省略字段或 JSON `null` 会让 GLM/Zhipu 类主机 400（`invalid message content type: <nil>`）。多模态仍走 `content` 数组。
 
 ## 不变式
 
 1. Harness 只依赖稳定 Provider 端口；线协议细节关在 adapter / 协议包。
 2. Auth：env + 配置文件；H 不做 OAuth（可后置）。
 3. 可重试错误与不可重试错误分类稳定，供 loop 使用（`isRetryableError`）。
-4. 配置密钥不进 verbose/trace/session 明文（h-redact-001：CLI 把 resolved key 拷入 core Redactor；HTTP/openai-zig 诊断仅 status+body length，不 log Authorization/body）。
+4. 配置密钥不进 verbose/trace/session 明文（h-redact-001：CLI 把 resolved key 拷入 core Redactor；HTTP/openai-zig 诊断仍不 log Authorization/raw body。出错时 `provider_diag` 另记 status + 解析后的 `error.type`/`code`/`param`/截断并 scrub 过的 `error.message` + 请求形态计数，写入 `.zag/logs/provider-last.json` 与 `provider.jsonl`）。
 5. 配置的 deadline 必须真正执行或在启动/调用时明确拒绝；禁止静默保存无效 `timeout_ms`。
 6. Cancel/deadline 贯穿 Provider 与 stream；取消后的半截 Tool call 不进入 transcript 或执行。
 7. 每次 provider attempt 只有一个 owner 负责重试，避免 transport 与 loop 组合造成未记录的重试爆炸。
@@ -174,7 +176,7 @@ Credentials are host-owned and separate from model metadata/package content. OAu
 
 - ✅ 包内 `contract_tests.zig` 覆盖双 wire style、request/turn、错误/retry/usage、strict SSE terminal、Tool-call atomicity，以及 std/curl loopback lifecycle controls。
 - ✅ std ordinary no-control success 与 requested-control pre-network `UnsupportedControl` 分开证明；curl timeout/active cancel 真正执行。
-- ✅ HTTP diagnostics 只含 status/body length；产品 verbose/trace/session secret fixtures 通过。
+- ✅ HTTP diagnostics 不含 Authorization/raw body；出错摘要走 `provider_diag`（解析字段 + 请求形态）；产品 verbose/trace/session secret fixtures 通过。
 
 Fixture 目录命名不影响行为合同，可在以后整理；它不再作为 L2 blocker。
 

@@ -37,12 +37,13 @@
 | [session-fork.md](./session-fork.md) | M1 fork ✅ | idle-only durable `Session.fork`; closed at `0a3087f` | schema v1 unchanged; Session remains L2; no tree/journal claim |
 | [skills.md](./skills.md) | M2 / C8 E1 ✅ | implemented (`skills-001` @ `caafef5`); coding-agent only | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
 | [prompt-templates.md](./prompt-templates.md) | M2 / C8 E1 ✅ | implemented (`prompt-templates-001` @ `61326ae`); coding-agent only + thin CLI routing | no Core/schema/Trace/headless change; Runtime Extensions remains L0 |
-| [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55` (PASS @ `c7a8f3a`); post-TUI remote Gate Phase A **in-progress** (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui`) | `packages/zag-tui` + CLI `-Dtui` wire; local macOS Gates; **no** maturity raise | unique package; dual-thread host; `-Dtui` default false |
+| [tui-minimal.md](./tui-minimal.md) | M2 / C9 **done** @ `f8f7f55` (PASS @ `c7a8f3a`); post-TUI remote Gate Phase A **in-progress** (TARGET `f352b60`; Class C rebind review PASS @ `7f9cfa4`; no Phase B grant / run / Gate green; no remote `-Dtui`) | `packages/zag-tui` + CLI `-Dtui` wire; local macOS Gates; **no** maturity raise | unique package; dual-thread host; `-Dtui` default true |
 | [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | Provider stream → Loop/Façade events → progressive TUI card | default streaming transport; headless/session/Trace wire unchanged |
 | [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | `zag-tui` layout + presenter | pure geometry and dirty-flag paint; no cell diff/virtualization |
 | [tui-vaxis.md](./tui-vaxis.md) | C9 backend ✅ `76360ab` | quarantined vaxis in `zag-tui` | no vxfw wholesale |
 | [theme.md](./theme.md) | M2 / C9 Theme ✅ canvas @ `f5e1356` ([theme-001](../plan/tasks/theme-001.md) **done**) | `theme.zig` + role→Style | owner `zag-tui` only; fail-closed built-in; contract PASS @ `9e1b9f9` was the freeze, not “no code” |
 | [tui-slash-host.md](./tui-slash-host.md) | C9 canvas ✅ | overlay + slash palette | reuse skill/template expand; no Core slash |
+| [tui-model-picker.md](./tui-model-picker.md) | C9 follow-on (tui-model-picker-001) | catalog + `models.json` `/model` picker | no live `/models` on launch; no maturity row |
 | [tui-transcript.md](./tui-transcript.md) | C9 canvas ✅ | scroll transcript region | keep streaming deltas; PTY markers |
 | [memory.md](./memory.md) | **C5 deferred** | —（未实现） | 无真实 use case 前不建挂载点 |
 | [subagents-oracle.md](./subagents-oracle.md) | C6 in-process slice @ `1dabd25`; Oracle/Graph still L0 | `zag-coding-agent/src/subagent.zig` + `task` tool | process-backed / Oracle / Graph remain deferred |
@@ -103,6 +104,7 @@ main → zag-cli → coding-agent → agent-core → zag-types
 | [tui-streaming.md](./tui-streaming.md) | C9 follow-on ✅ `2d57e84` | progressive assistant streaming; default transport |
 | [tui-layout.md](./tui-layout.md) | C9 follow-on ✅ `189de9e` | pure layout + dirty-flag presenter |
 | [theme.md](./theme.md) | M2 / C9 Theme **done** (canvas; contract PASS @ `9e1b9f9`) | Host-shell Theme; implementation in `zag-tui`; no maturity raise |
+| [tui-model-picker.md](./tui-model-picker.md) | C9 follow-on | catalog + user `models.json` `/model` picker; no maturity row |
 | [memory.md](./memory.md) | C5 deferred | Memory Repo（跨 session；default-off; no current trigger） |
 | [rpc-v1.md](./rpc-v1.md) | C9 **implemented** @ `0eeef5d` (Wave 2 closeout) | `--rpc` NDJSON; does not modify `headless-v1` |
 | [acp.md](./acp.md) | C9 **implemented** @ `8d2ba64` (Wave 2 closeout; gate15 residual) | `--acp` editor JSON-RPC adapter |

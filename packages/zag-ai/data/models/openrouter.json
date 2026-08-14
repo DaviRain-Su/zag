@@ -2,37 +2,303 @@
   "provider": "openrouter",
   "models": [
     {
-      "id": "openai/gpt-4o-mini",
-      "name": "GPT-4o mini (OpenRouter)",
-      "context_window": 128000,
-      "max_output_tokens": 16384,
-      "reasoning": false,
-      "vision": true,
-      "cost": {
-        "input": 0.15,
-        "output": 0.6,
-        "cache_read": 0.075,
-        "cache_write": 0.15
-      }
-    },
-    {
-      "id": "deepseek/deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash (OpenRouter)",
-      "context_window": 1000000,
-      "max_output_tokens": 384000,
+      "id": "ai21/jamba-large-1.7",
+      "name": "Jamba Large 1.7",
+      "context_window": 256000,
+      "max_output_tokens": 4096,
       "reasoning": false,
       "vision": false,
       "cost": {
-        "input": 0.14,
-        "output": 0.28,
-        "cache_read": 0.014,
-        "cache_write": 0.28
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "aion-labs/aion-2.0",
+      "name": "Aion-2.0",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.8,
+        "output": 1.6,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "aion-labs/aion-3.0",
+      "name": "Aion-3.0",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 3.0,
+        "output": 6.0,
+        "cache_read": 0.75,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "aion-labs/aion-3.0-mini",
+      "name": "Aion-3.0-Mini",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.7,
+        "output": 1.4,
+        "cache_read": 0.18,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-2-lite-v1",
+      "name": "Nova 2 Lite",
+      "context_window": 1000000,
+      "max_output_tokens": 65535,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 2.5,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-lite-v1",
+      "name": "Nova Lite 1.0",
+      "context_window": 300000,
+      "max_output_tokens": 5120,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.06,
+        "output": 0.24,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-micro-v1",
+      "name": "Nova Micro 1.0",
+      "context_window": 128000,
+      "max_output_tokens": 5120,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.035,
+        "output": 0.14,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-premier-v1",
+      "name": "Nova Premier 1.0",
+      "context_window": 1000000,
+      "max_output_tokens": 32000,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 12.5,
+        "cache_read": 0.625,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-pro-v1",
+      "name": "Nova Pro 1.0",
+      "context_window": 300000,
+      "max_output_tokens": 5120,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.8,
+        "output": 3.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "anthropic/claude-3-haiku",
+      "name": "Claude 3 Haiku",
+      "context_window": 200000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.25,
+        "output": 1.25,
+        "cache_read": 0.03,
+        "cache_write": 0.3
+      }
+    },
+    {
+      "id": "anthropic/claude-fable-5",
+      "name": "Claude Fable 5",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      }
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5",
+      "name": "Claude Haiku 4.5 (latest)",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4",
+      "name": "Claude Opus 4",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_write": 18.75
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.1",
+      "name": "Claude Opus 4.1 (latest)",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_write": 18.75
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.5",
+      "name": "Claude Opus 4.5 (latest)",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.6",
+      "name": "Claude Opus 4.6",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.7",
+      "name": "Claude Opus 4.7",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.7-fast",
+      "name": "Claude Opus 4.7 (Fast)",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 150.0,
+        "cache_read": 3.0,
+        "cache_write": 37.5
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.8",
+      "name": "Claude Opus 4.8",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.8-fast",
+      "name": "Claude Opus 4.8 (Fast)",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-5",
+      "name": "Claude Opus 5",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
       }
     },
     {
       "id": "anthropic/claude-sonnet-4",
-      "name": "Claude Sonnet 4 (OpenRouter)",
-      "context_window": 200000,
+      "name": "Claude Sonnet 4",
+      "context_window": 1000000,
       "max_output_tokens": 64000,
       "reasoning": true,
       "vision": true,
@@ -41,6 +307,34 @@
         "output": 15.0,
         "cache_read": 0.3,
         "cache_write": 3.75
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "openai/gpt-4o-mini",
+      "name": "GPT-4o mini",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.075,
+        "cache_write": 0.0
       }
     }
   ]

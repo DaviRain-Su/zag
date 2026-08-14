@@ -64,10 +64,10 @@ zig build test
 zig build run -- --yolo -v --trace "list_dir ."
 # or: zig build run -- --yolo -v --trace -- "list_dir ."
 
-# 交互 REPL（默认 ask）：同一 Session 多轮，空白行或 Ctrl-D/EOF 退出
-# 空闲等待输入时按一次 Ctrl+C 干净退出（code 0）；活动回复中第一次 Ctrl+C 请求
-# 协作取消，再按一次在取消未落定前强退（code 130，可能跳过会话/trace 落盘）
+# 交互 TUI（默认 ask；TTY 上无需 --tui）。管道 / CI 仍走 line REPL。
+# 空闲 Ctrl+C 干净退出；活动回复中第一次取消，再按一次可能强退 130。
 zig build run
+# 只要 line REPL：zig build run -- --repl
 # 退出码契约以直接二进制 ./zig-out/bin/zag 为准。`zig build run` 的父 build
 # runner 与 Zag 共享前台进程组，Ctrl+C 可能让父 runner 先退 130；但 Zag 子进程
 # 不得吐 Zig 运行时 error/stack（如 ReadFailed）。退出码以直接二进制为准。
@@ -85,8 +85,9 @@ zig build run -- --yolo -v "read_file /etc/passwd"
 | `-c` / `--continue` | 续聊（默认 `.zag/sessions/default.jsonl`） |
 | `--trace` / `--trace=PATH` | 审计 JSONL（默认 `.zag/traces/latest.jsonl`；裸词不当路径） |
 | `--no-project` | 不注入 AGENTS.md |
+| `--tui` / `--repl` | 强制 TUI（TTY）/ 强制 line REPL |
 
-交互模式在同一个 `Session` 中接受多轮非空输入，直到空白行或 stdin EOF；它是产品 REPL，不是稳定的 headless/process protocol。
+TTY 上默认进 TUI；`--repl` 或非 TTY 走 line REPL（同一 Session 多轮，空白行或 EOF 退出）。REPL 不是稳定的 headless/process protocol。
 
 ```text
 src/main.zig                    可执行入口（几行 → zag-cli.run）

@@ -160,6 +160,20 @@ pub fn listConfigured(getter: anytype, out: *std.ArrayList(presets.ProviderSpec)
     }
 }
 
+/// Picker availability: every env-keyed preset plus keyless local hosts
+/// (Ollama). Order matches `presets.builtin`.
+pub fn listPickerProviders(getter: anytype, out: *std.ArrayList(presets.ProviderSpec), gpa: std.mem.Allocator) !void {
+    for (presets.builtin) |spec| {
+        if (spec.env_keys.len == 0) {
+            try out.append(gpa, spec);
+            continue;
+        }
+        if (auth_env.resolveApiKeySource(getter, spec.env_keys) != null) {
+            try out.append(gpa, spec);
+        }
+    }
+}
+
 /// TUI `/model` row key: `spec_id` + unit separator + `model_id`.
 /// A bare model id (no separator) means "keep the current provider".
 pub const picker_sep: u8 = 0x1f;
@@ -340,6 +354,18 @@ test "listConfigured returns every keyed preset" {
     try std.testing.expectEqualStrings("opencode-zen", out.items[2].id);
     try std.testing.expectEqualStrings("ollama-cloud", out.items[3].id);
     try std.testing.expectEqualStrings("kimi-coding", out.items[4].id);
+}
+
+test "listPickerProviders includes keyless ollama" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(presets.ProviderSpec) = .empty;
+    defer out.deinit(gpa);
+    try listPickerProviders(TestEnv{ .pairs = &.{
+        .{ "DEEPSEEK_API_KEY", "sk-d" },
+    } }, &out, gpa);
+    try std.testing.expectEqual(@as(usize, 2), out.items.len);
+    try std.testing.expectEqualStrings("deepseek", out.items[0].id);
+    try std.testing.expectEqualStrings("ollama", out.items[1].id);
 }
 
 test "resolvePreset switches host without ZAG_PROVIDER" {

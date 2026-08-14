@@ -52,10 +52,23 @@ python3 packages/zag-ai/scripts/generate_catalog.py
 # CI: fail if generated files are stale
 python3 packages/zag-ai/scripts/generate_catalog.py --check
 
-# optional: import from a local Pi packages/ai tree
+# optional: import from a local Pi packages/ai tree (JSON only; Pi now
+# generates `providers/data/*.json` and does not commit them)
 python3 packages/zag-ai/scripts/generate_catalog.py \
   --from-pi /path/to/pi/packages/ai \
   --write-providers
+
+# recommended: same feed Pi uses (models.dev), projected to Zag ModelInfo.
+# First-party hosts import every tool-capable row; mega-gateways are capped.
+python3 packages/zag-ai/scripts/generate_catalog.py \
+  --from-models-dev \
+  --write-providers
 ```
+
+`--from-models-dev` is a **narrow-field projection** (D-009): id / name /
+context / output / reasoning / vision / cost only. It does not import Pi
+`compat`, `thinkingLevelMap`, OAuth, or headers. Mega-gateways
+(openrouter, vercel-ai-gateway, huggingface, nvidia) stay capped so the
+TUI `/model` list stays reachable.
 
 Unknown model ids still work on the wire; the catalog is for budgets, flags, and cost estimates.

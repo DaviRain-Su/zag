@@ -10,11 +10,17 @@ pub fn build(b: *std.Build) void {
         "http_backend",
         "Outbound HTTP for zag-coding-agent / zag-ai (std.http or zig-curl)",
     ) orelse .std;
+    const live = b.option(
+        bool,
+        "live",
+        "Forwarded to zag-coding-agent so the root graph shares one module",
+    ) orelse false;
 
     const coding_dep = b.dependency("zag_coding_agent", .{
         .target = target,
         .optimize = optimize,
         .http_backend = http_backend,
+        .live = live,
     });
     const coding_mod = coding_dep.module("zag-coding-agent");
 

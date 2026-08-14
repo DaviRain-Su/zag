@@ -20,6 +20,7 @@ const Io = std.Io;
 const wire = @import("wire.zig");
 const config_mod = @import("config.zig");
 const rc = @import("request_control.zig");
+const provider_diag = @import("provider_diag.zig");
 
 pub const Error = wire.Error;
 pub const Config = config_mod.Config;
@@ -292,6 +293,7 @@ pub const Client = struct {
                         continue;
                     }
                     if (retry_after_out) |out| out.* = retry_after_ms;
+                    provider_diag.recordHttp(status, err_body);
                     return mapHttpStatus(status);
                 }
                 const cb = on_chunk orelse return error.Unexpected;
@@ -321,6 +323,7 @@ pub const Client = struct {
                     try rc.sleepRetryBounded(self.io, self.retry_base_delay_ms, attempt, control);
                     continue;
                 }
+                provider_diag.recordHttp(status, response_bytes);
                 self.allocator.free(response_bytes);
                 if (retry_after_out) |out| out.* = retry_after_ms;
                 return mapHttpStatus(status);

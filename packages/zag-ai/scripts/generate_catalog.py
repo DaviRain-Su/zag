@@ -17,6 +17,8 @@ Usage:
   python3 packages/zag-ai/scripts/generate_catalog.py
   python3 packages/zag-ai/scripts/generate_catalog.py --check
   python3 packages/zag-ai/scripts/generate_catalog.py --from-pi /path/to/pi/packages/ai --write-providers
+  python3 packages/zag-ai/scripts/generate_catalog.py --from-models-dev --write-providers
+  python3 packages/zag-ai/scripts/generate_catalog.py --from-models-dev /tmp/models.dev.json --write-providers
 """
 
 from __future__ import annotations
@@ -306,6 +308,134 @@ def flatten_pi_catalog(provider: str, raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+# models.dev provider key → Zag preset id. Same feed Pi uses
+# (earendil-works/pi `packages/ai/scripts/generate-models.ts`); Zag only
+# projects id/name/context/output/reasoning/vision/cost (D-009).
+MODELS_DEV_TO_ZAG: dict[str, str] = {
+    "deepseek": "deepseek",
+    "xai": "xai",
+    "openai": "openai",
+    "anthropic": "anthropic",
+    "openrouter": "openrouter",
+    "togetherai": "together",
+    "together": "together",
+    "groq": "groq",
+    "cerebras": "cerebras",
+    "nvidia": "nvidia",
+    "fireworks-ai": "fireworks",
+    "huggingface": "huggingface",
+    "opencode-go": "opencode-go",
+    "opencode": "opencode-zen",
+    "moonshotai": "moonshotai",
+    "moonshotai-cn": "moonshotai-cn",
+    "zai": "zai",
+    "zai-coding-plan": "zai-coding-cn",
+    "xiaomi": "xiaomi",
+    "ollama-cloud": "ollama-cloud",
+    "kimi-for-coding": "kimi-coding",
+    "minimax": "minimax",
+    "minimax-cn": "minimax-cn",
+    "vercel": "vercel-ai-gateway",
+}
+
+# Mega-gateways: keep the picker usable. Prefer already-curated Zag ids, then
+# fill from models.dev in id order. First-party hosts import in full.
+GATEWAY_IMPORT_CAP: dict[str, int] = {
+    "openrouter": 24,
+    "vercel-ai-gateway": 24,
+    "huggingface": 24,
+    "nvidia": 24,
+}
+
+MODELS_DEV_URL = "https://models.dev/api.json"
+MODELS_DEV_UA = "zag-catalog/0.1 (+https://github.com/DaviRain-Su/zag)"
+
+
+def load_models_dev_doc(source: Path | None) -> dict[str, Any]:
+    if source is not None:
+        raw = source.read_text(encoding="utf-8")
+        doc = json.loads(raw)
+        if not isinstance(doc, dict):
+            raise SystemExit(f"{source}: models.dev root must be object")
+        return doc
+    import urllib.request
+
+    req = urllib.request.Request(MODELS_DEV_URL, headers={"User-Agent": MODELS_DEV_UA})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        doc = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(doc, dict):
+        raise SystemExit("models.dev API: root must be object")
+    return doc
+
+
+def flatten_models_dev(doc: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Project models.dev → Zag ModelInfo rows, grouped by Zag provider id."""
+    by_zag: dict[str, list[dict[str, Any]]] = {}
+    for dev_key, zag_id in MODELS_DEV_TO_ZAG.items():
+        block = doc.get(dev_key)
+        if not isinstance(block, dict):
+            continue
+        models = block.get("models")
+        if not isinstance(models, dict):
+            continue
+        for mid, m in models.items():
+            if not isinstance(m, dict):
+                continue
+            if m.get("tool_call") is not True:
+                continue
+            modalities = m.get("modalities") if isinstance(m.get("modalities"), dict) else {}
+            inputs = modalities.get("input") if isinstance(modalities, dict) else None
+            vision = isinstance(inputs, list) and "image" in inputs
+            limit = m.get("limit") if isinstance(m.get("limit"), dict) else {}
+            ctx = int(limit.get("context") or 128_000)
+            max_out = int(limit.get("output") or 8_192)
+            entry: dict[str, Any] = {
+                "id": str(mid),
+                "name": str(m.get("name") or mid),
+                "provider": zag_id,
+                "context_window": ctx,
+                "max_output_tokens": max_out,
+                "reasoning": bool(m.get("reasoning", False)),
+                "vision": bool(vision),
+            }
+            cost = m.get("cost")
+            if isinstance(cost, dict):
+                entry["cost"] = {
+                    "input": float(cost.get("input", 0) or 0),
+                    "output": float(cost.get("output", 0) or 0),
+                    "cache_read": float(cost.get("cache_read", 0) or 0),
+                    "cache_write": float(cost.get("cache_write", 0) or 0),
+                }
+            by_zag.setdefault(zag_id, []).append(entry)
+    return by_zag
+
+
+def merge_models_dev(
+    existing: list[dict[str, Any]],
+    imported_by_zag: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    by_key: dict[tuple[str, str], dict[str, Any]] = {(m["provider"], m["id"]): m for m in existing}
+    existing_ids: dict[str, set[str]] = {}
+    for m in existing:
+        existing_ids.setdefault(m["provider"], set()).add(m["id"])
+
+    for zag_id, rows in imported_by_zag.items():
+        cap = GATEWAY_IMPORT_CAP.get(zag_id)
+        rows_sorted = sorted(rows, key=lambda r: r["id"])
+        if cap is None:
+            chosen = rows_sorted
+        else:
+            prefer = existing_ids.get(zag_id, set())
+            kept = [r for r in rows_sorted if r["id"] in prefer]
+            extra = [r for r in rows_sorted if r["id"] not in prefer]
+            chosen = kept + extra
+            if len(chosen) > cap:
+                chosen = chosen[:cap]
+        for m in chosen:
+            by_key[(m["provider"], m["id"])] = m
+    return sorted(by_key.values(), key=lambda m: (m["provider"], m["id"]))
+
+
 def write_provider_files(models: list[dict[str, Any]]) -> None:
     by_prov: dict[str, list[dict[str, Any]]] = {}
     for m in models:
@@ -327,13 +457,34 @@ def main() -> int:
     ap.add_argument("--from-pi", type=Path, help="path to pi packages/ai for optional import")
     ap.add_argument("--prefer-pi", action="store_true", help="Pi rows override Zag on collision")
     ap.add_argument(
+        "--from-models-dev",
+        nargs="?",
+        const=True,
+        default=None,
+        help="import tool-capable models from models.dev (same feed Pi uses). "
+        "Optional path to a saved api.json; omit to fetch",
+    )
+    ap.add_argument(
         "--write-providers",
         action="store_true",
-        help="after --from-pi merge, rewrite data/models/*.json",
+        help="after --from-pi / --from-models-dev merge, rewrite data/models/*.json",
     )
     args = ap.parse_args()
 
     models = merge_models_dir()
+
+    if args.from_models_dev is not None:
+        src = None if args.from_models_dev is True else Path(args.from_models_dev)
+        if src is not None and not src.is_file():
+            print(f"--from-models-dev not a file: {src}", file=sys.stderr)
+            return 1
+        doc = load_models_dev_doc(src)
+        imported = flatten_models_dev(doc)
+        n_in = sum(len(v) for v in imported.values())
+        models = merge_models_dev(models, imported)
+        print(f"merged models.dev: {n_in} tool-capable rows → {len(models)} total")
+        if args.write_providers:
+            write_provider_files(models)
 
     if args.from_pi:
         pi_ai = args.from_pi

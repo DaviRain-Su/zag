@@ -24,8 +24,16 @@
    product-semantics improvement that never runs on the transcript and never
    invents content. Incomplete bundles and leading-system-without-tail remain
    `InvalidContext` everywhere.
-5. **No provider replay of reasoning**: thinking content is a user-visible
-   audit artifact, never re-sent to a provider.
+5. **Reasoning is an audit field; OpenAI-compat must replay it on the wire**:
+   thinking stays off the user-visible product surface, but
+   `openai_compat` re-sends nonempty `Message.reasoning` as
+   `reasoning_content`. DeepSeek-class Chat Completions hosts return HTTP 400
+   on the follow-up turn (tool result / multi-turn) when that field is
+   dropped. Anthropic still does not replay — we store plain text only, and
+   their API requires signed `thinking` blocks.
+6. **OpenAI-compat `content` is always a string** (empty `""` on
+   tool-only assistant turns). Omitting the field or sending JSON `null`
+   makes GLM/Zhipu-class hosts 400 (`invalid message content type: <nil>`).
 
 ## 2. Types (packages/zag-types/src/root.zig)
 
@@ -33,7 +41,7 @@
 
 | field | type | default | meaning |
 |---|---|---|---|
-| `reasoning` | `?[]const u8` | `null` | model thinking carried from the wire into the transcript; never replayed |
+| `reasoning` | `?[]const u8` | `null` | model thinking from the wire; OpenAI-compat replays as `reasoning_content` |
 | `synthetic` | `bool` | `false` | row was runtime-injected (interjection, auto-continue, task-completed, system-reminder), not typed by the user |
 | `prompt_index` | `?u32` | `null` | monotone prompt-turn index this row belongs to; `null` = pre-existing/preamble/unknown |
 
@@ -151,13 +159,14 @@ machinery are retained unchanged.
 ## 7. Adapters (packages/zag-ai)
 
 - `openai_compat.zig` `turnFromResponse`: capture `reasoning_content` (string)
-  into `AssistantTurn.reasoning`; stream path ignores reasoning deltas (v1) —
-  the captured field covers non-stream turn assembly.
+  into `AssistantTurn.reasoning`. Stream path accumulates the same field.
+  `toChatMessages` / `buildRequestBody` re-emit nonempty `Message.reasoning`
+  as `reasoning_content` so tool-follow-up turns stay valid on DeepSeek-class
+  hosts.
 - `anthropic_messages.zig` `turnFromAnthropicValue`: capture
   `thinking`/`redacted_thinking` blocks (text joined `"\n"`) into
   `AssistantTurn.reasoning`. Signature-only redacted blocks (no text) contribute
-  nothing.
-- No re-emission to providers in v1.
+  nothing. Thinking blocks are not re-sent (no signature).
 
 ## 8. Diagnostics & budgets
 

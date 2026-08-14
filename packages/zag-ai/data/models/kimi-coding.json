@@ -2,12 +2,60 @@
   "provider": "kimi-coding",
   "models": [
     {
+      "id": "k3",
+      "name": "Kimi K3",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "k3-256k",
+      "name": "Kimi K3-256K",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
       "id": "kimi-for-coding",
-      "name": "Kimi For Coding",
-      "context_window": 256000,
+      "name": "Kimi K2.7 Code",
+      "context_window": 262144,
       "max_output_tokens": 32768,
       "reasoning": true,
-      "vision": false
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-for-coding-highspeed",
+      "name": "Kimi For Coding HighSpeed",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     }
   ]
 }

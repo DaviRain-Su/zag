@@ -4,6 +4,7 @@
 //! Receives only model-visible `ToolDefinition` slices from the loop.
 
 const std = @import("std");
+const Io = std.Io;
 const ai = @import("zag-ai");
 const core = @import("zag-agent-core");
 
@@ -25,6 +26,9 @@ pub const WireProvider = struct {
     timeout_ms: ?u64 = null,
     on_event: ?ai.types.StreamHandler = null,
     on_event_ctx: ?*anyopaque = null,
+    /// Product CLI sets this so failures write `.zag/logs/provider-*.json`.
+    io: ?Io = null,
+    diag_dir: ?[]const u8 = null,
 
     pub fn init(w: ai.WireAdapter, stream_mode: bool, owns: bool) WireProvider {
         return .{
@@ -75,6 +79,26 @@ pub const WireProvider = struct {
         return self.wire.listModels(arena);
     }
 
+    fn noteDiag(
+        self: *WireProvider,
+        err: ChatError,
+        messages: []const message.Message,
+        tools: []const tool.Definition,
+        opts: ai.ChatOptions,
+    ) void {
+        ai.provider_diag.pullOpenAiHint();
+        ai.provider_diag.recordShape(
+            @errorName(err),
+            self.wire.getModel(),
+            self.wire.apiStyle(),
+            self.stream,
+            messages,
+            tools,
+            opts,
+        );
+        ai.provider_diag.emit(self.io, self.diag_dir);
+    }
+
     const vtable: provider_mod.VTable = .{
         .chat = chatImpl,
         .chat_stream = chatStreamImpl,
@@ -114,9 +138,15 @@ pub const WireProvider = struct {
                 self.on_event_ctx,
                 opts,
                 retry_after_out,
-            );
+            ) catch |err| {
+                self.noteDiag(err, messages, tools, opts);
+                return err;
+            };
         }
-        return self.wire.chat(arena, messages, tools, opts, retry_after_out);
+        return self.wire.chat(arena, messages, tools, opts, retry_after_out) catch |err| {
+            self.noteDiag(err, messages, tools, opts);
+            return err;
+        };
     }
 
     /// Streaming port (tui-streaming-001). The loop calls this slot whenever
@@ -150,7 +180,10 @@ pub const WireProvider = struct {
         }
         opts.control = c;
         if (!self.stream) {
-            return self.wire.chat(arena, messages, tools, opts, retry_after_out);
+            return self.wire.chat(arena, messages, tools, opts, retry_after_out) catch |err| {
+                self.noteDiag(err, messages, tools, opts);
+                return err;
+            };
         }
         var shim = StreamShim{
             .core_handler = handler,
@@ -166,7 +199,10 @@ pub const WireProvider = struct {
             &shim,
             opts,
             retry_after_out,
-        );
+        ) catch |err| {
+            self.noteDiag(err, messages, tools, opts);
+            return err;
+        };
     }
 };
 

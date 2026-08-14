@@ -201,6 +201,7 @@ session tree/journal, subagents, Graph, provider hooks, or a new wire-compatible
 | [tui-slash-host-001](./plan/tasks/tui-slash-host-001.md) | **done** | overlay + skill/template submit route |
 | [tui-transcript-001](./plan/tasks/tui-transcript-001.md) | **done** | scroll window over card ring |
 | [tui-model-settings-001](./plan/tasks/tui-model-settings-001.md) | **done** | model/settings/theme overlays |
+| [tui-model-picker-001](./plan/tasks/tui-model-picker-001.md) | **in-progress** | catalog-driven `/model` picker (no live `/models` on launch) + user `models.json` manifest; binding [tui-model-picker.md](./modules/tui-model-picker.md); no maturity row |
 
 Host shell and D-012 coding route run **in parallel**. Theme must not block edit-transaction review/impl. Post-TUI remote Gate does not authorize Theme or vaxis.
 

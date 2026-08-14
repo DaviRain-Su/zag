@@ -49,6 +49,7 @@ const workspace = @import("workspace.zig");
 const edit_tools = @import("runtime/edit_tools.zig");
 const fs_tools = @import("runtime/fs_tools.zig");
 const shell_policy = @import("shell_policy.zig");
+const lifecycle_mod = @import("lifecycle.zig");
 
 // ── Subagent types (adapted from grok-build SubagentType + oh-my-pi agent roles) ─
 
@@ -255,6 +256,9 @@ fn finalizeChildOutput(
 
 /// Maximum subagent entries tracked in the registry (ring buffer).
 pub const max_registry_entries: usize = 64;
+/// Live activity log cap (one Entry; copied on TUI snapshot).
+pub const progress_cap: usize = 1536;
+pub const progress_line_cap: usize = 96;
 
 /// One tracked subagent entry.
 pub const Entry = struct {
@@ -266,12 +270,20 @@ pub const Entry = struct {
     status: Status = .pending,
     /// Owned output text (gpa-allocated on completion).
     output: []u8 = &[_]u8{},
+    /// Live activity log (tool/turn lines). Inline so TUI snapshots copy
+    /// bytes, not a dangling slice. Never holds raw tool args.
+    progress: [progress_cap]u8 = undefined,
+    progress_len: usize = 0,
     turns: u32 = 0,
     error_message: ?[]u8 = null,
     /// Monotonic timestamp (ms) when the subagent was created.
     started_ms: u64 = 0,
     /// Monotonic timestamp (ms) when the subagent reached a terminal state.
     finished_ms: u64 = 0,
+
+    pub fn progressSlice(self: *const Entry) []const u8 {
+        return self.progress[0..self.progress_len];
+    }
 
     pub fn freeOwned(self: *Entry, gpa: std.mem.Allocator) void {
         if (self.id.len > 0) {
@@ -402,6 +414,38 @@ pub const Registry = struct {
         if (self.depth > 0) self.depth -= 1;
     }
 
+    /// Append one activity line (single-line, capped). Drops oldest lines
+    /// when the buffer is full. Safe for the background worker.
+    pub fn appendProgress(self: *Registry, idx: usize, line: []const u8) void {
+        spinLock(&self.mutex);
+        defer self.mutex.unlock();
+        if (idx >= max_registry_entries) return;
+        const e = &self.entries[idx];
+        if (e.id.len == 0) return;
+        var clean: [progress_line_cap]u8 = undefined;
+        const n = sanitizeProgressLine(line, &clean);
+        if (n == 0) return;
+        const need = n + @intFromBool(e.progress_len > 0);
+        if (need > progress_cap) return;
+        while (e.progress_len + need > progress_cap) {
+            if (!dropOldestProgressLine(e)) break;
+        }
+        if (e.progress_len + need > progress_cap) return;
+        if (e.progress_len > 0) {
+            e.progress[e.progress_len] = '\n';
+            e.progress_len += 1;
+        }
+        @memcpy(e.progress[e.progress_len .. e.progress_len + n], clean[0..n]);
+        e.progress_len += n;
+    }
+
+    pub fn setTurns(self: *Registry, idx: usize, turns: u32) void {
+        spinLock(&self.mutex);
+        defer self.mutex.unlock();
+        if (idx >= max_registry_entries) return;
+        self.entries[idx].turns = turns;
+    }
+
     pub fn countByStatus(self: *const Registry, want: Status) usize {
         // Cast away const for mutex — lock is interior mutability.
         const m: *std.atomic.Mutex = @constCast(&self.mutex);
@@ -454,6 +498,31 @@ pub const Registry = struct {
         return n;
     }
 };
+
+fn sanitizeProgressLine(line: []const u8, dest: []u8) usize {
+    var n: usize = 0;
+    for (line) |c| {
+        if (c == '\n' or c == '\r') break;
+        if (c < 0x20) continue;
+        if (n >= dest.len) break;
+        dest[n] = c;
+        n += 1;
+    }
+    return n;
+}
+
+fn dropOldestProgressLine(e: *Entry) bool {
+    if (e.progress_len == 0) return false;
+    const slice = e.progress[0..e.progress_len];
+    const nl = std.mem.indexOfScalar(u8, slice, '\n') orelse {
+        e.progress_len = 0;
+        return true;
+    };
+    const rest = slice[nl + 1 ..];
+    std.mem.copyForwards(u8, e.progress[0..rest.len], rest);
+    e.progress_len = rest.len;
+    return true;
+}
 
 // ── Depth limiting (adapted from grok-build SubagentDepthCounter) ────────────
 
@@ -592,7 +661,63 @@ pub const SpawnContext = struct {
     apply_hunk_state: *edit_tools.ApplyHunkState,
     /// Subagent request.
     request: SubagentRequest,
+    /// Optional registry slot for live TUI progress (background + await).
+    registry: ?*Registry = null,
+    reg_idx: ?usize = null,
+    wake_fn: ?*const fn (?*anyopaque) void = null,
+    wake_ctx: ?*anyopaque = null,
 };
+
+const ChildObs = struct {
+    registry: ?*Registry,
+    idx: usize,
+    wake_fn: ?*const fn (?*anyopaque) void,
+    wake_ctx: ?*anyopaque,
+};
+
+fn childLifecycleEmit(ptr: ?*anyopaque, event: lifecycle_mod.LifecycleEvent) void {
+    const self: *ChildObs = @ptrCast(@alignCast(ptr.?));
+    const reg = self.registry orelse return;
+    switch (event) {
+        .tool_start => |t| {
+            var buf: [progress_line_cap]u8 = undefined;
+            const line = std.fmt.bufPrint(&buf, "→ {s}", .{t.name}) catch return;
+            reg.appendProgress(self.idx, line);
+            reg.setTurns(self.idx, t.turn);
+        },
+        .tool_end => |t| {
+            var buf: [progress_line_cap]u8 = undefined;
+            const line = std.fmt.bufPrint(&buf, "✓ {s}", .{t.name}) catch return;
+            reg.appendProgress(self.idx, line);
+            reg.setTurns(self.idx, t.turn);
+        },
+        .assistant_message => |m| {
+            reg.setTurns(self.idx, m.turn);
+            if (m.text.len == 0) return;
+            const first = firstProgressLine(m.text);
+            if (first.len == 0) return;
+            var buf: [progress_line_cap]u8 = undefined;
+            const line = std.fmt.bufPrint(&buf, "· {s}", .{first}) catch return;
+            reg.appendProgress(self.idx, line);
+        },
+        .run_terminal => |t| {
+            reg.setTurns(self.idx, t.turns);
+            reg.appendProgress(self.idx, if (t.ok) "done" else "failed");
+        },
+        else => {},
+    }
+    if (self.wake_fn) |wf| wf(self.wake_ctx);
+}
+
+fn firstProgressLine(text: []const u8) []const u8 {
+    var i: usize = 0;
+    while (i < text.len and (text[i] == ' ' or text[i] == '\n' or text[i] == '\r' or text[i] == '\t')) : (i += 1) {}
+    if (i >= text.len) return "";
+    const rest = text[i..];
+    const end = std.mem.indexOfScalar(u8, rest, '\n') orelse rest.len;
+    const line = rest[0..end];
+    return if (line.len > 72) line[0..72] else line;
+}
 
 /// Spawn a subagent: create a child Agent + ephemeral Session, run reply,
 /// return the result. The child is fully synchronous — the parent blocks
@@ -644,11 +769,20 @@ pub fn spawn(ctx: SpawnContext) agent_mod.ReplyError!SubagentResult {
     };
     defer if (child_tools) |s| gpa.free(s);
 
+    // Live TUI progress: child's lifecycle events append tool/turn lines
+    // into the parent registry. No raw args. Observer stays null (verbose
+    // path would print child text to the parent's stderr).
+    var child_obs: ChildObs = .{
+        .registry = ctx.registry,
+        .idx = ctx.reg_idx orelse 0,
+        .wake_fn = ctx.wake_fn,
+        .wake_ctx = ctx.wake_ctx,
+    };
+
     // Build child Agent options. The child inherits the parent's policy
     // but gets the subagent type's system prompt as its base system.
-    // No trace, no lifecycle observer, no cost catalog — the child is
-    // ephemeral and its usage is folded into the parent's ledger by the
-    // tool handler (the parent's event_sink sees the task tool result).
+    // No trace, no cost catalog — the child is ephemeral and its usage
+    // is folded into the parent's ledger by the tool handler.
     const child_options: agent_mod.Options = .{
         .max_turns = ctx.request.max_turns,
         .permission_mode = ctx.permission_mode,
@@ -669,7 +803,13 @@ pub fn spawn(ctx: SpawnContext) agent_mod.ReplyError!SubagentResult {
         .hunk_reviewer = null,
         .post_edit_verifier = null,
         .observer = null,
-        .lifecycle = null,
+        .lifecycle = if (ctx.registry != null and ctx.reg_idx != null)
+            lifecycle_mod.LifecycleObserver{
+                .ptr = &child_obs,
+                .on_event = childLifecycleEmit,
+            }
+        else
+            null,
     };
 
     var child_agent = agent_mod.Agent.init(gpa, ctx.io, ctx.provider, child_options) catch |err| {
@@ -872,6 +1012,21 @@ test "registry ring wraps and frees" {
         reg.entries[idx].status = .completed;
     }
     try std.testing.expectEqual(@as(usize, max_registry_entries), reg.liveCount());
+}
+
+test "registry appendProgress drops oldest and skips empty" {
+    const gpa = std.testing.allocator;
+    var reg = Registry.init(gpa);
+    defer reg.deinit();
+    const idx = reg.allocSlot();
+    try reg.setIdentity(idx, "live");
+    reg.appendProgress(idx, "→ read_file");
+    reg.appendProgress(idx, "✓ read_file");
+    reg.setTurns(idx, 1);
+    try std.testing.expectEqual(@as(u32, 1), reg.entries[idx].turns);
+    try std.testing.expectEqualStrings("→ read_file\n✓ read_file", reg.entries[idx].progressSlice());
+    reg.appendProgress(idx, "\n\n");
+    try std.testing.expectEqualStrings("→ read_file\n✓ read_file", reg.entries[idx].progressSlice());
 }
 
 test "registry snapshotInto oldest-first" {

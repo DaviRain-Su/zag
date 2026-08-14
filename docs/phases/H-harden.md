@@ -184,7 +184,7 @@ Spec: [zag-ai-provider](../modules/zag-ai-provider.md).
 - std/curl selectable transports;
 - curl active deadline/cancel; std capability-truth `unsupported_control` (h-provider-001);
 - incomplete Tool-call fragment discard; retry ownership;
-- HTTP/openai-zig diagnostics: status + body length only; never Authorization/body (h-redact-001).
+- HTTP/openai-zig diagnostics: status + body length only on the transport print; never Authorization/raw body (h-redact-001). Provider failures also write a scrubbed `provider_diag` snapshot under `.zag/logs/`.
 
 ### Closed for H6 L2
 

@@ -222,7 +222,7 @@ v1 supervisor is **foreground-bounded**. It does **not** host zls or MCP.
 | post-TUI remote Gate | Phase A; TARGET `f352b60` stale vs HEAD | See §6. Needs **user grant**. |
 | openai-retry-after-001 | contract-draft | Independent of supervisor; small wire Goal when someone is in `zag-ai` |
 | Remaining TUI bugs | grok chrome landed | File *new* tasks for remaining visual defects only |
-| TUI launch | `zig build run -Dtui=true -- --tui` | Requires TTY; exclusive vs `--json`/`--rpc`/`--acp`/`--doctor`/`-v` |
+| TUI launch | `zig build run` | TTY default; `--repl` for line REPL; exclusive vs `--json`/`--rpc`/`--acp`/`--doctor`/`-v` |
 
 ## 6. Post-TUI remote Gate (ops, not product)
 

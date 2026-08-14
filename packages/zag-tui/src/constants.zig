@@ -19,6 +19,12 @@ pub const card_body_max_bytes: usize = 4096;
 pub const tool_body_max_lines: u16 = 6;
 pub const permission_tool_name_max_bytes: usize = 64;
 
+/// Overlay (slash / model / theme / resume) line buffer cap. Collection side
+/// (`tui_picker_cap` in zag-cli/tui_entry.zig) must match. Raised so a
+/// models.dev-adapted multi-provider catalog + user manifest fits and is
+/// reachable via the overlay scroll viewport.
+pub const overlay_line_cap: usize = 512;
+
 /// Exact 14-byte ASCII truncation marker (not U+2026).
 pub const truncation_marker: []const u8 = "...[truncated]";
 pub const truncation_marker_len: usize = 14;

@@ -3,12 +3,42 @@
   "generated_note": "Merged by scripts/generate_catalog.py — edit data/models/*.json then re-run.",
   "models": [
     {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      }
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5 (latest)",
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      }
+    },
+    {
       "id": "claude-haiku-4-5-20251001",
       "name": "Claude Haiku 4.5",
       "provider": "anthropic",
       "context_window": 200000,
       "max_output_tokens": 64000,
-      "reasoning": false,
+      "reasoning": true,
       "vision": true,
       "cost": {
         "input": 1.0,
@@ -33,6 +63,96 @@
       }
     },
     {
+      "id": "claude-opus-4-5",
+      "name": "Claude Opus 4.5 (latest)",
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-5-20251101",
+      "name": "Claude Opus 4.5",
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
       "id": "claude-sonnet-4-20250514",
       "name": "Claude Sonnet 4",
       "provider": "anthropic",
@@ -49,9 +169,9 @@
     },
     {
       "id": "claude-sonnet-4-5",
-      "name": "Claude Sonnet 4.5",
+      "name": "Claude Sonnet 4.5 (latest)",
       "provider": "anthropic",
-      "context_window": 200000,
+      "context_window": 1000000,
       "max_output_tokens": 64000,
       "reasoning": true,
       "vision": true,
@@ -60,6 +180,81 @@
         "output": 15.0,
         "cache_read": 0.3,
         "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-sonnet-4-5-20250929",
+      "name": "Claude Sonnet 4.5",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "provider": "anthropic",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      }
+    },
+    {
+      "id": "gemma-4-31b",
+      "name": "Gemma 4 31B IT",
+      "provider": "cerebras",
+      "context_window": 131072,
+      "max_output_tokens": 40960,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.99,
+        "output": 1.49,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "provider": "cerebras",
+      "context_window": 131072,
+      "max_output_tokens": 40960,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.35,
+        "output": 0.75,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
@@ -93,23 +288,23 @@
       }
     },
     {
-      "id": "deepseek-chat",
-      "name": "DeepSeek Chat (legacy)",
-      "provider": "deepseek",
-      "context_window": 128000,
-      "max_output_tokens": 8192,
-      "reasoning": false,
+      "id": "zai-glm-4.7",
+      "name": "Z.AI GLM-4.7",
+      "provider": "cerebras",
+      "context_window": 131072,
+      "max_output_tokens": 40960,
+      "reasoning": true,
       "vision": false,
       "cost": {
-        "input": 0.27,
-        "output": 1.1,
-        "cache_read": 0.07,
-        "cache_write": 1.1
+        "input": 2.25,
+        "output": 2.75,
+        "cache_read": 2.25,
+        "cache_write": 0.0
       }
     },
     {
-      "id": "deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash",
+      "id": "deepseek-chat",
+      "name": "DeepSeek Chat",
       "provider": "deepseek",
       "context_window": 1000000,
       "max_output_tokens": 384000,
@@ -118,8 +313,38 @@
       "cost": {
         "input": 0.14,
         "output": 0.28,
-        "cache_read": 0.014,
-        "cache_write": 0.28
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-reasoner",
+      "name": "DeepSeek Reasoner",
+      "provider": "deepseek",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "provider": "deepseek",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
       }
     },
     {
@@ -128,13 +353,13 @@
       "provider": "deepseek",
       "context_window": 1000000,
       "max_output_tokens": 384000,
-      "reasoning": false,
+      "reasoning": true,
       "vision": false,
       "cost": {
-        "input": 1.0,
-        "output": 2.0,
-        "cache_read": 0.1,
-        "cache_write": 2.0
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.003625,
+        "cache_write": 0.0
       }
     },
     {
@@ -149,6 +374,171 @@
         "input": 0.56,
         "output": 1.68,
         "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "provider": "fireworks",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "provider": "fireworks",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "provider": "fireworks",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.74,
+        "output": 3.48,
+        "cache_read": 0.145,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/deepseek-v4-pro-0813",
+      "name": "DeepSeek V4 Pro 0813",
+      "provider": "fireworks",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.32,
+        "output": 3.96,
+        "cache_read": 0.044,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/glm-5p2",
+      "name": "GLM 5.2",
+      "provider": "fireworks",
+      "context_window": 1048575,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.14,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "provider": "fireworks",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.015,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/gpt-oss-20b",
+      "name": "GPT OSS 20B",
+      "provider": "fireworks",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.07,
+        "output": 0.3,
+        "cache_read": 0.035,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/inkling",
+      "name": "Inkling",
+      "provider": "fireworks",
+      "context_window": 1048576,
+      "max_output_tokens": 1048576,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 4.05,
+        "cache_read": 0.17,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/kimi-k2p6",
+      "name": "Kimi K2.6",
+      "provider": "fireworks",
+      "context_window": 262000,
+      "max_output_tokens": 262000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.16,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/kimi-k2p7-code",
+      "name": "Kimi K2.7 Code",
+      "provider": "fireworks",
+      "context_window": 262000,
+      "max_output_tokens": 262000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/kimi-k3",
+      "name": "Kimi K3",
+      "provider": "fireworks",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
         "cache_write": 0.0
       }
     },
@@ -168,11 +558,191 @@
       }
     },
     {
+      "id": "accounts/fireworks/models/minimax-m2p7",
+      "name": "MiniMax-M2.7",
+      "provider": "fireworks",
+      "context_window": 196608,
+      "max_output_tokens": 196608,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/minimax-m3",
+      "name": "MiniMax-M3",
+      "provider": "fireworks",
+      "context_window": 512000,
+      "max_output_tokens": 512000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/muse-glimmer-30b",
+      "name": "Muse Glimmer 30B",
+      "provider": "fireworks",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.35,
+        "output": 1.5,
+        "cache_read": 0.04,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/nemotron-3-ultra-nvfp4",
+      "name": "Nemotron 3 Ultra 550B A55B",
+      "provider": "fireworks",
+      "context_window": 262144,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.119,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b",
+      "name": "Nemotron 3.5 Lightning 30B A3B",
+      "provider": "fireworks",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.05,
+        "output": 0.2,
+        "cache_read": 0.01,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/qwen3p7-plus",
+      "name": "Qwen 3.7 Plus",
+      "provider": "fireworks",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 1.6,
+        "cache_read": 0.08,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/models/qwen3p8-max",
+      "name": "Qwen3.8 Max",
+      "provider": "fireworks",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/routers/glm-5p2-fast",
+      "name": "GLM 5.2 Fast",
+      "provider": "fireworks",
+      "context_window": 1048575,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 2.1,
+        "output": 6.6,
+        "cache_read": 0.21,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/routers/kimi-k2p6-fast",
+      "name": "Kimi K2.6 Fast",
+      "provider": "fireworks",
+      "context_window": 262000,
+      "max_output_tokens": 262000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/routers/kimi-k2p6-turbo",
+      "name": "Kimi K2.6 Turbo",
+      "provider": "fireworks",
+      "context_window": 262000,
+      "max_output_tokens": 262000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/routers/kimi-k2p7-code-fast",
+      "name": "Kimi K2.7 Code Fast",
+      "provider": "fireworks",
+      "context_window": 262000,
+      "max_output_tokens": 262000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.9,
+        "output": 8.0,
+        "cache_read": 0.38,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "accounts/fireworks/routers/kimi-k3-fast",
+      "name": "Kimi K3 Fast",
+      "provider": "fireworks",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 4.5,
+        "output": 22.5,
+        "cache_read": 0.45,
+        "cache_write": 0.0
+      }
+    },
+    {
       "id": "llama-3.1-8b-instant",
-      "name": "Llama 3.1 8B Instant",
+      "name": "Llama 3.1 8B",
       "provider": "groq",
-      "context_window": 128000,
-      "max_output_tokens": 8192,
+      "context_window": 131072,
+      "max_output_tokens": 131072,
       "reasoning": false,
       "vision": false,
       "cost": {
@@ -186,13 +756,433 @@
       "id": "llama-3.3-70b-versatile",
       "name": "Llama 3.3 70B",
       "provider": "groq",
-      "context_window": 128000,
+      "context_window": 131072,
       "max_output_tokens": 32768,
       "reasoning": false,
       "vision": false,
       "cost": {
         "input": 0.59,
         "output": 0.79,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "provider": "groq",
+      "context_window": 131072,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.075,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "openai/gpt-oss-20b",
+      "name": "GPT OSS 20B",
+      "provider": "groq",
+      "context_window": 131072,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.075,
+        "output": 0.3,
+        "cache_read": 0.0375,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "openai/gpt-oss-safeguard-20b",
+      "name": "Safety GPT OSS 20B",
+      "provider": "groq",
+      "context_window": 131072,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.075,
+        "output": 0.3,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "qwen/qwen3.6-27b",
+      "name": "Qwen3.6 27B",
+      "provider": "groq",
+      "context_window": 131072,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2",
+      "name": "MiniMax-M2",
+      "provider": "huggingface",
+      "context_window": 204800,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.1",
+      "name": "MiniMax-M2.1",
+      "provider": "huggingface",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.5",
+      "name": "MiniMax-M2.5",
+      "provider": "huggingface",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "huggingface",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M3",
+      "name": "MiniMax-M3",
+      "provider": "huggingface",
+      "context_window": 524288,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen2.5-Coder-32B-Instruct",
+      "name": "Qwen2.5-Coder-32B-Instruct",
+      "provider": "huggingface",
+      "context_window": 131072,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.06,
+        "output": 0.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-235B-A22B",
+      "name": "Qwen3 235B-A22B",
+      "provider": "huggingface",
+      "context_window": 40960,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.2,
+        "output": 0.8,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-235B-A22B-Instruct-2507",
+      "name": "Qwen3 235B-A22B Instruct 2507",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.855,
+        "output": 2.565,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-235B-A22B-Thinking-2507",
+      "name": "Qwen3-235B-A22B-Thinking-2507",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 3.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-30B-A3B",
+      "name": "Qwen3 30B A3B",
+      "provider": "huggingface",
+      "context_window": 40960,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.12,
+        "output": 0.5,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-32B",
+      "name": "Qwen3 32B",
+      "provider": "huggingface",
+      "context_window": 131072,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.29,
+        "output": 0.59,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+      "name": "Qwen3-Coder 30B-A3B Instruct",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.07,
+        "output": 0.26,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "name": "Qwen3-Coder-480B-A35B-Instruct",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 66536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 2.0,
+        "output": 2.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Coder-Next",
+      "name": "Qwen3-Coder-Next",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.2,
+        "output": 1.5,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+      "name": "Qwen3-Next-80B-A3B-Instruct",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 66536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.25,
+        "output": 1.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Next-80B-A3B-Thinking",
+      "name": "Qwen3-Next-80B-A3B-Thinking",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 2.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-122B-A10B",
+      "name": "Qwen3.5 122B-A10B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 3.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-27B",
+      "name": "Qwen3.5 27B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 2.4,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-35B-A3B",
+      "name": "Qwen3.5 35B-A3B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.25,
+        "output": 2.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-397B-A17B",
+      "name": "Qwen3.5-397B-A17B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-9B",
+      "name": "Qwen3.5 9B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.17,
+        "output": 0.25,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.6-27B",
+      "name": "Qwen3.6 27B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.47,
+        "output": 3.19,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.6-35B-A3B",
+      "name": "Qwen3.6 35B-A3B",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.15,
+        "output": 0.95,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "XiaomiMiMo/MiMo-V2-Flash",
+      "name": "MiMo-V2-Flash",
+      "provider": "huggingface",
+      "context_window": 262144,
+      "max_output_tokens": 4096,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.1,
+        "output": 0.3,
         "cache_read": 0.0,
         "cache_write": 0.0
       }
@@ -207,58 +1197,604 @@
       "vision": false
     },
     {
-      "id": "kimi-for-coding",
-      "name": "Kimi For Coding",
+      "id": "k3",
+      "name": "Kimi K3",
       "provider": "kimi-coding",
-      "context_window": 256000,
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "k3-256k",
+      "name": "Kimi K3-256K",
+      "provider": "kimi-coding",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-for-coding",
+      "name": "Kimi K2.7 Code",
+      "provider": "kimi-coding",
+      "context_window": 262144,
       "max_output_tokens": 32768,
       "reasoning": true,
-      "vision": false
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     },
     {
-      "id": "MiniMax-M2.5",
-      "name": "MiniMax M2.5",
+      "id": "kimi-for-coding-highspeed",
+      "name": "Kimi For Coding HighSpeed",
+      "provider": "kimi-coding",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMax-M2",
+      "name": "MiniMax-M2",
       "provider": "minimax",
-      "context_window": 200000,
-      "max_output_tokens": 16384,
-      "reasoning": false,
-      "vision": false
+      "context_window": 196608,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMax-M2.1",
+      "name": "MiniMax-M2.1",
+      "provider": "minimax",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.375
+      }
     },
     {
       "id": "MiniMax-M2.5",
-      "name": "MiniMax M2.5 (CN)",
+      "name": "MiniMax-M2.5",
+      "provider": "minimax",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.5-highspeed",
+      "name": "MiniMax-M2.5-highspeed",
+      "provider": "minimax",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "minimax",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.7-highspeed",
+      "name": "MiniMax-M2.7-highspeed",
+      "provider": "minimax",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M3",
+      "name": "MiniMax-M3",
+      "provider": "minimax",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMax-M2",
+      "name": "MiniMax-M2",
       "provider": "minimax-cn",
-      "context_window": 200000,
+      "context_window": 196608,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMax-M2.1",
+      "name": "MiniMax-M2.1",
+      "provider": "minimax-cn",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.5",
+      "name": "MiniMax-M2.5",
+      "provider": "minimax-cn",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.5-highspeed",
+      "name": "MiniMax-M2.5-highspeed",
+      "provider": "minimax-cn",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "minimax-cn",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M2.7-highspeed",
+      "name": "MiniMax-M2.7-highspeed",
+      "provider": "minimax-cn",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.4,
+        "cache_read": 0.06,
+        "cache_write": 0.375
+      }
+    },
+    {
+      "id": "MiniMax-M3",
+      "name": "MiniMax-M3",
+      "provider": "minimax-cn",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-0711-preview",
+      "name": "Kimi K2 0711",
+      "provider": "moonshotai",
+      "context_window": 131072,
       "max_output_tokens": 16384,
       "reasoning": false,
-      "vision": false
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-0905-preview",
+      "name": "Kimi K2 0905",
+      "provider": "moonshotai",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "kimi-k2-thinking",
       "name": "Kimi K2 Thinking",
       "provider": "moonshotai",
-      "context_window": 256000,
-      "max_output_tokens": 16384,
+      "context_window": 262144,
+      "max_output_tokens": 262144,
       "reasoning": true,
-      "vision": false
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-thinking-turbo",
+      "name": "Kimi K2 Thinking Turbo",
+      "provider": "moonshotai",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.15,
+        "output": 8.0,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-turbo-preview",
+      "name": "Kimi K2 Turbo",
+      "provider": "moonshotai",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 2.4,
+        "output": 10.0,
+        "cache_read": 0.6,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "kimi-k2.5",
       "name": "Kimi K2.5",
       "provider": "moonshotai",
-      "context_window": 256000,
-      "max_output_tokens": 16384,
+      "context_window": 262144,
+      "max_output_tokens": 262144,
       "reasoning": true,
-      "vision": false
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.0,
+        "cache_read": 0.1,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "provider": "moonshotai",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.16,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "provider": "moonshotai",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.7-code-highspeed",
+      "name": "Kimi K2.7 Code HighSpeed",
+      "provider": "moonshotai",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.9,
+        "output": 8.0,
+        "cache_read": 0.38,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "provider": "moonshotai",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-0711-preview",
+      "name": "Kimi K2 0711",
+      "provider": "moonshotai-cn",
+      "context_window": 131072,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-0905-preview",
+      "name": "Kimi K2 0905",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-thinking",
+      "name": "Kimi K2 Thinking",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-thinking-turbo",
+      "name": "Kimi K2 Thinking Turbo",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.15,
+        "output": 8.0,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-turbo-preview",
+      "name": "Kimi K2 Turbo",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 2.4,
+        "output": 10.0,
+        "cache_read": 0.6,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "kimi-k2.5",
-      "name": "Kimi K2.5 (CN)",
+      "name": "Kimi K2.5",
       "provider": "moonshotai-cn",
-      "context_window": 256000,
-      "max_output_tokens": 16384,
+      "context_window": 262144,
+      "max_output_tokens": 262144,
       "reasoning": true,
-      "vision": false
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.0,
+        "cache_read": 0.1,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.16,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.7-code-highspeed",
+      "name": "Kimi K2.7 Code HighSpeed",
+      "provider": "moonshotai-cn",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.9,
+        "output": 8.0,
+        "cache_read": 0.38,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "provider": "moonshotai-cn",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "abacusai/dracarys-llama-3.1-70b-instruct",
+      "name": "dracarys-llama-3.1-70b-instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "bytedance/seed-oss-36b-instruct",
+      "name": "ByteDance-Seed/Seed-OSS-36B-Instruct",
+      "provider": "nvidia",
+      "context_window": 262000,
+      "max_output_tokens": 262000,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "deepseek-ai/deepseek-v3.1",
@@ -270,22 +1806,571 @@
       "vision": false
     },
     {
-      "id": "meta/llama-3.3-70b-instruct",
-      "name": "Llama 3.3 70B (NVIDIA)",
+      "id": "deepseek-ai/deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "provider": "nvidia",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-ai/deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "provider": "nvidia",
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.003625,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-2-2b-it",
+      "name": "Gemma 2 2b It",
       "provider": "nvidia",
       "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-3-12b-it",
+      "name": "Gemma 3 12B IT",
+      "provider": "nvidia",
+      "context_window": 131072,
       "max_output_tokens": 16384,
       "reasoning": false,
-      "vision": false
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-3-4b-it",
+      "name": "Gemma 3 4B IT",
+      "provider": "nvidia",
+      "context_window": 131072,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-3n-e2b-it",
+      "name": "Gemma 3n E2b It",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-3n-e4b-it",
+      "name": "Gemma 3n E4b It",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-4-31b-it",
+      "name": "Gemma-4-31B-IT",
+      "provider": "nvidia",
+      "context_window": 256000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-3.1-70b-instruct",
+      "name": "Llama 3.1 70b Instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-3.1-8b-instruct",
+      "name": "Llama 3.1 8B Instruct",
+      "provider": "nvidia",
+      "context_window": 16000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-3.2-11b-vision-instruct",
+      "name": "Llama 3.2 11b Vision Instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-3.2-1b-instruct",
+      "name": "Llama 3.2 1b Instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-3.2-90b-vision-instruct",
+      "name": "Llama-3.2-90B-Vision-Instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-3.3-70b-instruct",
+      "name": "Llama 3.3 70b Instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta/llama-4-maverick-17b-128e-instruct",
+      "name": "Llama 4 Maverick 17b 128e Instruct",
+      "provider": "nvidia",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "microsoft/phi-4-mini-instruct",
+      "name": "Phi-4-Mini",
+      "provider": "nvidia",
+      "context_window": 131072,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimaxai/minimax-m2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "nvidia",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimaxai/minimax-m3",
+      "name": "MiniMax-M3",
+      "provider": "nvidia",
+      "context_window": 1000000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mistralai/ministral-14b-instruct-2512",
+      "name": "Ministral 3 14B Instruct 2512",
+      "provider": "nvidia",
+      "context_window": 262144,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mistralai/mistral-7b-instruct-v0.3",
+      "name": "Mistral-7B-Instruct-v0.3",
+      "provider": "nvidia",
+      "context_window": 65536,
+      "max_output_tokens": 65536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mistralai/mistral-large-3-675b-instruct-2512",
+      "name": "Mistral Large 3 675B Instruct 2512",
+      "provider": "nvidia",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mistralai/mistral-medium-3.5-128b",
+      "name": "Mistral Medium 3.5",
+      "provider": "nvidia",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "deepseek-v4-flash:0731",
-      "name": "DeepSeek V4 Flash (Ollama Cloud)",
-      "provider": "ollama-cloud",
+      "name": "DeepSeek V4 Flash",
+      "provider": "ollama",
       "context_window": 128000,
       "max_output_tokens": 8192,
       "reasoning": false,
       "vision": false
+    },
+    {
+      "id": "llama3.2",
+      "name": "Llama 3.2",
+      "provider": "ollama",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false
+    },
+    {
+      "id": "qwen2.5-coder:7b",
+      "name": "Qwen2.5 Coder 7B",
+      "provider": "ollama",
+      "context_window": 32768,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "name": "deepseek-v4-flash",
+      "provider": "ollama-cloud",
+      "context_window": 1048576,
+      "max_output_tokens": 1048576,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "deepseek-v4-flash:0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "provider": "ollama-cloud",
+      "context_window": 1048576,
+      "max_output_tokens": 1048576,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "name": "deepseek-v4-pro",
+      "provider": "ollama-cloud",
+      "context_window": 1048576,
+      "max_output_tokens": 1048576,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "gemma4:31b",
+      "name": "gemma4:31b",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "glm-5.1",
+      "name": "glm-5.1",
+      "provider": "ollama-cloud",
+      "context_window": 202752,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "provider": "ollama-cloud",
+      "context_window": 976000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "gpt-oss:120b",
+      "name": "gpt-oss:120b",
+      "provider": "ollama-cloud",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "gpt-oss:20b",
+      "name": "gpt-oss:20b",
+      "provider": "ollama-cloud",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "kimi-k2.5",
+      "name": "kimi-k2.5",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "kimi-k2.6",
+      "name": "kimi-k2.6",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "name": "kimi-k2.7-code",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "kimi-k3",
+      "name": "kimi-k3",
+      "provider": "ollama-cloud",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "minimax-m2.5",
+      "name": "minimax-m2.5",
+      "provider": "ollama-cloud",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "minimax-m2.7",
+      "name": "minimax-m2.7",
+      "provider": "ollama-cloud",
+      "context_window": 196608,
+      "max_output_tokens": 196608,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "minimax-m3",
+      "name": "minimax-m3",
+      "provider": "ollama-cloud",
+      "context_window": 512000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "mistral-large-3:675b",
+      "name": "mistral-large-3:675b",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": true
+    },
+    {
+      "id": "nemotron-3-nano:30b",
+      "name": "nemotron-3-nano:30b",
+      "provider": "ollama-cloud",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "nemotron-3-super",
+      "name": "nemotron-3-super",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "nemotron-3-ultra",
+      "name": "nemotron-3-ultra",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false
+    },
+    {
+      "id": "qwen3.5:397b",
+      "name": "qwen3.5:397b",
+      "provider": "ollama-cloud",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true
+    },
+    {
+      "id": "gpt-4",
+      "name": "GPT-4",
+      "provider": "openai",
+      "context_window": 8192,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 30.0,
+        "output": 60.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4-turbo",
+      "name": "GPT-4 Turbo",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 30.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "gpt-4.1",
@@ -299,7 +2384,7 @@
         "input": 2.0,
         "output": 8.0,
         "cache_read": 0.5,
-        "cache_write": 2.0
+        "cache_write": 0.0
       }
     },
     {
@@ -314,7 +2399,22 @@
         "input": 0.4,
         "output": 1.6,
         "cache_read": 0.1,
-        "cache_write": 0.4
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4.1-nano",
+      "name": "GPT-4.1 nano",
+      "provider": "openai",
+      "context_window": 1047576,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.1,
+        "output": 0.4,
+        "cache_read": 0.025,
+        "cache_write": 0.0
       }
     },
     {
@@ -329,7 +2429,52 @@
         "input": 2.5,
         "output": 10.0,
         "cache_read": 1.25,
-        "cache_write": 2.5
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-2024-05-13",
+      "name": "GPT-4o (2024-05-13)",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 15.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-2024-08-06",
+      "name": "GPT-4o (2024-08-06)",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 10.0,
+        "cache_read": 1.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-4o-2024-11-20",
+      "name": "GPT-4o (2024-11-20)",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 10.0,
+        "cache_read": 1.25,
+        "cache_write": 0.0
       }
     },
     {
@@ -344,7 +2489,367 @@
         "input": 0.15,
         "output": 0.6,
         "cache_read": 0.075,
-        "cache_write": 0.15
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 10.0,
+        "cache_read": 0.125,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-mini",
+      "name": "GPT-5 Mini",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.25,
+        "output": 2.0,
+        "cache_read": 0.025,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-nano",
+      "name": "GPT-5 Nano",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.05,
+        "output": 0.4,
+        "cache_read": 0.005,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-pro",
+      "name": "GPT-5 Pro",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 272000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 120.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.1",
+      "name": "GPT-5.1",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 10.0,
+        "cache_read": 0.125,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2",
+      "name": "GPT-5.2",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2-chat-latest",
+      "name": "GPT-5.2 Chat",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2-pro",
+      "name": "GPT-5.2 Pro",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 21.0,
+        "output": 168.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-chat-latest",
+      "name": "GPT-5.3 Chat (latest)",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "name": "GPT-5.3 Codex",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3 Codex Spark",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 15.0,
+        "cache_read": 0.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 mini",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.75,
+        "output": 4.5,
+        "cache_read": 0.075,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "name": "GPT-5.4 nano",
+      "provider": "openai",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.25,
+        "cache_read": 0.02,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-pro",
+      "name": "GPT-5.4 Pro",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "name": "GPT-5.5 Pro",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.6",
+      "name": "GPT-5.6",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "provider": "openai",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      }
+    },
+    {
+      "id": "gpt-realtime-2.1",
+      "name": "GPT-Realtime-2.1",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 4.0,
+        "output": 24.0,
+        "cache_read": 0.4,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o1",
+      "name": "o1",
+      "provider": "openai",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 60.0,
+        "cache_read": 7.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o1-pro",
+      "name": "o1-pro",
+      "provider": "openai",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 150.0,
+        "output": 600.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
@@ -354,12 +2859,42 @@
       "context_window": 200000,
       "max_output_tokens": 100000,
       "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o3-mini",
+      "name": "o3-mini",
+      "provider": "openai",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
       "vision": false,
       "cost": {
-        "input": 10.0,
-        "output": 40.0,
-        "cache_read": 2.5,
-        "cache_write": 10.0
+        "input": 1.1,
+        "output": 4.4,
+        "cache_read": 0.55,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "o3-pro",
+      "name": "o3-pro",
+      "provider": "openai",
+      "context_window": 200000,
+      "max_output_tokens": 100000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 20.0,
+        "output": 80.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
@@ -369,37 +2904,2074 @@
       "context_window": 200000,
       "max_output_tokens": 100000,
       "reasoning": true,
-      "vision": false,
+      "vision": true,
       "cost": {
         "input": 1.1,
         "output": 4.4,
         "cache_read": 0.275,
-        "cache_write": 1.1
+        "cache_write": 0.0
       }
     },
     {
       "id": "deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash (OpenCode Go)",
+      "name": "DeepSeek V4 Flash (2x usage)",
       "provider": "opencode-go",
-      "context_window": 128000,
-      "max_output_tokens": 8192,
-      "reasoning": false,
-      "vision": false
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.07,
+        "output": 0.14,
+        "cache_read": 0.0014,
+        "cache_write": 0.0
+      }
     },
     {
-      "id": "claude-sonnet-4-5",
-      "name": "Claude Sonnet 4.5 (OpenCode Zen)",
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro (New)",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.003625,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5",
+      "name": "GLM-5",
+      "provider": "opencode-go",
+      "context_window": 202752,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 3.2,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.1",
+      "name": "GLM-5.1",
+      "provider": "opencode-go",
+      "context_window": 202752,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna (2x usage)",
+      "provider": "opencode-go",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.1,
+        "output": 0.6,
+        "cache_read": 0.01,
+        "cache_write": 0.125
+      }
+    },
+    {
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "provider": "opencode-go",
+      "context_window": 500000,
+      "max_output_tokens": 500000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "hy3",
+      "name": "Hy3",
+      "provider": "opencode-go",
+      "context_window": 256000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.58,
+        "cache_read": 0.035,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "name": "Kimi K2.5",
+      "provider": "opencode-go",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.0,
+        "cache_read": 0.1,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "provider": "opencode-go",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.16,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "provider": "opencode-go",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "provider": "opencode-go",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-omni",
+      "name": "MiMo V2 Omni",
+      "provider": "opencode-go",
+      "context_window": 262144,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 2.0,
+        "cache_read": 0.08,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-pro",
+      "name": "MiMo V2 Pro",
+      "provider": "opencode-go",
+      "context_window": 1048576,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 3.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2.5",
+      "name": "MiMo V2.5",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2.5-pro",
+      "name": "MiMo V2.5 Pro",
+      "provider": "opencode-go",
+      "context_window": 1048576,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.003625,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.5",
+      "name": "MiniMax-M2.5",
+      "provider": "opencode-go",
+      "context_window": 204800,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.03,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "opencode-go",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m3",
+      "name": "MiniMax-M3",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "qwen3.5-plus",
+      "name": "Qwen3.5 Plus",
+      "provider": "opencode-go",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    {
+      "id": "qwen3.6-plus",
+      "name": "Qwen3.6 Plus",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.05,
+        "cache_write": 0.625
+      }
+    },
+    {
+      "id": "qwen3.7-max",
+      "name": "Qwen3.7 Max",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 2.5,
+        "output": 7.5,
+        "cache_read": 0.5,
+        "cache_write": 3.125
+      }
+    },
+    {
+      "id": "qwen3.7-plus",
+      "name": "Qwen3.7 Plus",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 1.6,
+        "cache_read": 0.04,
+        "cache_write": 0.5
+      }
+    },
+    {
+      "id": "qwen3.8-max",
+      "name": "Qwen3.8 Max",
+      "provider": "opencode-go",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.25,
+        "cache_write": 2.5
+      }
+    },
+    {
+      "id": "big-pickle",
+      "name": "Big Pickle",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "claude-3-5-haiku",
+      "name": "Claude Haiku 3.5",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 8192,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.8,
+        "output": 4.0,
+        "cache_read": 0.08,
+        "cache_write": 1.0
+      }
+    },
+    {
+      "id": "claude-fable-5",
+      "name": "Claude Fable 5",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      }
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
       "provider": "opencode-zen",
       "context_window": 200000,
       "max_output_tokens": 64000,
       "reasoning": true,
-      "vision": true
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      }
+    },
+    {
+      "id": "claude-opus-4-1",
+      "name": "Claude Opus 4.1",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_write": 18.75
+      }
+    },
+    {
+      "id": "claude-opus-4-5",
+      "name": "Claude Opus 4.5",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-4-8",
+      "name": "Claude Opus 4.8",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-opus-5",
+      "name": "Claude Opus 5",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-sonnet-4-5",
+      "name": "Claude Sonnet 4.5",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 3.75
+      }
+    },
+    {
+      "id": "claude-sonnet-5",
+      "name": "Claude Sonnet 5",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.2,
+        "cache_write": 2.5
+      }
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-v4-flash-free",
+      "name": "DeepSeek V4 Flash Free",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.74,
+        "output": 3.84,
+        "cache_read": 0.145,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3-flash",
+      "name": "Gemini 3 Flash",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.05,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3-pro",
+      "name": "Gemini 3 Pro",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3.1-pro",
+      "name": "Gemini 3.1 Pro Preview",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 12.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "name": "Gemini 3.5 Flash",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.5,
+        "output": 9.0,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3.5-flash-lite",
+      "name": "Gemini 3.5 Flash Lite",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 2.5,
+        "cache_read": 0.03,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3.6-flash",
+      "name": "Gemini 3.6 Flash",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.5,
+        "output": 7.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.5,
+        "output": 7.5,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.6",
+      "name": "GLM-4.6",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.2,
+        "cache_read": 0.1,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.7",
+      "name": "GLM-4.7",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.2,
+        "cache_read": 0.1,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.7-free",
+      "name": "GLM-4.7 Free",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5",
+      "name": "GLM-5",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 3.2,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5-free",
+      "name": "GLM-5 Free",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.1",
+      "name": "GLM-5.1",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5",
+      "name": "GPT-5",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.07,
+        "output": 8.5,
+        "cache_read": 0.107,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-codex",
+      "name": "GPT-5 Codex",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.07,
+        "output": 8.5,
+        "cache_read": 0.107,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5-nano",
+      "name": "GPT-5 Nano",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.05,
+        "output": 0.4,
+        "cache_read": 0.005,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.1",
+      "name": "GPT-5.1",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.07,
+        "output": 8.5,
+        "cache_read": 0.107,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.1-codex",
+      "name": "GPT-5.1 Codex",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.07,
+        "output": 8.5,
+        "cache_read": 0.107,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.1-codex-max",
+      "name": "GPT-5.1 Codex Max",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 10.0,
+        "cache_read": 0.125,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.1-codex-mini",
+      "name": "GPT-5.1 Codex Mini",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.25,
+        "output": 2.0,
+        "cache_read": 0.025,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2",
+      "name": "GPT-5.2",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.2-codex",
+      "name": "GPT-5.2 Codex",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-codex",
+      "name": "GPT-5.3 Codex",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3 Codex Spark",
+      "provider": "opencode-zen",
+      "context_window": 128000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.75,
+        "output": 14.0,
+        "cache_read": 0.175,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4",
+      "name": "GPT-5.4",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 15.0,
+        "cache_read": 0.25,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-mini",
+      "name": "GPT-5.4 Mini",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.75,
+        "output": 4.5,
+        "cache_read": 0.075,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-nano",
+      "name": "GPT-5.4 Nano",
+      "provider": "opencode-zen",
+      "context_window": 400000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.25,
+        "cache_read": 0.02,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.4-pro",
+      "name": "GPT-5.4 Pro",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 30.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.5",
+      "name": "GPT-5.5",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.5-pro",
+      "name": "GPT-5.5 Pro",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 180.0,
+        "cache_read": 30.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "gpt-5.6-luna",
+      "name": "GPT-5.6 Luna",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "name": "GPT-5.6 Sol",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 30.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "name": "GPT-5.6 Terra",
+      "provider": "opencode-zen",
+      "context_window": 1050000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 15.0,
+        "cache_read": 0.25,
+        "cache_write": 3.125
+      }
+    },
+    {
+      "id": "grok-4.5",
+      "name": "Grok 4.5",
+      "provider": "opencode-zen",
+      "context_window": 500000,
+      "max_output_tokens": 500000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-4.6",
+      "name": "Grok 4.6",
+      "provider": "opencode-zen",
+      "context_window": 500000,
+      "max_output_tokens": 500000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-build-0.1",
+      "name": "Grok Build 0.1",
+      "provider": "opencode-zen",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 2.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-code",
+      "name": "Grok Code Fast 1",
+      "provider": "opencode-zen",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "hy3-free",
+      "name": "Hy3 Free",
+      "provider": "opencode-zen",
+      "context_window": 190000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "hy3-preview-free",
+      "name": "Hy3 preview Free",
+      "provider": "opencode-zen",
+      "context_window": 256000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2",
+      "name": "Kimi K2",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.4,
+        "output": 2.5,
+        "cache_read": 0.4,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2-thinking",
+      "name": "Kimi K2 Thinking",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.4,
+        "output": 2.5,
+        "cache_read": 0.4,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.5",
+      "name": "Kimi K2.5",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.0,
+        "cache_read": 0.08,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.5-free",
+      "name": "Kimi K2.5 Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.6",
+      "name": "Kimi K2.6",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.16,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k2.7-code",
+      "name": "Kimi K2.7 Code",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "kimi-k3",
+      "name": "Kimi K3",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "laguna-s-2.1-free",
+      "name": "Laguna S 2.1 Free",
+      "provider": "opencode-zen",
+      "context_window": 256000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "ling-2.6-flash-free",
+      "name": "Ling 2.6 Flash Free",
+      "provider": "opencode-zen",
+      "context_window": 262100,
+      "max_output_tokens": 32800,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "ling-3.0-flash-free",
+      "name": "Ling-3.0-flash Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "ling-3.0-tiny-free",
+      "name": "Ling-3.0-tiny Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "longcat-2.0-free",
+      "name": "LongCat-2.0 Free",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-flash-free",
+      "name": "MiMo V2 Flash Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-omni-free",
+      "name": "MiMo V2 Omni Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-pro-free",
+      "name": "MiMo V2 Pro Free",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2.5-free",
+      "name": "MiMo V2.5 Free",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.1",
+      "name": "MiniMax-M2.1",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.1,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.1-free",
+      "name": "MiniMax-M2.1 Free",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.5",
+      "name": "MiniMax-M2.5",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.5-free",
+      "name": "MiniMax-M2.5 Free",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m3",
+      "name": "MiniMax-M3",
+      "provider": "opencode-zen",
+      "context_window": 512000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "minimax-m3-free",
+      "name": "MiniMax-M3 Free",
+      "provider": "opencode-zen",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "muse-spark-1.2",
+      "name": "Muse Spark 1.2",
+      "provider": "opencode-zen",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 4.25,
+        "cache_read": 0.15,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "nemotron-3-super-free",
+      "name": "Nemotron 3 Super Free",
+      "provider": "opencode-zen",
+      "context_window": 204800,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "nemotron-3-ultra-free",
+      "name": "Nemotron 3 Ultra Free",
+      "provider": "opencode-zen",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "nemotron-3.5-lightning-free",
+      "name": "Nemotron 3.5 Lightning Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "north-mini-code-free",
+      "name": "North Mini Code Free",
+      "provider": "opencode-zen",
+      "context_window": 256000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "qwen3-coder",
+      "name": "Qwen3 Coder",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.45,
+        "output": 1.8,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "qwen3.5-plus",
+      "name": "Qwen3.5 Plus",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.2,
+        "output": 1.2,
+        "cache_read": 0.02,
+        "cache_write": 0.25
+      }
+    },
+    {
+      "id": "qwen3.6-plus",
+      "name": "Qwen3.6 Plus",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.05,
+        "cache_write": 0.625
+      }
+    },
+    {
+      "id": "qwen3.6-plus-free",
+      "name": "Qwen3.6 Plus Free",
+      "provider": "opencode-zen",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "ring-2.6-1t-free",
+      "name": "Ring 2.6 1T Free",
+      "provider": "opencode-zen",
+      "context_window": 262000,
+      "max_output_tokens": 66000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "trinity-large-preview-free",
+      "name": "Trinity Large Preview",
+      "provider": "opencode-zen",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "ai21/jamba-large-1.7",
+      "name": "Jamba Large 1.7",
+      "provider": "openrouter",
+      "context_window": 256000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 2.0,
+        "output": 8.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "aion-labs/aion-2.0",
+      "name": "Aion-2.0",
+      "provider": "openrouter",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.8,
+        "output": 1.6,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "aion-labs/aion-3.0",
+      "name": "Aion-3.0",
+      "provider": "openrouter",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 3.0,
+        "output": 6.0,
+        "cache_read": 0.75,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "aion-labs/aion-3.0-mini",
+      "name": "Aion-3.0-Mini",
+      "provider": "openrouter",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.7,
+        "output": 1.4,
+        "cache_read": 0.18,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-2-lite-v1",
+      "name": "Nova 2 Lite",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 65535,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 2.5,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-lite-v1",
+      "name": "Nova Lite 1.0",
+      "provider": "openrouter",
+      "context_window": 300000,
+      "max_output_tokens": 5120,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.06,
+        "output": 0.24,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-micro-v1",
+      "name": "Nova Micro 1.0",
+      "provider": "openrouter",
+      "context_window": 128000,
+      "max_output_tokens": 5120,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.035,
+        "output": 0.14,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-premier-v1",
+      "name": "Nova Premier 1.0",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 32000,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 2.5,
+        "output": 12.5,
+        "cache_read": 0.625,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "amazon/nova-pro-v1",
+      "name": "Nova Pro 1.0",
+      "provider": "openrouter",
+      "context_window": 300000,
+      "max_output_tokens": 5120,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.8,
+        "output": 3.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "anthropic/claude-3-haiku",
+      "name": "Claude 3 Haiku",
+      "provider": "openrouter",
+      "context_window": 200000,
+      "max_output_tokens": 4096,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.25,
+        "output": 1.25,
+        "cache_read": 0.03,
+        "cache_write": 0.3
+      }
+    },
+    {
+      "id": "anthropic/claude-fable-5",
+      "name": "Claude Fable 5",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      }
+    },
+    {
+      "id": "anthropic/claude-haiku-4.5",
+      "name": "Claude Haiku 4.5 (latest)",
+      "provider": "openrouter",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.1,
+        "cache_write": 1.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4",
+      "name": "Claude Opus 4",
+      "provider": "openrouter",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_write": 18.75
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.1",
+      "name": "Claude Opus 4.1 (latest)",
+      "provider": "openrouter",
+      "context_window": 200000,
+      "max_output_tokens": 32000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_write": 18.75
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.5",
+      "name": "Claude Opus 4.5 (latest)",
+      "provider": "openrouter",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.6",
+      "name": "Claude Opus 4.6",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.7",
+      "name": "Claude Opus 4.7",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.7-fast",
+      "name": "Claude Opus 4.7 (Fast)",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 30.0,
+        "output": 150.0,
+        "cache_read": 3.0,
+        "cache_write": 37.5
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.8",
+      "name": "Claude Opus 4.8",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-4.8-fast",
+      "name": "Claude Opus 4.8 (Fast)",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 10.0,
+        "output": 50.0,
+        "cache_read": 1.0,
+        "cache_write": 12.5
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-5",
+      "name": "Claude Opus 5",
+      "provider": "openrouter",
+      "context_window": 1000000,
+      "max_output_tokens": 128000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 5.0,
+        "output": 25.0,
+        "cache_read": 0.5,
+        "cache_write": 6.25
+      }
     },
     {
       "id": "anthropic/claude-sonnet-4",
-      "name": "Claude Sonnet 4 (OpenRouter)",
+      "name": "Claude Sonnet 4",
       "provider": "openrouter",
-      "context_window": 200000,
+      "context_window": 1000000,
       "max_output_tokens": 64000,
       "reasoning": true,
       "vision": true,
@@ -412,22 +4984,22 @@
     },
     {
       "id": "deepseek/deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash (OpenRouter)",
+      "name": "DeepSeek V4 Flash",
       "provider": "openrouter",
-      "context_window": 1000000,
-      "max_output_tokens": 384000,
-      "reasoning": false,
+      "context_window": 1048576,
+      "max_output_tokens": 393216,
+      "reasoning": true,
       "vision": false,
       "cost": {
         "input": 0.14,
         "output": 0.28,
-        "cache_read": 0.014,
-        "cache_write": 0.28
+        "cache_read": 0.028,
+        "cache_write": 0.0
       }
     },
     {
       "id": "openai/gpt-4o-mini",
-      "name": "GPT-4o mini (OpenRouter)",
+      "name": "GPT-4o mini",
       "provider": "openrouter",
       "context_window": 128000,
       "max_output_tokens": 16384,
@@ -437,7 +5009,277 @@
         "input": 0.15,
         "output": 0.6,
         "cache_read": 0.075,
-        "cache_write": 0.15
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.5",
+      "name": "MiniMax-M2.5",
+      "provider": "together",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M2.7",
+      "name": "MiniMax-M2.7",
+      "provider": "together",
+      "context_window": 202752,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "MiniMaxAI/MiniMax-M3",
+      "name": "MiniMax-M3",
+      "provider": "together",
+      "context_window": 524288,
+      "max_output_tokens": 250000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cache_read": 0.06,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen2.5-7B-Instruct-Turbo",
+      "name": "Qwen 2.5 7B Instruct Turbo",
+      "provider": "together",
+      "context_window": 32768,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.3,
+        "output": 0.3,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-235B-A22B-Instruct-2507-tput",
+      "name": "Qwen3 235B A22B Instruct 2507 FP8",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.2,
+        "output": 0.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+      "name": "Qwen3 Coder 480B A35B Instruct",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 2.0,
+        "output": 2.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3-Coder-Next-FP8",
+      "name": "Qwen3 Coder Next FP8",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.5,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-397B-A17B",
+      "name": "Qwen3.5 397B A17B",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 130000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.6,
+        "cache_read": 0.35,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.5-9B",
+      "name": "Qwen3.5 9B",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.17,
+        "output": 0.25,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.6-Plus",
+      "name": "Qwen3.6 Plus",
+      "provider": "together",
+      "context_window": 1000000,
+      "max_output_tokens": 500000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "Qwen/Qwen3.7-Max",
+      "name": "Qwen3.7 Max",
+      "provider": "together",
+      "context_window": 1000000,
+      "max_output_tokens": 500000,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.25,
+        "output": 3.75,
+        "cache_read": 0.125,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V3",
+      "name": "DeepSeek-V3",
+      "provider": "together",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.25,
+        "output": 1.25,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V3-1",
+      "name": "DeepSeek V3.1",
+      "provider": "together",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 1.7,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "name": "DeepSeek V4 Flash 0731",
+      "provider": "together",
+      "context_window": 1000000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.03,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "deepseek-ai/DeepSeek-V4-Pro",
+      "name": "DeepSeek V4 Pro",
+      "provider": "together",
+      "context_window": 512000,
+      "max_output_tokens": 384000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.74,
+        "output": 3.48,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "essentialai/Rnj-1-Instruct",
+      "name": "Rnj-1 Instruct",
+      "provider": "together",
+      "context_window": 32768,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 0.15,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "google/gemma-4-31B-it",
+      "name": "Gemma 4 31B Instruct",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.39,
+        "output": 0.97,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "name": "Llama 3.3 70B",
+      "provider": "together",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.04,
+        "output": 1.04,
+        "cache_read": 0.0,
+        "cache_write": 0.0
       }
     },
     {
@@ -471,11 +5313,521 @@
       }
     },
     {
-      "id": "anthropic/claude-sonnet-4",
-      "name": "Claude Sonnet 4 (Vercel)",
+      "id": "moonshotai/Kimi-K2.5",
+      "name": "Kimi K2.5",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 262144,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.5,
+        "output": 2.8,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "moonshotai/Kimi-K2.6",
+      "name": "Kimi K2.6",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 131000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.2,
+        "output": 4.5,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "moonshotai/Kimi-K2.7-Code",
+      "name": "Kimi K2.7 Code",
+      "provider": "together",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.95,
+        "output": 4.0,
+        "cache_read": 0.19,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "moonshotai/Kimi-K3",
+      "name": "Kimi K3",
+      "provider": "together",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "nvidia/nemotron-3-ultra-550b-a55b",
+      "name": "Nemotron 3 Ultra 550B A55B",
+      "provider": "together",
+      "context_window": 512300,
+      "max_output_tokens": 512300,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 3.6,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "openai/gpt-oss-120b",
+      "name": "GPT OSS 120B",
+      "provider": "together",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "openai/gpt-oss-20b",
+      "name": "GPT OSS 20B",
+      "provider": "together",
+      "context_window": 131072,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.05,
+        "output": 0.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "thinkingmachines/Inkling",
+      "name": "Inkling",
+      "provider": "together",
+      "context_window": 524288,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 4.05,
+        "cache_read": 0.17,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "zai-org/GLM-5",
+      "name": "GLM-5",
+      "provider": "together",
+      "context_window": 202752,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 3.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "zai-org/GLM-5.1",
+      "name": "GLM-5.1",
+      "provider": "together",
+      "context_window": 202752,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "zai-org/GLM-5.2",
+      "name": "GLM-5.2",
+      "provider": "together",
+      "context_window": 512000,
+      "max_output_tokens": 164000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-14b",
+      "name": "Qwen3-14B",
       "provider": "vercel-ai-gateway",
-      "context_window": 200000,
+      "context_window": 40960,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.12,
+        "output": 0.24,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-235b",
+      "name": "Qwen3 235B A22B Instruct 2507",
+      "provider": "vercel-ai-gateway",
+      "context_window": 262144,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.22,
+        "output": 0.88,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-30b",
+      "name": "Qwen3-30B-A3B",
+      "provider": "vercel-ai-gateway",
+      "context_window": 40960,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.12,
+        "output": 0.5,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3-32b",
+      "name": "Qwen 3.32B",
+      "provider": "vercel-ai-gateway",
+      "context_window": 128000,
+      "max_output_tokens": 8192,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.16,
+        "output": 0.64,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen-3.6-max-preview",
+      "name": "Qwen 3.6 Max Preview",
+      "provider": "vercel-ai-gateway",
+      "context_window": 240000,
       "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.3,
+        "output": 7.8,
+        "cache_read": 0.26,
+        "cache_write": 1.625
+      }
+    },
+    {
+      "id": "alibaba/qwen3-235b-a22b-thinking",
+      "name": "Qwen3 235B A22B Thinking 2507",
+      "provider": "vercel-ai-gateway",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 4.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder",
+      "name": "Qwen3 Coder 480B A35B Instruct",
+      "provider": "vercel-ai-gateway",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.5,
+        "output": 7.5,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder-30b-a3b",
+      "name": "Qwen 3 Coder 30B A3B Instruct",
+      "provider": "vercel-ai-gateway",
+      "context_window": 262144,
+      "max_output_tokens": 8192,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 0.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder-next",
+      "name": "Qwen3 Coder Next",
+      "provider": "vercel-ai-gateway",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.5,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-coder-plus",
+      "name": "Qwen3 Coder Plus",
+      "provider": "vercel-ai-gateway",
+      "context_window": 1000000,
+      "max_output_tokens": 65536,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 5.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-max",
+      "name": "Qwen3 Max",
+      "provider": "vercel-ai-gateway",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-max-preview",
+      "name": "Qwen3 Max Preview",
+      "provider": "vercel-ai-gateway",
+      "context_window": 262144,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-max-thinking",
+      "name": "Qwen 3 Max Thinking",
+      "provider": "vercel-ai-gateway",
+      "context_window": 256000,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 6.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-next-80b-a3b-instruct",
+      "name": "Qwen3 Next 80B A3B Instruct",
+      "provider": "vercel-ai-gateway",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": false,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-next-80b-a3b-thinking",
+      "name": "Qwen3 Next 80B A3B Thinking",
+      "provider": "vercel-ai-gateway",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.15,
+        "output": 1.2,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-vl-instruct",
+      "name": "Qwen3 VL Instruct",
+      "provider": "vercel-ai-gateway",
+      "context_window": 131072,
+      "max_output_tokens": 129024,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 1.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3-vl-thinking",
+      "name": "Qwen3 VL Thinking",
+      "provider": "vercel-ai-gateway",
+      "context_window": 131072,
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 4.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3.5-flash",
+      "name": "Qwen 3.5 Flash",
+      "provider": "vercel-ai-gateway",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.1,
+        "output": 0.4,
+        "cache_read": 0.001,
+        "cache_write": 0.125
+      }
+    },
+    {
+      "id": "alibaba/qwen3.5-plus",
+      "name": "Qwen 3.5 Plus",
+      "provider": "vercel-ai-gateway",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.4,
+        "output": 2.4,
+        "cache_read": 0.04,
+        "cache_write": 0.5
+      }
+    },
+    {
+      "id": "alibaba/qwen3.6-27b",
+      "name": "Qwen 3.6 27B",
+      "provider": "vercel-ai-gateway",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 3.6,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "alibaba/qwen3.6-plus",
+      "name": "Qwen 3.6 Plus",
+      "provider": "vercel-ai-gateway",
+      "context_window": 1000000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.5,
+        "output": 3.0,
+        "cache_read": 0.1,
+        "cache_write": 0.625
+      }
+    },
+    {
+      "id": "alibaba/qwen3.7-flash",
+      "name": "Qwen 3.7 Flash",
+      "provider": "vercel-ai-gateway",
+      "context_window": 991000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.03,
+        "output": 0.13,
+        "cache_read": 0.006,
+        "cache_write": 0.038
+      }
+    },
+    {
+      "id": "alibaba/qwen3.7-max",
+      "name": "Qwen 3.7 Max",
+      "provider": "vercel-ai-gateway",
+      "context_window": 991000,
+      "max_output_tokens": 64000,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 2.5,
+        "output": 7.5,
+        "cache_read": 0.5,
+        "cache_write": 3.125
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "provider": "vercel-ai-gateway",
+      "context_window": 1000000,
+      "max_output_tokens": 8192,
       "reasoning": true,
       "vision": true,
       "cost": {
@@ -516,46 +5868,469 @@
       }
     },
     {
+      "id": "grok-4.20-0309-non-reasoning",
+      "name": "Grok 4.20 (Non-Reasoning)",
+      "provider": "xai",
+      "context_window": 1000000,
+      "max_output_tokens": 30000,
+      "reasoning": false,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 2.5,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-4.20-0309-reasoning",
+      "name": "Grok 4.20 (Reasoning)",
+      "provider": "xai",
+      "context_window": 1000000,
+      "max_output_tokens": 30000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 2.5,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-4.3",
+      "name": "Grok 4.3",
+      "provider": "xai",
+      "context_window": 1000000,
+      "max_output_tokens": 30000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.25,
+        "output": 2.5,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
       "id": "grok-4.5",
       "name": "Grok 4.5",
       "provider": "xai",
-      "context_window": 256000,
-      "max_output_tokens": 64000,
+      "context_window": 500000,
+      "max_output_tokens": 500000,
       "reasoning": true,
-      "vision": false,
+      "vision": true,
       "cost": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.75,
-        "cache_write": 3.0
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.3,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-4.6",
+      "name": "Grok 4.6",
+      "provider": "xai",
+      "context_window": 500000,
+      "max_output_tokens": 500000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 2.0,
+        "output": 6.0,
+        "cache_read": 0.5,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "grok-build-0.1",
+      "name": "Grok Build 0.1",
+      "provider": "xai",
+      "context_window": 256000,
+      "max_output_tokens": 256000,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.0,
+        "output": 2.0,
+        "cache_read": 0.2,
+        "cache_write": 0.0
       }
     },
     {
       "id": "mimo-v2-flash",
-      "name": "MiMo V2 Flash",
+      "name": "MiMo-V2-Flash",
       "provider": "xiaomi",
+      "context_window": 262144,
+      "max_output_tokens": 65536,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-omni",
+      "name": "MiMo-V2-Omni",
+      "provider": "xiaomi",
+      "context_window": 262144,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2-pro",
+      "name": "MiMo-V2-Pro",
+      "provider": "xiaomi",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.0036,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2.5",
+      "name": "MiMo-V2.5",
+      "provider": "xiaomi",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.14,
+        "output": 0.28,
+        "cache_read": 0.0028,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2.5-pro",
+      "name": "MiMo-V2.5-Pro",
+      "provider": "xiaomi",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.435,
+        "output": 0.87,
+        "cache_read": 0.0036,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "mimo-v2.5-pro-ultraspeed",
+      "name": "MiMo-V2.5-Pro-UltraSpeed",
+      "provider": "xiaomi",
+      "context_window": 1048576,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.305,
+        "output": 2.61,
+        "cache_read": 0.0108,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.5",
+      "name": "GLM-4.5",
+      "provider": "zai",
+      "context_window": 131072,
+      "max_output_tokens": 98304,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.2,
+        "cache_read": 0.11,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.5-air",
+      "name": "GLM-4.5-Air",
+      "provider": "zai",
+      "context_window": 131072,
+      "max_output_tokens": 98304,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.2,
+        "output": 1.1,
+        "cache_read": 0.03,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.5-flash",
+      "name": "GLM-4.5-Flash",
+      "provider": "zai",
+      "context_window": 131072,
+      "max_output_tokens": 98304,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.5v",
+      "name": "GLM-4.5V",
+      "provider": "zai",
+      "context_window": 64000,
+      "max_output_tokens": 16384,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.6,
+        "output": 1.8,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.6",
+      "name": "GLM-4.6",
+      "provider": "zai",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.2,
+        "cache_read": 0.11,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.6v",
+      "name": "GLM-4.6V",
+      "provider": "zai",
       "context_window": 128000,
-      "max_output_tokens": 8192,
-      "reasoning": false,
-      "vision": false
+      "max_output_tokens": 32768,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 0.3,
+        "output": 0.9,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "glm-4.7",
       "name": "GLM-4.7",
       "provider": "zai",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.6,
+        "output": 2.2,
+        "cache_read": 0.11,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.7-flash",
+      "name": "GLM-4.7-Flash",
+      "provider": "zai",
       "context_window": 200000,
-      "max_output_tokens": 16384,
-      "reasoning": false,
-      "vision": false
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-4.7-flashx",
+      "name": "GLM-4.7-FlashX",
+      "provider": "zai",
+      "context_window": 200000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.07,
+        "output": 0.4,
+        "cache_read": 0.01,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5",
+      "name": "GLM-5",
+      "provider": "zai",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.0,
+        "output": 3.2,
+        "cache_read": 0.2,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5-turbo",
+      "name": "GLM-5-Turbo",
+      "provider": "zai",
+      "context_window": 200000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.2,
+        "output": 4.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.1",
+      "name": "GLM-5.1",
+      "provider": "zai",
+      "context_window": 200000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "provider": "zai",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 1.4,
+        "output": 4.4,
+        "cache_read": 0.26,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5v-turbo",
+      "name": "GLM-5V-Turbo",
+      "provider": "zai",
+      "context_window": 200000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": true,
+      "cost": {
+        "input": 1.2,
+        "output": 4.0,
+        "cache_read": 0.24,
+        "cache_write": 0.0
+      }
     },
     {
       "id": "glm-4.7",
-      "name": "GLM-4.7 (Coding CN)",
+      "name": "GLM-4.7",
+      "provider": "zai-coding-cn",
+      "context_window": 204800,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5-turbo",
+      "name": "GLM-5-Turbo",
       "provider": "zai-coding-cn",
       "context_window": 200000,
-      "max_output_tokens": 16384,
-      "reasoning": false,
-      "vision": false
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.2",
+      "name": "GLM-5.2",
+      "provider": "zai-coding-cn",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.2-highspeed",
+      "name": "GLM-5.2 Highspeed",
+      "provider": "zai-coding-cn",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
+    },
+    {
+      "id": "glm-5.3",
+      "name": "GLM-5.3",
+      "provider": "zai-coding-cn",
+      "context_window": 1000000,
+      "max_output_tokens": 131072,
+      "reasoning": true,
+      "vision": false,
+      "cost": {
+        "input": 0.0,
+        "output": 0.0,
+        "cache_read": 0.0,
+        "cache_write": 0.0
+      }
     }
   ]
 }

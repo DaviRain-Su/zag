@@ -10,6 +10,7 @@ const openai = @import("openai_zig");
 const types = @import("types.zig");
 const wire = @import("wire.zig");
 const config_mod = @import("config.zig");
+const provider_diag = @import("provider_diag.zig");
 
 const chat_res = openai.resources.chat;
 const gen = openai.generated;
@@ -129,11 +130,13 @@ pub const Client = struct {
 
         var parsed = self.sdk.chat().create_chat_completion(arena, req, retry_after_out) catch |err| {
             const mapped = mapSdkError(err);
+            provider_diag.pullOpenAiHint();
             if (retry_after_out) |out| {
                 if (mapped != error.RateLimited and mapped != error.ServerError) out.* = null;
             }
             return mapped;
         };
+        provider_diag.clearHttp();
         defer parsed.deinit();
 
         const turn = try turnFromResponse(arena, parsed.value);
@@ -186,14 +189,17 @@ pub const Client = struct {
             if (state.err) |e| {
                 // SSE-level failures never carry Retry-After (retry-after-wire-001).
                 if (retry_after_out) |out| out.* = null;
+                provider_diag.pullOpenAiHint();
                 return e;
             }
             const mapped = mapSdkError(err);
+            provider_diag.pullOpenAiHint();
             if (retry_after_out) |out| {
                 if (mapped != error.RateLimited and mapped != error.ServerError) out.* = null;
             }
             return mapped;
         };
+        provider_diag.clearHttp();
 
         if (state.err) |e| return e;
         if (!state.saw_protocol_done) return error.InvalidResponse;
@@ -723,7 +729,9 @@ fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.Ch
 
     if (msg.content_parts) |parts| {
         m.content_json = try contentPartsToJson(arena, parts);
-    } else if (msg.content.len > 0) {
+    } else {
+        // Always a string. Omitting content / sending JSON null makes
+        // GLM/Zhipu-class hosts 400 (`invalid message content type: <nil>`).
         m.content = msg.content;
     }
 
@@ -735,8 +743,8 @@ fn toChatMessage(arena: std.mem.Allocator, msg: types.Message) Error!chat_res.Ch
             m.content_json = null;
         },
         .assistant => {
-            if (msg.content_parts == null and msg.content.len == 0 and msg.tool_calls != null) {
-                m.content = null;
+            if (msg.reasoning) |r| {
+                if (r.len > 0) m.reasoning_content = r;
             }
             if (msg.tool_calls) |calls| {
                 const tc = try arena.alloc(gen.ChatCompletionMessageToolCall, calls.len);
@@ -848,8 +856,8 @@ pub fn turnFromResponse(arena: std.mem.Allocator, resp: gen.CreateChatCompletion
     };
 
     const content = try arena.dupe(u8, optionalSlice(msg.content));
-    // Provider thinking: captured as a user-visible audit artifact; never
-    // replayed to a provider (v1 stream path ignores reasoning deltas).
+    // Captured for the transcript and replayed on the next OpenAI-compat
+    // request as `reasoning_content` (DeepSeek-class hosts 400 without it).
     const reasoning = if (msg.reasoning_content) |r|
         try arena.dupe(u8, r)
     else
@@ -1010,12 +1018,16 @@ fn writeMessageLegacy(s: *std.json.Stringify, msg: types.Message) Error!void {
         },
         .assistant => {
             s.objectField("content") catch return error.WriteFailed;
-            if (msg.content_parts == null and msg.content.len == 0 and msg.tool_calls != null) {
-                s.write(null) catch return error.WriteFailed;
-            } else if (msg.content_parts) |parts| {
+            if (msg.content_parts) |parts| {
                 try writeContentPartsLegacy(s, parts);
             } else {
                 s.write(msg.content) catch return error.WriteFailed;
+            }
+            if (msg.reasoning) |r| {
+                if (r.len > 0) {
+                    s.objectField("reasoning_content") catch return error.WriteFailed;
+                    s.write(r) catch return error.WriteFailed;
+                }
             }
             if (msg.tool_calls) |calls| {
                 s.objectField("tool_calls") catch return error.WriteFailed;
@@ -1226,6 +1238,90 @@ test "buildRequestBody includes options" {
     try std.testing.expect(std.mem.indexOf(u8, body, "\"parallel_tool_calls\":false") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "list_dir") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"stream\"") == null);
+}
+
+test "toChatMessages replays reasoning as reasoning_content" {
+    const gpa = std.testing.allocator;
+    const calls = [_]types.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    const msgs = [_]types.Message{.{
+        .role = .assistant,
+        .content = "",
+        .tool_calls = &calls,
+        .reasoning = "need a listing",
+    }};
+    const out = try toChatMessages(gpa, &msgs);
+    defer {
+        gpa.free(out[0].tool_calls.?);
+        gpa.free(out);
+    }
+    try std.testing.expectEqualStrings("need a listing", out[0].reasoning_content.?);
+    try std.testing.expectEqualStrings("", out[0].content.?);
+}
+
+test "toChatMessages omits empty reasoning" {
+    const gpa = std.testing.allocator;
+    const msgs = [_]types.Message{types.Message.assistantText("hi")};
+    const out = try toChatMessages(gpa, &msgs);
+    defer gpa.free(out);
+    try std.testing.expect(out[0].reasoning_content == null);
+}
+
+test "buildRequestBody includes reasoning_content on assistant tool turn" {
+    const gpa = std.testing.allocator;
+    const calls = [_]types.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    const msgs = [_]types.Message{
+        types.Message.user("list files"),
+        .{
+            .role = .assistant,
+            .content = "",
+            .tool_calls = &calls,
+            .reasoning = "need a listing",
+        },
+        types.Message.toolResult("c1", "ok"),
+    };
+    const body = try buildRequestBody(gpa, "deepseek-v4-flash", &msgs, &.{}, .{}, false);
+    defer gpa.free(body);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"reasoning_content\":\"need a listing\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"tool_call_id\":\"c1\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"content\":null") == null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"content\":\"\"") != null);
+}
+
+test "toChatMessages tool-only assistant serializes empty string content" {
+    const gpa = std.testing.allocator;
+    const calls = [_]types.ToolCall{.{
+        .id = "c1",
+        .name = "list_dir",
+        .arguments = "{}",
+    }};
+    const msgs = [_]types.Message{.{
+        .role = .assistant,
+        .content = "",
+        .tool_calls = &calls,
+    }};
+    const out = try toChatMessages(gpa, &msgs);
+    defer {
+        gpa.free(out[0].tool_calls.?);
+        gpa.free(out);
+    }
+    try std.testing.expectEqualStrings("", out[0].content.?);
+
+    var buf: Io.Writer.Allocating = .init(gpa);
+    defer buf.deinit();
+    var s: std.json.Stringify = .{ .writer = &buf.writer };
+    out[0].jsonStringify(&s) catch return error.TestUnexpectedResult;
+    const json = buf.written();
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"content\":\"\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"content\":null") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"tool_calls\"") != null);
 }
 
 test "buildRequestBodyForStream sets stream true and include_usage" {

@@ -1994,9 +1994,9 @@ fn drawTasksOverlay(
     // Title in top border (grok: compact "Tasks" chrome).
     const hdr: ?[]const u8 = if (opts.focused)
         (if (running > 0)
-            store.format(" Tasks {d} · {d} running · j/k Space ", .{ n, running })
+            store.format(" Tasks {d} · {d} running · j/k Space +/- ", .{ n, running })
         else
-            store.format(" Tasks {d} · j/k Space ", .{n}))
+            store.format(" Tasks {d} · j/k Space +/- ", .{n}))
     else if (running > 0)
         store.format(" Tasks {d} · {d} running ", .{ n, running })
     else
@@ -2013,6 +2013,9 @@ fn drawTasksOverlay(
         printLineStyled(box, 0, "(no subagents)", muted);
         return;
     }
+
+    // Chip (3-row pane → 1 interior row): title in the border is enough.
+    if (box.height <= 1) return;
 
     const cursor = @min(opts.cursor, n - 1);
     var row: u16 = 0;
@@ -2113,6 +2116,7 @@ fn drawTasksOverlay(
                 row += 1;
             }
             const detail: []const u8 = blk: {
+                if (e.progress_len > 0) break :blk e.progressSlice();
                 if (e.error_message) |em| if (em.len > 0) break :blk em;
                 if (e.output.len > 0) break :blk e.output;
                 if (e.status == .running or e.status == .pending) break :blk "working…";
@@ -2121,7 +2125,7 @@ fn drawTasksOverlay(
             var lines = std.mem.splitScalar(u8, detail, '\n');
             var di: usize = 0;
             while (lines.next()) |ln| : (di += 1) {
-                if (di >= 4 or row >= box.height) break;
+                if (row >= box.height) break;
                 const body = singleLine(ln);
                 if (body.len == 0) continue;
                 if (store.format("    {s}", .{body})) |s| {
@@ -2341,9 +2345,25 @@ fn drawHostOverlay(
         .row_offset = y,
         .wrap = .none,
     });
+    // tui-model-picker-001: scroll viewport. The overlay box height stays
+    // small (≤24), but the line buffer can hold up to `overlay_line_cap`
+    // (96) rows. Render a cursor-centered window so every row is reachable
+    // with ↑↓/PgUp/PgD/Home/End; the focused row is always visible.
+    const vis: usize = @intCast(box.height);
+    const lines_len = ov.lines.len;
+    const top: usize = blk: {
+        if (lines_len <= vis) break :blk 0;
+        const half = vis / 2;
+        var t = ov.cursor -| half;
+        const max_top = lines_len - vis;
+        if (t > max_top) t = max_top;
+        break :blk t;
+    };
     var row: u16 = 0;
-    for (ov.lines, 0..) |line, i| {
+    var i: usize = top;
+    while (i < lines_len) : (i += 1) {
         if (row >= box.height) break;
+        const line = ov.lines[i];
         // Group headers (session-tree-001) render muted and carry no cursor
         // marker: they are non-selectable (Enter is a no-op on them).
         const kind: RowKind = if (i < ov.row_kinds.len) ov.row_kinds[i] else .normal;
